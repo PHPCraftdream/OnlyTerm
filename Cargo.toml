@@ -40,7 +40,6 @@ async-executor = "1.11"
 async-io = "2.3"
 async-task = "4.7"
 async-trait = "0.1"
-async_ossl = { path = "async_ossl" }
 backtrace = "0.3"
 base64 = {version="0.22", default-features=false }
 base91 = { path = "base91" }
@@ -127,7 +126,6 @@ lfucache = { path = "lfucache" }
 libc = "0.2"
 libflate = "2"
 libloading = "0.8"
-libssh-rs = "0.3.8"
 line_drawing = "0.8"
 log = "0.4"
 logging = { path = "lua-api-crates/logging" }
@@ -155,7 +153,6 @@ objc2 = "0.6"
 objc2-core-graphics = "0.3"
 objc2-foundation = "0.3"
 objc2-user-notifications = "0.3"
-openssl = "0.10.57"
 ordered-float = {version="4.1", default-features=false}
 parking_lot = "0.12"
 passfd = "0.1.6"
@@ -203,7 +200,6 @@ socket2 = "0.5"
 spa = "0.3.1"
 spawn-funcs = { path = "lua-api-crates/spawn-funcs" }
 sqlite-cache = "0.1.4"
-ssh2 = "0.9.3"
 starship-battery = "0.10"
 strsim = "0.11"
 syn = "1.0"
