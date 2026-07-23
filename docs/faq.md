@@ -248,7 +248,7 @@ env TERM=wezterm nvim
 
 Note: on Windows, the ConPTY layer strips out the curly underline escape
 sequences.  If you're missing this feature in your WSL instance, you will need
-to use either `wezterm ssh` or
+to use
 [multiplexing](multiplexing.md#connecting-into-windows-subsystem-for-linux)
 to bypass ConPTY.
 

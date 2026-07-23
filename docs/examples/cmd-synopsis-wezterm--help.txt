@@ -6,7 +6,6 @@ Usage: wezterm [OPTIONS] [COMMAND]
 Commands:
   start                  Start the GUI, optionally running an alternative
                              program [aliases: -e]
-  ssh                    Establish an ssh session
   serial                 Open a serial port
   connect                Connect to wezterm multiplexer
   ls-fonts               Display information about fonts
