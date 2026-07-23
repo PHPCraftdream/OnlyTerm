@@ -13,3 +13,9 @@ lazy_static.workspace = true
 luahelper.workspace = true
 ordered-float.workspace = true
 wezterm-dynamic.workspace = true
+# Promoted to a real dependency as of L4c (see
+# docs/plans/2026-07-23-lua-rhai-migration.md): `src/lib.rs::register_rhai`
+# registers a rhai-side equivalent of `wezterm.GLOBAL`, sharing the exact same
+# `GLOBALS` singleton storage the mlua path (`register`) uses, via the
+# `config::rhai_value` Dynamic<->Dynamic bridge.
+rhai.workspace = true
