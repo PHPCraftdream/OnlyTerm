@@ -6774,6 +6774,7 @@ dependencies = [
  "serde_json",
  "termwiz",
  "thiserror 1.0.69",
+ "tiny-skia",
  "walkdir",
  "wezterm-bidi",
  "wezterm-color-types",

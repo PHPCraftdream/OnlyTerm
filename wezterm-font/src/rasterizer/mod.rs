@@ -10,6 +10,7 @@ pub(crate) const FAKE_ITALIC_SKEW: f64 = 0.2;
 pub mod colr;
 pub mod freetype;
 pub mod harfbuzz;
+pub mod paint;
 
 /// A bitmap representation of a glyph.
 /// The data is stored as pre-multiplied RGBA 32bpp.
