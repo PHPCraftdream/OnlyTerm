@@ -4,9 +4,8 @@ use freetype;
 pub use harfbuzz::*;
 
 use crate::locator::{FontDataHandle, FontDataSource};
-use crate::rasterizer::colr::{ColorLine, ColorStop, DrawOp};
+pub use crate::rasterizer::colr::{ColorLine, ColorStop, DrawOp};
 use anyhow::{ensure, Context, Error};
-use cairo::Extend;
 use memmap2::{Mmap, MmapOptions};
 use std::ffi::CStr;
 use std::io::Read;
@@ -14,6 +13,7 @@ use std::mem;
 use std::ops::Range;
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 use std::sync::Arc;
+use tiny_skia::SpreadMode;
 use wezterm_color_types::SrgbaPixel;
 
 extern "C" {
@@ -921,7 +921,7 @@ impl ColorLine {
                     },
                 })
                 .collect(),
-            extend: hb_extend_to_cairo(extend),
+            extend: hb_extend_to_spread_mode(extend),
         }
     }
 }
@@ -934,11 +934,11 @@ fn hb_color_to_srgba_pixel(color: hb_color_t) -> SrgbaPixel {
     SrgbaPixel::rgba(red, green, blue, alpha)
 }
 
-fn hb_extend_to_cairo(extend: hb_paint_extend_t) -> Extend {
+fn hb_extend_to_spread_mode(extend: hb_paint_extend_t) -> SpreadMode {
     match extend {
-        hb_paint_extend_t::HB_PAINT_EXTEND_PAD => Extend::Pad,
-        hb_paint_extend_t::HB_PAINT_EXTEND_REPEAT => Extend::Repeat,
-        hb_paint_extend_t::HB_PAINT_EXTEND_REFLECT => Extend::Reflect,
+        hb_paint_extend_t::HB_PAINT_EXTEND_PAD => SpreadMode::Pad,
+        hb_paint_extend_t::HB_PAINT_EXTEND_REPEAT => SpreadMode::Repeat,
+        hb_paint_extend_t::HB_PAINT_EXTEND_REFLECT => SpreadMode::Reflect,
     }
 }
 

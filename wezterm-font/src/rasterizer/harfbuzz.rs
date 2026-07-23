@@ -1,16 +1,19 @@
 use crate::hbwrap::{
     hb_color, hb_color_get_alpha, hb_color_get_blue, hb_color_get_green, hb_color_get_red,
-    hb_color_t, hb_paint_composite_mode_t, hb_tag_to_string, Font, PaintOp, IS_PNG,
+    hb_color_t, hb_paint_composite_mode_t, hb_tag_to_string, DrawOp as HbDrawOp, Font, PaintOp,
+    IS_PNG,
 };
 use crate::rasterizer::colr::{
     apply_draw_ops_to_context, paint_linear_gradient, paint_radial_gradient, paint_sweep_gradient,
+    DrawOp,
 };
+use crate::rasterizer::paint::Painter;
 use crate::rasterizer::FAKE_ITALIC_SKEW;
 use crate::units::PixelLength;
 use crate::{FontRasterizer, ParsedFont, RasterizedGlyph};
-use cairo::{Content, Context, Format, ImageSurface, Matrix, Operator, RecordingSurface};
 use image::DynamicImage::{ImageLuma8, ImageLumaA8};
 use image::GenericImageView;
+use tiny_skia::{BlendMode, Color, FilterQuality, IntSize, Pixmap, SpreadMode, Transform};
 
 pub struct HarfbuzzRasterizer {
     font: Font,
@@ -57,11 +60,18 @@ impl FontRasterizer for HarfbuzzRasterizer {
 
         log::trace!("ops: {ops:#?}");
 
-        let (surface, has_color) = record_to_cairo_surface(ops)?;
-        let (left, top, width, height) = surface.ink_extents();
-        log::trace!("extents: left={left} top={top} width={width} height={height}");
+        // Pass 1: dry-run over a `Painter` in bbox-only mode to compute the
+        // ink extents. tiny-skia has no `RecordingSurface`/`ink_extents()`
+        // equivalent, so the two-pass protocol documented on `Painter` is
+        // used instead: replay every op once against a dry-run painter to
+        // get a conservative bbox (see "Тонкое место 1" in the migration
+        // plan), then replay again for real into a pixmap of that size.
+        let mut dry = Painter::new_dry_run();
+        dry.scale(1. / 64., -1. / 64.);
+        apply_paint_ops(&mut dry, &ops)?;
+        let bbox = dry.bbox();
 
-        if width as usize == 0 || height as usize == 0 {
+        if bbox.is_empty() || bbox.width() <= 0. || bbox.height() <= 0. {
             return Ok(RasterizedGlyph {
                 data: vec![],
                 height: 0,
@@ -73,21 +83,25 @@ impl FontRasterizer for HarfbuzzRasterizer {
             });
         }
 
-        let mut bounds_adjust = Matrix::identity();
-        bounds_adjust.translate(left * -1., top * -1.);
-        log::trace!("dims: {width}x{height} {bounds_adjust:?}");
+        let left = bbox.x0 as f64;
+        let top = bbox.y0 as f64;
+        let width = bbox.width().ceil() as u32;
+        let height = bbox.height().ceil() as u32;
+        log::trace!("extents: left={left} top={top} width={width} height={height}");
 
-        let target = ImageSurface::create(Format::ARgb32, width as i32, height as i32)?;
-        {
-            let context = Context::new(&target)?;
-            context.transform(bounds_adjust);
-            context.set_antialias(cairo::Antialias::Best);
-            context.set_source_surface(surface, 0., 0.)?;
-            context.paint()?;
-        }
+        // Pass 2: render for real into a pixmap sized to the bbox,
+        // translated so that the bbox origin maps to (0, 0) - mirroring
+        // cairo's `bounds_adjust` translate + `set_source_surface` +
+        // `paint()` dance.
+        let mut painter = Painter::new(width, height)?;
+        painter.translate(left as f32 * -1., top as f32 * -1.);
+        painter.scale(1. / 64., -1. / 64.);
+        let has_color = apply_paint_ops(&mut painter, &ops)?;
 
-        let mut data = target.take_data()?.to_vec();
-        argb_to_rgba(&mut data);
+        let pixmap = painter
+            .into_pixmap()
+            .ok_or_else(|| anyhow::anyhow!("Painter::into_pixmap: expected a real pixmap"))?;
+        let data = pixmap.data().to_vec();
 
         Ok(RasterizedGlyph {
             data,
@@ -101,12 +115,16 @@ impl FontRasterizer for HarfbuzzRasterizer {
     }
 }
 
-fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(RecordingSurface, bool)> {
+/// Replays a sequence of HarfBuzz paint ops against `painter`, mirroring
+/// what `record_to_cairo_surface` used to do against a cairo `Context`.
+/// Works in both dry-run (bbox-only) and real rendering modes, since every
+/// operation is expressed purely in terms of the `Painter` API. Returns
+/// whether the glyph has color (i.e. was painted with something other than
+/// solid white), matching the pre-existing `has_color` semantics that
+/// determine whether the glyph gets tinted with the terminal's foreground
+/// color.
+fn apply_paint_ops(painter: &mut Painter, paint_ops: &[PaintOp]) -> anyhow::Result<bool> {
     let mut has_color = false;
-    let surface = RecordingSurface::create(Content::ColorAlpha, None)?;
-    let context = Context::new(&surface)?;
-    context.scale(1. / 64., -1. / 64.);
-    context.set_antialias(cairo::Antialias::Best);
 
     for pop in paint_ops {
         match pop {
@@ -118,23 +136,17 @@ fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(Recording
                 dx,
                 dy,
             } => {
-                context.save()?;
-                context.transform(Matrix::new(
-                    xx.into(),
-                    yx.into(),
-                    xy.into(),
-                    yy.into(),
-                    dx.into(),
-                    dy.into(),
-                ));
+                painter.save();
+                painter.transform(Transform::from_row(*xx, *yx, *xy, *yy, *dx, *dy));
             }
             PaintOp::PopTransform => {
-                context.restore()?;
+                painter.restore();
             }
             PaintOp::PushGlyphClip { glyph: _, draw } => {
-                context.save()?;
-                apply_draw_ops_to_context(&draw, &context)?;
-                context.clip();
+                painter.save();
+                let draw_ops = hb_draw_ops_to_colr(draw);
+                apply_draw_ops_to_context(&draw_ops, painter)?;
+                painter.clip();
             }
             PaintOp::PushRectClip {
                 xmin,
@@ -142,38 +154,35 @@ fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(Recording
                 ymax,
                 xmax,
             } => {
-                context.save()?;
-                context.rectangle(
-                    xmin.into(),
-                    ymin.into(),
-                    (xmax - xmin).into(),
-                    (ymax - ymin).into(),
-                );
-                context.clip();
+                painter.save();
+                painter.new_path();
+                painter.move_to(*xmin, *ymin);
+                painter.line_to(*xmax, *ymin);
+                painter.line_to(*xmax, *ymax);
+                painter.line_to(*xmin, *ymax);
+                painter.close_path();
+                painter.clip();
             }
             PaintOp::PopClip => {
-                context.restore()?;
+                painter.restore();
             }
             PaintOp::PushGroup => {
-                context.save()?;
-                context.push_group();
+                painter.save();
+                painter.push_group();
             }
             PaintOp::PopGroup { mode } => {
-                context.pop_group_to_source()?;
-                context.set_operator(hb_paint_mode_to_operator(mode));
-                context.paint()?;
-                context.restore()?;
+                painter.pop_group(hb_paint_mode_to_blend_mode(*mode));
+                painter.restore();
             }
             PaintOp::PaintSolid {
                 is_foreground: _,
                 color,
             } => {
-                if color != 0xffffffff {
+                if *color != 0xffffffff {
                     has_color = true;
                 }
-                let (r, g, b, a) = hb_color_to_rgba(color);
-                context.set_source_rgba(r, g, b, a);
-                context.paint()?;
+                let (r, g, b, a) = hb_color_to_rgba_u8(*color);
+                painter.paint_solid(Color::from_rgba8(r, g, b, a));
             }
             PaintOp::PaintLinearGradient {
                 x0,
@@ -186,14 +195,14 @@ fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(Recording
             } => {
                 has_color = true;
                 paint_linear_gradient(
-                    &context,
-                    x0.into(),
-                    y0.into(),
-                    x1.into(),
-                    y1.into(),
-                    x2.into(),
-                    y2.into(),
-                    color_line,
+                    painter,
+                    (*x0).into(),
+                    (*y0).into(),
+                    (*x1).into(),
+                    (*y1).into(),
+                    (*x2).into(),
+                    (*y2).into(),
+                    color_line.clone(),
                 )?;
             }
             PaintOp::PaintRadialGradient {
@@ -207,14 +216,14 @@ fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(Recording
             } => {
                 has_color = true;
                 paint_radial_gradient(
-                    &context,
-                    x0.into(),
-                    y0.into(),
-                    r0.into(),
-                    x1.into(),
-                    y1.into(),
-                    r1.into(),
-                    color_line,
+                    painter,
+                    (*x0).into(),
+                    (*y0).into(),
+                    (*r0).into(),
+                    (*x1).into(),
+                    (*y1).into(),
+                    (*r1).into(),
+                    color_line.clone(),
                 )?;
             }
             PaintOp::PaintSweepGradient {
@@ -226,12 +235,12 @@ fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(Recording
             } => {
                 has_color = true;
                 paint_sweep_gradient(
-                    &context,
-                    x0.into(),
-                    y0.into(),
-                    start_angle.into(),
-                    end_angle.into(),
-                    color_line,
+                    painter,
+                    (*x0).into(),
+                    (*y0).into(),
+                    (*start_angle).into(),
+                    (*end_angle).into(),
+                    color_line.clone(),
                 )?;
             }
             PaintOp::PaintImage {
@@ -242,121 +251,168 @@ fn record_to_cairo_surface(paint_ops: Vec<PaintOp>) -> anyhow::Result<(Recording
                 slant,
                 extents,
             } => {
-                let image_surface = if format == IS_PNG {
-                    let decoded = image::ImageReader::new(std::io::Cursor::new(image.as_slice()))
-                        .with_guessed_format()?
-                        .decode()?;
+                if *format != IS_PNG {
+                    anyhow::bail!("NOT IMPL: PaintImage {}", hb_tag_to_string(*format));
+                }
 
-                    if !matches!(&decoded, ImageLuma8(_) | ImageLumaA8(_)) {
-                        // Not a monochrome image
-                        has_color = true;
-                    }
+                let decoded = image::ImageReader::new(std::io::Cursor::new(image.as_slice()))
+                    .with_guessed_format()?
+                    .decode()?;
 
-                    let (width, height) = decoded.dimensions();
-                    let mut data = decoded.into_rgba8().into_vec();
+                if !matches!(&decoded, ImageLuma8(_) | ImageLumaA8(_)) {
+                    // Not a monochrome image
+                    has_color = true;
+                }
 
-                    // Cairo wants ARGB. Walk through the pixels and
-                    // premultiply and get into that form
-                    rgba_to_argb_and_multiply(&mut data);
-                    // premultiply(&mut data);
+                let (img_width, img_height) = decoded.dimensions();
+                let mut data = decoded.into_rgba8().into_vec();
+                // tiny-skia's `Pixmap` stores premultiplied RGBA (unlike
+                // the `image` crate's straight-alpha output), so
+                // premultiply in place before handing it to `Pixmap`.
+                // Unlike the cairo path's `rgba_to_argb_and_multiply`, no
+                // byte-swizzle to ARGB is needed: `Pixmap` keeps RGBA
+                // order.
+                premultiply_rgba(&mut data);
 
-                    let width = width as i32;
-                    let height = height as i32;
-                    ImageSurface::create_for_data(data, Format::ARgb32, width, height, width * 4)?
-                } else {
-                    anyhow::bail!("NOT IMPL: PaintImage {}", hb_tag_to_string(format));
-                };
+                let size = IntSize::from_wh(img_width, img_height).ok_or_else(|| {
+                    anyhow::anyhow!("invalid PaintImage dimensions {img_width}x{img_height}")
+                })?;
+                let pixmap = Pixmap::from_vec(data, size).ok_or_else(|| {
+                    anyhow::anyhow!("failed to build Pixmap from decoded PNG data")
+                })?;
 
-                // Use the decoded dimensions; not all fonts encode
-                // the dimensions correctly in the font data
-                let width = image_surface.width();
-                let height = image_surface.height();
-
-                let extents = extents.ok_or_else(|| {
+                let extents = (*extents).ok_or_else(|| {
                     anyhow::anyhow!("expected to have extents for non-svg image data")
                 })?;
 
-                context.save()?;
-                // Ensure that we clip to the image rectangle
-                context.rectangle(
-                    extents.x_bearing.into(),
-                    extents.y_bearing.into(),
-                    extents.width.into(),
-                    extents.height.into(),
+                // `hb_glyph_extents_t`'s fields are `hb_position_t`
+                // (26.6-independent, plain integer font units here since
+                // these come from `hb_font_get_glyph_extents`, not glyph
+                // outlines) - cast up to f32 for use with `Painter`.
+                let x_bearing = extents.x_bearing as f32;
+                let y_bearing = extents.y_bearing as f32;
+                let ext_width = extents.width as f32;
+                let ext_height = extents.height as f32;
+
+                painter.save();
+                // Ensure that we clip to the image rectangle.
+                painter.new_path();
+                painter.move_to(x_bearing, y_bearing);
+                painter.line_to(x_bearing + ext_width, y_bearing);
+                painter.line_to(x_bearing + ext_width, y_bearing + ext_height);
+                painter.line_to(x_bearing, y_bearing + ext_height);
+                painter.close_path();
+                painter.clip();
+
+                let slanted_width = ext_width as f64 - ext_height as f64 * *slant as f64;
+                let slanted_x_bearing = x_bearing as f64 - y_bearing as f64 * *slant as f64;
+
+                // Mirrors the cairo path's
+                // `context.transform(Matrix::new(1., 0., slant, 1., 0., 0.))`
+                // followed by `translate(slanted_x_bearing, y_bearing)` and
+                // `scale(slanted_width, height)`, which together map the
+                // unit square onto the (slant-adjusted) glyph image
+                // extents.
+                painter.transform(Transform::from_row(1., 0., *slant, 1., 0., 0.));
+                painter.translate(slanted_x_bearing as f32, y_bearing);
+                painter.scale(slanted_width as f32, ext_height);
+
+                // The pattern's own transform maps the pixmap's pixel grid
+                // down onto that same unit square (mirroring the cairo
+                // path's `pattern.set_matrix(Matrix::new(width, 0, 0,
+                // height, 0, 0))`, which is the inverse scale of what we
+                // want the *pattern* to do to its own coordinate space).
+                let pattern_transform = Transform::from_scale(
+                    1.0 / pixmap.width() as f32,
+                    1.0 / pixmap.height() as f32,
                 );
-                context.clip();
-
-                let pattern = cairo::SurfacePattern::create(image_surface);
-                pattern.set_extend(cairo::Extend::Pad);
-                pattern.set_matrix(Matrix::new(width.into(), 0., 0., height.into(), 0., 0.));
-
-                let slanted_width = extents.width as f64 - extents.height as f64 * slant as f64;
-                let slanted_x_bearing =
-                    extents.x_bearing as f64 - extents.y_bearing as f64 * slant as f64;
-                context.transform(Matrix::new(1., 0., slant.into(), 1., 0., 0.));
-                context.translate(slanted_x_bearing.into(), extents.y_bearing.into());
-                context.scale(slanted_width.into(), extents.height.into());
-                context.set_source(pattern)?;
-                context.paint()?;
-                context.restore()?;
+                let shader = tiny_skia::Pattern::new(
+                    pixmap.as_ref(),
+                    SpreadMode::Pad,
+                    FilterQuality::Bilinear,
+                    1.0,
+                    pattern_transform,
+                );
+                painter.paint_shader(shader);
+                painter.restore();
             }
         }
     }
 
-    Ok((surface, has_color))
+    Ok(has_color)
+}
+
+/// Converts HarfBuzz's own `DrawOp` (from `hbwrap`) into `colr::DrawOp`
+/// (from `rasterizer::colr`), so that the shared
+/// `apply_draw_ops_to_context` helper (already ported to `Painter` as part
+/// of phase C) can be reused verbatim for glyph clip paths coming from the
+/// HarfBuzz paint API.
+fn hb_draw_ops_to_colr(ops: &[HbDrawOp]) -> Vec<DrawOp> {
+    ops.iter()
+        .map(|op| match *op {
+            HbDrawOp::MoveTo { to_x, to_y } => DrawOp::MoveTo { to_x, to_y },
+            HbDrawOp::LineTo { to_x, to_y } => DrawOp::LineTo { to_x, to_y },
+            HbDrawOp::QuadTo {
+                control_x,
+                control_y,
+                to_x,
+                to_y,
+            } => DrawOp::QuadTo {
+                control_x,
+                control_y,
+                to_x,
+                to_y,
+            },
+            HbDrawOp::CubicTo {
+                control1_x,
+                control1_y,
+                control2_x,
+                control2_y,
+                to_x,
+                to_y,
+            } => DrawOp::CubicTo {
+                control1_x,
+                control1_y,
+                control2_x,
+                control2_y,
+                to_x,
+                to_y,
+            },
+            HbDrawOp::ClosePath => DrawOp::ClosePath,
+        })
+        .collect()
+}
+
+/// Premultiplies straight-alpha RGBA pixel data (as produced by the
+/// `image` crate's `into_rgba8()`) in place, matching the format
+/// `tiny_skia::Pixmap` requires. Replaces the cairo-era
+/// `rgba_to_argb_and_multiply`, which additionally byte-swizzled into
+/// cairo's native `ARgb32` (BGRA-on-little-endian) layout; tiny-skia's
+/// `Pixmap` keeps RGBA byte order, so only the premultiplication step
+/// remains necessary.
+fn premultiply_rgba(data: &mut [u8]) {
+    for pixel in data.chunks_exact_mut(4) {
+        let [r, g, b, a] = *pixel else {
+            unreachable!()
+        };
+        if a != 0xff {
+            pixel[0] = multiply_alpha(a, r);
+            pixel[1] = multiply_alpha(a, g);
+            pixel[2] = multiply_alpha(a, b);
+        }
+    }
 }
 
 fn multiply_alpha(alpha: u8, color: u8) -> u8 {
     let temp: u32 = alpha as u32 * (color as u32 + 0x80);
-
     ((temp + (temp >> 8)) >> 8) as u8
 }
 
-#[allow(dead_code)]
-fn demultiply_alpha(alpha: u8, color: u8) -> u8 {
-    if alpha == 0 {
-        return 0;
-    }
-    let v = ((color as u32) * 255) / alpha as u32;
-    if v > 255 {
-        255
-    } else {
-        v as u8
-    }
-}
-
-#[allow(dead_code)]
-fn premultiply(data: &mut [u8]) {
-    for pixel in data.chunks_exact_mut(4) {
-        let (r, g, b, a) = (pixel[0], pixel[1], pixel[2], pixel[3]);
-        pixel[0] = multiply_alpha(a, r);
-        pixel[1] = multiply_alpha(a, g);
-        pixel[2] = multiply_alpha(a, b);
-        pixel[3] = a;
-    }
-}
-
-fn rgba_to_argb_and_multiply(data: &mut [u8]) {
-    for pixel in data.chunks_exact_mut(4) {
-        let [mut r, mut g, mut b, a] = *pixel else {
-            unreachable!()
-        };
-
-        if a != 0xff {
-            r = multiply_alpha(a, r);
-            g = multiply_alpha(a, g);
-            b = multiply_alpha(a, b);
-        }
-
-        #[cfg(target_endian = "big")]
-        let result = [a, r, g, b];
-        #[cfg(target_endian = "little")]
-        let result = [b, g, r, a];
-
-        pixel.copy_from_slice(&result);
-    }
-}
-
+/// Retained only because `freetype.rs` (not yet ported to `Painter` - see
+/// phase E) still imports and calls this on cairo's `ARgb32`-formatted
+/// `ImageSurface` data. Once phase E ports `freetype.rs` to `Painter` as
+/// well, this function (and its cairo-specific byte-order assumptions) can
+/// be removed entirely.
 pub fn argb_to_rgba(data: &mut [u8]) {
     for pixel in data.chunks_exact_mut(4) {
         #[cfg(target_endian = "little")]
@@ -373,44 +429,50 @@ pub fn argb_to_rgba(data: &mut [u8]) {
     }
 }
 
-fn hb_paint_mode_to_operator(mode: hb_paint_composite_mode_t) -> Operator {
+/// Maps a HarfBuzz paint composite mode (`hb_paint_composite_mode_t`, the
+/// same 29-variant set as CSS/Porter-Duff compositing operators) onto the
+/// equivalent `tiny_skia::BlendMode`. This is a 1:1 mapping - tiny-skia's
+/// `BlendMode` covers exactly the same operators (including the HSL blend
+/// modes) that cairo's `Operator` did, so this replaces
+/// `hb_paint_mode_to_operator` with no loss of fidelity.
+fn hb_paint_mode_to_blend_mode(mode: hb_paint_composite_mode_t) -> BlendMode {
     use hb_paint_composite_mode_t::*;
     match mode {
-        HB_PAINT_COMPOSITE_MODE_CLEAR => Operator::Clear,
-        HB_PAINT_COMPOSITE_MODE_SRC => Operator::Source,
-        HB_PAINT_COMPOSITE_MODE_DEST => Operator::Dest,
-        HB_PAINT_COMPOSITE_MODE_SRC_OVER => Operator::Over,
-        HB_PAINT_COMPOSITE_MODE_DEST_OVER => Operator::DestOver,
-        HB_PAINT_COMPOSITE_MODE_SRC_IN => Operator::In,
-        HB_PAINT_COMPOSITE_MODE_DEST_IN => Operator::DestIn,
-        HB_PAINT_COMPOSITE_MODE_SRC_OUT => Operator::Out,
-        HB_PAINT_COMPOSITE_MODE_DEST_OUT => Operator::DestOut,
-        HB_PAINT_COMPOSITE_MODE_SRC_ATOP => Operator::Atop,
-        HB_PAINT_COMPOSITE_MODE_DEST_ATOP => Operator::DestAtop,
-        HB_PAINT_COMPOSITE_MODE_XOR => Operator::Xor,
-        HB_PAINT_COMPOSITE_MODE_PLUS => Operator::Add,
-        HB_PAINT_COMPOSITE_MODE_SCREEN => Operator::Screen,
-        HB_PAINT_COMPOSITE_MODE_OVERLAY => Operator::Overlay,
-        HB_PAINT_COMPOSITE_MODE_DARKEN => Operator::Darken,
-        HB_PAINT_COMPOSITE_MODE_LIGHTEN => Operator::Lighten,
-        HB_PAINT_COMPOSITE_MODE_COLOR_DODGE => Operator::ColorDodge,
-        HB_PAINT_COMPOSITE_MODE_COLOR_BURN => Operator::ColorBurn,
-        HB_PAINT_COMPOSITE_MODE_HARD_LIGHT => Operator::HardLight,
-        HB_PAINT_COMPOSITE_MODE_SOFT_LIGHT => Operator::SoftLight,
-        HB_PAINT_COMPOSITE_MODE_DIFFERENCE => Operator::Difference,
-        HB_PAINT_COMPOSITE_MODE_EXCLUSION => Operator::Exclusion,
-        HB_PAINT_COMPOSITE_MODE_MULTIPLY => Operator::Multiply,
-        HB_PAINT_COMPOSITE_MODE_HSL_HUE => Operator::HslHue,
-        HB_PAINT_COMPOSITE_MODE_HSL_SATURATION => Operator::HslSaturation,
-        HB_PAINT_COMPOSITE_MODE_HSL_COLOR => Operator::HslColor,
-        HB_PAINT_COMPOSITE_MODE_HSL_LUMINOSITY => Operator::HslLuminosity,
+        HB_PAINT_COMPOSITE_MODE_CLEAR => BlendMode::Clear,
+        HB_PAINT_COMPOSITE_MODE_SRC => BlendMode::Source,
+        HB_PAINT_COMPOSITE_MODE_DEST => BlendMode::Destination,
+        HB_PAINT_COMPOSITE_MODE_SRC_OVER => BlendMode::SourceOver,
+        HB_PAINT_COMPOSITE_MODE_DEST_OVER => BlendMode::DestinationOver,
+        HB_PAINT_COMPOSITE_MODE_SRC_IN => BlendMode::SourceIn,
+        HB_PAINT_COMPOSITE_MODE_DEST_IN => BlendMode::DestinationIn,
+        HB_PAINT_COMPOSITE_MODE_SRC_OUT => BlendMode::SourceOut,
+        HB_PAINT_COMPOSITE_MODE_DEST_OUT => BlendMode::DestinationOut,
+        HB_PAINT_COMPOSITE_MODE_SRC_ATOP => BlendMode::SourceAtop,
+        HB_PAINT_COMPOSITE_MODE_DEST_ATOP => BlendMode::DestinationAtop,
+        HB_PAINT_COMPOSITE_MODE_XOR => BlendMode::Xor,
+        HB_PAINT_COMPOSITE_MODE_PLUS => BlendMode::Plus,
+        HB_PAINT_COMPOSITE_MODE_SCREEN => BlendMode::Screen,
+        HB_PAINT_COMPOSITE_MODE_OVERLAY => BlendMode::Overlay,
+        HB_PAINT_COMPOSITE_MODE_DARKEN => BlendMode::Darken,
+        HB_PAINT_COMPOSITE_MODE_LIGHTEN => BlendMode::Lighten,
+        HB_PAINT_COMPOSITE_MODE_COLOR_DODGE => BlendMode::ColorDodge,
+        HB_PAINT_COMPOSITE_MODE_COLOR_BURN => BlendMode::ColorBurn,
+        HB_PAINT_COMPOSITE_MODE_HARD_LIGHT => BlendMode::HardLight,
+        HB_PAINT_COMPOSITE_MODE_SOFT_LIGHT => BlendMode::SoftLight,
+        HB_PAINT_COMPOSITE_MODE_DIFFERENCE => BlendMode::Difference,
+        HB_PAINT_COMPOSITE_MODE_EXCLUSION => BlendMode::Exclusion,
+        HB_PAINT_COMPOSITE_MODE_MULTIPLY => BlendMode::Multiply,
+        HB_PAINT_COMPOSITE_MODE_HSL_HUE => BlendMode::Hue,
+        HB_PAINT_COMPOSITE_MODE_HSL_SATURATION => BlendMode::Saturation,
+        HB_PAINT_COMPOSITE_MODE_HSL_COLOR => BlendMode::Color,
+        HB_PAINT_COMPOSITE_MODE_HSL_LUMINOSITY => BlendMode::Luminosity,
     }
 }
 
-fn hb_color_to_rgba(color: hb_color_t) -> (f64, f64, f64, f64) {
-    let red = unsafe { hb_color_get_red(color) } as f64;
-    let green = unsafe { hb_color_get_green(color) } as f64;
-    let blue = unsafe { hb_color_get_blue(color) } as f64;
-    let alpha = unsafe { hb_color_get_alpha(color) } as f64;
-    (red / 255., green / 255., blue / 255., alpha / 255.)
+fn hb_color_to_rgba_u8(color: hb_color_t) -> (u8, u8, u8, u8) {
+    let red = unsafe { hb_color_get_red(color) };
+    let green = unsafe { hb_color_get_green(color) };
+    let blue = unsafe { hb_color_get_blue(color) };
+    let alpha = unsafe { hb_color_get_alpha(color) };
+    (red, green, blue, alpha)
 }
