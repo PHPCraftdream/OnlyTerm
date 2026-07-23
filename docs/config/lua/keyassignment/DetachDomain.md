@@ -14,10 +14,9 @@ error log/debug overlay.
 local wezterm = require 'wezterm'
 local act = wezterm.action
 
-config.ssh_domains = {
+config.unix_domains = {
   {
     name = 'devhost',
-    remote_address = 'devhost.example.com',
   },
 }
 config.keys = {

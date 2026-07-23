@@ -3,8 +3,7 @@
 {{since('20220624-141144-bd1b7c5d')}}
 
 Attempts to attach the named multiplexing domain.  The name can be any of the
-names used in your `ssh_domains`, `unix_domains` or `tls_clients`
-configurations.
+names used in your `unix_domains` configuration.
 
 Attaching a domain will attempt to import the windows, tabs and panes from the
 remote system into those of the local GUI.
@@ -16,13 +15,12 @@ This action is not bound to any keys by default. The [Launcher Menu](../../launc
 (default: right click on the new tab `+` button in the tab bar) will synthesize
 entries with this action.
 
-The example below shows how to bind a key to trigger attaching to an ssh domain:
+The example below shows how to bind a key to trigger attaching to a unix domain:
 
 ```lua
-config.ssh_domains = {
+config.unix_domains = {
   {
     name = 'devhost',
-    remote_address = 'devhost.example.com',
   },
 }
 config.keys = {

@@ -13,15 +13,15 @@ subcommand explicitly specified), wezterm will use the value of
 The default for this config is `{"start"}` which makes `wezterm` with no
 additional subcommand arguments equivalent to `wezterm start`.
 
-If you know that you always want to use wezterm's ssh client to login to a
-particular host, then you might consider using this configuration:
+If you know that you always want to connect to a particular multiplexer
+domain, then you might consider using this configuration:
 
 ```lua
-config.default_gui_startup_args = { 'ssh', 'some-host' }
+config.default_gui_startup_args = { 'connect', 'some-domain' }
 ```
 
 which will cause `wezterm` with no additional subcommand arguments to be
-equivalent to running `wezterm ssh some-host`.
+equivalent to running `wezterm connect some-domain`.
 
 Specifying subcommand arguments on the command line is NOT additive with
 this config; the command line arguments always take precedence.
