@@ -468,6 +468,41 @@ impl<'lua> FromLua<'lua> for TextStyleAttributes {
     }
 }
 
+// rhai analogue of the `FromLua` impl above (L3 of the migration plan, see
+// `docs/plans/2026-07-23-lua-rhai-migration.md`). This is a manual `TryFrom`
+// rather than `impl_rhai_conversion_dynamic!` because of the `italic` ->
+// `style` fixup below: `impl_rhai_conversion_dynamic!` only ever calls
+// `FromDynamic::from_dynamic` (via `rhai_dynamic_to_value`) and hands back the
+// result verbatim, with no hook to post-process the parsed value.
+// `TextStyleAttributes` itself has no alternate top-level "shape" (it's
+// always an object/map on both the Lua and rhai side) -- the special
+// handling here is purely the same backwards-compat alias (`italic: bool`
+// folded into `style: FontStyle`) that the Lua `from_lua` impl performs, so
+// the parse step below reuses `rhai_dynamic_to_value` (the same generic
+// `FromDynamic`-based parser `impl_rhai_conversion_dynamic!` expands to) and
+// then applies the identical fixup.
+impl std::convert::TryFrom<rhai::Dynamic> for TextStyleAttributes {
+    type Error = crate::rhai_value::RhaiConversionError;
+
+    fn try_from(value: rhai::Dynamic) -> Result<Self, Self::Error> {
+        let mut attr: TextStyleAttributes = crate::rhai_value::rhai_dynamic_to_value(&value)?;
+        if let Some(italic) = attr.italic.take() {
+            attr.style = if italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            };
+        }
+        Ok(attr)
+    }
+}
+
+impl From<TextStyleAttributes> for rhai::Dynamic {
+    fn from(value: TextStyleAttributes) -> rhai::Dynamic {
+        crate::rhai_value::dynamic_to_rhai_dynamic(&wezterm_dynamic::ToDynamic::to_dynamic(&value))
+    }
+}
+
 #[derive(Debug, Default, FromDynamic, ToDynamic, Clone, PartialEq, Eq, Hash)]
 struct LuaFontAttributes {
     /// The font family name
@@ -519,6 +554,52 @@ impl<'lua> FromLua<'lua> for LuaFontAttributes {
                 Ok(attr)
             }
         }
+    }
+}
+
+// rhai analogue of the `FromLua` impl above (L3 of the migration plan). This
+// is the canonical example of *why* a manual impl exists at all rather than
+// `impl_rhai_conversion_dynamic!`: `wezterm.font(...)`/`wezterm.font_with_fallback(...)`
+// accept a font attribute either as a bare family-name string
+// (`wezterm.font("Fira Code")`) or as a full object/map with `family`,
+// `weight`, `stretch`, etc (`wezterm.font({family="Fira Code", weight="Bold"})`).
+// That is a genuine alternate top-level *shape* of the incoming value (string
+// XOR object), not just a field-level default -- exactly the case the
+// migration plan calls out as needing a hand-written conversion instead of
+// the generic macro. Mirrors the Lua match on `Value::String(..)` vs
+// everything else, then reuses `rhai_dynamic_to_value` for the object path
+// plus the same `italic` -> `style` fixup as `TextStyleAttributes` above.
+impl std::convert::TryFrom<rhai::Dynamic> for LuaFontAttributes {
+    type Error = crate::rhai_value::RhaiConversionError;
+
+    fn try_from(value: rhai::Dynamic) -> Result<Self, Self::Error> {
+        if value.is_string() {
+            let type_name = value.type_name();
+            let family = value.into_string().map_err(|_| crate::rhai_value::RhaiConversionError {
+                from: type_name,
+                to: std::any::type_name::<LuaFontAttributes>(),
+                message: "expected string".to_string(),
+            })?;
+            let mut attr = LuaFontAttributes::default();
+            attr.family = family;
+            return Ok(attr);
+        }
+
+        let mut attr: LuaFontAttributes = crate::rhai_value::rhai_dynamic_to_value(&value)?;
+        if let Some(italic) = attr.italic.take() {
+            attr.style = if italic {
+                FontStyle::Italic
+            } else {
+                FontStyle::Normal
+            };
+        }
+        Ok(attr)
+    }
+}
+
+impl From<LuaFontAttributes> for rhai::Dynamic {
+    fn from(value: LuaFontAttributes) -> rhai::Dynamic {
+        crate::rhai_value::dynamic_to_rhai_dynamic(&wezterm_dynamic::ToDynamic::to_dynamic(&value))
     }
 }
 
@@ -949,6 +1030,223 @@ assert(wezterm.emit('bar', 42, 'woot') == true)
 
         assert_eq!(*total.lock().unwrap(), 6);
 
+        Ok(())
+    }
+
+    // L3 (docs/plans/2026-07-23-lua-rhai-migration.md): tests for the manual
+    // rhai `TryFrom<rhai::Dynamic>` conversions above, proving both alternate
+    // Lua-side syntaxes (bare string vs full object/map for
+    // `LuaFontAttributes`; object/map plus the `italic` backwards-compat
+    // alias for `TextStyleAttributes`) still parse the same way through rhai,
+    // and that the rhai result matches what the existing mlua path
+    // (`wezterm.font(...)`, already exercised by the crate's own doc
+    // examples/config structs) would produce for the equivalent Lua input.
+    //
+    // Test signatures use `Result<(), String>` (not `anyhow::Result<()>`):
+    // `Box<rhai::EvalAltResult>` is not `Sync` (it can embed an `FnPtr`, which
+    // closes over non-`Sync` `Rc`-based AST nodes), so it can't flow through
+    // anyhow's blanket `From` impl, which requires `Send + Sync`. See the
+    // identical note on `TestResult`/`MapErrString` in
+    // `config/src/rhai_engine.rs`'s test module.
+    type TestResult = Result<(), String>;
+
+    trait MapErrString<T> {
+        fn str_err(self) -> Result<T, String>;
+    }
+    impl<T, E: std::fmt::Display> MapErrString<T> for Result<T, E> {
+        fn str_err(self) -> Result<T, String> {
+            self.map_err(|e| e.to_string())
+        }
+    }
+
+    #[test]
+    fn font_attributes_string_form_rhai_matches_lua() -> TestResult {
+        // rhai side: bare string form.
+        let engine = rhai::Engine::new();
+        let value: rhai::Dynamic = engine.eval(r#""Fira Code""#).str_err()?;
+        let rhai_attr = LuaFontAttributes::try_from(value).str_err()?;
+
+        // Lua side (oracle): `wezterm.font("Fira Code")` goes through the very
+        // same `FromLua` impl this rhai conversion mirrors.
+        let lua = make_lua_context(Path::new("testing")).str_err()?;
+        let package: Table = lua.globals().get("package").str_err()?;
+        let loaded: Table = package.get("loaded").str_err()?;
+        let wezterm_mod: Table = loaded.get("wezterm").str_err()?;
+        let font_func: mlua::Function = wezterm_mod.get("font").str_err()?;
+        let lua_style: TextStyle = font_func.call("Fira Code").str_err()?;
+
+        let mut expected = LuaFontAttributes::default();
+        expected.family = "Fira Code".to_string();
+
+        assert_eq!(rhai_attr.family, "Fira Code");
+        assert_eq!(rhai_attr, expected);
+        assert_eq!(lua_style.font[0].family, "Fira Code");
+        assert_eq!(lua_style.font[0].family, rhai_attr.family);
+        Ok(())
+    }
+
+    #[test]
+    fn font_attributes_object_form_rhai_matches_lua() -> TestResult {
+        // rhai side: full object/map form.
+        let engine = rhai::Engine::new();
+        let value: rhai::Dynamic = engine
+            .eval(
+                r#"
+            #{
+                family: "Operator Mono",
+                weight: "Bold",
+                stretch: "Condensed",
+                style: "Italic",
+            }
+            "#,
+            )
+            .str_err()?;
+        let rhai_attr = LuaFontAttributes::try_from(value).str_err()?;
+
+        assert_eq!(rhai_attr.family, "Operator Mono");
+        assert_eq!(rhai_attr.weight, FontWeight::BOLD);
+        assert_eq!(rhai_attr.stretch, FontStretch::Condensed);
+        assert_eq!(rhai_attr.style, FontStyle::Italic);
+
+        // Lua side (oracle): equivalent table via `wezterm.font({...})`.
+        let lua = make_lua_context(Path::new("testing")).str_err()?;
+        let lua_style: TextStyle = lua
+            .load(
+                r#"
+                local wezterm = require 'wezterm'
+                return wezterm.font({
+                    family = "Operator Mono",
+                    weight = "Bold",
+                    stretch = "Condensed",
+                    style = "Italic",
+                })
+                "#,
+            )
+            .eval()
+            .str_err()?;
+
+        assert_eq!(lua_style.font[0].family, rhai_attr.family);
+        assert_eq!(lua_style.font[0].weight, rhai_attr.weight);
+        assert_eq!(lua_style.font[0].stretch, rhai_attr.stretch);
+        assert_eq!(lua_style.font[0].style, rhai_attr.style);
+        Ok(())
+    }
+
+    #[test]
+    fn font_attributes_italic_bool_alias_rhai_matches_lua() -> TestResult {
+        // The `italic: bool` -> `style: FontStyle` backwards-compat alias is
+        // the whole reason `LuaFontAttributes`/`TextStyleAttributes` have
+        // hand-written conversions instead of the generic macro. Confirm it
+        // survives the rhai path identically for both `italic = true` and
+        // `italic = false`.
+        let engine = rhai::Engine::new();
+
+        let value: rhai::Dynamic = engine
+            .eval(r#"#{ family: "Menlo", italic: true }"#)
+            .str_err()?;
+        let attr = LuaFontAttributes::try_from(value).str_err()?;
+        assert_eq!(attr.style, FontStyle::Italic);
+
+        let value: rhai::Dynamic = engine
+            .eval(r#"#{ family: "Menlo", italic: false }"#)
+            .str_err()?;
+        let attr = LuaFontAttributes::try_from(value).str_err()?;
+        assert_eq!(attr.style, FontStyle::Normal);
+
+        // Lua oracle: `italic = true`.
+        let lua = make_lua_context(Path::new("testing")).str_err()?;
+        let lua_style: TextStyle = lua
+            .load(r#"return require('wezterm').font({family = "Menlo", italic = true})"#)
+            .eval()
+            .str_err()?;
+        assert_eq!(lua_style.font[0].style, FontStyle::Italic);
+        Ok(())
+    }
+
+    #[test]
+    fn text_style_attributes_object_form_rhai_matches_lua() -> TestResult {
+        let engine = rhai::Engine::new();
+        let value: rhai::Dynamic = engine
+            .eval(
+                r#"
+            #{
+                bold: true,
+                stretch: "Expanded",
+                foreground: "tomato",
+            }
+            "#,
+            )
+            .str_err()?;
+        let rhai_attr = TextStyleAttributes::try_from(value).str_err()?;
+
+        assert_eq!(rhai_attr.bold, Some(true));
+        assert_eq!(rhai_attr.stretch, FontStretch::Expanded);
+        assert!(rhai_attr.foreground.is_some());
+
+        // Lua oracle: pass the equivalent table as `wezterm.font`'s second
+        // (map_defaults) argument, which is parsed via the same
+        // `TextStyleAttributes` `FromLua` impl this rhai conversion mirrors.
+        let lua = make_lua_context(Path::new("testing")).str_err()?;
+        let lua_style: TextStyle = lua
+            .load(
+                r#"
+                return require('wezterm').font("Fira Code", {
+                    bold = true,
+                    stretch = "Expanded",
+                    foreground = "tomato",
+                })
+                "#,
+            )
+            .eval()
+            .str_err()?;
+        assert_eq!(lua_style.font[0].weight, FontWeight::BOLD);
+        assert_eq!(lua_style.font[0].stretch, FontStretch::Expanded);
+        assert!(lua_style.foreground.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn text_style_attributes_italic_bool_alias_rhai_matches_lua() -> TestResult {
+        // Same alias check as the `LuaFontAttributes` test above, but for
+        // `TextStyleAttributes` (used for the `wezterm.font(...)` "defaults"
+        // argument rather than the primary font attributes argument).
+        let engine = rhai::Engine::new();
+        let value: rhai::Dynamic = engine.eval(r#"#{ italic: true }"#).str_err()?;
+        let attr = TextStyleAttributes::try_from(value).str_err()?;
+        assert_eq!(attr.style, FontStyle::Italic);
+        assert_eq!(attr.italic, None, "italic alias must be consumed, not retained");
+
+        let value: rhai::Dynamic = engine.eval(r#"#{ italic: false }"#).str_err()?;
+        let attr = TextStyleAttributes::try_from(value).str_err()?;
+        assert_eq!(attr.style, FontStyle::Normal);
+        Ok(())
+    }
+
+    #[test]
+    fn font_attributes_reverse_conversion_round_trips_through_rhai() -> TestResult {
+        // `From<LuaFontAttributes> for rhai::Dynamic` / `From<TextStyleAttributes>
+        // for rhai::Dynamic`: build a value in Rust, hand it to rhai, read the
+        // fields back out as an ordinary object map.
+        let mut attr = LuaFontAttributes::default();
+        attr.family = "Iosevka".to_string();
+        attr.weight = FontWeight::BOLD;
+
+        let dynamic: rhai::Dynamic = attr.clone().into();
+        assert!(dynamic.is_map());
+
+        let mut scope = rhai::Scope::new();
+        scope.push("attr", dynamic);
+        let engine = rhai::Engine::new();
+        let family: String = engine
+            .eval_with_scope(&mut scope, "attr.family")
+            .str_err()?;
+        assert_eq!(family, "Iosevka");
+
+        let round_tripped_value: rhai::Dynamic = engine
+            .eval_with_scope(&mut scope, "attr")
+            .str_err()?;
+        let round_tripped = LuaFontAttributes::try_from(round_tripped_value).str_err()?;
+        assert_eq!(round_tripped, attr);
         Ok(())
     }
 }
