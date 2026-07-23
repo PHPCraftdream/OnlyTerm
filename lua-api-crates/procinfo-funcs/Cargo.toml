@@ -13,3 +13,8 @@ libc.workspace = true
 luahelper.workspace = true
 procinfo.workspace = true
 wezterm-dynamic.workspace = true
+# rhai port of `register` (L4b, see
+# docs/plans/2026-07-23-lua-rhai-migration.md): `src/lib.rs::register_rhai`
+# registers rhai-side equivalents of every function `register(lua: &Lua)`
+# registers, in parallel with the mlua path.
+rhai.workspace = true
