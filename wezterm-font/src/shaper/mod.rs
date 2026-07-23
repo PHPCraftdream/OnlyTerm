@@ -5,6 +5,7 @@ use termwiz::cell::Presentation;
 use termwiz::cellcluster::CellCluster;
 
 pub mod harfbuzz;
+pub mod rustybuzz;
 pub use wezterm_bidi::Direction;
 
 /// Holds information about a shaped glyph

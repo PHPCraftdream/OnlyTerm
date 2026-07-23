@@ -179,6 +179,14 @@ impl Face {
         }
     }
 
+    /// Returns the `FT_Library` that this face was opened with. Useful for
+    /// callers that need to make additional low-level FreeType calls (eg:
+    /// `FT_Get_MM_Var`/`FT_Done_MM_Var`) against this face outside of the
+    /// methods already provided by this wrapper.
+    pub fn library(&self) -> FT_Library {
+        self.lib
+    }
+
     pub fn variations(&self) -> anyhow::Result<Vec<ParsedFont>> {
         let mut mm = std::ptr::null_mut();
 
