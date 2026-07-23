@@ -689,7 +689,7 @@ mod test {
         num_cells: 2,
         x_offset: 0.0,
         bearing_x: 0.0,
-        bitmap_pixel_width: 20,
+        bitmap_pixel_width: 19,
     },
 ]
 "
