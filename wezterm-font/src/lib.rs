@@ -30,6 +30,7 @@ pub mod locator;
 pub mod parser;
 pub mod rasterizer;
 pub mod shaper;
+pub mod swash_metrics;
 pub mod units;
 
 #[cfg(all(unix, not(target_os = "macos")))]
