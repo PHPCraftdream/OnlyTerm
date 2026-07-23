@@ -1,6 +1,7 @@
 use config::keyassignment::SpawnTabDomain;
 use config::lua::mlua::{self, Lua, UserData, UserDataMethods, Value as LuaValue};
 use config::lua::{get_or_create_module, get_or_create_sub_module};
+use config::impl_rhai_conversion_dynamic;
 use luahelper::impl_lua_conversion_dynamic;
 use mlua::UserDataRef;
 use mux::domain::{DomainId, SplitSource};
@@ -22,11 +23,17 @@ mod window;
 pub use domain::MuxDomain;
 pub use pane::MuxPane;
 pub use tab::MuxTab;
-pub use window::MuxWindow;
+pub use window::{set_gui_window_resolver_rhai, MuxWindow};
 
 fn get_mux() -> mlua::Result<Arc<Mux>> {
     Mux::try_get().ok_or_else(|| mlua::Error::external("cannot get Mux!?"))
 }
+
+/// rhai-flavored equivalent of `get_mux()` above, shared by every `_rhai`
+/// module in this crate (also re-exported as `domain::get_mux_rhai` for
+/// `domain.rs`'s own use, since it's defined first there in the mlua-mirrored
+/// file layout -- both names resolve to the same function).
+pub(crate) use domain::get_mux_rhai;
 
 pub fn register(lua: &Lua) -> anyhow::Result<()> {
     let mux_mod = get_or_create_sub_module(lua, "mux")?;
@@ -171,6 +178,229 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// L4d: rhai port of `register` above (see
+// docs/plans/2026-07-23-lua-rhai-migration.md), plus the rhai custom-type
+// registration for every `MuxDomain`/`MuxPane`/`MuxTab`/`MuxWindow` method
+// defined in `domain.rs`/`pane.rs`/`tab.rs`/`window.rs`. Runs in parallel with
+// the mlua path; does not replace or touch `register(lua: &Lua)`.
+//
+// Registered under a `mux` static module, the same call-site shape
+// (`mux.get_window(id)`, `mux.all_windows()`, etc) as the mlua path's
+// `wezterm.mux.*` sub-module.
+//
+// `get_domain` takes `LuaValue` on the mlua side to accept nil/string/integer
+// interchangeably; rhai's `register_fn` only supports fixed-type overloads
+// resolved by arity+type at the call site (not a single dynamically-typed
+// parameter), so this registers three separate overloads instead: a
+// zero-arg `get_domain()` (nil-equivalent, the default domain), a
+// `get_domain(name: String)`, and a `get_domain(id: INT)`.
+pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
+    domain::register_rhai(engine)?;
+    pane::register_rhai(engine)?;
+    tab::register_rhai(engine)?;
+    window::register_rhai(engine)?;
+
+    let mut mux_module = rhai::Module::new();
+
+    mux_module.set_native_fn(
+        "get_active_workspace",
+        || -> Result<String, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            Ok(mux.active_workspace())
+        },
+    );
+
+    mux_module.set_native_fn(
+        "get_workspace_names",
+        || -> Result<rhai::Array, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            Ok(mux
+                .iter_workspaces()
+                .into_iter()
+                .map(rhai::Dynamic::from)
+                .collect())
+        },
+    );
+
+    mux_module.set_native_fn(
+        "set_active_workspace",
+        |workspace: String| -> Result<(), Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let workspaces = mux.iter_workspaces();
+            if workspaces.contains(&workspace) {
+                mux.set_active_workspace(&workspace);
+                Ok(())
+            } else {
+                Err(format!("{:?} is not an existing workspace", workspace).into())
+            }
+        },
+    );
+
+    mux_module.set_native_fn(
+        "rename_workspace",
+        |old_workspace: String, new_workspace: String| -> Result<(), Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            mux.rename_workspace(&old_workspace, &new_workspace);
+            Ok(())
+        },
+    );
+
+    mux_module.set_native_fn(
+        "get_window",
+        |window_id: rhai::INT| -> Result<MuxWindow, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let window_id = window_id_from_rhai_int(window_id)?;
+            let window = MuxWindow(window_id);
+            let _ = window::resolve_rhai(&window, &mux)?;
+            Ok(window)
+        },
+    );
+
+    mux_module.set_native_fn(
+        "get_pane",
+        |pane_id: rhai::INT| -> Result<MuxPane, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let pane_id = pane_id_from_rhai_int(pane_id)?;
+            let pane = MuxPane(pane_id);
+            pane::resolve_rhai(&pane, &mux)?;
+            Ok(pane)
+        },
+    );
+
+    mux_module.set_native_fn(
+        "get_tab",
+        |tab_id: rhai::INT| -> Result<MuxTab, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let tab_id = tab_id_from_rhai_int(tab_id)?;
+            let tab = MuxTab(tab_id);
+            tab::resolve_rhai(&tab, &mux)?;
+            Ok(tab)
+        },
+    );
+
+    mux_module.set_native_fn(
+        "spawn_window",
+        |spawn: rhai::Map| -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+            let spawn = SpawnWindow::try_from(rhai::Dynamic::from_map(spawn)).map_err(
+                |err| -> Box<rhai::EvalAltResult> { format!("spawn_window: {err}").into() },
+            )?;
+            spawn_window_rhai(spawn)
+        },
+    );
+    // Zero-arg overload: `mux.spawn_window()` with defaults.
+    mux_module.set_native_fn(
+        "spawn_window",
+        || -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+            spawn_window_rhai(SpawnWindow::default())
+        },
+    );
+
+    mux_module.set_native_fn(
+        "all_windows",
+        || -> Result<rhai::Array, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            Ok(mux
+                .iter_windows()
+                .into_iter()
+                .map(|id| rhai::Dynamic::from(MuxWindow(id)))
+                .collect())
+        },
+    );
+
+    // Zero-arg overload of `get_domain`: the mlua path's nil case, returning
+    // the default domain.
+    mux_module.set_native_fn(
+        "get_domain",
+        || -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            Ok(rhai::Dynamic::from(MuxDomain(
+                mux.default_domain().domain_id(),
+            )))
+        },
+    );
+    mux_module.set_native_fn(
+        "get_domain",
+        |name: String| -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            Ok(match mux.get_domain_by_name(&name) {
+                Some(dom) => rhai::Dynamic::from(MuxDomain(dom.domain_id())),
+                None => rhai::Dynamic::UNIT,
+            })
+        },
+    );
+    mux_module.set_native_fn(
+        "get_domain",
+        |id: rhai::INT| -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let id: DomainId = id.try_into().map_err(|err| -> Box<rhai::EvalAltResult> {
+                format!("invalid domain identifier passed to mux::get_domain: {err:#}").into()
+            })?;
+            Ok(match mux.get_domain(id) {
+                Some(dom) => rhai::Dynamic::from(MuxDomain(dom.domain_id())),
+                None => rhai::Dynamic::UNIT,
+            })
+        },
+    );
+
+    mux_module.set_native_fn(
+        "all_domains",
+        || -> Result<rhai::Array, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            Ok(mux
+                .iter_domains()
+                .into_iter()
+                .map(|dom| rhai::Dynamic::from(MuxDomain(dom.domain_id())))
+                .collect())
+        },
+    );
+
+    mux_module.set_native_fn(
+        "set_default_domain",
+        |domain: MuxDomain| -> Result<(), Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let domain = domain::resolve_rhai(&domain, &mux)?;
+            mux.set_default_domain(&domain);
+            Ok(())
+        },
+    );
+
+    engine.register_static_module("mux", mux_module.into());
+
+    Ok(())
+}
+
+fn spawn_window_rhai(spawn: SpawnWindow) -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+    let (tab, pane, window) = smol::block_on(spawn.spawn())
+        .map_err(|err| -> Box<rhai::EvalAltResult> { format!("{err:#}").into() })?;
+    Ok(rhai::Dynamic::from(vec![
+        rhai::Dynamic::from(tab),
+        rhai::Dynamic::from(pane),
+        rhai::Dynamic::from(window),
+    ]))
+}
+
+/// rhai has no unsigned integer type (`INT` is `i64`, or `i32` under
+/// `only_i32`), unlike the mlua path's plain id newtypes, so each rhai
+/// binding above takes `rhai::INT` and narrows it here, rejecting
+/// out-of-range/negative ids with a proper rhai error instead of silently
+/// truncating.
+fn window_id_from_rhai_int(id: rhai::INT) -> Result<WindowId, Box<rhai::EvalAltResult>> {
+    WindowId::try_from(id).map_err(|_| -> Box<rhai::EvalAltResult> {
+        format!("window id {id} is out of range").into()
+    })
+}
+
+fn pane_id_from_rhai_int(id: rhai::INT) -> Result<PaneId, Box<rhai::EvalAltResult>> {
+    PaneId::try_from(id)
+        .map_err(|_| -> Box<rhai::EvalAltResult> { format!("pane id {id} is out of range").into() })
+}
+
+fn tab_id_from_rhai_int(id: rhai::INT) -> Result<TabId, Box<rhai::EvalAltResult>> {
+    TabId::try_from(id)
+        .map_err(|_| -> Box<rhai::EvalAltResult> { format!("tab id {id} is out of range").into() })
+}
+
 #[derive(Debug, Default, FromDynamic, ToDynamic)]
 struct CommandBuilderFrag {
     args: Option<Vec<String>>,
@@ -204,6 +434,7 @@ enum HandySplitDirection {
     Bottom,
 }
 impl_lua_conversion_dynamic!(HandySplitDirection);
+impl_rhai_conversion_dynamic!(HandySplitDirection);
 
 impl Default for HandySplitDirection {
     fn default() -> Self {
@@ -211,7 +442,7 @@ impl Default for HandySplitDirection {
     }
 }
 
-#[derive(Debug, FromDynamic, ToDynamic)]
+#[derive(Debug, Default, FromDynamic, ToDynamic)]
 struct SpawnWindow {
     #[dynamic(default = "spawn_tab_default_domain")]
     domain: SpawnTabDomain,
@@ -223,6 +454,7 @@ struct SpawnWindow {
     cmd_builder: CommandBuilderFrag,
 }
 impl_lua_conversion_dynamic!(SpawnWindow);
+impl_rhai_conversion_dynamic!(SpawnWindow);
 
 fn spawn_tab_default_domain() -> SpawnTabDomain {
     SpawnTabDomain::DefaultDomain
@@ -264,7 +496,7 @@ impl SpawnWindow {
     }
 }
 
-#[derive(Debug, FromDynamic, ToDynamic)]
+#[derive(Debug, Default, FromDynamic, ToDynamic)]
 struct SpawnTab {
     #[dynamic(default)]
     domain: SpawnTabDomain,
@@ -272,6 +504,7 @@ struct SpawnTab {
     cmd_builder: CommandBuilderFrag,
 }
 impl_lua_conversion_dynamic!(SpawnTab);
+impl_rhai_conversion_dynamic!(SpawnTab);
 
 impl SpawnTab {
     async fn spawn(self, window: &MuxWindow) -> mlua::Result<(MuxTab, MuxPane, MuxWindow)> {
@@ -321,6 +554,7 @@ struct MuxTabInfo {
     pub is_active: bool,
 }
 impl_lua_conversion_dynamic!(MuxTabInfo);
+impl_rhai_conversion_dynamic!(MuxTabInfo);
 
 #[derive(Clone, FromDynamic, ToDynamic)]
 struct MuxPaneInfo {
@@ -344,3 +578,4 @@ struct MuxPaneInfo {
     pub pixel_height: usize,
 }
 impl_lua_conversion_dynamic!(MuxPaneInfo);
+impl_rhai_conversion_dynamic!(MuxPaneInfo);
