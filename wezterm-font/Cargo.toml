@@ -33,6 +33,7 @@ ordered-float.workspace = true
 rangeset.workspace = true
 termwiz.workspace = true
 thiserror.workspace = true
+tiny-skia.workspace = true
 walkdir.workspace = true
 wezterm-bidi.workspace = true
 wezterm-color-types.workspace = true
