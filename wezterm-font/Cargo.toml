@@ -31,6 +31,7 @@ metrics.workspace = true
 ordered-float.workspace = true
 rangeset.workspace = true
 rustybuzz = "0.20"
+swash = "0.2.10"
 termwiz.workspace = true
 thiserror.workspace = true
 tiny-skia.workspace = true
