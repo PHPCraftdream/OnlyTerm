@@ -9,12 +9,6 @@ publish = false
 
 [dev-dependencies]
 env_logger.workspace = true
-# L0 tooling for the Lua->rhai migration (see docs/plans/2026-07-23-lua-rhai-migration.md).
-# rhai is pure Rust (no vendored C, unlike mlua), which is the whole point of the
-# migration. It is a dev-dependency only at this stage: L0 is proving the tooling and
-# API-registration pattern in isolation, NOT wiring rhai in as the production config
-# parser (that starts at L1). mlua remains the production dependency until L5.
-rhai.workspace = true
 
 [features]
 distro-defaults = []
@@ -35,6 +29,13 @@ notify.workspace = true
 ordered-float = { workspace=true, features = ["serde"] }
 portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true
+# rhai bridge for the Lua->rhai config migration (see
+# docs/plans/2026-07-23-lua-rhai-migration.md). L1 promoted this from a
+# dev-dependency (L0 tooling only) to a real dependency: `config::rhai_value`
+# is production code implementing the `rhai::Dynamic <-> wezterm_dynamic::Value`
+# bridge that will back the rhai config engine landing in L2. mlua remains the
+# production config-parsing dependency until L5.
+rhai.workspace = true
 serde = {workspace=true, features = ["rc", "derive"]}
 serde_json.workspace = true
 shlex.workspace = true
