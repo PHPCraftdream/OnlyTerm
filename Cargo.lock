@@ -5130,6 +5130,7 @@ dependencies = [
  "lazy_static",
  "luahelper",
  "ordered-float 4.6.0",
+ "rhai",
  "wezterm-dynamic",
 ]
 
@@ -5312,6 +5313,7 @@ dependencies = [
  "config",
  "log",
  "luahelper",
+ "rhai",
  "smol",
  "wezterm-dynamic",
  "wezterm-open-url",
@@ -5648,6 +5650,7 @@ dependencies = [
  "finl_unicode",
  "lazy_static",
  "luahelper",
+ "rhai",
  "terminfo",
  "termwiz",
  "wezterm-dynamic",
