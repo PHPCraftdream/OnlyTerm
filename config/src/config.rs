@@ -15,7 +15,6 @@ use crate::keyassignment::{
 };
 use crate::keys::{Key, LeaderKey, Mouse};
 use crate::lua::make_lua_context;
-use crate::tls::{TlsDomainClient, TlsDomainServer};
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
 use crate::wsl::WslDomain;
@@ -366,15 +365,6 @@ pub struct Config {
     /// The set of unix domains
     #[dynamic(default = "UnixDomain::default_unix_domains")]
     pub unix_domains: Vec<UnixDomain>,
-
-    /// When running in server mode, defines configuration for
-    /// each of the endpoints that we'll listen for connections
-    #[dynamic(default)]
-    pub tls_servers: Vec<TlsDomainServer>,
-
-    /// The set of tls domains that we can connect to as a client
-    #[dynamic(default)]
-    pub tls_clients: Vec<TlsDomainClient>,
 
     /// Constrains the rate at which the multiplexer client will
     /// speculatively fetch line data.
@@ -1240,9 +1230,6 @@ impl Config {
                 check_domain(&d.name, "wsl domain")?;
             }
         }
-        for d in &self.tls_clients {
-            check_domain(&d.name, "tls domain")?;
-        }
         Ok(())
     }
 
@@ -1751,8 +1738,13 @@ pub(crate) fn compute_runtime_dir() -> anyhow::Result<PathBuf> {
     Ok(crate::HOME_DIR.join(".local/share/wezterm"))
 }
 
-pub fn pki_dir() -> anyhow::Result<PathBuf> {
-    compute_runtime_dir().map(|d| d.join("pki"))
+pub fn username_from_env() -> anyhow::Result<String> {
+    #[cfg(unix)]
+    const USER: &str = "USER";
+    #[cfg(windows)]
+    const USER: &str = "USERNAME";
+
+    std::env::var(USER).with_context(|| format!("while resolving {} env var", USER))
 }
 
 pub fn default_read_timeout() -> Duration {

@@ -11,7 +11,6 @@ publish = false
 anyhow.workspace = true
 async-io.workspace = true
 async-trait.workspace = true
-async_ossl.workspace = true
 codec.workspace = true
 config.workspace = true
 filedescriptor.workspace = true
@@ -22,7 +21,6 @@ log.workspace = true
 lru.workspace = true
 metrics.workspace = true
 mux.workspace = true
-openssl.workspace = true
 parking_lot.workspace = true
 portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true

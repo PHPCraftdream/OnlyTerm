@@ -1,4 +1,3 @@
-use crate::PKI;
 use anyhow::{anyhow, Context};
 use codec::*;
 use config::TermConfig;
@@ -867,17 +866,9 @@ impl SessionHandler {
             }
 
             Pdu::GetTlsCreds(_) => {
-                catch(
-                    move || {
-                        let client_cert_pem = PKI.generate_client_cert()?;
-                        let ca_cert_pem = PKI.ca_pem_string()?;
-                        Ok(Pdu::GetTlsCredsResponse(GetTlsCredsResponse {
-                            client_cert_pem,
-                            ca_cert_pem,
-                        }))
-                    },
-                    send_response,
-                );
+                send_response(Err(anyhow!(
+                    "TLS mux support has been removed; GetTlsCreds is no longer available"
+                )));
             }
             Pdu::WindowTitleChanged(WindowTitleChanged { window_id, title }) => {
                 spawn_into_main_thread(async move {

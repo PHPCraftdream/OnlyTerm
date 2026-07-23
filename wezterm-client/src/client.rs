@@ -1,28 +1,22 @@
 use crate::domain::{ClientDomain, ClientDomainConfig};
 use crate::pane::ClientPane;
 use anyhow::{anyhow, bail, Context};
-use async_ossl::AsyncSslStream;
 use async_trait::async_trait;
 use codec::*;
-use config::{configuration, TlsDomainClient, UnixDomain, UnixTarget};
+use config::{configuration, UnixDomain, UnixTarget};
 use futures::FutureExt;
 use mux::client::ClientId;
 use mux::connui::ConnectionUI;
 use mux::domain::DomainId;
 use mux::pane::PaneId;
 use mux::Mux;
-use openssl::ssl::{SslConnector, SslFiletype, SslMethod};
-use openssl::x509::X509;
-use portable_pty::Child;
 use smol::channel::{bounded, unbounded, Receiver, Sender};
 use smol::prelude::*;
 use smol::{block_on, Async};
 use std::collections::HashMap;
 use std::marker::Unpin;
-use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
-use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
@@ -532,30 +526,11 @@ where
 struct Reconnectable {
     config: ClientDomainConfig,
     stream: Option<Box<dyn AsyncReadAndWrite>>,
-    tls_creds: Option<GetTlsCredsResponse>,
 }
 
 impl Reconnectable {
     fn new(config: ClientDomainConfig, stream: Option<Box<dyn AsyncReadAndWrite>>) -> Self {
-        Self {
-            config,
-            stream,
-            tls_creds: None,
-        }
-    }
-
-    fn tls_creds_path(&self) -> anyhow::Result<PathBuf> {
-        let path = config::pki_dir()?.join(self.config.name());
-        std::fs::create_dir_all(&path)?;
-        Ok(path)
-    }
-
-    fn tls_creds_ca_path(&self) -> anyhow::Result<PathBuf> {
-        Ok(self.tls_creds_path()?.join("ca.pem"))
-    }
-
-    fn tls_creds_cert_path(&self) -> anyhow::Result<PathBuf> {
-        Ok(self.tls_creds_path()?.join("cert.pem"))
+        Self { config, stream }
     }
 
     fn take_stream(&mut self) -> Option<Box<dyn AsyncReadAndWrite>> {
@@ -572,7 +547,6 @@ impl Reconnectable {
             // get disconnected it it dies, so respawning it would not preserve
             // the set of tabs and we'd have confusing and inconsistent state
             ClientDomainConfig::Unix(_) => false,
-            ClientDomainConfig::Tls(_) => true,
         }
     }
 
@@ -586,7 +560,6 @@ impl Reconnectable {
             ClientDomainConfig::Unix(unix_dom) => {
                 self.unix_connect(unix_dom, initial, ui, no_auto_start)
             }
-            ClientDomainConfig::Tls(tls) => self.tls_connect(tls, initial, ui),
         }
     }
 
@@ -679,127 +652,6 @@ impl Reconnectable {
         let stream: Box<dyn AsyncReadAndWrite> = Box::new(Async::new(stream)?);
         self.stream.replace(stream);
         Ok(())
-    }
-
-    pub fn tls_connect(
-        &mut self,
-        tls_client: TlsDomainClient,
-        _initial: bool,
-        ui: &mut ConnectionUI,
-    ) -> anyhow::Result<()> {
-        openssl::init();
-
-        let remote_address = &tls_client.remote_address;
-
-        let remote_host_name = remote_address.split(':').next().ok_or_else(|| {
-            anyhow!(
-                "expected mux_server_remote_address to have the form 'host:port', but have {}",
-                remote_address
-            )
-        })?;
-
-        let cloned_ui = ui.clone();
-        let stream = cloned_ui.run_and_log_error({
-            || self.try_connect(&tls_client, ui, &remote_address, remote_host_name)
-        })?;
-        self.stream.replace(stream);
-        Ok(())
-    }
-
-    fn try_connect(
-        &mut self,
-        tls_client: &TlsDomainClient,
-        ui: &mut ConnectionUI,
-        remote_address: &str,
-        remote_host_name: &str,
-    ) -> anyhow::Result<Box<dyn AsyncReadAndWrite>> {
-        let mut connector = SslConnector::builder(SslMethod::tls())?;
-
-        let cert_file = match tls_client.pem_cert.clone() {
-            Some(cert) => cert,
-            None => self.tls_creds_cert_path()?,
-        };
-
-        connector
-            .set_certificate_file(&cert_file, SslFiletype::PEM)
-            .context(format!(
-                "set_certificate_file to {} for TLS client",
-                cert_file.display()
-            ))?;
-
-        if let Some(chain_file) = tls_client.pem_ca.as_ref() {
-            connector
-                .set_certificate_chain_file(&chain_file)
-                .context(format!(
-                    "set_certificate_chain_file to {} for TLS client",
-                    chain_file.display()
-                ))?;
-        }
-
-        let key_file = match tls_client.pem_private_key.clone() {
-            Some(key) => key,
-            None => self.tls_creds_cert_path()?,
-        };
-        connector
-            .set_private_key_file(&key_file, SslFiletype::PEM)
-            .context(format!(
-                "set_private_key_file to {} for TLS client",
-                key_file.display()
-            ))?;
-
-        fn load_cert(name: &Path) -> anyhow::Result<X509> {
-            let cert_bytes = std::fs::read(name)?;
-            log::trace!("loaded {}", name.display());
-            Ok(X509::from_pem(&cert_bytes)?)
-        }
-        for name in &tls_client.pem_root_certs {
-            if name.is_dir() {
-                for entry in std::fs::read_dir(name)? {
-                    if let Ok(cert) = load_cert(&entry?.path()) {
-                        connector.cert_store_mut().add_cert(cert).ok();
-                    }
-                }
-            } else {
-                connector.cert_store_mut().add_cert(load_cert(name)?)?;
-            }
-        }
-
-        if let Ok(ca_path) = self.tls_creds_ca_path() {
-            if ca_path.exists() {
-                connector.cert_store_mut().add_cert(load_cert(&ca_path)?)?;
-            }
-        }
-
-        let connector = connector.build();
-        let connector = connector
-            .configure()?
-            .verify_hostname(!tls_client.accept_invalid_hostnames);
-
-        ui.output_str(&format!("Connecting to {} using TLS\n", remote_address));
-        let stream = TcpStream::connect(remote_address)
-            .with_context(|| format!("connecting to {}", remote_address))?;
-        stream.set_nodelay(true)?;
-        stream.set_write_timeout(Some(tls_client.write_timeout))?;
-        stream.set_read_timeout(Some(tls_client.read_timeout))?;
-
-        let stream = Box::new(Async::new(AsyncSslStream::new(
-            connector
-                .connect(
-                    tls_client
-                        .expected_cn
-                        .as_deref()
-                        .unwrap_or(remote_host_name),
-                    stream,
-                )
-                .with_context(|| {
-                    format!(
-                        "SslConnector for {} with host name {}",
-                        remote_address, remote_host_name,
-                    )
-                })?,
-        ))?);
-        ui.output_str("TLS Connected!\n");
-        Ok(stream)
     }
 }
 
@@ -1044,18 +896,6 @@ impl Client {
         Ok(Self::new(local_domain_id, reconnectable))
     }
 
-    pub fn new_tls(
-        local_domain_id: DomainId,
-        tls_client: &TlsDomainClient,
-        ui: &mut ConnectionUI,
-    ) -> anyhow::Result<Self> {
-        let mut reconnectable =
-            Reconnectable::new(ClientDomainConfig::Tls(tls_client.clone()), None);
-        let no_auto_start = true;
-        reconnectable.connect(true, ui, no_auto_start)?;
-        Ok(Self::new(Some(local_domain_id), reconnectable))
-    }
-
     pub async fn send_pdu(&self, pdu: Pdu) -> anyhow::Result<Pdu> {
         let (promise, rx) = bounded(1);
         self.sender
@@ -1121,7 +961,6 @@ impl Client {
         GetPaneRenderableDimensionsResponse
     );
     rpc!(get_codec_version, GetCodecVersion, GetCodecVersionResponse);
-    rpc!(get_tls_creds, GetTlsCreds = (), GetTlsCredsResponse);
     rpc!(
         search_scrollback,
         SearchScrollbackRequest,
