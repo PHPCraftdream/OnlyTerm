@@ -1239,4 +1239,100 @@ mod test {
             );
         }
     }
+
+    /// Regression test for BUG7: harfbuzz was previously built with
+    /// `HB_NO_MT` defined (see deps/harfbuzz/build.rs), which makes
+    /// harfbuzz's internal `hb_object_t` refcounting a plain, unsynchronized
+    /// `+=`/`-=` (see hb-atomic.hh) and its internal mutexes no-ops (see
+    /// hb-mutex.hh). Those refcounts and mutexes protect process-wide
+    /// lazily-initialized singletons inside harfbuzz itself (for example the
+    /// default Unicode-functions structure returned by
+    /// `hb_unicode_funcs_get_default()`, and per-face shape-plan caches).
+    /// wezterm creates independent `HarfbuzzShaper`s per pane/tab and shapes
+    /// text from multiple threads concurrently, so those singletons really
+    /// are shared across threads. Concurrently shaping from several threads
+    /// reproduced random corruption of harfbuzz's internal object headers,
+    /// surfacing as `hb_object_is_valid()` assertion failures or outright
+    /// `STATUS_ACCESS_VIOLATION`/`STATUS_STACK_BUFFER_OVERRUN` crashes in
+    /// `cargo test -p wezterm-font` whenever this test happened to run at
+    /// the same time as `shaper::rustybuzz::test::parity_simple_latin`/
+    /// `parity_ligatures` (which also construct and use a `HarfbuzzShaper`
+    /// for comparison against `RustybuzzShaper`).
+    ///
+    /// This test drives many independent `HarfbuzzShaper`s concurrently
+    /// from several threads to exercise exactly that shared internal state;
+    /// it is expected to be flaky-crash (not just flaky-fail) if `HB_NO_MT`
+    /// is ever reintroduced.
+    #[test]
+    fn concurrent_shaping_does_not_corrupt_harfbuzz_globals() {
+        let _ = env_logger::Builder::new()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Warn)
+            .try_init();
+
+        let db = FontDatabase::with_built_in().unwrap();
+        let handle = db
+            .resolve(
+                &FontAttributes {
+                    family: "JetBrains Mono".into(),
+                    stretch: Default::default(),
+                    weight: Default::default(),
+                    is_fallback: false,
+                    is_synthetic: false,
+                    style: Default::default(),
+                    freetype_load_flags: None,
+                    freetype_load_target: None,
+                    freetype_render_target: None,
+                    harfbuzz_features: None,
+                    scale: None,
+                    assume_emoji_presentation: None,
+                },
+                14,
+            )
+            .unwrap()
+            .clone();
+
+        let config = config::configuration();
+
+        let threads: Vec<_> = (0..8)
+            .map(|t| {
+                let handle = handle.clone();
+                let config = config.clone();
+                std::thread::spawn(move || {
+                    // Each thread gets its own shaper (mirroring how each
+                    // pane/tab owns its own HarfbuzzShaper in production),
+                    // but they all end up touching harfbuzz's process-wide
+                    // internal singletons under the hood.
+                    let shaper = HarfbuzzShaper::new(&config, &[handle]).unwrap();
+                    for i in 0..200 {
+                        let text = match (t + i) % 4 {
+                            0 => "abc",
+                            1 => "<-",
+                            2 => "<--",
+                            _ => "x\u{3000}x",
+                        };
+                        let mut no_glyphs = vec![];
+                        let info = shaper
+                            .shape(
+                                text,
+                                10.,
+                                72,
+                                &mut no_glyphs,
+                                None,
+                                Direction::LeftToRight,
+                                None,
+                                None,
+                            )
+                            .unwrap();
+                        assert!(no_glyphs.is_empty(), "{:?}", no_glyphs);
+                        assert!(!info.is_empty());
+                    }
+                })
+            })
+            .collect();
+
+        for t in threads {
+            t.join().expect("shaping thread panicked");
+        }
+    }
 }
