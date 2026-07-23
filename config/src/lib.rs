@@ -33,6 +33,7 @@ pub mod keyassignment;
 mod keys;
 pub mod lua;
 pub mod meta;
+pub mod rhai_value;
 mod scheme_data;
 mod serial;
 mod terminal;
