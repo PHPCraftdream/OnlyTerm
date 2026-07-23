@@ -11,6 +11,13 @@ pub mod colr;
 pub mod freetype;
 pub mod harfbuzz;
 pub mod paint;
+/// Parallel, not-yet-wired-up implementation of `FontRasterizer` for
+/// non-COLR glyphs on top of `swash::scale` (phase H3 of
+/// docs/plans/2026-07-23-freetype-harfbuzz-migration.md). See the module
+/// doc comment in `swash.rs` for scope/limitations. Nothing in
+/// `new_rasterizer` below constructs this yet -- wiring it in as a real
+/// `FontRasterizerSelection` option is a later phase.
+pub mod swash;
 
 /// A bitmap representation of a glyph.
 /// The data is stored as pre-multiplied RGBA 32bpp.
