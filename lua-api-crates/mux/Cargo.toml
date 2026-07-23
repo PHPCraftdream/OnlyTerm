@@ -9,12 +9,15 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 config.workspace = true
+lazy_static.workspace = true
 libc.workspace = true
 log.workspace = true
 luahelper.workspace = true
 mux.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
+rhai = { workspace = true, features = ["serde"] }
+serde.workspace = true
 smol.workspace = true
 termwiz-funcs.workspace = true
 termwiz.workspace = true
