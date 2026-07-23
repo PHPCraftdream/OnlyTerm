@@ -8,12 +8,36 @@
 //! `wezterm_dynamic::Value`, the engine-agnostic value type that all
 //! `FromDynamic`/`ToDynamic` config structs already speak.
 //!
-//! Unlike the mlua bridge, this module does not (yet) plug into
-//! `impl_lua_conversion_dynamic!`, which is hard-wired to `mlua::IntoLua`/`FromLua`.
-//! Making the macro backend-agnostic (or adding a parallel
-//! `impl_rhai_conversion_dynamic!`) is L2's job, once `config/src/lua.rs` grows a
-//! rhai-based sibling entry point that actually needs to call these functions from
-//! generated code. For now this module is a complete, independently testable unit.
+//! ## Macro integration (L2)
+//!
+//! `impl_lua_conversion_dynamic!` (see `luahelper::impl_lua_conversion_dynamic`) is
+//! hard-wired to `mlua::IntoLua`/`FromLua`: it lives in the `luahelper` crate, whose
+//! entire public surface (`to_lua`/`from_lua`, the `mlua` re-export, etc) is mlua
+//! types. Making it backend-agnostic in place would mean either (a) teaching
+//! `luahelper` about rhai too (mixing two unrelated script engines into one helper
+//! crate, and forcing every consumer of `luahelper` to pull in `rhai` even if they
+//! only touch Lua), or (b) generalizing the macro's expansion over the concrete
+//! trait each backend uses to plug into `Engine`/`Lua`. Option (a) doesn't survive
+//! contact with the actual trait shapes: `mlua::IntoLua<'lua>`/`FromLua<'lua>` are
+//! parameterized over the lifetime of a particular `Lua` instance, and there simply
+//! is no rhai-side equivalent to parameterize over -- `rhai::Dynamic` has no
+//! lifetime at all, so a single macro branch can't emit both without duplicating
+//! most of its body behind a backend switch anyway, at which point it stops being
+//! "one macro" in any meaningful sense.
+//!
+//! So this module takes approach (b): a parallel macro,
+//! [`impl_rhai_conversion_dynamic!`], defined here (next to the bridge functions it
+//! calls) rather than in `luahelper`, since `config` is the only crate that needs a
+//! rhai-aware conversion and this keeps `luahelper` mlua-only. It generates the
+//! rhai-side analogue of what `impl_lua_conversion_dynamic!` generates for mlua: a
+//! `TryFrom<rhai::Dynamic>` (parsing) and a `From<T> for rhai::Dynamic` (serializing
+//! back, e.g. for handing config-derived values into event callbacks) impl, built on
+//! `FromDynamic`/`ToDynamic` plus the [`rhai_dynamic_to_dynamic`]/
+//! [`dynamic_to_rhai_dynamic`] bridge functions above. Applying it to a struct is
+//! mechanical (see `config/src/exec_domain.rs`, applied to `ExecDomain` and
+//! `ValueOrFunc`, for the sample this task's report demonstrates end-to-end);
+//! rolling it out to the remaining structs listed in the migration plan is expected
+//! to be a separate, mechanical follow-up pass, not additional design work.
 //!
 //! ## Coverage
 //!
@@ -47,7 +71,7 @@
 
 use rhai::{Array as RhaiArray, Dynamic, Map as RhaiMap};
 use std::convert::TryFrom;
-use wezterm_dynamic::{Error, Value as DynValue};
+use wezterm_dynamic::{Error, FromDynamic, FromDynamicOptions, Value as DynValue};
 
 /// Convert a `rhai::Dynamic` into a `wezterm_dynamic::Value`.
 ///
@@ -205,6 +229,91 @@ pub fn dynamic_to_rhai_dynamic(value: &DynValue) -> Dynamic {
             Dynamic::from_map(map)
         }
     }
+}
+
+/// A conversion error produced by an `impl_rhai_conversion_dynamic!`-generated
+/// `TryFrom<rhai::Dynamic>` impl.
+///
+/// This exists (rather than reusing `wezterm_dynamic::Error` directly) so that
+/// callers get a `std::error::Error` + `Display` type that mentions both the rhai
+/// source type and the Rust target type, mirroring the level of detail
+/// `mlua::Error::FromLuaConversionError` provides on the Lua side (`from`, `to`,
+/// `message`).
+#[derive(Debug)]
+pub struct RhaiConversionError {
+    pub from: &'static str,
+    pub to: &'static str,
+    pub message: String,
+}
+
+impl std::fmt::Display for RhaiConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "cannot convert rhai value of type `{}` into `{}`: {}",
+            self.from, self.to, self.message
+        )
+    }
+}
+
+impl std::error::Error for RhaiConversionError {}
+
+/// Parse a `rhai::Dynamic` into any `T: FromDynamic`, going through the
+/// `rhai::Dynamic -> wezterm_dynamic::Value` bridge above.
+///
+/// This is the free-function core that `impl_rhai_conversion_dynamic!` wires up as
+/// a `TryFrom` impl; exposed directly too, since a bare function is easier to call
+/// from generic code (e.g. a future event-callback dispatcher that needs to convert
+/// an arbitrary argument type without naming it at the macro-expansion site).
+pub fn rhai_dynamic_to_value<T: FromDynamic>(value: &Dynamic) -> Result<T, RhaiConversionError> {
+    let type_name = value.type_name();
+    let dynamic_value = rhai_dynamic_to_dynamic(value).map_err(|e| RhaiConversionError {
+        from: type_name,
+        to: std::any::type_name::<T>(),
+        message: e.to_string(),
+    })?;
+    T::from_dynamic(&dynamic_value, FromDynamicOptions::default()).map_err(|e| {
+        RhaiConversionError {
+            from: type_name,
+            to: std::any::type_name::<T>(),
+            message: e.to_string(),
+        }
+    })
+}
+
+/// Implement rhai conversion traits for a config type that already derives
+/// `FromDynamic`/`ToDynamic`.
+///
+/// This is the rhai-side analogue of `luahelper::impl_lua_conversion_dynamic!` (see
+/// the module-level doc comment above for why it is a separate macro rather than a
+/// backend-agnostic extension of that one). It generates:
+///
+/// * `impl TryFrom<rhai::Dynamic> for $struct` -- parsing a config value out of a
+///   rhai script result (e.g. the return value of evaluating a `.rhai` config, or
+///   one field of an object map within it).
+/// * `impl From<$struct> for rhai::Dynamic` -- the reverse, e.g. for handing a
+///   config-derived value back into a rhai event callback's arguments.
+///
+/// Both are total conversions modulo the same documented rejections
+/// `rhai_dynamic_to_dynamic` has (function pointers, timestamps, etc), which show up
+/// as the `TryFrom::Error` (`RhaiConversionError`) rather than a panic.
+#[macro_export]
+macro_rules! impl_rhai_conversion_dynamic {
+    ($struct:ident) => {
+        impl std::convert::TryFrom<rhai::Dynamic> for $struct {
+            type Error = $crate::rhai_value::RhaiConversionError;
+
+            fn try_from(value: rhai::Dynamic) -> Result<Self, Self::Error> {
+                $crate::rhai_value::rhai_dynamic_to_value(&value)
+            }
+        }
+
+        impl From<$struct> for rhai::Dynamic {
+            fn from(value: $struct) -> rhai::Dynamic {
+                $crate::rhai_value::dynamic_to_rhai_dynamic(&wezterm_dynamic::ToDynamic::to_dynamic(&value))
+            }
+        }
+    };
 }
 
 #[cfg(test)]
