@@ -12,6 +12,7 @@
 //! The results are cached to avoid recomputing on each
 //! evaluation of the config file.
 use crate::ColorWrap;
+use config::impl_rhai_conversion_dynamic;
 use config::lua::mlua::{self, Lua};
 use config::SrgbaTuple;
 use deltae::LabValue;
@@ -44,6 +45,7 @@ pub struct ExtractColorParams {
     min_contrast: f32,
 }
 impl_lua_conversion_dynamic!(ExtractColorParams);
+impl_rhai_conversion_dynamic!(ExtractColorParams);
 
 impl PartialEq for ExtractColorParams {
     fn eq(&self, rhs: &Self) -> bool {
@@ -182,14 +184,26 @@ pub fn extract_colors_from_image<'lua>(
     _: &'lua Lua,
     (file_name, params): (String, Option<ExtractColorParams>),
 ) -> mlua::Result<Vec<ColorWrap>> {
+    extract_colors_from_image_impl(file_name, params).map_err(mlua::Error::external)
+}
+
+/// Engine-agnostic implementation shared by the mlua binding above and the
+/// rhai binding in `crate::extract_colors_from_image_rhai` (L4a, see
+/// docs/plans/2026-07-23-lua-rhai-migration.md). Identical logic/caching to
+/// what `extract_colors_from_image` always did; only the error type changed
+/// (`anyhow::Error` instead of directly building an `mlua::Error`) so both
+/// engine bindings can wrap it in their own error type without duplicating the
+/// image analysis itself.
+pub fn extract_colors_from_image_impl(
+    file_name: String,
+    params: Option<ExtractColorParams>,
+) -> anyhow::Result<Vec<ColorWrap>> {
     let params = params.unwrap_or_default();
 
     let modified = std::fs::metadata(&file_name)
         .and_then(|m| m.modified())
         .map_err(|err| {
-            mlua::Error::external(format!(
-                "error getting modified time for {file_name}: {err:#}"
-            ))
+            anyhow::anyhow!("error getting modified time for {file_name}: {err:#}")
         })?;
 
     let mut cache = IMG_COLOR_CACHE.lock().unwrap();
@@ -201,11 +215,9 @@ pub fn extract_colors_from_image<'lua>(
 
     log::trace!("loading image {file_name}");
     let im = image::ImageReader::open(&file_name)
-        .map_err(|err| mlua::Error::external(format!("{err:#} while loading {file_name}")))?
+        .map_err(|err| anyhow::anyhow!("{err:#} while loading {file_name}"))?
         .decode()
-        .map_err(|err| {
-            mlua::Error::external(format!("{err:#} while decoding image from {file_name}"))
-        })?
+        .map_err(|err| anyhow::anyhow!("{err:#} while decoding image from {file_name}"))?
         .resize(
             params.max_width.into(),
             params.max_height.into(),
@@ -310,11 +322,11 @@ pub fn extract_colors_from_image<'lua>(
     }
 
     if colors.len() < params.num_colors {
-        return Err(mlua::Error::external(format!(
+        anyhow::bail!(
             "extract_colors_from_image: only found {} out of requested {} colors.",
             colors.len(),
             params.num_colors
-        )));
+        );
     }
 
     cache.put(
