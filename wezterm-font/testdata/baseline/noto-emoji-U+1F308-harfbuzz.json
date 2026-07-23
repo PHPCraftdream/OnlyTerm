@@ -1,0 +1,13 @@
+{
+  "rasterizer": "harfbuzz",
+  "font": "assets/fonts/NotoColorEmoji.ttf",
+  "glyph_id": 105,
+  "size": 32.0,
+  "dpi": 96,
+  "width": 42,
+  "height": 47,
+  "bearing_x": 0.0,
+  "bearing_y": 38.0,
+  "has_color": true,
+  "is_scaled": true
+}
