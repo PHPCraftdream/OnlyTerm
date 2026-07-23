@@ -187,19 +187,25 @@ impl ConicalGradient {
         let dy = y1 - y0;
         let dr = self.r1 - self.r0;
 
+        // Expanding |P - C(t)|^2 = R(t)^2, where C(t) = c0 + t*(c1-c0) and
+        // R(t) = r0 + t*dr, into the standard quadratic form a*t^2+b*t+c=0
+        // gives b = -2*(fx*dx + fy*dy + r0*dr) (note the leading minus
+        // sign - this used to be dropped here, which silently negated
+        // every solved `t` and inverted the whole gradient ramp, e.g.
+        // painting the *last* color stop at a radial gradient's center
+        // instead of the first: see BUG5 in the migration plan).
         let a = dx * dx + dy * dy - dr * dr;
         let fx = px - x0;
         let fy = py - y0;
-        let b = 2.0 * (fx * dx + fy * dy + self.r0 * dr);
+        let b = -2.0 * (fx * dx + fy * dy + self.r0 * dr);
         let c = fx * fx + fy * fy - self.r0 * self.r0;
 
         let t = if a.abs() < 1e-9 {
-            // Linear (degenerate quadratic): b*t + c = 0 becomes, after
-            // sign convention below, t = c / b.
+            // Linear (degenerate quadratic): b*t + c = 0, so t = -c / b.
             if b.abs() < 1e-12 {
                 return None;
             }
-            c / b
+            -c / b
         } else {
             let disc = b * b - 4.0 * a * c;
             if disc < 0.0 {
@@ -639,6 +645,64 @@ mod tests {
         // cairo/Skia/CSS's `radial-gradient()` behavior; `Pad` only
         // clamps an out-of-range `t`, it doesn't manufacture one where
         // none exists.
+    }
+
+    #[test]
+    fn radial_gradient_concentric_two_radius_ramps_in_correct_direction() {
+        // Regression test for BUG5 (see the migration plan / TaskList): a
+        // concentric two-radius conical gradient (same center, r0 != 0,
+        // as COLRv1 fonts commonly use for a soft radial highlight, e.g.
+        // Noto Color Emoji's U+1F600 face) used to have the sign of `b`
+        // flipped in `ConicalGradient::color_at`'s quadratic solve, which
+        // silently negated the solved `t` and inverted the whole ramp:
+        // the *last* color stop got painted at the center (and near it)
+        // instead of the *first* one. This does not hit tiny-skia's
+        // native `RadialGradient` fast path (which requires `rr0 == 0`),
+        // so it must go through `ConicalGradient`.
+        let mut p = Painter::new(64, 64).unwrap();
+        let color_line = ColorLine {
+            color_stops: vec![stop(0.0, 255, 255, 0, 255), stop(1.0, 0, 0, 255, 255)],
+            extend: SpreadMode::Pad,
+        };
+        p.new_path();
+        p.move_to(0., 0.);
+        p.line_to(64., 0.);
+        p.line_to(64., 64.);
+        p.line_to(0., 64.);
+        p.close_path();
+        p.clip();
+        // Same center (32,32) for both circles, r0=16 (first/yellow
+        // stop) and r1=32 (second/blue stop) - r0 != 0, so this must go
+        // through the ConicalGradient fallback, not the native shader.
+        paint_radial_gradient(&mut p, 32.0, 32.0, 16.0, 32.0, 32.0, 32.0, color_line).unwrap();
+
+        let pixmap = p.into_pixmap().unwrap();
+        // The center (well inside r0) must clamp (Pad) to t=0, i.e. the
+        // *first* (yellow) stop - this is exactly the pixel the sign bug
+        // got wrong (it painted the *last*/blue stop there instead).
+        let center = pixmap.pixel(32, 32).unwrap();
+        assert!(
+            center.red() > 200 && center.green() > 200 && center.blue() < 60,
+            "center (inside r0) should clamp to the first (yellow) stop: {:?}",
+            center
+        );
+        // A point beyond r1 (Pad) must clamp to t=1, i.e. the *last*
+        // (blue) stop.
+        let outside = pixmap.pixel(63, 32).unwrap();
+        assert!(
+            outside.blue() > 200 && outside.red() < 60,
+            "point beyond r1 should clamp to the last (blue) stop: {:?}",
+            outside
+        );
+        // Halfway between r0 and r1 (radius 24 from center, e.g. straight
+        // right of center) should be roughly an even blend, i.e. neither
+        // pure yellow nor pure blue.
+        let mid = pixmap.pixel(56, 32).unwrap();
+        assert!(
+            mid.red() > 40 && mid.blue() > 40,
+            "halfway between r0 and r1 should be a blend of both stops: {:?}",
+            mid
+        );
     }
 
     #[test]

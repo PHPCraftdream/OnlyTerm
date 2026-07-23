@@ -1,14 +1,15 @@
 use crate::ftwrap::{
-    composite_mode_to_operator, vector_x_y, FT_Affine23, FT_ColorIndex, FT_ColorLine, FT_ColorStop,
-    FT_Fixed, FT_Get_Colorline_Stops, FT_Int32, FT_PaintExtend, IsColr1OrLater, IsSvg,
-    SelectedFontSize, FT_LOAD_NO_HINTING,
+    composite_mode_to_blend_mode, vector_x_y, FT_Affine23, FT_ColorIndex, FT_ColorLine,
+    FT_ColorStop, FT_Fixed, FT_Get_Colorline_Stops, FT_Int32, FT_PaintExtend, IsColr1OrLater,
+    IsSvg, SelectedFontSize, FT_LOAD_NO_HINTING,
 };
 use crate::parser::ParsedFont;
 use crate::rasterizer::colr::{
     apply_draw_ops_to_context, paint_linear_gradient, paint_radial_gradient, paint_sweep_gradient,
     ColorLine, ColorStop, PaintOp,
 };
-use crate::rasterizer::harfbuzz::{argb_to_rgba, HarfbuzzRasterizer};
+use crate::rasterizer::harfbuzz::HarfbuzzRasterizer;
+use crate::rasterizer::paint::Painter;
 use crate::rasterizer::{FontRasterizer, FAKE_ITALIC_SKEW};
 use crate::units::*;
 use crate::{ftwrap, FontRasterizerSelection, RasterizedGlyph};
@@ -16,12 +17,12 @@ use ::freetype::{
     FT_Color_Root_Transform, FT_GlyphSlotRec_, FT_Matrix, FT_Opaque_Paint_, FT_PaintFormat_,
 };
 use anyhow::{bail, Context as _};
-use cairo::{Content, Context, Extend, Format, ImageSurface, Matrix, Operator, RecordingSurface};
 use config::{DisplayPixelGeometry, FreeTypeLoadFlags, FreeTypeLoadTarget};
 use std::cell::RefCell;
 use std::f64::consts::PI;
 use std::mem;
 use std::mem::MaybeUninit;
+use tiny_skia::{BlendMode, Color, SpreadMode, Transform};
 use wezterm_color_types::{linear_u8_to_srgb8, SrgbaPixel};
 
 pub struct FreeTypeRasterizer {
@@ -465,11 +466,20 @@ fn rasterize_from_ops(
     scale_x: f64,
     scale_y: f64,
 ) -> anyhow::Result<RasterizedGlyph> {
-    let (surface, has_color) = record_to_cairo_surface(ops, scale_x, scale_y)?;
-    let (left, top, width, height) = surface.ink_extents();
-    log::trace!("extents: left={left} top={top} width={width} height={height}");
+    let root_transform = Transform::from_scale(scale_x as f32, scale_y as f32);
 
-    if width as usize == 0 || height as usize == 0 {
+    // Pass 1: dry-run to compute the ink extents (see "Тонкое место 1" in
+    // the migration plan; tiny-skia has no `RecordingSurface`/
+    // `ink_extents()` equivalent).
+    let mut dry_run = Painter::new_dry_run();
+    dry_run.transform(root_transform);
+    let mut has_color_dry_run = false;
+    apply_paint_ops_to_painter(&ops, &mut dry_run, &mut has_color_dry_run)?;
+    let bbox = dry_run.bbox();
+
+    log::trace!("extents: {bbox:?}");
+
+    if bbox.is_empty() || bbox.width() as usize == 0 || bbox.height() as usize == 0 {
         return Ok(RasterizedGlyph {
             data: vec![],
             height: 0,
@@ -481,21 +491,27 @@ fn rasterize_from_ops(
         });
     }
 
-    let mut bounds_adjust = Matrix::identity();
-    bounds_adjust.translate(left * -1., top * -1.);
-    log::trace!("dims: {width}x{height} {bounds_adjust:?}");
+    let left = bbox.x0 as f64;
+    let top = bbox.y0 as f64;
+    let width = bbox.width().ceil().max(1.) as u32;
+    let height = bbox.height().ceil().max(1.) as u32;
+    log::trace!("dims: {width}x{height} left={left} top={top}");
 
-    let target = ImageSurface::create(Format::ARgb32, width as i32, height as i32)?;
-    {
-        let context = Context::new(&target)?;
-        context.transform(bounds_adjust);
-        context.set_antialias(cairo::Antialias::Best);
-        context.set_source_surface(surface, 0., 0.)?;
-        context.paint()?;
-    }
+    // Pass 2: real rendering into a pixmap sized to the computed bbox,
+    // translated so that the bbox origin maps to (0, 0).
+    let mut painter = Painter::new(width, height)?;
+    painter.translate(-left as f32, -top as f32);
+    painter.transform(root_transform);
+    let mut has_color = false;
+    apply_paint_ops_to_painter(&ops, &mut painter, &mut has_color)?;
 
-    let mut data = target.take_data()?.to_vec();
-    argb_to_rgba(&mut data);
+    let pixmap = painter
+        .into_pixmap()
+        .ok_or_else(|| anyhow::anyhow!("rasterize_from_ops: expected a real Painter"))?;
+    // Pixmap already stores premultiplied RGBA, which is what
+    // `RasterizedGlyph::data` expects; no argb_to_rgba swizzle needed
+    // (that conversion only existed to undo cairo's ARgb32 byte order).
+    let data = pixmap.data().to_vec();
 
     Ok(RasterizedGlyph {
         data,
@@ -617,7 +633,7 @@ impl<'a> Walker<'a> {
                     )?;
 
                     self.walk_paint(paint, level + 1)?;
-                    self.ops.push(PaintOp::PopGroup(Operator::Over));
+                    self.ops.push(PaintOp::PopGroup(BlendMode::SourceOver));
                 }
                 FT_COLR_PAINTFORMAT_TRANSFORM => {
                     let t = paint.u.transform.as_ref();
@@ -631,8 +647,7 @@ impl<'a> Walker<'a> {
                     let t = paint.u.translate.as_ref();
                     log::trace!("{level:>3} {t:?}");
 
-                    let mut matrix = Matrix::identity();
-                    matrix.translate(t.dx.to_num(), t.dy.to_num());
+                    let matrix = Transform::from_translate(t.dx.to_num(), t.dy.to_num());
                     self.ops.push(PaintOp::PushTransform(matrix));
                     self.walk_paint(t.paint, level + 1)?;
                     self.ops.push(PaintOp::PopTransform);
@@ -645,14 +660,9 @@ impl<'a> Walker<'a> {
                     let center_x = scale.center_x.to_num();
                     let center_y = scale.center_x.to_num();
 
-                    let mut p1 = Matrix::identity();
-                    p1.translate(center_x, center_y);
-
-                    let mut p2 = Matrix::identity();
-                    p2.scale(scale.scale_x.to_num(), scale.scale_y.to_num());
-
-                    let mut p3 = Matrix::identity();
-                    p3.translate(-center_x, -center_y);
+                    let p1 = Transform::from_translate(center_x, center_y);
+                    let p2 = Transform::from_scale(scale.scale_x.to_num(), scale.scale_y.to_num());
+                    let p3 = Transform::from_translate(-center_x, -center_y);
 
                     self.ops.push(PaintOp::PushTransform(p1));
                     self.ops.push(PaintOp::PushTransform(p2));
@@ -670,14 +680,10 @@ impl<'a> Walker<'a> {
                     let center_x = rot.center_x.to_num();
                     let center_y = rot.center_x.to_num();
 
-                    let mut p1 = Matrix::identity();
-                    p1.translate(center_x, center_y);
-
-                    let mut p2 = Matrix::identity();
-                    p2.rotate(PI * rot.angle.to_num::<f64>());
-
-                    let mut p3 = Matrix::identity();
-                    p3.translate(-center_x, -center_y);
+                    let p1 = Transform::from_translate(center_x, center_y);
+                    let angle_degrees = (PI * rot.angle.to_num::<f64>()).to_degrees() as f32;
+                    let p2 = Transform::from_rotate(angle_degrees);
+                    let p3 = Transform::from_translate(-center_x, -center_y);
 
                     self.ops.push(PaintOp::PushTransform(p1));
                     self.ops.push(PaintOp::PushTransform(p2));
@@ -695,18 +701,20 @@ impl<'a> Walker<'a> {
                     let center_x = skew.center_x.to_num();
                     let center_y = skew.center_x.to_num();
 
-                    let mut p1 = Matrix::identity();
-                    p1.translate(center_x, center_y);
+                    let p1 = Transform::from_translate(center_x, center_y);
 
                     let x_skew_angle: f64 = skew.x_skew_angle.to_num();
                     let y_skew_angle: f64 = skew.y_skew_angle.to_num();
                     let x = (PI * -x_skew_angle).tan();
                     let y = (PI * y_skew_angle).tan();
 
-                    let p2 = Matrix::new(1., y, x, 1., 0., 0.);
+                    // cairo::Matrix::new(xx, yx, xy, yy, x0, y0) with
+                    // (xx=1, yx=y, xy=x, yy=1, x0=0, y0=0) maps to
+                    // tiny_skia::Transform::from_row(sx, ky, kx, sy, tx, ty)
+                    // in the same argument order.
+                    let p2 = Transform::from_row(1., y as f32, x as f32, 1., 0., 0.);
 
-                    let mut p3 = Matrix::identity();
-                    p3.translate(-center_x, -center_y);
+                    let p3 = Transform::from_translate(-center_x, -center_y);
 
                     self.ops.push(PaintOp::PushTransform(p1));
                     self.ops.push(PaintOp::PushTransform(p2));
@@ -723,7 +731,7 @@ impl<'a> Walker<'a> {
                     self.walk_paint(comp.backdrop_paint, level + 1)?;
                     self.ops.push(PaintOp::PushGroup);
                     self.walk_paint(comp.source_paint, level + 1)?;
-                    self.ops.push(PaintOp::PopGroup(composite_mode_to_operator(
+                    self.ops.push(PaintOp::PopGroup(composite_mode_to_blend_mode(
                         comp.composite_mode,
                     )));
                 }
@@ -778,17 +786,27 @@ impl<'a> Walker<'a> {
 
         Ok(ColorLine {
             extend: match line.extend {
-                FT_PaintExtend::FT_COLR_PAINT_EXTEND_PAD => Extend::Pad,
-                FT_PaintExtend::FT_COLR_PAINT_EXTEND_REPEAT => Extend::Repeat,
-                FT_PaintExtend::FT_COLR_PAINT_EXTEND_REFLECT => Extend::Reflect,
+                FT_PaintExtend::FT_COLR_PAINT_EXTEND_PAD => SpreadMode::Pad,
+                FT_PaintExtend::FT_COLR_PAINT_EXTEND_REPEAT => SpreadMode::Repeat,
+                FT_PaintExtend::FT_COLR_PAINT_EXTEND_REFLECT => SpreadMode::Reflect,
             },
             color_stops,
         })
     }
 }
 
-fn affine2x3_to_matrix(t: FT_Affine23) -> Matrix {
-    Matrix::new(
+// NOTE: this passes `t.dy, t.dx` in this order (not `t.dx, t.dy`) into the
+// (x0, y0)/(tx, ty) translation slots, reproducing the same argument order
+// as the cairo-based code this was ported from
+// (`cairo::Matrix::new(xx, yx, xy, yy, x0, y0)` called with `t.dy, t.dx`).
+// See "Тонкое место 2" in docs/plans/2026-07-23-decairo-tiny-skia.md: this
+// looks like it could be a dx/dy transposition bug, but per the plan's
+// explicit instruction this behavior is preserved 1:1 rather than "fixed"
+// during the port, since it's unclear whether it's an upstream bug or
+// intentional and changing it silently could alter (or accidentally fix)
+// glyph rendering in ways that aren't this task's call to make.
+fn affine2x3_to_matrix(t: FT_Affine23) -> Transform {
+    Transform::from_row(
         t.xx.to_num(),
         t.yx.to_num(),
         t.xy.to_num(),
@@ -798,51 +816,55 @@ fn affine2x3_to_matrix(t: FT_Affine23) -> Matrix {
     )
 }
 
-fn record_to_cairo_surface(
-    paint_ops: Vec<PaintOp>,
-    scale_x: f64,
-    scale_y: f64,
-) -> anyhow::Result<(RecordingSurface, bool)> {
-    let mut has_color = false;
-    let surface = RecordingSurface::create(Content::ColorAlpha, None)?;
-    let context = Context::new(&surface)?;
-    context.scale(scale_x, scale_y);
-    context.set_antialias(cairo::Antialias::Best);
-
+/// Replays `paint_ops` against `painter` (either a dry-run painter used to
+/// compute ink extents, or a real painter that rasterizes into a pixmap),
+/// mirroring the cairo-based `record_to_cairo_surface` this replaces.
+/// Unlike the harfbuzz paint path, FreeType's COLR walker has no
+/// `PaintImage` op, so this only needs to handle transforms, clips
+/// (already-flattened `DrawOp`s, not glyph/rect clips), groups and the
+/// solid/gradient paint ops. Sets `*has_color = true` as soon as any
+/// non-white solid fill or any gradient is painted, mirroring the
+/// `has_color`/`is_foreground` bit-for-bit semantics from the cairo path
+/// (see "Тонкое место 5" in the migration plan): a glyph that was only
+/// ever painted with solid white (0xffffffff, the "current foreground
+/// color" placeholder - see `decode_color_index`) is still considered
+/// monochrome and eligible for being tinted by the terminal's text color.
+fn apply_paint_ops_to_painter(
+    paint_ops: &[PaintOp],
+    painter: &mut Painter,
+    has_color: &mut bool,
+) -> anyhow::Result<()> {
     for pop in paint_ops {
         match pop {
             PaintOp::PushTransform(matrix) => {
-                context.save()?;
-                context.transform(matrix);
+                painter.save();
+                painter.transform(*matrix);
             }
             PaintOp::PopTransform => {
-                context.restore()?;
+                painter.restore();
             }
             PaintOp::PushClip(draw) => {
-                context.save()?;
-                apply_draw_ops_to_context(&draw, &context)?;
-                context.clip();
+                painter.save();
+                apply_draw_ops_to_context(draw, painter)?;
+                painter.clip();
             }
             PaintOp::PopClip => {
-                context.restore()?;
+                painter.restore();
             }
             PaintOp::PushGroup => {
-                context.save()?;
-                context.push_group();
+                painter.save();
+                painter.push_group();
             }
-            PaintOp::PopGroup(operator) => {
-                context.pop_group_to_source()?;
-                context.set_operator(operator);
-                context.paint()?;
-                context.restore()?;
+            PaintOp::PopGroup(blend_mode) => {
+                painter.pop_group(*blend_mode);
+                painter.restore();
             }
             PaintOp::PaintSolid(color) => {
                 if color.as_srgba32() != 0xffffffff {
-                    has_color = true;
+                    *has_color = true;
                 }
                 let (r, g, b, a) = color.as_srgba_tuple();
-                context.set_source_rgba(r.into(), g.into(), b.into(), a.into());
-                context.paint()?;
+                painter.paint_solid(Color::from_rgba(r, g, b, a).unwrap_or(Color::TRANSPARENT));
             }
             PaintOp::PaintLinearGradient {
                 x0,
@@ -853,16 +875,16 @@ fn record_to_cairo_surface(
                 y2,
                 color_line,
             } => {
-                has_color = true;
+                *has_color = true;
                 paint_linear_gradient(
-                    &context,
-                    x0.into(),
-                    y0.into(),
-                    x1.into(),
-                    y1.into(),
-                    x2.into(),
-                    y2.into(),
-                    color_line,
+                    painter,
+                    (*x0).into(),
+                    (*y0).into(),
+                    (*x1).into(),
+                    (*y1).into(),
+                    (*x2).into(),
+                    (*y2).into(),
+                    color_line.clone(),
                 )?;
             }
             PaintOp::PaintRadialGradient {
@@ -874,16 +896,16 @@ fn record_to_cairo_surface(
                 r1,
                 color_line,
             } => {
-                has_color = true;
+                *has_color = true;
                 paint_radial_gradient(
-                    &context,
-                    x0.into(),
-                    y0.into(),
-                    r0.into(),
-                    x1.into(),
-                    y1.into(),
-                    r1.into(),
-                    color_line,
+                    painter,
+                    (*x0).into(),
+                    (*y0).into(),
+                    (*r0).into(),
+                    (*x1).into(),
+                    (*y1).into(),
+                    (*r1).into(),
+                    color_line.clone(),
                 )?;
             }
             PaintOp::PaintSweepGradient {
@@ -893,18 +915,18 @@ fn record_to_cairo_surface(
                 end_angle,
                 color_line,
             } => {
-                has_color = true;
+                *has_color = true;
                 paint_sweep_gradient(
-                    &context,
-                    x0.into(),
-                    y0.into(),
-                    start_angle.into(),
-                    end_angle.into(),
-                    color_line,
+                    painter,
+                    (*x0).into(),
+                    (*y0).into(),
+                    (*start_angle).into(),
+                    (*end_angle).into(),
+                    color_line.clone(),
                 )?;
             }
         }
     }
 
-    Ok((surface, has_color))
+    Ok(())
 }
