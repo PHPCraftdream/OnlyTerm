@@ -285,6 +285,6 @@ perceived by the user, and the application(s) that it has spawned inside.
 The result of this is pretty good, but still has a few edge cases where the
 ConPTY layer has some surprising behavior. I expect this to improve over time,
 but what it means for wezterm users is that they may wish to bypass ConPTY in
-some cases by using `wezterm ssh` to directly communicate with a "real" unix
-pty either on a remote system or inside a WSL or VM running on the local
-machine.
+some cases by using [multiplexing](multiplexing.md#connecting-into-windows-subsystem-for-linux)
+to directly communicate with a "real" unix pty inside a WSL instance running
+on the local machine.

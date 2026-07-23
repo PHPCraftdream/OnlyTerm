@@ -22,6 +22,14 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* **Breaking**: the built-in SSH client (`wezterm ssh`, `SshDomain`/`ssh_domains`,
+  `ssh_backend`) and the TLS-mux remote-multiplexing feature
+  (`TlsDomainClient`/`TlsDomainServer`, `tls_clients`/`tls_servers`,
+  `wezterm cli tlscreds`) have been removed entirely, along with their
+  `openssl`/`ssh2`/`libssh-rs` dependencies. Local multiplexing via
+  [unix domains](multiplexing.md#unix-domains) is unaffected. If you relied on
+  SSH domains or TLS-mux, use a system `ssh` client together with a local
+  unix domain instead.
 * DECRQCRA is now disabled by default to prevent silent screen scraping.
   Set `enable_checksum_rectangular_area = true` to re-enable it.
   Thanks to @jquast! #7701

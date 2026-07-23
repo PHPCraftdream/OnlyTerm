@@ -35,7 +35,7 @@ _wezterm() {
             (start)
 _arguments "${_arguments_options[@]}" \
 '--cwd=[Specify the current working directory for the initially spawned program]:CWD:_files -/' \
-'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error, update and ssh authentication dialogs]:CLASS: ' \
+'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error and update dialogs]:CLASS: ' \
 '--workspace=[Override the default workspace with the provided name. The default is "default"]:WORKSPACE: ' \
 '--position=[Override the position for the initial window launched by this process.]:POSITION: ' \
 '--domain=[Name of the multiplexer domain section from the configuration to which you'\''d like to connect. If omitted, the default domain will be used]:DOMAIN: ' \
@@ -52,7 +52,7 @@ _arguments "${_arguments_options[@]}" \
 (blocking-start)
 _arguments "${_arguments_options[@]}" \
 '--cwd=[Specify the current working directory for the initially spawned program]:CWD:_files -/' \
-'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error, update and ssh authentication dialogs]:CLASS: ' \
+'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error and update dialogs]:CLASS: ' \
 '--workspace=[Override the default workspace with the provided name. The default is "default"]:WORKSPACE: ' \
 '--position=[Override the position for the initial window launched by this process.]:POSITION: ' \
 '--domain=[Name of the multiplexer domain section from the configuration to which you'\''d like to connect. If omitted, the default domain will be used]:DOMAIN: ' \
@@ -66,23 +66,10 @@ _arguments "${_arguments_options[@]}" \
 '*::prog -- Instead of executing your shell, run PROG. For example\: `wezterm start -- bash -l` will spawn bash as if it were a login shell. \[aliases\: -e\]:_cmdambivalent' \
 && ret=0
 ;;
-(ssh)
-_arguments "${_arguments_options[@]}" \
-'*-o+[Override specific SSH configuration options. \`wezterm ssh\` is able to parse some (but not all!) options from your \`~/.ssh/config\` and \`/etc/ssh/ssh_config\` files. This command line switch allows you to override or otherwise specify ssh_config style options]:name=value: ' \
-'*--ssh-option=[Override specific SSH configuration options. \`wezterm ssh\` is able to parse some (but not all!) options from your \`~/.ssh/config\` and \`/etc/ssh/ssh_config\` files. This command line switch allows you to override or otherwise specify ssh_config style options]:name=value: ' \
-'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error, update and ssh authentication dialogs]:CLASS: ' \
-'--position=[Override the position for the initial window launched by this process.]:POSITION: ' \
-'-v[Enable verbose ssh protocol tracing. The trace information is printed to the stderr stream of the process]' \
-'-h[Print help (see more with '\''--help'\'')]' \
-'--help[Print help (see more with '\''--help'\'')]' \
-':user_at_host_and_port -- Specifies the remote system using the form\: `\[username@\]host\[\:port\]`. If `username@` is omitted, then your local $USER is used instead. If `\:port` is omitted, then the standard ssh port (22) is used instead:' \
-'*::prog -- Instead of executing your shell, run PROG. For example\: `wezterm ssh user@host -- bash -l` will spawn bash as if it were a login shell:_cmdambivalent' \
-&& ret=0
-;;
 (serial)
 _arguments "${_arguments_options[@]}" \
 '--baud=[Set the baud rate.  The default is 9600 baud]:BAUD: ' \
-'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error, update and ssh authentication dialogs]:CLASS: ' \
+'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error and update dialogs]:CLASS: ' \
 '--position=[Override the position for the initial window launched by this process.]:POSITION: ' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -91,7 +78,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (connect)
 _arguments "${_arguments_options[@]}" \
-'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error, update and ssh authentication dialogs]:CLASS: ' \
+'--class=[Override the default windowing system class. The default is "org.wezfurlong.wezterm". Under X11 and Windows this changes the window class. Under Wayland this changes the app_id. This changes the class for all windows spawned by this instance of wezterm, including error and update dialogs]:CLASS: ' \
 '--workspace=[Override the default workspace with the provided name. The default is "default"]:WORKSPACE: ' \
 '--position=[Override the position for the initial window launched by this process.]:POSITION: ' \
 '--new-tab[When spawning into an existing GUI instance, spawn a new tab into the active window rather than spawn a new window]' \
@@ -154,13 +141,6 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 '-h[Print help]' \
 '--help[Print help]' \
-&& ret=0
-;;
-(tlscreds)
-_arguments "${_arguments_options[@]}" \
-'--pem[Output a PEM file encoded copy of the credentials]' \
-'-h[Print help (see more with '\''--help'\'')]' \
-'--help[Print help (see more with '\''--help'\'')]' \
 && ret=0
 ;;
 (move-pane-to-new-tab)
@@ -334,10 +314,6 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
-(tlscreds)
-_arguments "${_arguments_options[@]}" \
-&& ret=0
-;;
 (move-pane-to-new-tab)
 _arguments "${_arguments_options[@]}" \
 && ret=0
@@ -484,10 +460,6 @@ _arguments "${_arguments_options[@]}" \
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
-(ssh)
-_arguments "${_arguments_options[@]}" \
-&& ret=0
-;;
 (serial)
 _arguments "${_arguments_options[@]}" \
 && ret=0
@@ -525,10 +497,6 @@ _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
 (proxy)
-_arguments "${_arguments_options[@]}" \
-&& ret=0
-;;
-(tlscreds)
 _arguments "${_arguments_options[@]}" \
 && ret=0
 ;;
@@ -1117,16 +1085,6 @@ _wezterm__help__cli__split-pane_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm help cli split-pane commands' commands "$@"
 }
-(( $+functions[_wezterm__help__ssh_commands] )) ||
-_wezterm__help__ssh_commands() {
-    local commands; commands=()
-    _describe -t commands 'wezterm help ssh commands' commands "$@"
-}
-(( $+functions[_wezterm__ssh_commands] )) ||
-_wezterm__ssh_commands() {
-    local commands; commands=()
-    _describe -t commands 'wezterm ssh commands' commands "$@"
-}
 (( $+functions[_wezterm__help__start_commands] )) ||
 _wezterm__help__start_commands() {
     local commands; commands=()
@@ -1136,21 +1094,6 @@ _wezterm__help__start_commands() {
 _wezterm__start_commands() {
     local commands; commands=()
     _describe -t commands 'wezterm start commands' commands "$@"
-}
-(( $+functions[_wezterm__cli__help__tlscreds_commands] )) ||
-_wezterm__cli__help__tlscreds_commands() {
-    local commands; commands=()
-    _describe -t commands 'wezterm cli help tlscreds commands' commands "$@"
-}
-(( $+functions[_wezterm__cli__tlscreds_commands] )) ||
-_wezterm__cli__tlscreds_commands() {
-    local commands; commands=()
-    _describe -t commands 'wezterm cli tlscreds commands' commands "$@"
-}
-(( $+functions[_wezterm__help__cli__tlscreds_commands] )) ||
-_wezterm__help__cli__tlscreds_commands() {
-    local commands; commands=()
-    _describe -t commands 'wezterm help cli tlscreds commands' commands "$@"
 }
 (( $+functions[_wezterm__cli__help__zoom-pane_commands] )) ||
 _wezterm__cli__help__zoom-pane_commands() {
