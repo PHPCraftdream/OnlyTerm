@@ -65,8 +65,7 @@ pub struct StartCommand {
     /// Under X11 and Windows this changes the window class.
     /// Under Wayland this changes the app_id.
     /// This changes the class for all windows spawned by this
-    /// instance of wezterm, including error, update and ssh
-    /// authentication dialogs.
+    /// instance of wezterm, including error and update dialogs.
     #[arg(long = "class")]
     pub class: Option<String>,
 
@@ -118,8 +117,7 @@ pub struct SerialCommand {
     /// Under X11 and Windows this changes the window class.
     /// Under Wayland this changes the app_id.
     /// This changes the class for all windows spawned by this
-    /// instance of wezterm, including error, update and ssh
-    /// authentication dialogs.
+    /// instance of wezterm, including error and update dialogs.
     #[arg(long = "class")]
     pub class: Option<String>,
     /// Override the position for the initial window launched by this process.
@@ -156,8 +154,7 @@ pub struct ConnectCommand {
     /// Under X11 and Windows this changes the window class.
     /// Under Wayland this changes the app_id.
     /// This changes the class for all windows spawned by this
-    /// instance of wezterm, including error, update and ssh
-    /// authentication dialogs.
+    /// instance of wezterm, including error and update dialogs.
     #[arg(long = "class")]
     pub class: Option<String>,
 

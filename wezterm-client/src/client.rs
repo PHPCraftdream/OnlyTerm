@@ -563,18 +563,6 @@ impl Reconnectable {
         }
     }
 
-    /// Resolve the path to wezterm for the remote system.
-    /// We can't simply derive this from the current executable because
-    /// we are being asked to produce a path for the remote system and
-    /// we don't really know anything about it.
-    /// Otherwise, we have to rely on the `PATH` environment for the remote
-    /// system, and we don't know if it is even running unix, or whether
-    /// any given shell syntax will help us provide a more meaningful
-    /// message to the user.
-    fn wezterm_bin_path(path: &Option<String>) -> String {
-        path.as_deref().unwrap_or("wezterm").to_string()
-    }
-
     fn unix_connect(
         &mut self,
         unix_dom: UnixDomain,
