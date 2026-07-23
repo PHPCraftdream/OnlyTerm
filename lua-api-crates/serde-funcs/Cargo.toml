@@ -14,3 +14,12 @@ serde_json.workspace = true
 serde_yaml.workspace = true
 toml.workspace = true
 wezterm-dynamic.workspace = true
+# rhai port of `register` (L4b, see
+# docs/plans/2026-07-23-lua-rhai-migration.md): `src/lib.rs::register_rhai`
+# registers rhai-side equivalents of every function `register(lua: &Lua)`
+# registers. Enables rhai's own `serde` feature (`rhai::serde::{to_dynamic,
+# from_dynamic}`), which lets `serde_json::Value`/`toml::Value`/the `serde_yaml`
+# equivalent (all `Serialize`/`Deserialize`) convert directly to/from
+# `rhai::Dynamic` without hand-rolling the tree-walking conversion the mlua
+# path below does by necessity (mlua has no such generic serde bridge).
+rhai = { workspace = true, features = ["serde"] }

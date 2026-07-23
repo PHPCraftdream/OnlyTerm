@@ -289,6 +289,115 @@ fn lua_value_to_json_value(value: LuaValue, visited: &mut HashSet<usize>) -> mlu
     })
 }
 
+// ---------------------------------------------------------------------------
+// L4b: rhai port of `register` above (see
+// docs/plans/2026-07-23-lua-rhai-migration.md). Runs in parallel with the mlua
+// path; does not replace or touch `register(lua: &Lua)`.
+//
+// ## Using rhai's own serde integration instead of hand-rolling a walker
+//
+// The mlua path above hand-rolls a full recursive `LuaValue <-> JValue`
+// tree-walking conversion (`lua_value_to_json_value`/`json_value_to_lua_value`)
+// because mlua has no generic serde bridge of its own. rhai does: with the
+// `serde` cargo feature enabled on the `rhai` dependency (see this crate's
+// Cargo.toml), `rhai::serde` exposes
+//   * `rhai::serde::to_dynamic<T: Serialize>(value: T) -> Result<Dynamic, ..>`
+//   * `rhai::serde::from_dynamic<T: DeserializeOwned>(value: &Dynamic) -> Result<T, ..>`
+// which serialize/deserialize through `Dynamic` exactly the way `serde_json`
+// serializes/deserializes through `JValue` -- so any type that is
+// `Serialize`/`Deserialize` (which `serde_json::Value` already is) converts
+// to/from `rhai::Dynamic` for free, with no bespoke tree walk to maintain here.
+// This directly answers the migration plan's callout ("check whether rhai's
+// own serde-feature JSON integration can be used directly instead of a manual
+// value-tree walk") -- yes, and it is used below for both directions:
+//   * *_encode(value: Dynamic) -> String: `from_dynamic::<JValue>` turns the
+//     incoming rhai value into a `serde_json::Value`, then the exact same
+//     `serde_json`/`serde_yaml`/`toml` serializer the mlua path calls.
+//   * *_decode(text: String) -> Dynamic: the exact same `serde_json`/
+//     `serde_yaml`/`toml` deserializer the mlua path calls parses into a
+//     `serde_json::Value`, then `to_dynamic` turns that into the `Dynamic`
+//     handed back to the calling `.rhai` script.
+//
+// One behavioral note inherited from `rhai::serde` rather than invented here:
+// object/map keys go through `Dynamic`'s own string representation, so (as
+// with the L1 `rhai::Dynamic <-> wezterm_dynamic::Value` bridge documented in
+// `config/src/rhai_value.rs`) rhai `Map` keys are always plain strings --
+// consistent with JSON's own string-only object keys, so no lossy behavior is
+// introduced by routing through `Dynamic` here specifically.
+pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
+    let mut serde_module = rhai::Module::new();
+
+    // Decoders:
+    serde_module.set_native_fn("json_decode", json_decode_rhai);
+    serde_module.set_native_fn("yaml_decode", yaml_decode_rhai);
+    serde_module.set_native_fn("toml_decode", toml_decode_rhai);
+
+    // Encoders:
+    serde_module.set_native_fn("json_encode", json_encode_rhai);
+    serde_module.set_native_fn("yaml_encode", yaml_encode_rhai);
+    serde_module.set_native_fn("toml_encode", toml_encode_rhai);
+    // Pretty ones:
+    serde_module.set_native_fn("json_encode_pretty", json_encode_pretty_rhai);
+    serde_module.set_native_fn("toml_encode_pretty", toml_encode_pretty_rhai);
+    // Note there is no pretty encoder for yaml, because the default one is
+    // pretty already (mirrors the comment on the mlua path above). See
+    // https://github.com/dtolnay/serde-yaml/issues/226
+
+    engine.register_static_module("serde", serde_module.into());
+
+    // For backward compatibility, mirroring `wezterm.json_parse`/
+    // `wezterm.json_encode` on the mlua path (registered directly as
+    // top-level functions there too, not under a sub-module).
+    engine.register_fn("json_parse", json_decode_rhai);
+    engine.register_fn("json_encode", json_encode_rhai);
+
+    Ok(())
+}
+
+fn to_eval_err(err: impl std::fmt::Display) -> Box<rhai::EvalAltResult> {
+    format!("{err:#}").into()
+}
+
+fn json_encode_rhai(value: rhai::Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
+    let json: JValue = rhai::serde::from_dynamic(&value)?;
+    serde_json::to_string(&json).map_err(to_eval_err)
+}
+
+fn json_encode_pretty_rhai(value: rhai::Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
+    let json: JValue = rhai::serde::from_dynamic(&value)?;
+    serde_json::to_string_pretty(&json).map_err(to_eval_err)
+}
+
+fn yaml_encode_rhai(value: rhai::Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
+    let json: JValue = rhai::serde::from_dynamic(&value)?;
+    serde_yaml::to_string(&json).map_err(to_eval_err)
+}
+
+fn toml_encode_rhai(value: rhai::Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
+    let json: JValue = rhai::serde::from_dynamic(&value)?;
+    toml::to_string(&json).map_err(to_eval_err)
+}
+
+fn toml_encode_pretty_rhai(value: rhai::Dynamic) -> Result<String, Box<rhai::EvalAltResult>> {
+    let json: JValue = rhai::serde::from_dynamic(&value)?;
+    toml::to_string_pretty(&json).map_err(to_eval_err)
+}
+
+fn json_decode_rhai(text: String) -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+    let value: JValue = serde_json::from_str(&text).map_err(to_eval_err)?;
+    rhai::serde::to_dynamic(value)
+}
+
+fn yaml_decode_rhai(text: String) -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+    let value: JValue = serde_yaml::from_str(&text).map_err(to_eval_err)?;
+    rhai::serde::to_dynamic(value)
+}
+
+fn toml_decode_rhai(text: String) -> Result<rhai::Dynamic, Box<rhai::EvalAltResult>> {
+    let value: JValue = toml::from_str(&text).map_err(to_eval_err)?;
+    rhai::serde::to_dynamic(value)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
