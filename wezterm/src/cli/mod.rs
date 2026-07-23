@@ -198,8 +198,30 @@ async fn run_cli_async(opts: &crate::Opt, cli: CliCommand) -> anyhow::Result<()>
 }
 
 pub fn run_cli(opts: &crate::Opt, cli: CliCommand) -> anyhow::Result<()> {
-    let executor = promise::spawn::ScopedExecutor::new();
-    match promise::spawn::block_on(executor.run(async move { run_cli_async(opts, cli).await })) {
+    // `run_cli_async` combines a large number of subcommand futures (one
+    // per `CliSubCommand` variant) into a single generated state machine.
+    // In debug builds that state machine can be large enough to overflow
+    // the small (~1MB) default stack that Windows gives the process main
+    // thread; `RUST_MIN_STACK` has no effect here because it only applies
+    // to threads spawned via `std::thread`, not to the main thread.
+    // Run the whole async CLI dispatch on a dedicated thread with a
+    // generously sized stack so this is safe regardless of how large the
+    // generated future ends up being, in both debug and release builds.
+    let result = std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("wezterm-cli".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn_scoped(scope, || {
+                let executor = promise::spawn::ScopedExecutor::new();
+                promise::spawn::block_on(
+                    executor.run(async move { run_cli_async(opts, cli).await }),
+                )
+            })
+            .expect("failed to spawn wezterm-cli thread")
+            .join()
+            .expect("wezterm-cli thread panicked")
+    });
+    match result {
         Ok(_) => Ok(()),
         Err(err) => crate::terminate_with_error(err),
     }
