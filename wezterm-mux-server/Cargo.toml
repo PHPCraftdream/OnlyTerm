@@ -10,7 +10,6 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-async_ossl.workspace = true
 clap.workspace = true
 config.workspace = true
 env-bootstrap.workspace = true
@@ -18,7 +17,6 @@ libc.workspace = true
 log.workspace = true
 mux.workspace = true
 mlua.workspace = true
-openssl.workspace = true
 portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true
 umask.workspace = true

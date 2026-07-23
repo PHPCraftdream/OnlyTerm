@@ -10,20 +10,15 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 async-io.workspace = true
-async_ossl.workspace = true
 codec.workspace = true
 config.workspace = true
-dns-lookup.workspace = true
 futures.workspace = true
-hostname.workspace = true
-lazy_static.workspace = true
 libc.workspace = true
 log.workspace = true
 mux.workspace = true
 portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true
 rangeset.workspace = true
-rcgen.workspace = true
 smol.workspace = true
 termwiz = { workspace=true, features=["use_serde"] }
 url.workspace = true
