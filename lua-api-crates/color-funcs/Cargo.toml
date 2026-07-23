@@ -23,3 +23,11 @@ serde_yaml.workspace = true
 wezterm-dynamic.workspace = true
 wezterm-color-types = {workspace=true, features=["std"]}
 wezterm-term = { workspace=true, features=["use_serde"] }
+
+[dev-dependencies]
+# L0 tooling for the Lua->rhai migration (see
+# docs/plans/2026-07-23-lua-rhai-migration.md). Proves, as a sample for the future
+# L4a-L4e per-crate ports, that a simple function with the same signature as an
+# existing lua-api-crates function can be registered on a rhai::Engine and called
+# from a .rhai script. Not a replacement for the lua registration in src/lib.rs.
+rhai.workspace = true
