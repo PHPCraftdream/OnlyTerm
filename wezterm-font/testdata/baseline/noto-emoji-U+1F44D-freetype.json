@@ -1,0 +1,13 @@
+{
+  "rasterizer": "freetype",
+  "font": "assets/fonts/NotoColorEmoji.ttf",
+  "glyph_id": 594,
+  "size": 32.0,
+  "dpi": 96,
+  "width": 40,
+  "height": 44,
+  "bearing_x": 0.0,
+  "bearing_y": 36.0,
+  "has_color": true,
+  "is_scaled": true
+}
