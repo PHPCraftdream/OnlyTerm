@@ -13,7 +13,6 @@ members = [
   "wezterm-gui",
   "wezterm-mux-server",
   "wezterm-open-url",
-  "wezterm-ssh",
   "wezterm-surface",
   "wezterm-uds",
 ]
@@ -204,7 +203,6 @@ socket2 = "0.5"
 spa = "0.3.1"
 spawn-funcs = { path = "lua-api-crates/spawn-funcs" }
 sqlite-cache = "0.1.4"
-ssh-funcs = { path = "lua-api-crates/ssh-funcs" }
 ssh2 = "0.9.3"
 starship-battery = "0.10"
 strsim = "0.11"
@@ -254,7 +252,6 @@ wezterm-gui-subcommands = { path = "wezterm-gui-subcommands" }
 wezterm-input-types = { version="0.1", path = "wezterm-input-types", default-features=false }
 wezterm-mux-server-impl = { path = "wezterm-mux-server-impl" }
 wezterm-open-url = { path = "wezterm-open-url" }
-wezterm-ssh = { path = "wezterm-ssh" }
 wezterm-surface = { path = "wezterm-surface" }
 wezterm-term = { path = "term" }
 wezterm-toast-notification = { path = "wezterm-toast-notification" }
