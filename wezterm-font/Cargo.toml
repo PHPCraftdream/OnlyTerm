@@ -15,7 +15,6 @@ vendor-nerd-font-symbols = []
 
 [dependencies]
 anyhow.workspace = true
-cairo-rs.workspace = true
 config.workspace = true
 encoding_rs.workspace = true
 enum-display-derive.workspace = true
