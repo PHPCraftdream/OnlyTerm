@@ -9,6 +9,12 @@ publish = false
 
 [dev-dependencies]
 env_logger.workspace = true
+# L0 tooling for the Lua->rhai migration (see docs/plans/2026-07-23-lua-rhai-migration.md).
+# rhai is pure Rust (no vendored C, unlike mlua), which is the whole point of the
+# migration. It is a dev-dependency only at this stage: L0 is proving the tooling and
+# API-registration pattern in isolation, NOT wiring rhai in as the production config
+# parser (that starts at L1). mlua remains the production dependency until L5.
+rhai.workspace = true
 
 [features]
 distro-defaults = []
