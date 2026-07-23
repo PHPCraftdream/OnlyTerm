@@ -305,8 +305,6 @@ fn terminate_with_error(err: anyhow::Error) -> ! {
     std::process::exit(1);
 }
 
-mod ossl;
-
 pub fn spawn_listener() -> anyhow::Result<()> {
     let config = configuration();
     for unix_dom in &config.unix_domains {
@@ -315,10 +313,6 @@ pub fn spawn_listener() -> anyhow::Result<()> {
         thread::spawn(move || {
             listener.run();
         });
-    }
-
-    for tls_server in &config.tls_servers {
-        ossl::spawn_tls_listener(tls_server)?;
     }
 
     Ok(())
