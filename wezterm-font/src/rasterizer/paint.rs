@@ -523,6 +523,111 @@ impl Painter {
         self.paint_solid(color);
         self.restore();
     }
+
+    /// Fills the current clip region with per-pixel colors computed by
+    /// `f`, mirroring `set_source(pattern)` + `paint()` for gradient
+    /// shapes that tiny-skia's built-in `Shader` enum cannot express
+    /// natively.
+    ///
+    /// `f` is called once per device-space pixel that is inside the
+    /// current surface, and receives that pixel's coordinates already
+    /// mapped back into the *user space* that is active right now (i.e.
+    /// the inverse of `current_transform()` has already been applied),
+    /// matching the coordinate system that gradient paint parameters
+    /// (e.g. `PaintOp::PaintRadialGradient`/`PaintSweepGradient`) are
+    /// expressed in. It must return a straight-alpha (non-premultiplied)
+    /// `Color`; this method takes care of premultiplying it and
+    /// compositing it with the existing pixel contents via
+    /// `BlendMode::SourceOver` (tiny-skia's, and cairo's, default
+    /// operator), attenuated by the current clip mask's per-pixel
+    /// coverage - the same compositing `paint_shader` performs for a
+    /// `Shader`.
+    ///
+    /// This exists for gradient shapes that tiny-skia 0.11 has no
+    /// native shader for: a general two-radius conical/radial gradient
+    /// (tiny-skia's `RadialGradient` only supports a zero-radius start
+    /// circle, but COLRv1 fonts may specify a non-zero `r0`) and a
+    /// sweep/conic gradient (tiny-skia has no sweep gradient shader at
+    /// all, unlike what was assumed when this migration was planned).
+    pub fn paint_with<F: FnMut(f32, f32) -> Color>(&mut self, mut f: F) {
+        match &mut self.surface {
+            Surface::DryRun { bbox } => {
+                let clip_bbox = self.clip_bbox.unwrap_or(BBox {
+                    x0: 0.,
+                    y0: 0.,
+                    x1: self.width as f32,
+                    y1: self.height as f32,
+                });
+                *bbox = bbox.union(&clip_bbox);
+            }
+            Surface::Real { .. } => {
+                let Some(inverse) = self.transform.invert() else {
+                    return;
+                };
+                let clip = self.clip.clone();
+                let width = self.width;
+                let height = self.height;
+                let Some(pixmap) = self.active_pixmap_mut() else {
+                    return;
+                };
+                for y in 0..height {
+                    for x in 0..width {
+                        let idx = (y * width + x) as usize;
+                        let mask_alpha = clip.as_ref().map(|m| m.data()[idx]).unwrap_or(255);
+                        if mask_alpha == 0 {
+                            continue;
+                        }
+
+                        let mut pt: tiny_skia::Point = (x as f32 + 0.5, y as f32 + 0.5).into();
+                        inverse.map_point(&mut pt);
+                        let color = f(pt.x, pt.y);
+                        let mut premul = color.premultiply().to_color_u8();
+                        if mask_alpha != 255 {
+                            premul = scale_premultiplied(premul, mask_alpha);
+                        }
+
+                        let dst = &mut pixmap.pixels_mut()[idx];
+                        *dst = composite_source_over(premul, *dst);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Scales a premultiplied color's channels (including alpha) by
+/// `coverage / 255`, as when applying a clip mask's per-pixel coverage
+/// to a source color before compositing.
+fn scale_premultiplied(
+    c: tiny_skia::PremultipliedColorU8,
+    coverage: u8,
+) -> tiny_skia::PremultipliedColorU8 {
+    let scale = |v: u8| -> u8 { ((v as u32 * coverage as u32 + 127) / 255) as u8 };
+    tiny_skia::PremultipliedColorU8::from_rgba(
+        scale(c.red()),
+        scale(c.green()),
+        scale(c.blue()),
+        scale(c.alpha()),
+    )
+    .expect("scaled channels stay <= scaled alpha")
+}
+
+/// Standard Porter-Duff "source over destination" compositing of two
+/// premultiplied colors, matching `BlendMode::SourceOver` (tiny-skia's
+/// default blend mode, and cairo's default `Operator::Over`).
+fn composite_source_over(
+    src: tiny_skia::PremultipliedColorU8,
+    dst: tiny_skia::PremultipliedColorU8,
+) -> tiny_skia::PremultipliedColorU8 {
+    let inv_sa = 255 - src.alpha() as u32;
+    let blend = |s: u8, d: u8| -> u8 { (s as u32 + (d as u32 * inv_sa + 127) / 255) as u8 };
+    tiny_skia::PremultipliedColorU8::from_rgba(
+        blend(src.red(), dst.red()),
+        blend(src.green(), dst.green()),
+        blend(src.blue(), dst.blue()),
+        blend(src.alpha(), dst.alpha()),
+    )
+    .expect("source-over of two premultiplied colors stays premultiplied")
 }
 
 fn intersect_bbox(a: BBox, b: BBox) -> BBox {
