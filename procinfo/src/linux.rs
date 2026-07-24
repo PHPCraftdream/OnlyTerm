@@ -104,20 +104,7 @@ impl LocalProcessInfo {
 
         let procs: Vec<_> = all_pids().into_iter().filter_map(info_for_pid).collect();
 
-        fn build_proc(
-            info: &LinuxStat,
-            procs: &[LinuxStat],
-            visited: &mut HashSet<u32>,
-        ) -> LocalProcessInfo {
-            let mut children = HashMap::new();
-
-            for kid in procs {
-                if kid.ppid == info.pid && !visited.contains(&(kid.pid as u32)) {
-                    visited.insert(kid.pid as u32);
-                    children.insert(kid.pid as u32, build_proc(kid, procs, visited));
-                }
-            }
-
+        fn make_leaf(info: &LinuxStat) -> LocalProcessInfo {
             let executable = exe_for_pid(info.pid);
             let name = info.name.clone();
             let argv = parse_cmdline(info.pid);
@@ -131,16 +118,16 @@ impl LocalProcessInfo {
                 argv,
                 start_time: info.starttime,
                 status: info.status.as_str().into(),
-                children,
+                children: HashMap::new(),
             }
         }
 
-        if let Some(info) = procs.iter().find(|info| info.pid == pid) {
-            let mut visited = HashSet::new();
-            visited.insert(pid as u32);
-            Some(build_proc(info, &procs, &mut visited))
-        } else {
-            None
-        }
+        crate::build_tree_iterative(
+            &procs,
+            pid as u32,
+            |info| info.pid as u32,
+            |info| info.ppid as u32,
+            make_leaf,
+        )
     }
 }
