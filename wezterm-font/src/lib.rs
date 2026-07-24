@@ -22,10 +22,7 @@ use wezterm_bidi::Direction;
 use wezterm_term::{CellAttributes, Intensity};
 use wezterm_toast_notification::ToastNotification;
 
-mod hbwrap;
-
 pub mod db;
-pub mod ftwrap;
 pub mod locator;
 pub mod parser;
 pub mod rasterizer;
