@@ -688,16 +688,31 @@ impl Default for FontLocatorSelection {
 
 #[derive(Debug, Clone, Copy, FromDynamic, ToDynamic, Default)]
 pub enum FontRasterizerSelection {
-    #[default]
     FreeType,
     Harfbuzz,
+    /// Pure-Rust rasterizer built on the `swash` crate. Handles ordinary
+    /// (non-COLR) glyph outlines itself and internally delegates
+    /// COLR/COLRv1/CBDT/sbix color glyphs to the `Harfbuzz`
+    /// (tiny-skia-backed) paint rasterizer -- see
+    /// `wezterm-font/src/rasterizer/swash.rs` module docs. Default as of
+    /// phase H3.5 of the freetype+harfbuzz -> rustybuzz+swash migration
+    /// (`docs/plans/2026-07-23-freetype-harfbuzz-migration.md`); `FreeType`
+    /// remains available as a fallback if you hit a rendering regression.
+    #[default]
+    Swash,
 }
 
 #[derive(Debug, Clone, Copy, FromDynamic, ToDynamic, Default)]
 pub enum FontShaperSelection {
     Allsorts,
-    #[default]
     Harfbuzz,
+    /// Pure-Rust shaper built on the `rustybuzz` crate (a Rust port of the
+    /// HarfBuzz shaping algorithm). Default as of phase H3.5 of the
+    /// freetype+harfbuzz -> rustybuzz+swash migration (see
+    /// `docs/plans/2026-07-23-freetype-harfbuzz-migration.md`); `Harfbuzz`
+    /// remains available as a fallback if you hit a shaping regression.
+    #[default]
+    RustyBuzz,
 }
 
 #[cfg(test)]

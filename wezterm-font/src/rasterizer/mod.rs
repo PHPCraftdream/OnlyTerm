@@ -11,12 +11,13 @@ pub mod colr;
 pub mod freetype;
 pub mod harfbuzz;
 pub mod paint;
-/// Parallel, not-yet-wired-up implementation of `FontRasterizer` for
-/// non-COLR glyphs on top of `swash::scale` (phase H3 of
-/// docs/plans/2026-07-23-freetype-harfbuzz-migration.md). See the module
-/// doc comment in `swash.rs` for scope/limitations. Nothing in
-/// `new_rasterizer` below constructs this yet -- wiring it in as a real
-/// `FontRasterizerSelection` option is a later phase.
+/// `FontRasterizer` for non-COLR glyphs on top of `swash::scale` (phase H3
+/// of docs/plans/2026-07-23-freetype-harfbuzz-migration.md), wired in as
+/// the default `FontRasterizerSelection::Swash` option as of phase H3.5.
+/// See the module doc comment in `swash.rs` for scope/limitations
+/// (notably: it internally delegates COLR/COLRv1/CBDT/sbix color glyphs to
+/// `harfbuzz::HarfbuzzRasterizer`, so `new_rasterizer` below does not need
+/// any special-casing for color glyphs).
 pub mod swash;
 
 /// A bitmap representation of a glyph.
@@ -51,6 +52,12 @@ pub fn new_rasterizer(
     pixel_geometry: config::DisplayPixelGeometry,
 ) -> anyhow::Result<Box<dyn FontRasterizer>> {
     match rasterizer {
+        // `SwashRasterizer` doesn't support LCD/subpixel targets yet (see
+        // its module doc comment); it always renders grayscale alpha
+        // masks, so `pixel_geometry` isn't needed here.
+        FontRasterizerSelection::Swash => {
+            Ok(Box::new(swash::SwashRasterizer::from_locator(handle)?))
+        }
         FontRasterizerSelection::FreeType => Ok(Box::new(
             freetype::FreeTypeRasterizer::from_locator(handle, pixel_geometry)?,
         )),

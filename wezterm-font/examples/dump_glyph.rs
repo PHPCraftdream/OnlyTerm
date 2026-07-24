@@ -94,6 +94,7 @@ fn selection_name(sel: config::FontRasterizerSelection) -> &'static str {
     match sel {
         config::FontRasterizerSelection::FreeType => "freetype",
         config::FontRasterizerSelection::Harfbuzz => "harfbuzz",
+        config::FontRasterizerSelection::Swash => "swash-via-selection",
     }
 }
 
