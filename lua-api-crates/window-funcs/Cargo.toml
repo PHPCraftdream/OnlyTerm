@@ -9,6 +9,5 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 config.workspace = true
-luahelper.workspace = true
 wezterm-dynamic.workspace = true
 window.workspace = true

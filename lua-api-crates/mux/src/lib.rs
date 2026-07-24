@@ -1,9 +1,5 @@
 use config::keyassignment::SpawnTabDomain;
-use config::lua::mlua::{self, Lua, UserData, UserDataMethods, Value as LuaValue};
-use config::lua::{get_or_create_module, get_or_create_sub_module};
 use config::impl_rhai_conversion_dynamic;
-use luahelper::impl_lua_conversion_dynamic;
-use mlua::UserDataRef;
 use mux::domain::{DomainId, SplitSource};
 use mux::pane::{Pane, PaneId};
 use mux::tab::{SplitDirection, SplitRequest, SplitSize, Tab, TabId};
@@ -25,8 +21,8 @@ pub use pane::MuxPane;
 pub use tab::MuxTab;
 pub use window::{set_gui_window_resolver_rhai, MuxWindow};
 
-fn get_mux() -> mlua::Result<Arc<Mux>> {
-    Mux::try_get().ok_or_else(|| mlua::Error::external("cannot get Mux!?"))
+fn get_mux() -> anyhow::Result<Arc<Mux>> {
+    Mux::try_get().ok_or_else(|| anyhow::anyhow!("cannot get Mux!?"))
 }
 
 /// rhai-flavored equivalent of `get_mux()` above, shared by every `_rhai`
@@ -35,148 +31,6 @@ fn get_mux() -> mlua::Result<Arc<Mux>> {
 /// file layout -- both names resolve to the same function).
 pub(crate) use domain::get_mux_rhai;
 
-pub fn register(lua: &Lua) -> anyhow::Result<()> {
-    let mux_mod = get_or_create_sub_module(lua, "mux")?;
-
-    mux_mod.set(
-        "get_active_workspace",
-        lua.create_function(|_, _: ()| {
-            let mux = get_mux()?;
-            Ok(mux.active_workspace())
-        })?,
-    )?;
-
-    mux_mod.set(
-        "get_workspace_names",
-        lua.create_function(|_, _: ()| {
-            let mux = get_mux()?;
-            Ok(mux.iter_workspaces())
-        })?,
-    )?;
-
-    mux_mod.set(
-        "set_active_workspace",
-        lua.create_function(|_, workspace: String| {
-            let mux = get_mux()?;
-            let workspaces = mux.iter_workspaces();
-            if workspaces.contains(&workspace) {
-                Ok(mux.set_active_workspace(&workspace))
-            } else {
-                Err(mlua::Error::external(format!(
-                    "{:?} is not an existing workspace",
-                    workspace
-                )))
-            }
-        })?,
-    )?;
-
-    mux_mod.set(
-        "rename_workspace",
-        lua.create_function(|_, (old_workspace, new_workspace): (String, String)| {
-            let mux = get_mux()?;
-            mux.rename_workspace(&old_workspace, &new_workspace);
-            Ok(())
-        })?,
-    )?;
-
-    mux_mod.set(
-        "get_window",
-        lua.create_function(|_, window_id: WindowId| {
-            let mux = get_mux()?;
-            let window = MuxWindow(window_id);
-            let _resolved = window.resolve(&mux)?;
-            Ok(window)
-        })?,
-    )?;
-
-    mux_mod.set(
-        "get_pane",
-        lua.create_function(|_, pane_id: PaneId| {
-            let mux = get_mux()?;
-            let pane = MuxPane(pane_id);
-            pane.resolve(&mux)?;
-            Ok(pane)
-        })?,
-    )?;
-
-    mux_mod.set(
-        "get_tab",
-        lua.create_function(|_, tab_id: TabId| {
-            let mux = get_mux()?;
-            let tab = MuxTab(tab_id);
-            tab.resolve(&mux)?;
-            Ok(tab)
-        })?,
-    )?;
-
-    mux_mod.set(
-        "spawn_window",
-        lua.create_async_function(|_, spawn: SpawnWindow| async move { spawn.spawn().await })?,
-    )?;
-
-    mux_mod.set(
-        "all_windows",
-        lua.create_function(|_, _: ()| {
-            let mux = get_mux()?;
-            Ok(mux
-                .iter_windows()
-                .into_iter()
-                .map(MuxWindow)
-                .collect::<Vec<MuxWindow>>())
-        })?,
-    )?;
-
-    mux_mod.set(
-        "get_domain",
-        lua.create_function(|_, domain: LuaValue| {
-            let mux = get_mux()?;
-            match domain {
-                LuaValue::Nil => Ok(Some(MuxDomain(mux.default_domain().domain_id()))),
-                LuaValue::String(s) => match s.to_str() {
-                    Ok(name) => Ok(mux
-                        .get_domain_by_name(name)
-                        .map(|dom| MuxDomain(dom.domain_id()))),
-                    Err(err) => Err(mlua::Error::external(format!(
-                        "invalid domain identifier passed to mux.get_domain: {err:#}"
-                    ))),
-                },
-                LuaValue::Integer(id) => match TryInto::<DomainId>::try_into(id) {
-                    Ok(id) => Ok(mux.get_domain(id).map(|dom| MuxDomain(dom.domain_id()))),
-                    Err(err) => Err(mlua::Error::external(format!(
-                        "invalid domain identifier passed to mux.get_domain: {err:#}"
-                    ))),
-                },
-                _ => Err(mlua::Error::external(
-                    "invalid domain identifier passed to mux.get_domain".to_string(),
-                )),
-            }
-        })?,
-    )?;
-
-    mux_mod.set(
-        "all_domains",
-        lua.create_function(|_, _: ()| {
-            let mux = get_mux()?;
-            Ok(mux
-                .iter_domains()
-                .into_iter()
-                .map(|dom| MuxDomain(dom.domain_id()))
-                .collect::<Vec<MuxDomain>>())
-        })?,
-    )?;
-
-    mux_mod.set(
-        "set_default_domain",
-        lua.create_function(|_, domain: UserDataRef<MuxDomain>| {
-            let mux = get_mux()?;
-            let domain = domain.resolve(&mux)?;
-            mux.set_default_domain(&domain);
-            Ok(())
-        })?,
-    )?;
-
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // L4d: rhai port of `register` above (see
@@ -433,7 +287,6 @@ enum HandySplitDirection {
     Top,
     Bottom,
 }
-impl_lua_conversion_dynamic!(HandySplitDirection);
 impl_rhai_conversion_dynamic!(HandySplitDirection);
 
 impl Default for HandySplitDirection {
@@ -453,7 +306,6 @@ struct SpawnWindow {
     #[dynamic(flatten)]
     cmd_builder: CommandBuilderFrag,
 }
-impl_lua_conversion_dynamic!(SpawnWindow);
 impl_rhai_conversion_dynamic!(SpawnWindow);
 
 fn spawn_tab_default_domain() -> SpawnTabDomain {
@@ -461,7 +313,7 @@ fn spawn_tab_default_domain() -> SpawnTabDomain {
 }
 
 impl SpawnWindow {
-    async fn spawn(self) -> mlua::Result<(MuxTab, MuxPane, MuxWindow)> {
+    async fn spawn(self) -> anyhow::Result<(MuxTab, MuxPane, MuxWindow)> {
         let mux = get_mux()?;
 
         let size = match (self.width, self.height) {
@@ -486,7 +338,7 @@ impl SpawnWindow {
                 self.position,
             )
             .await
-            .map_err(|e| mlua::Error::external(format!("{:#?}", e)))?;
+            .map_err(|e| anyhow::anyhow!(format!("{:#?}", e)))?;
 
         Ok((
             MuxTab(tab.tab_id()),
@@ -503,11 +355,10 @@ struct SpawnTab {
     #[dynamic(flatten)]
     cmd_builder: CommandBuilderFrag,
 }
-impl_lua_conversion_dynamic!(SpawnTab);
 impl_rhai_conversion_dynamic!(SpawnTab);
 
 impl SpawnTab {
-    async fn spawn(self, window: &MuxWindow) -> mlua::Result<(MuxTab, MuxPane, MuxWindow)> {
+    async fn spawn(self, window: &MuxWindow) -> anyhow::Result<(MuxTab, MuxPane, MuxWindow)> {
         let mux = get_mux()?;
         let size;
         let pane;
@@ -538,7 +389,7 @@ impl SpawnTab {
                 None, // optional gui window position
             )
             .await
-            .map_err(|e| mlua::Error::external(format!("{:#?}", e)))?;
+            .map_err(|e| anyhow::anyhow!(format!("{:#?}", e)))?;
 
         Ok((
             MuxTab(tab.tab_id()),
@@ -553,7 +404,6 @@ struct MuxTabInfo {
     pub index: usize,
     pub is_active: bool,
 }
-impl_lua_conversion_dynamic!(MuxTabInfo);
 impl_rhai_conversion_dynamic!(MuxTabInfo);
 
 #[derive(Clone, FromDynamic, ToDynamic)]
@@ -577,5 +427,4 @@ struct MuxPaneInfo {
     pub height: usize,
     pub pixel_height: usize,
 }
-impl_lua_conversion_dynamic!(MuxPaneInfo);
 impl_rhai_conversion_dynamic!(MuxPaneInfo);

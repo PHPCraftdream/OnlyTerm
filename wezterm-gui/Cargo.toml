@@ -60,9 +60,7 @@ lazy_static.workspace = true
 lfucache.workspace = true
 libc.workspace = true
 log.workspace = true
-luahelper.workspace = true
 metrics.workspace = true
-mlua = {workspace=true, features=["send", "serialize"]}
 mux-lua.workspace = true
 mux.workspace = true
 nucleo-matcher.workspace = true
