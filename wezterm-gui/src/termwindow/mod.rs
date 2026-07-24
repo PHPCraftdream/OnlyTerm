@@ -39,7 +39,6 @@ use config::{
     GeometryOrigin, GuiPosition, TermConfig, WindowCloseConfirmation,
 };
 use lfucache::*;
-use mlua::{LuaSerdeExt, UserData, UserDataFields};
 use mux::pane::{
     CachePolicy, CloseReason, Pane, PaneId, Pattern as MuxPattern, PerformAssignmentResult,
 };
@@ -218,43 +217,6 @@ pub struct TabInformation {
     pub tab_title: String,
 }
 
-impl UserData for TabInformation {
-    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
-        fields.add_field_method_get("tab_id", |_, this| Ok(this.tab_id));
-        fields.add_field_method_get("tab_index", |_, this| Ok(this.tab_index));
-        fields.add_field_method_get("is_active", |_, this| Ok(this.is_active));
-        fields.add_field_method_get("is_last_active", |_, this| Ok(this.is_last_active));
-        fields.add_field_method_get("active_pane", |_, this| {
-            if let Some(pane) = &this.active_pane {
-                Ok(Some(pane.clone()))
-            } else {
-                Ok(None)
-            }
-        });
-        fields.add_field_method_get("panes", |_, this| {
-            let mux = Mux::get();
-            let mut panes = vec![];
-            if let Some(tab) = mux.get_tab(this.tab_id) {
-                panes = tab
-                    .iter_panes()
-                    .iter()
-                    .map(TermWindow::pos_pane_to_pane_info)
-                    .collect();
-            }
-            Ok(panes)
-        });
-        fields.add_field_method_get("window_id", |_, this| Ok(this.window_id));
-        fields.add_field_method_get("tab_title", |_, this| Ok(this.tab_title.clone()));
-        fields.add_field_method_get("window_title", |_, this| {
-            let mux = Mux::get();
-            let window = mux.get_window(this.window_id).ok_or_else(|| {
-                mlua::Error::external(format!("window {} not found", this.window_id))
-            })?;
-            Ok(window.get_title().to_string())
-        });
-    }
-}
-
 /// L4.6 rhai binding for `TabInformation`, mirroring the `impl UserData` block
 /// above field-by-field. Every field here is either a plain stored value or a
 /// synchronous `Mux::get()`/`Mux::try_get()` lookup -- unlike `GuiWin` (see the
@@ -320,71 +282,6 @@ pub struct PaneInformation {
     pub title: String,
     pub user_vars: HashMap<String, String>,
     pub progress: Progress,
-}
-
-impl UserData for PaneInformation {
-    fn add_fields<'lua, F: UserDataFields<'lua, Self>>(fields: &mut F) {
-        fields.add_field_method_get("pane_id", |_, this| Ok(this.pane_id));
-        fields.add_field_method_get("pane_index", |_, this| Ok(this.pane_index));
-        fields.add_field_method_get("is_active", |_, this| Ok(this.is_active));
-        fields.add_field_method_get("is_zoomed", |_, this| Ok(this.is_zoomed));
-        fields.add_field_method_get("has_unseen_output", |_, this| Ok(this.has_unseen_output));
-        fields.add_field_method_get("left", |_, this| Ok(this.left));
-        fields.add_field_method_get("top", |_, this| Ok(this.top));
-        fields.add_field_method_get("width", |_, this| Ok(this.width));
-        fields.add_field_method_get("height", |_, this| Ok(this.height));
-        fields.add_field_method_get("pixel_width", |_, this| Ok(this.pixel_width));
-        fields.add_field_method_get("pixel_height", |_, this| Ok(this.pixel_height));
-        fields.add_field_method_get("progress", |lua, this| lua.to_value(&this.progress));
-        fields.add_field_method_get("title", |_, this| Ok(this.title.clone()));
-        fields.add_field_method_get("user_vars", |_, this| Ok(this.user_vars.clone()));
-        fields.add_field_method_get("foreground_process_name", |_, this| {
-            let mut name = None;
-            if let Some(mux) = Mux::try_get() {
-                if let Some(pane) = mux.get_pane(this.pane_id) {
-                    name = pane.get_foreground_process_name(CachePolicy::AllowStale);
-                }
-            }
-            match name {
-                Some(name) => Ok(name),
-                None => Ok("".to_string()),
-            }
-        });
-        fields.add_field_method_get("tty_name", |_, this| {
-            let mut name = None;
-            if let Some(mux) = Mux::try_get() {
-                if let Some(pane) = mux.get_pane(this.pane_id) {
-                    name = pane.tty_name();
-                }
-            }
-            Ok(name)
-        });
-        fields.add_field_method_get("current_working_dir", |_, this| {
-            if let Some(mux) = Mux::try_get() {
-                if let Some(pane) = mux.get_pane(this.pane_id) {
-                    return Ok(pane
-                        .get_current_working_dir(CachePolicy::AllowStale)
-                        .map(|url| url_funcs::Url { url }));
-                }
-            }
-            Ok(None)
-        });
-        fields.add_field_method_get("domain_name", |_, this| {
-            let mut name = None;
-            if let Some(mux) = Mux::try_get() {
-                if let Some(pane) = mux.get_pane(this.pane_id) {
-                    let domain_id = pane.domain_id();
-                    name = mux
-                        .get_domain(domain_id)
-                        .map(|dom| dom.domain_name().to_string());
-                }
-            }
-            match name {
-                Some(name) => Ok(name),
-                None => Ok("".to_string()),
-            }
-        });
-    }
 }
 
 /// L4.6 rhai binding for `PaneInformation`, mirroring the `impl UserData` block

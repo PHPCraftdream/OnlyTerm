@@ -1,5 +1,3 @@
-use config::lua::get_or_create_sub_module;
-use config::lua::mlua::{self, Lua, Value};
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -50,31 +48,6 @@ fn compute_repo_dir(url: &str) -> String {
 /// `require`s it via Lua's own module resolver. Git-URL installation
 /// (`https://...`, `file://...` treated as a git remote, etc.) is no longer
 /// supported; see `GIT_PLUGIN_REMOVED_MESSAGE`.
-fn require_plugin(lua: &Lua, path: String) -> anyhow::Result<Value<'_>> {
-    if looks_like_git_url(&path) {
-        anyhow::bail!(GIT_PLUGIN_REMOVED_MESSAGE);
-    }
-
-    let dir = Path::new(&path);
-    if !dir.is_dir() {
-        anyhow::bail!(
-            "{path:?} is not a local directory. {}",
-            GIT_PLUGIN_REMOVED_MESSAGE
-        );
-    }
-
-    let component = compute_repo_dir(&path);
-
-    let require: mlua::Function = lua.globals().get("require")?;
-    match require.call::<_, Value>(component.clone()) {
-        Ok(value) => Ok(value),
-        Err(err) => {
-            log::error!("Failed to require local plugin at {path:?} (component {component}): {err:#}");
-            Err(err.into())
-        }
-    }
-}
-
 /// Heuristic used only to give a better error message: does `path` look like
 /// something that used to be accepted as a git remote (a URL scheme, or a
 /// scp-like `host:path` git spec) rather than a plain local filesystem path?
@@ -95,32 +68,6 @@ fn looks_like_git_url(path: &str) -> bool {
 
 fn list_plugins() -> anyhow::Result<()> {
     anyhow::bail!(GIT_PLUGIN_REMOVED_MESSAGE)
-}
-
-pub fn register(lua: &Lua) -> anyhow::Result<()> {
-    let plugin_mod = get_or_create_sub_module(lua, "plugin")?;
-    plugin_mod.set(
-        "require",
-        lua.create_function(|lua: &Lua, repo_spec: String| {
-            require_plugin(lua, repo_spec).map_err(|e| mlua::Error::external(format!("{e:#}")))
-        })?,
-    )?;
-
-    plugin_mod.set(
-        "list",
-        lua.create_function(|_, _: ()| {
-            list_plugins().map_err(|e| mlua::Error::external(format!("{e:#}")))
-        })?,
-    )?;
-
-    plugin_mod.set(
-        "update_all",
-        lua.create_function(|_, _: ()| {
-            list_plugins().map_err(|e| mlua::Error::external(format!("{e:#}")))?;
-            Ok(())
-        })?,
-    )?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

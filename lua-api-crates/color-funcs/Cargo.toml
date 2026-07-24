@@ -15,7 +15,6 @@ image.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 lru.workspace = true
-luahelper.workspace = true
 plist.workspace = true
 serde = {workspace=true, features=["derive"]}
 serde_json.workspace = true

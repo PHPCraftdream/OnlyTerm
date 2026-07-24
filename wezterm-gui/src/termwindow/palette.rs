@@ -11,7 +11,6 @@ use crate::utilsprites::RenderMetrics;
 use config::keyassignment::KeyAssignment;
 use config::Dimension;
 use frecency::Frecency;
-use luahelper::impl_lua_conversion_dynamic;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -86,7 +85,6 @@ pub struct UserPaletteEntry {
     pub action: KeyAssignment,
     pub icon: Option<String>,
 }
-impl_lua_conversion_dynamic!(UserPaletteEntry);
 
 fn build_commands(
     gui_window: GuiWin,

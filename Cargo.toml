@@ -125,14 +125,12 @@ line_drawing = "0.8"
 log = "0.4"
 logging = { path = "lua-api-crates/logging" }
 lru = "0.16"
-luahelper = { path = "luahelper" }
 maplit = "1.0"
 memmap2 = "0.9"
 memmem = "0.1"
 metrics = "0.23"
 miniz_oxide = "0.7"
 mio = "0.8"
-mlua = "0.9"
 mux = { path = "mux" }
 mux-lua = { path = "lua-api-crates/mux" }
 names = { version = "0.12", default-features = false }

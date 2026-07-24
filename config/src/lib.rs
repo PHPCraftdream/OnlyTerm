@@ -30,7 +30,6 @@ mod font;
 mod frontend;
 pub mod keyassignment;
 mod keys;
-pub mod lua;
 pub mod meta;
 pub mod rhai_bridge;
 pub mod rhai_engine;
@@ -784,8 +783,8 @@ impl Configuration {
     /// Reload the configuration
     pub fn reload(&self) {
         // Deliberately computed *before* taking the lock below: `Config::load()`
-        // runs arbitrary config-setup code (via `make_lua_context`'s
-        // `SETUP_FUNCS`) that can call back into this `Configuration` (e.g.
+        // runs arbitrary config-setup code (via rhai's `RHAI_SETUP_FUNCS`)
+        // that can call back into this `Configuration` (e.g.
         // `time-funcs::register` -> `subscribe_to_config_reload` -> `subscribe`,
         // below) to lock the same mutex. Since `std::sync::Mutex` is not
         // reentrant, doing the load while holding the lock would deadlock the

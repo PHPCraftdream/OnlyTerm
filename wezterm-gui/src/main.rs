@@ -1125,12 +1125,6 @@ fn run() -> anyhow::Result<()> {
     };
 
     env_bootstrap::bootstrap();
-    // window_funcs is not set up by env_bootstrap as window_funcs is
-    // GUI environment specific and env_bootstrap is used to setup the
-    // headless mux server.
-    config::lua::add_context_setup_func(window_funcs::register);
-    config::lua::add_context_setup_func(crate::scripting::register);
-    config::lua::add_context_setup_func(crate::stats::register);
     // L4.6: register wezterm-gui's rhai-side types (`GuiWin` via
     // `crate::scripting::register_rhai`, `TabInformation`/`PaneInformation` via
     // `crate::termwindow::register_rhai`) so the runtime event-callback bridge

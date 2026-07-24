@@ -10,7 +10,6 @@ publish = false
 anyhow.workspace = true
 config.workspace = true
 libc.workspace = true
-luahelper.workspace = true
 procinfo.workspace = true
 wezterm-dynamic.workspace = true
 # rhai port of `register` (L4b, see

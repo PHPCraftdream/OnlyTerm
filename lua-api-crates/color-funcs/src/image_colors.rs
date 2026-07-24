@@ -13,12 +13,10 @@
 //! evaluation of the config file.
 use crate::ColorWrap;
 use config::impl_rhai_conversion_dynamic;
-use config::lua::mlua::{self, Lua};
 use config::SrgbaTuple;
 use deltae::LabValue;
 use image::Pixel;
 use lru::LruCache;
-use luahelper::impl_lua_conversion_dynamic;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
@@ -44,7 +42,6 @@ pub struct ExtractColorParams {
     #[dynamic(default = "default_min_contrast")]
     min_contrast: f32,
 }
-impl_lua_conversion_dynamic!(ExtractColorParams);
 impl_rhai_conversion_dynamic!(ExtractColorParams);
 
 impl PartialEq for ExtractColorParams {
@@ -178,13 +175,6 @@ fn extract_distinct_colors_lab(
             result.push(*candidate);
         }
     }
-}
-
-pub fn extract_colors_from_image<'lua>(
-    _: &'lua Lua,
-    (file_name, params): (String, Option<ExtractColorParams>),
-) -> mlua::Result<Vec<ColorWrap>> {
-    extract_colors_from_image_impl(file_name, params).map_err(mlua::Error::external)
 }
 
 /// Engine-agnostic implementation shared by the mlua binding above and the

@@ -2,7 +2,6 @@ use crate::default_true;
 use crate::impl_rhai_conversion_dynamic;
 use crate::keys::KeyNoAction;
 use crate::window::WindowLevel;
-use luahelper::impl_lua_conversion_dynamic;
 use ordered_float::NotNan;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
@@ -200,7 +199,6 @@ pub struct SpawnCommand {
 
     pub position: Option<crate::GuiPosition>,
 }
-impl_lua_conversion_dynamic!(SpawnCommand);
 // L4.6: `SpawnCommand` round-trips through the rhai event-callback bridge (see
 // `config/src/rhai_bridge.rs`) as both an argument (`gui-startup`'s `SpawnCommand`)
 // and a return value (an `ExecDomain`'s `fixup_command` handler is expected to
@@ -320,7 +318,6 @@ pub enum ClipboardCopyDestination {
     PrimarySelection,
     ClipboardAndPrimarySelection,
 }
-impl_lua_conversion_dynamic!(ClipboardCopyDestination);
 
 impl Default for ClipboardCopyDestination {
     fn default() -> Self {
@@ -654,7 +651,6 @@ pub enum KeyAssignment {
     InputSelector(InputSelector),
     Confirmation(Confirmation),
 }
-impl_lua_conversion_dynamic!(KeyAssignment);
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct SplitPane {
