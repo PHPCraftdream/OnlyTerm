@@ -285,19 +285,22 @@ async fn connect_to_auto_connect_domains() -> anyhow::Result<()> {
 }
 
 async fn trigger_gui_startup(
-    lua: Option<Rc<mlua::Lua>>,
+    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
     spawn: Option<SpawnCommand>,
 ) -> anyhow::Result<()> {
-    if let Some(lua) = lua {
-        let args = lua.pack_multi(spawn)?;
-        config::lua::emit_event(&lua, ("gui-startup".to_string(), args)).await?;
+    if let Some(state) = state {
+        let arg: rhai::Dynamic = match spawn {
+            Some(spawn) => spawn.into(),
+            None => rhai::Dynamic::UNIT,
+        };
+        config::rhai_bridge::emit_event(&state, "gui-startup", vec![arg]).await?;
     }
     Ok(())
 }
 
 async fn trigger_and_log_gui_startup(spawn_command: Option<SpawnCommand>) {
     if let Err(err) =
-        config::with_lua_config_on_main_thread(move |lua| trigger_gui_startup(lua, spawn_command))
+        config::with_rhai_config_on_main_thread(move |state| trigger_gui_startup(state, spawn_command))
             .await
     {
         let message = format!("while processing gui-startup event: {:#}", err);
@@ -306,17 +309,20 @@ async fn trigger_and_log_gui_startup(spawn_command: Option<SpawnCommand>) {
     }
 }
 
-async fn trigger_gui_attached(lua: Option<Rc<mlua::Lua>>, domain: MuxDomain) -> anyhow::Result<()> {
-    if let Some(lua) = lua {
-        let args = lua.pack_multi(domain)?;
-        config::lua::emit_event(&lua, ("gui-attached".to_string(), args)).await?;
+async fn trigger_gui_attached(
+    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
+    domain: MuxDomain,
+) -> anyhow::Result<()> {
+    if let Some(state) = state {
+        let arg = rhai::Dynamic::from(domain);
+        config::rhai_bridge::emit_event(&state, "gui-attached", vec![arg]).await?;
     }
     Ok(())
 }
 
 async fn trigger_and_log_gui_attached(domain: MuxDomain) {
     if let Err(err) =
-        config::with_lua_config_on_main_thread(move |lua| trigger_gui_attached(lua, domain)).await
+        config::with_rhai_config_on_main_thread(move |state| trigger_gui_attached(state, domain)).await
     {
         let message = format!("while processing gui-attached event: {:#}", err);
         log::error!("{}", message);
@@ -1125,6 +1131,12 @@ fn run() -> anyhow::Result<()> {
     config::lua::add_context_setup_func(window_funcs::register);
     config::lua::add_context_setup_func(crate::scripting::register);
     config::lua::add_context_setup_func(crate::stats::register);
+    // L4.6: register wezterm-gui's rhai-side types (`GuiWin` via
+    // `crate::scripting::register_rhai`, `TabInformation`/`PaneInformation` via
+    // `crate::termwindow::register_rhai`) so the runtime event-callback bridge
+    // (`wezterm.on`/`emit`, see `config::rhai_bridge`) has them available.
+    config::rhai_engine::add_rhai_setup_func(crate::scripting::register_rhai);
+    config::rhai_engine::add_rhai_setup_func(crate::termwindow::register_rhai);
 
     stats::Stats::init()?;
     let _saver = umask::UmaskSaver::new();

@@ -4,7 +4,6 @@ use config::lua::{
     emit_event, get_or_create_module, get_or_create_sub_module, is_event_emission, wrap_callback,
 };
 use config::ConfigSubscription;
-use std::rc::Rc;
 use std::sync::Mutex;
 
 lazy_static::lazy_static! {
@@ -15,30 +14,33 @@ lazy_static::lazy_static! {
 /// config being reloaded.
 /// It spawns a task for each of the timers that have been configured
 /// by the user via `wezterm.time.call_after`.
-fn schedule_all(lua: Option<Rc<mlua::Lua>>) -> mlua::Result<()> {
-    if let Some(lua) = lua {
-        let scheduled_events: Vec<UserDataRef<ScheduledEvent>> =
-            lua.named_registry_value(SCHEDULED_EVENTS)?;
-        lua.set_named_registry_value(SCHEDULED_EVENTS, Vec::<ScheduledEvent>::new())?;
-        let generation = config::configuration().generation();
-        for event in scheduled_events {
-            event.clone().schedule(generation);
-        }
-    }
-    Ok(())
+///
+/// L4.6 note: this mechanism (`wezterm.time.call_after`, and `wrap_callback`
+/// registering into the companion mlua context's `SCHEDULED_EVENTS`
+/// registry) has been non-functional in production since L4.5 switched
+/// config-loading to rhai: the companion `mlua::Lua` context that used to
+/// live behind `config::with_lua_config_on_main_thread` was built via
+/// `crate::lua::make_lua_context` but never executed the user's actual
+/// (now `.rhai`) config script text -- see `RhaiEventScript`'s doc comment
+/// in `config/src/rhai_engine.rs` -- so a script's `wezterm.time.call_after(...)`
+/// call could never have reached this registry to begin with. L4.6 removes
+/// the companion mlua context from the config-reload pipeline entirely (see
+/// `config::with_rhai_config_on_main_thread`, its replacement for the
+/// `wezterm.on`/`emit` bridge), which means there is no longer *any*
+/// `Rc<mlua::Lua>` for this function to look one up from, making that
+/// pre-existing dead path explicit rather than silently retrying a lookup
+/// that could only ever return `None`. Porting `wezterm.time.call_after` to
+/// a working rhai equivalent (this crate has no `register_rhai` yet, unlike
+/// most of its L4a-e siblings) is tracked as follow-up work, not attempted
+/// here.
+fn schedule_all() {
+    // Intentionally a no-op now; see the doc comment above.
 }
 
 /// Helper to schedule !Send futures to run with access to the lua
 /// config on the main thread
 fn schedule_trampoline() {
-    promise::spawn::spawn(async move {
-        config::with_lua_config_on_main_thread(|lua| async move {
-            schedule_all(lua)?;
-            Ok(())
-        })
-        .await
-    })
-    .detach();
+    schedule_all();
 }
 
 /// Called by the config subsystem when the config is reloaded.
@@ -79,20 +81,23 @@ impl ScheduledEvent {
     /// That means that for large intervals we may keep more memory
     /// occupied, but we won't run the callback twice for the first
     /// reload, or 4 times for the second and so on.
-    fn schedule(self, generation: usize) {
-        let event = self;
-        promise::spawn::spawn(async move {
-            config::with_lua_config_on_main_thread(move |lua| async move {
-                if let Some(lua) = lua {
-                    event.run(&lua, generation).await?;
-                }
-                Ok(())
-            })
-            .await
-        })
-        .detach();
-    }
+    ///
+    /// L4.6 note: this used to fetch a fresh `Rc<mlua::Lua>` from
+    /// `config::with_lua_config_on_main_thread` once `duration` had
+    /// elapsed (the whole reason for the indirection: the `&'lua Lua`
+    /// available inside `call_after`'s `create_function` closure is only
+    /// valid for that single synchronous call, long gone by the time this
+    /// timer fires). That companion mlua context no longer exists in the
+    /// config-reload pipeline (see `RhaiEventScript`'s doc comment in
+    /// `config/src/rhai_engine.rs`), so there is nothing left to fetch here.
+    /// As documented on `schedule_all` above, `wezterm.time.call_after`
+    /// registered from an actual (now `.rhai`) config script was already
+    /// unreachable before this change; this makes the timer itself an
+    /// explicit no-op rather than a call into a function that no longer
+    /// exists.
+    fn schedule(self, _generation: usize) {}
 
+    #[allow(dead_code)]
     async fn run(self, lua: &Lua, generation: usize) -> mlua::Result<()> {
         let duration = std::time::Duration::from_secs_f64(self.interval_seconds);
         smol::Timer::after(duration).await;

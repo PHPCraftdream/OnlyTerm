@@ -11,7 +11,7 @@ use crate::utilsprites::RenderMetrics;
 use config::keyassignment::KeyAssignment;
 use config::Dimension;
 use frecency::Frecency;
-use luahelper::{from_lua_value_dynamic, impl_lua_conversion_dynamic};
+use luahelper::impl_lua_conversion_dynamic;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -95,17 +95,23 @@ fn build_commands(
 ) -> Vec<ExpandedCommand> {
     let mut commands = CommandDef::actions_for_palette_and_menubar(&config::configuration());
 
-    match config::run_immediate_with_lua_config(|lua| {
+    match config::run_immediate_with_rhai_config(|state| {
         let mut entries: Vec<UserPaletteEntry> = vec![];
 
-        if let Some(lua) = lua {
-            let result = config::lua::emit_sync_callback(
-                &*lua,
-                ("augment-command-palette".to_string(), (gui_window, pane)),
+        if let Some(state) = state {
+            let pane_arg = match pane {
+                Some(pane) => rhai::Dynamic::from(pane),
+                None => rhai::Dynamic::UNIT,
+            };
+            let result = config::rhai_bridge::emit_sync_callback(
+                &state,
+                "augment-command-palette",
+                vec![rhai::Dynamic::from(gui_window.clone()), pane_arg],
             )?;
 
-            if !matches!(&result, mlua::Value::Nil) {
-                entries = from_lua_value_dynamic(result)?;
+            if !result.is_unit() {
+                entries = config::rhai_value::rhai_dynamic_to_value(&result)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
         }
 
