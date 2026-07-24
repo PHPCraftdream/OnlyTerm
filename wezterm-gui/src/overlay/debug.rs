@@ -136,16 +136,16 @@ pub fn show_debug_overlay(
 ) -> anyhow::Result<()> {
     term.no_grab_mouse_in_raw_mode();
 
-    let config::LoadedConfig { lua, .. } = config::Config::load();
-    // Try hard to fall back to some kind of working lua context even
-    // if the user's config file is temporarily out of whack
-    let lua = match lua {
-        Some(lua) => lua,
-        None => match config::Config::try_default() {
-            Ok(config::LoadedConfig { lua: Some(lua), .. }) => lua,
-            _ => config::lua::make_lua_context(std::path::Path::new(""))?,
-        },
-    };
+    // L4.6: `Config::load()`/`Config::try_default()` no longer carry a
+    // companion `mlua::Lua` context (config-loading is pure rhai now; the
+    // runtime `wezterm.on`/`emit` bridge those used to also host has moved to
+    // `config::rhai_bridge`, see `RhaiEventScript`'s doc comment in
+    // `config/src/rhai_engine.rs`). This debug REPL is a standalone,
+    // Lua-expression-evaluating tool independent of that bridge, so it just
+    // builds its own fresh Lua context directly, exactly like the
+    // `make_lua_context` fallback arm below used to be reached only when no
+    // config-provided context was available -- now it's the only path.
+    let lua = config::lua::make_lua_context(std::path::Path::new(""))?;
 
     lua.load("wezterm = require 'wezterm'").exec()?;
     lua.globals().set("window", gui_win)?;
