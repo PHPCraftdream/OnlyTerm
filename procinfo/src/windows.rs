@@ -361,22 +361,7 @@ impl LocalProcessInfo {
         let procs = Snapshot::entries();
         log::trace!("Got snapshot");
 
-        fn build_proc(
-            info: &PROCESSENTRY32W,
-            procs: &[PROCESSENTRY32W],
-            visited: &mut HashSet<u32>,
-        ) -> LocalProcessInfo {
-            let mut children = HashMap::new();
-
-            for kid in procs {
-                if kid.th32ParentProcessID == info.th32ProcessID
-                    && !visited.contains(&kid.th32ProcessID)
-                {
-                    visited.insert(kid.th32ProcessID);
-                    children.insert(kid.th32ProcessID, build_proc(kid, procs, visited));
-                }
-            }
-
+        fn make_leaf(info: &PROCESSENTRY32W) -> LocalProcessInfo {
             let mut executable = None;
             let mut start_time = 0;
             let mut cwd = PathBuf::new();
@@ -412,17 +397,17 @@ impl LocalProcessInfo {
                 argv,
                 start_time,
                 status: LocalProcessStatus::Run,
-                children,
+                children: HashMap::new(),
                 console,
             }
         }
 
-        if let Some(info) = procs.iter().find(|info| info.th32ProcessID == pid) {
-            let mut visited = HashSet::new();
-            visited.insert(pid);
-            Some(build_proc(info, &procs, &mut visited))
-        } else {
-            None
-        }
+        crate::build_tree_iterative(
+            &procs,
+            pid,
+            |info| info.th32ProcessID,
+            |info| info.th32ParentProcessID,
+            make_leaf,
+        )
     }
 }
