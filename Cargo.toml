@@ -171,12 +171,12 @@ ratelim= { path = "ratelim" }
 raw-window-handle = "0.6"
 rayon = "1.10"
 rcgen = "0.12"
+redb = "2"
 regex = "1"
 reqwest = "0.12"
 resize = "0.5"
 rhai = "1.25"
 rstest = "0.21"
-rusqlite = "0.32"
 serde = {version="1.0", default-features=false, features = ["derive"]}
 serde-funcs = { path = "lua-api-crates/serde-funcs" }
 serde_json = "1.0"
@@ -195,7 +195,6 @@ smol = "2.0"
 socket2 = "0.5"
 spa = "0.3.1"
 spawn-funcs = { path = "lua-api-crates/spawn-funcs" }
-sqlite-cache = "0.1.4"
 starship-battery = "0.10"
 strsim = "0.11"
 syn = "1.0"
