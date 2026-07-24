@@ -2,7 +2,6 @@ use crate::scheme::Scheme;
 use anyhow::Context;
 use config::{ColorSchemeFile, ColorSchemeMetaData};
 use serde::Deserialize;
-use sqlite_cache::Cache;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::Duration;
@@ -10,13 +9,14 @@ use tar::Archive;
 use tempfile::NamedTempFile;
 
 mod base16;
+mod cache;
 mod gogh;
 mod iterm2;
 mod scheme;
 mod sexy;
 
 lazy_static::lazy_static! {
-    static ref CACHE: Cache = make_cache();
+    static ref CACHE: cache::Cache = make_cache();
 }
 
 fn apply_nightly_version(metadata: &mut ColorSchemeMetaData) {
@@ -25,10 +25,9 @@ fn apply_nightly_version(metadata: &mut ColorSchemeMetaData) {
         .replace("nightly builds only".to_string());
 }
 
-fn make_cache() -> Cache {
-    let file_name = "/tmp/wezterm-sync-color-schemes.sqlite";
-    let connection = sqlite_cache::rusqlite::Connection::open(&file_name).unwrap();
-    Cache::new(sqlite_cache::CacheConfig::default(), connection).unwrap()
+fn make_cache() -> cache::Cache {
+    let file_name = "/tmp/wezterm-sync-color-schemes.redb";
+    cache::Cache::open(file_name).expect("failed to open redb cache")
 }
 
 pub async fn fetch_url_as_str(url: &str) -> anyhow::Result<String> {

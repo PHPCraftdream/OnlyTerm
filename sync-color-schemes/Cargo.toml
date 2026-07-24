@@ -15,12 +15,11 @@ futures.workspace = true
 lazy_static.workspace = true
 libflate.workspace = true
 log.workspace = true
+redb.workspace = true
 reqwest.workspace = true
-rusqlite = {workspace=true, features=["bundled", "blob"]}
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-sqlite-cache.workspace = true
 tar.workspace = true
 tempfile.workspace = true
 tokio = { workspace=true, features = ["rt-multi-thread", "sync", "macros"] }
