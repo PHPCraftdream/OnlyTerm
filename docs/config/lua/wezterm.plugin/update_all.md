@@ -2,13 +2,11 @@
 
 {{since('20230320-124340-559cb7b0')}}
 
-Attempt to fast-forward or `pull --rebase` each of the repos in the plugin directory.
+!!! Warning
 
-!!! Note
-
-    The configuration is **not** reloaded afterwards; the user will need to do that themselves.
-
-!!! Tip
-
-    Run the [`wezterm.reload_configuration()`](../wezterm/reload_configuration.md) function to reload the configuration.
+    Git-based plugin installation has been removed from wezterm. There is no
+    longer a managed clone directory for `update_all()` to fetch/fast-forward,
+    so calling this function now raises an error explaining the removal.
+    Update a plugin by updating its files in its local directory yourself
+    (for example, running `git pull` there), then reload your configuration.
 

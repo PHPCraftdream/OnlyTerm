@@ -9,12 +9,11 @@ publish = false
 [dependencies]
 anyhow.workspace = true
 config.workspace = true
-git2.workspace = true
 log.workspace = true
-luahelper.workspace = true
 # rhai port of `register` (L4e, see
 # docs/plans/2026-07-23-lua-rhai-migration.md): `src/lib.rs::register_rhai`
 # registers a rhai-side equivalent of `register(lua: &Lua)`'s plugin loader.
 rhai.workspace = true
+
+[dev-dependencies]
 tempfile.workspace = true
-wezterm-dynamic.workspace = true
