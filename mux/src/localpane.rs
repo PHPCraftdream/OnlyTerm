@@ -28,7 +28,7 @@ use termwiz::escape::{Action, DeviceControlMode};
 use termwiz::input::KeyboardEncoding;
 use termwiz::surface::{Line, SequenceNo};
 use url::Url;
-use wezterm_dynamic::Value;
+use wezterm_dynamic::{ToDynamic, Value};
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
     Alert, AlertHandler, Clipboard, DownloadHandler, KeyCode, KeyModifiers, MouseEvent, Progress,
@@ -558,19 +558,21 @@ impl Pane for LocalPane {
                 info.root
             );
 
-            let hook_result = config::run_immediate_with_lua_config(|lua| {
-                let lua = match lua {
-                    Some(lua) => lua,
+            let hook_result = config::run_immediate_with_rhai_config(|state| {
+                let state = match state {
+                    Some(state) => state,
                     None => return Ok(None),
                 };
-                let v = config::lua::emit_sync_callback(
-                    &*lua,
-                    ("mux-is-process-stateful".to_string(), (info.root.clone())),
+                let arg = config::rhai_value::dynamic_to_rhai_dynamic(&info.root.to_dynamic());
+                let v = config::rhai_bridge::emit_sync_callback(
+                    &state,
+                    "mux-is-process-stateful",
+                    vec![arg],
                 )?;
-                match v {
-                    mlua::Value::Nil => Ok(None),
-                    mlua::Value::Boolean(v) => Ok(Some(v)),
-                    _ => Ok(None),
+                if v.is_unit() {
+                    Ok(None)
+                } else {
+                    Ok(v.as_bool().ok())
                 }
             });
 

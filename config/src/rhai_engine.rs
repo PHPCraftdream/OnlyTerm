@@ -69,6 +69,7 @@
 //!   [`install_module_resolver`] below.
 
 use crate::keyassignment::KeyAssignment;
+use anyhow::Context;
 use rhai::{Dynamic, Engine, EvalAltResult, FnPtr, Scope, AST};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -113,6 +114,18 @@ impl EventRegistry {
             .get(name)
             .map(|v| v.len())
             .unwrap_or(0)
+    }
+
+    /// Returns the first registered handler for `name`, if any. Used by
+    /// `config::rhai::emit_sync_callback`, the rhai analogue of the Lua
+    /// `emit_sync_callback`'s "only ever calls the first registered function"
+    /// behavior (see that function's doc comment in `config/src/lua.rs`).
+    pub fn first_handler(&self, name: &str) -> Option<FnPtr> {
+        self.inner
+            .lock()
+            .unwrap()
+            .get(name)
+            .and_then(|v| v.first().cloned())
     }
 
     /// Emit `name`, calling each registered handler in registration order with
@@ -343,6 +356,25 @@ pub fn make_rhai_engine(config_file: &Path) -> anyhow::Result<RhaiConfigEngine> 
         KeyAssignment::variants().contains(&name)
     });
 
+    // Note: unlike Lua's `wezterm.emit`, there is deliberately no script-visible
+    // `emit(...)` function registered on the engine here. `EventRegistry::emit_sync`
+    // needs the specific `AST` that defined the `FnPtr`s being invoked (an `FnPtr`
+    // captured from a script is only callable against its own `AST`, see the
+    // `EventRegistry` doc comment above), and a `rhai::NativeCallContext` available
+    // inside a `register_fn` closure does not expose that `AST` back out. The
+    // event-callback bridge this module exists for (see `RhaiConfigState` below) is
+    // driven entirely from the Rust side (`mux`/`wezterm-gui` call
+    // `config::rhai::emit_sync_callback`/`emit_event`/`emit_async_callback`, which
+    // hold the `AST` produced by `RhaiConfigState::from_script`), so no config
+    // script has needed to re-emit an event from within itself yet. If that need
+    // arises, the fix is to have `RhaiConfigState` hand out its own `AST` alongside
+    // the engine so a closure can capture it directly, rather than trying to
+    // recover it from a `NativeCallContext`.
+
+    for func in RHAI_SETUP_FUNCS.lock().unwrap().iter() {
+        func(&mut engine).context("calling RHAI_SETUP_FUNCS")?;
+    }
+
     Ok(RhaiConfigEngine {
         engine,
         events,
@@ -350,6 +382,98 @@ pub fn make_rhai_engine(config_file: &Path) -> anyhow::Result<RhaiConfigEngine> 
         config_file: config_file.to_path_buf(),
         config_dir,
     })
+}
+
+/// Extensibility hook mirroring `config::lua::add_context_setup_func`/`SETUP_FUNCS`:
+/// other crates (`mux`, `wezterm-gui`) that define their own rhai-exposed types
+/// (e.g. `GuiWin`, `TabInformation`) register a callback here so that every
+/// `rhai::Engine` built by `make_rhai_engine` -- including the one built for the
+/// L4.6 runtime event-callback bridge, see [`RhaiConfigState`] -- has those types
+/// and functions available to `wezterm.on(...)` handlers.
+pub type RhaiSetupFunc = fn(&mut Engine) -> anyhow::Result<()>;
+
+lazy_static::lazy_static! {
+    static ref RHAI_SETUP_FUNCS: Mutex<Vec<RhaiSetupFunc>> = Mutex::new(vec![]);
+}
+
+pub fn add_rhai_setup_func(func: RhaiSetupFunc) {
+    RHAI_SETUP_FUNCS.lock().unwrap().push(func);
+}
+
+/// A `Send`-safe descriptor of the event-callback surface of a loaded `.rhai`
+/// config: just the script's own source text plus the file/dir paths used to
+/// build the engine. This is what crosses the background config-reload-watcher
+/// thread -> main thread boundary (see `config::reload`/`ConfigInner::reload` in
+/// `config/src/lib.rs`), replacing the companion `mlua::Lua` context that used to
+/// be sent over `LUA_PIPE`.
+///
+/// `rhai::Engine`/`rhai::AST` are not `Send` in this workspace (no `sync` feature;
+/// see the module-level doc comment and the L4.6 migration note in
+/// `config/src/lib.rs`), so unlike the old `mlua::Lua`-based pipe, we cannot send an
+/// already-built engine/AST across the channel. Instead we send this plain-data
+/// descriptor, and [`RhaiConfigState::from_script`] rebuilds a fresh engine and
+/// re-evaluates the script *on the main thread* to populate its [`EventRegistry`]
+/// (any top-level `on(...)` calls in the script re-register their handlers as a
+/// side effect of that evaluation, exactly as they did the first time the
+/// background thread evaluated the same text to derive the `Config` value).
+#[derive(Clone, Debug)]
+pub struct RhaiEventScript {
+    /// The config script's source text (BOM already stripped), or `None` for the
+    /// no-config-file default configuration (mirrors `Config::try_default`'s
+    /// companion context, which still exists so `on`/`emit` calls made outside of
+    /// any config file -- e.g. future scripting hooks -- have somewhere to land).
+    pub source: Option<String>,
+    pub config_file: PathBuf,
+}
+
+impl RhaiEventScript {
+    pub fn for_default() -> Self {
+        Self {
+            source: None,
+            config_file: PathBuf::new(),
+        }
+    }
+
+    pub fn for_script(source: String, config_file: PathBuf) -> Self {
+        Self {
+            source: Some(source),
+            config_file,
+        }
+    }
+}
+
+/// The main-thread-only, live counterpart to [`RhaiEventScript`]: an actual
+/// `rhai::Engine` plus the compiled `AST` of the config script, rebuilt from an
+/// `RhaiEventScript` via [`RhaiConfigState::from_script`]. This is the rhai
+/// analogue of the old `LuaConfigState`/`Rc<mlua::Lua>` pairing in
+/// `config/src/lib.rs`: confined to the thread that built it (via `Rc`, not `Arc`),
+/// consumed by `config::rhai::emit_sync_callback`/`emit_event`/`emit_async_callback`.
+pub struct RhaiConfigState {
+    pub engine: RhaiConfigEngine,
+    pub ast: AST,
+}
+
+impl RhaiConfigState {
+    pub fn from_script(script: &RhaiEventScript) -> anyhow::Result<Self> {
+        let engine = make_rhai_engine(&script.config_file)?;
+        let ast = match &script.source {
+            Some(source) => {
+                let (ast, _value) = engine
+                    .compile_and_eval(source)
+                    .map_err(|e| anyhow::anyhow!("Error evaluating {}: {}", script.config_file.display(), e))?;
+                ast
+            }
+            None => engine
+                .engine
+                .compile("()")
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        };
+        Ok(Self { engine, ast })
+    }
+
+    pub fn emit_sync(&self, name: &str, args: Vec<Dynamic>) -> Result<bool, Box<EvalAltResult>> {
+        self.engine.emit_sync(&self.ast, name, args)
+    }
 }
 
 #[cfg(test)]

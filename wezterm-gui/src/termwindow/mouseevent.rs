@@ -413,21 +413,27 @@ impl super::TermWindow {
         };
 
         async fn dispatch_new_tab_button(
-            lua: Option<Rc<mlua::Lua>>,
+            state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
             window: GuiWin,
             pane: MuxPane,
             button: MousePress,
             action: Option<KeyAssignment>,
         ) -> anyhow::Result<()> {
-            let default_action = match lua {
-                Some(lua) => {
-                    let args = lua.pack_multi((
-                        window.clone(),
-                        pane,
-                        format!("{button:?}"),
-                        action.clone(),
-                    ))?;
-                    config::lua::emit_event(&lua, ("new-tab-button-click".to_string(), args))
+            let default_action = match state {
+                Some(state) => {
+                    let action_arg = match &action {
+                        Some(action) => config::rhai_value::dynamic_to_rhai_dynamic(
+                            &wezterm_dynamic::ToDynamic::to_dynamic(action),
+                        ),
+                        None => rhai::Dynamic::UNIT,
+                    };
+                    let args = vec![
+                        rhai::Dynamic::from(window.clone()),
+                        rhai::Dynamic::from(pane),
+                        rhai::Dynamic::from(format!("{button:?}")),
+                        action_arg,
+                    ];
+                    config::rhai_bridge::emit_event(&state, "new-tab-button-click", args)
                         .await
                         .map_err(|e| {
                             log::error!("while processing new-tab-button-click event: {:#}", e);
@@ -447,8 +453,8 @@ impl super::TermWindow {
         }
         let window = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
-        promise::spawn::spawn(config::with_lua_config_on_main_thread(move |lua| {
-            dispatch_new_tab_button(lua, window, pane, button, action)
+        promise::spawn::spawn(config::with_rhai_config_on_main_thread(move |state| {
+            dispatch_new_tab_button(state, window, pane, button, action)
         }))
         .detach();
     }

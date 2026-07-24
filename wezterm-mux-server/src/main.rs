@@ -250,10 +250,11 @@ fn run() -> anyhow::Result<()> {
     }
 }
 
-async fn trigger_mux_startup(lua: Option<Rc<mlua::Lua>>) -> anyhow::Result<()> {
-    if let Some(lua) = lua {
-        let args = lua.pack_multi(())?;
-        config::lua::emit_event(&lua, ("mux-startup".to_string(), args)).await?;
+async fn trigger_mux_startup(
+    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
+) -> anyhow::Result<()> {
+    if let Some(state) = state {
+        config::rhai_bridge::emit_event(&state, "mux-startup", vec![]).await?;
     }
     Ok(())
 }
@@ -276,7 +277,7 @@ async fn async_run(cmd: Option<CommandBuilder>) -> anyhow::Result<()> {
     let domain = mux.default_domain();
 
     {
-        if let Err(err) = config::with_lua_config_on_main_thread(trigger_mux_startup).await {
+        if let Err(err) = config::with_rhai_config_on_main_thread(trigger_mux_startup).await {
             log::error!("while processing mux-startup event: {:#}", err);
         }
     }

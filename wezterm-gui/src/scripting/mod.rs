@@ -15,6 +15,15 @@ fn luaerr(err: anyhow::Error) -> mlua::Error {
     mlua::Error::external(err)
 }
 
+/// L4.6: registers the rhai-side types this crate exposes to the event-callback
+/// bridge (`wezterm.on`/`emit`, see `config::rhai_bridge`). Wired up via
+/// `config::rhai_engine::add_rhai_setup_func` in `wezterm-gui/src/main.rs`, the
+/// rhai analogue of this module's own mlua `register` above (called via
+/// `config::lua::add_context_setup_func`).
+pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
+    guiwin::register_rhai(engine)
+}
+
 pub fn register(lua: &Lua) -> anyhow::Result<()> {
     let window_mod = get_or_create_sub_module(lua, "gui")?;
 
