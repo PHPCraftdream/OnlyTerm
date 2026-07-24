@@ -143,6 +143,9 @@ pub fn new_shaper(
     handles: &[ParsedFont],
 ) -> anyhow::Result<Box<dyn FontShaper>> {
     match config.font_shaper {
+        FontShaperSelection::RustyBuzz => {
+            Ok(Box::new(rustybuzz::RustybuzzShaper::new(config, handles)?))
+        }
         FontShaperSelection::Harfbuzz => {
             Ok(Box::new(harfbuzz::HarfbuzzShaper::new(config, handles)?))
         }
