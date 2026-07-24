@@ -22,19 +22,21 @@
 //!   non-LCD configurations; this module always targets grayscale,
 //!   matching the common case -- LCD/subpixel targets are a smaller,
 //!   separate concern noted below).
-//! - **Not covered** (delegates to `HarfbuzzRasterizer`, the same way
-//!   `FreeTypeRasterizer` already delegates to it when
-//!   `config.font_colr_rasterizer == FontRasterizerSelection::Harfbuzz`):
+//! - **Not covered** (delegates to `colr_paint::ColrRasterizer`, a
+//!   pure-Rust COLR/COLRv1 paint-graph rasterizer built on
+//!   `ttf_parser::colr` -- see that module's doc comment; it replaced the
+//!   former HarfBuzz-paint-API-based `HarfbuzzRasterizer` in phase H4):
 //!   any glyph carrying COLR/COLRv1/CBDT/sbix color data. This module
 //!   always tries the plain-outline `Source::Outline` path first (via
 //!   `Render`); if that comes back empty (no scalable monochrome outline
 //!   at all, or a zero-size result), it checks whether the *font* has any
 //!   color capability at all (`Scaler::has_color_outlines()`/
-//!   `has_color_bitmaps()`) and if so, delegates to `HarfbuzzRasterizer`
-//!   rather than returning the empty result or an error. Fonts with no
-//!   color capability skip straight to treating an empty outline as a
-//!   legitimately blank glyph (space, ZWJ, etc.), so this doesn't add a
-//!   harfbuzz round-trip to the common case.
+//!   `has_color_bitmaps()`) and if so, delegates to
+//!   `colr_paint::ColrRasterizer` rather than returning the empty result
+//!   or an error. Fonts with no color capability skip straight to
+//!   treating an empty outline as a legitimately blank glyph (space, ZWJ,
+//!   etc.), so this doesn't add a COLR-parsing round-trip to the common
+//!   case.
 //!
 //!   Note this can't be a precise *per-glyph* "is this glyph id color"
 //!   check: `swash::scale::color::ColorProxy::layers` (backing
@@ -89,7 +91,7 @@
 
 use crate::locator::FontDataHandle;
 use crate::parser::ParsedFont;
-use crate::rasterizer::harfbuzz::HarfbuzzRasterizer;
+use crate::rasterizer::colr_paint::ColrRasterizer;
 use crate::rasterizer::{FontRasterizer, FAKE_ITALIC_SKEW};
 use crate::units::*;
 use crate::RasterizedGlyph;
@@ -119,7 +121,7 @@ pub struct SwashRasterizer {
     scale: f64,
     /// Fallback for glyphs with no plain scalable outline (color
     /// glyphs: COLR/COLRv1/CBDT/sbix). See module doc comment.
-    color_fallback: HarfbuzzRasterizer,
+    color_fallback: ColrRasterizer,
 }
 
 impl SwashRasterizer {
@@ -144,7 +146,7 @@ impl SwashRasterizer {
             synthesize_bold: parsed.synthesize_bold,
             synthesize_italic: parsed.synthesize_italic,
             scale: parsed.scale.unwrap_or(1.),
-            color_fallback: HarfbuzzRasterizer::from_locator(parsed)?,
+            color_fallback: ColrRasterizer::from_locator(parsed)?,
         })
     }
 
@@ -239,13 +241,13 @@ impl FontRasterizer for SwashRasterizer {
             // capability at all (COLR of any version, or CBDT/sbix
             // bitmap strikes), treat an empty plain-outline result as
             // "probably a color glyph swash can't render on this path"
-            // and delegate to the harfbuzz paint-based rasterizer,
-            // matching how `FreeTypeRasterizer` falls back for
-            // `IsColr1OrLater`/`IsSvg` glyphs. Fonts with no color
-            // capability at all (the overwhelming common case) skip
-            // straight to treating this as a legitimately blank glyph
-            // (space, zero-width joiner, etc.), avoiding an unnecessary
-            // harfbuzz round-trip for every whitespace character.
+            // and delegate to `colr_paint::ColrRasterizer`, our pure-Rust
+            // COLR/COLRv1 paint-graph rasterizer built on
+            // `ttf_parser::colr`. Fonts with no color capability at all
+            // (the overwhelming common case) skip straight to treating
+            // this as a legitimately blank glyph (space, zero-width
+            // joiner, etc.), avoiding an unnecessary COLR-parsing
+            // round-trip for every whitespace character.
             if has_any_color_data {
                 drop(scaler);
                 drop(context);
@@ -453,11 +455,11 @@ mod test {
     /// probe also says no -- with no distinct signal from swash itself
     /// that this is "a color glyph rendered a different way" rather than
     /// "genuinely blank". This asserts that such a glyph still ends up
-    /// correctly delegated to the harfbuzz paint-based rasterizer (via
-    /// the font-level `has_any_color_data` check) instead of silently
-    /// coming back as an empty/invisible glyph.
+    /// correctly delegated to `colr_paint::ColrRasterizer` (via the
+    /// font-level `has_any_color_data` check) instead of silently coming
+    /// back as an empty/invisible glyph.
     #[test]
-    fn colr_glyph_falls_back_to_harfbuzz_paint_rasterizer() {
+    fn colr_glyph_falls_back_to_colr_paint_rasterizer() {
         let parsed = parsed_font_for("NotoColorEmoji.ttf");
         let raster = SwashRasterizer::from_locator(&parsed).unwrap();
 
@@ -472,7 +474,7 @@ mod test {
         let glyph = raster.rasterize_glyph(gid as u32, 32.0, 96).unwrap();
         assert!(
             glyph.width > 0 && glyph.height > 0,
-            "expected a non-empty rasterized emoji glyph via the harfbuzz \
+            "expected a non-empty rasterized emoji glyph via the ColrRasterizer \
              fallback, got {}x{}",
             glyph.width,
             glyph.height

@@ -4,7 +4,6 @@ use std::ops::Range;
 use termwiz::cell::Presentation;
 use termwiz::cellcluster::CellCluster;
 
-pub mod harfbuzz;
 pub mod rustybuzz;
 pub use wezterm_bidi::Direction;
 
@@ -147,7 +146,10 @@ pub fn new_shaper(
             Ok(Box::new(rustybuzz::RustybuzzShaper::new(config, handles)?))
         }
         FontShaperSelection::Harfbuzz => {
-            Ok(Box::new(harfbuzz::HarfbuzzShaper::new(config, handles)?))
+            anyhow::bail!(
+                "The Harfbuzz shaper (and the vendored harfbuzz C++ library backing it) has \
+                 been removed; use the default RustyBuzz shaper instead"
+            );
         }
         FontShaperSelection::Allsorts => {
             anyhow::bail!("The incomplete Allsorts shaper has been removed");
