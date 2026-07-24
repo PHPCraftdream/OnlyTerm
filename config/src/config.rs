@@ -14,7 +14,7 @@ use crate::keyassignment::{
     KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger, SpawnCommand,
 };
 use crate::keys::{Key, LeaderKey, Mouse};
-use crate::rhai_engine::{make_rhai_engine, RhaiConfigEngine};
+use crate::rhai_engine::{self, make_rhai_engine, RhaiConfigEngine};
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
 use crate::wsl::WslDomain;
@@ -1030,7 +1030,7 @@ impl Config {
                     return LoadedConfig {
                         config: Err(err),
                         file_name: Some(path_item.path.clone()),
-                        lua: None,
+                        event_script: None,
                         warnings: vec![],
                         rhai_watch_paths: vec![],
                     }
@@ -1050,7 +1050,7 @@ impl Config {
             Err(err) => LoadedConfig {
                 config: Err(err),
                 file_name: None,
-                lua: None,
+                event_script: None,
                 warnings: vec![],
                 rhai_watch_paths: vec![],
             },
@@ -1067,18 +1067,14 @@ impl Config {
         Ok(LoadedConfig {
             config: Ok(config?),
             file_name: None,
-            // The companion mlua context: real config *parsing* now happens
-            // via rhai (see `try_load` below), but the runtime event-callback
-            // bridge (`wezterm.on`/`emit`, consumed by mux/wezterm-gui via
-            // `config::lua::emit_sync_callback` et al) still runs on mlua,
-            // since `rhai::Engine`/`rhai::AST` are not `Send` (no `sync`
-            // feature enabled workspace-wide) and thus cannot cross the
-            // background config-reload-watcher thread -> main thread
-            // `LUA_PIPE` channel the way `mlua::Lua` can. Retiring this
-            // companion context is tracked as follow-up work (L5, full mlua
-            // removal) once the reload pipeline is redesigned to not require
-            // a `Send` engine value.
-            lua: Some(crate::lua::make_lua_context(Path::new(""))?),
+            // No config file: there is no script source to give the
+            // event-callback bridge an `on(...)` handler to run against, but we
+            // still hand back a (handler-less) `RhaiEventScript` descriptor so
+            // that `config::with_rhai_config_on_main_thread`/
+            // `run_immediate_with_rhai_config` always have *something* to build
+            // a `RhaiConfigState` from (mirroring the pre-L4.6 companion mlua
+            // context, which likewise always existed even with no config file).
+            event_script: Some(rhai_engine::RhaiEventScript::for_default()),
             warnings,
             rhai_watch_paths: vec![],
         })
@@ -1147,13 +1143,16 @@ impl Config {
         file.read_to_string(&mut s)?;
         let rhai_engine = make_rhai_engine(p)?;
 
+        // Skip a potential BOM that Windows software may have placed in the
+        // file. Stripped once up front (rather than inside the closure below)
+        // so that `script` is also available afterwards to build the
+        // `RhaiEventScript` event-callback descriptor.
+        let script = s.trim_start_matches('\u{FEFF}');
+
         let (config, warnings) =
             wezterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
                 let cfg: Config;
 
-                // Skip a potential BOM that Windows software may have placed in the
-                // file.
-                let script = s.trim_start_matches('\u{FEFF}');
                 let (_ast, config_value) = rhai_engine.compile_and_eval(script).map_err(|e| {
                     anyhow::anyhow!("Error evaluating {}: {}", p.display(), e)
                 })?;
@@ -1188,18 +1187,22 @@ impl Config {
         // that owns them goes out of scope; see `LoadedConfig::rhai_watch_paths`.
         let rhai_watch_paths = rhai_engine.watch_list.paths();
 
-        // Companion mlua context: see the comment on this same construction
-        // in `try_default` above for why this still exists. We build it from
-        // `p` (rather than a blank path) so that `wezterm.config_file`/
-        // `wezterm.config_dir` and any lua-api-crate that keys off the
-        // config file location behave the same as before for the runtime
-        // event bridge.
-        let lua = crate::lua::make_lua_context(p)?;
+        // Event-callback bridge descriptor (see `RhaiEventScript`'s doc comment
+        // in `config/src/rhai_engine.rs`): carries the script's own source text
+        // (the same `script` string just parsed above, BOM already stripped) so
+        // that whichever thread ends up building the live `RhaiConfigState` (the
+        // main thread, via `RhaiPipe`/`with_rhai_config_on_main_thread` in
+        // `config/src/lib.rs`) re-evaluates the *actual* config script rather
+        // than an empty stand-in. Any top-level `on(...)` calls the user's
+        // script makes are therefore registered for real, unlike the pre-L4.6
+        // companion mlua context (which was built from `p` but never executed
+        // the script's text at all).
+        let event_script = rhai_engine::RhaiEventScript::for_script(script.to_string(), p.to_path_buf());
 
         Ok(Some(LoadedConfig {
             config: Ok(cfg.compute_extra_defaults(Some(p))),
             file_name: Some(p.to_path_buf()),
-            lua: Some(lua),
+            event_script: Some(event_script),
             warnings,
             rhai_watch_paths,
         }))
@@ -2334,11 +2337,12 @@ mod rhai_config_load_test {
         assert_eq!(cfg.font_size, 14.0);
         assert_eq!(cfg.term, "screen-256color");
         assert_eq!(loaded.file_name.as_deref(), Some(config_path.as_path()));
-        // The companion mlua context (see the comment in `try_load`) should
-        // still be present, since mux/wezterm-gui's runtime event bridge
-        // (`wezterm.on`/`emit`) depends on it until that bridge itself moves
-        // to rhai (tracked separately as L5 follow-up work).
-        assert!(loaded.lua.is_some());
+        // The event-callback bridge descriptor (see `RhaiEventScript`, L4.6)
+        // should be present and carry the script's own source, since
+        // mux/wezterm-gui's runtime event bridge (`wezterm.on`/`emit`) is
+        // rebuilt from it on the main thread.
+        let event_script = loaded.event_script.expect("event_script should be present");
+        assert!(event_script.source.is_some());
     }
 
     /// `--config key=value`-style overrides (see `CONFIG_OVERRIDES`) are

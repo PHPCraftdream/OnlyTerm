@@ -82,23 +82,33 @@ pub fn show_line_prompt_overlay(
 
 fn trampoline(name: String, window: GuiWin, pane: MuxPane, line: Option<String>) {
     promise::spawn::spawn(async move {
-        config::with_lua_config_on_main_thread(move |lua| do_event(lua, name, window, pane, line))
-            .await
+        config::with_rhai_config_on_main_thread(move |state| {
+            do_event(state, name, window, pane, line)
+        })
+        .await
     })
     .detach();
 }
 
 async fn do_event(
-    lua: Option<Rc<mlua::Lua>>,
+    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
     name: String,
     window: GuiWin,
     pane: MuxPane,
     line: Option<String>,
 ) -> anyhow::Result<()> {
-    if let Some(lua) = lua {
-        let args = lua.pack_multi((window, pane, line))?;
+    if let Some(state) = state {
+        let line_arg = match line {
+            Some(line) => rhai::Dynamic::from(line),
+            None => rhai::Dynamic::UNIT,
+        };
+        let args = vec![
+            rhai::Dynamic::from(window),
+            rhai::Dynamic::from(pane),
+            line_arg,
+        ];
 
-        if let Err(err) = config::lua::emit_event(&lua, (name.clone(), args)).await {
+        if let Err(err) = config::rhai_bridge::emit_event(&state, &name, args).await {
             log::error!("while processing {} event: {:#}", name, err);
         }
     }

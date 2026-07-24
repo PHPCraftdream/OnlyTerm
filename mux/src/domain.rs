@@ -18,6 +18,7 @@ use downcast_rs::{impl_downcast, Downcast};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, ExitStatus, MasterPty, PtySize, PtySystem};
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -336,20 +337,21 @@ impl LocalDomain {
                 position: None,
             };
 
-            let spawn_command = config::with_lua_config_on_main_thread(|lua| async {
-                let lua = lua.ok_or_else(|| anyhow::anyhow!("missing lua context"))?;
-                let value = config::lua::emit_async_callback(
-                    &*lua,
-                    (ed.fixup_command.clone(), (spawn_command.clone())),
+            let spawn_command = config::with_rhai_config_on_main_thread(|state| async {
+                let state = state.ok_or_else(|| anyhow::anyhow!("missing rhai config state"))?;
+                let arg: rhai::Dynamic = spawn_command.clone().into();
+                let value = config::rhai_bridge::emit_async_callback(
+                    &state,
+                    &ed.fixup_command,
+                    vec![arg],
                 )
                 .await?;
-                let cmd: SpawnCommand =
-                    luahelper::from_lua_value_dynamic(value).with_context(|| {
-                        format!(
-                            "interpreting SpawnCommand result from ExecDomain {}",
-                            ed.name
-                        )
-                    })?;
+                let cmd = SpawnCommand::try_from(value).with_context(|| {
+                    format!(
+                        "interpreting SpawnCommand result from ExecDomain {}",
+                        ed.name
+                    )
+                })?;
                 Ok(cmd)
             })
             .await
@@ -677,20 +679,22 @@ impl Domain for LocalDomain {
             match &ed.label {
                 Some(ValueOrFunc::Value(wezterm_dynamic::Value::String(s))) => s.to_string(),
                 Some(ValueOrFunc::Func(label_func)) => {
-                    let label = config::with_lua_config_on_main_thread(|lua| async {
-                        let lua = lua.ok_or_else(|| anyhow::anyhow!("missing lua context"))?;
-                        let value = config::lua::emit_async_callback(
-                            &*lua,
-                            (label_func.clone(), (self.name.clone())),
+                    let label = config::with_rhai_config_on_main_thread(|state| async {
+                        let state = state.ok_or_else(|| anyhow::anyhow!("missing rhai config state"))?;
+                        let arg = rhai::Dynamic::from(self.name.clone());
+                        let value = config::rhai_bridge::emit_async_callback(
+                            &state,
+                            label_func,
+                            vec![arg],
                         )
                         .await?;
-                        let label: String =
-                            luahelper::from_lua_value_dynamic(value).with_context(|| {
-                                format!(
-                                    "interpreting SpawnCommand result from ExecDomain {}",
-                                    ed.name
-                                )
-                            })?;
+                        let label = value.into_string().map_err(|ty| {
+                            anyhow::anyhow!(
+                                "interpreting label result from ExecDomain {} as a string: got `{}`",
+                                ed.name,
+                                ty
+                            )
+                        })?;
                         Ok(label)
                     })
                     .await;

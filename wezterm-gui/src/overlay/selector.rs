@@ -385,26 +385,41 @@ impl SelectorState {
 
 fn trampoline(name: String, window: GuiWin, pane: MuxPane, entry: Option<InputSelectorEntry>) {
     promise::spawn::spawn(async move {
-        config::with_lua_config_on_main_thread(move |lua| do_event(lua, name, window, pane, entry))
-            .await
+        config::with_rhai_config_on_main_thread(move |state| {
+            do_event(state, name, window, pane, entry)
+        })
+        .await
     })
     .detach();
 }
 
 async fn do_event(
-    lua: Option<Rc<mlua::Lua>>,
+    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
     name: String,
     window: GuiWin,
     pane: MuxPane,
     entry: Option<InputSelectorEntry>,
 ) -> anyhow::Result<()> {
-    if let Some(lua) = lua {
+    if let Some(state) = state {
         let id = entry.as_ref().map(|entry| entry.id.clone());
         let label = entry.as_ref().map(|entry| entry.label.to_string());
 
-        let args = lua.pack_multi((window, pane, id, label))?;
+        let id_arg = match id {
+            Some(id) => rhai::Dynamic::from(id),
+            None => rhai::Dynamic::UNIT,
+        };
+        let label_arg = match label {
+            Some(label) => rhai::Dynamic::from(label),
+            None => rhai::Dynamic::UNIT,
+        };
+        let args = vec![
+            rhai::Dynamic::from(window),
+            rhai::Dynamic::from(pane),
+            id_arg,
+            label_arg,
+        ];
 
-        if let Err(err) = config::lua::emit_event(&lua, (name.clone(), args)).await {
+        if let Err(err) = config::rhai_bridge::emit_event(&state, &name, args).await {
             log::error!("while processing {} event: {:#}", name, err);
         }
     }

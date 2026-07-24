@@ -1,4 +1,5 @@
 use crate::default_true;
+use crate::impl_rhai_conversion_dynamic;
 use crate::keys::KeyNoAction;
 use crate::window::WindowLevel;
 use luahelper::impl_lua_conversion_dynamic;
@@ -200,6 +201,12 @@ pub struct SpawnCommand {
     pub position: Option<crate::GuiPosition>,
 }
 impl_lua_conversion_dynamic!(SpawnCommand);
+// L4.6: `SpawnCommand` round-trips through the rhai event-callback bridge (see
+// `config/src/rhai_bridge.rs`) as both an argument (`gui-startup`'s `SpawnCommand`)
+// and a return value (an `ExecDomain`'s `fixup_command` handler is expected to
+// return a `SpawnCommand`), so it needs the rhai analogue of the
+// `impl_lua_conversion_dynamic!` call above.
+impl_rhai_conversion_dynamic!(SpawnCommand);
 
 impl std::fmt::Debug for SpawnCommand {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {

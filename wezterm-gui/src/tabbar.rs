@@ -1,7 +1,6 @@
 use crate::termwindow::{PaneInformation, TabInformation, UIItem, UIItemType};
 use config::{ConfigHandle, TabBarColors};
 use finl_unicode::grapheme_clusters::Graphemes;
-use mlua::FromLua;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use termwiz::cell::{unicode_column_width, Cell, CellAttributes};
@@ -11,6 +10,7 @@ use termwiz::escape::parser::Parser;
 use termwiz::escape::{Action, ControlCode, CSI};
 use termwiz::surface::SEQ_ZERO;
 use termwiz_funcs::{format_as_escapes, FormatColor, FormatItem};
+use wezterm_dynamic::ToDynamic;
 use wezterm_term::{Line, Progress};
 use window::{IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle};
 
@@ -59,48 +59,48 @@ fn call_format_tab_title(
     hover: bool,
     tab_max_width: usize,
 ) -> Option<TitleText> {
-    match config::run_immediate_with_lua_config(|lua| {
-        if let Some(lua) = lua {
-            let tabs = lua.create_sequence_from(tab_info.iter().cloned())?;
-            let panes = lua.create_sequence_from(pane_info.iter().cloned())?;
+    match config::run_immediate_with_rhai_config(|state| {
+        if let Some(state) = state {
+            let tabs: rhai::Array = tab_info.iter().cloned().map(rhai::Dynamic::from).collect();
+            let panes: rhai::Array = pane_info.iter().cloned().map(rhai::Dynamic::from).collect();
 
-            let v = config::lua::emit_sync_callback(
-                &*lua,
-                (
-                    "format-tab-title".to_string(),
-                    (
-                        tab.clone(),
-                        tabs,
-                        panes,
-                        (**config).clone(),
-                        hover,
-                        tab_max_width,
-                    ),
-                ),
+            let v = config::rhai_bridge::emit_sync_callback(
+                &state,
+                "format-tab-title",
+                vec![
+                    rhai::Dynamic::from(tab.clone()),
+                    rhai::Dynamic::from(tabs),
+                    rhai::Dynamic::from(panes),
+                    config::rhai_value::dynamic_to_rhai_dynamic(&(**config).to_dynamic()),
+                    rhai::Dynamic::from(hover),
+                    rhai::Dynamic::from(tab_max_width as rhai::INT),
+                ],
             )?;
-            match &v {
-                mlua::Value::Nil => Ok(None),
-                mlua::Value::Table(_) => {
-                    let items = <Vec<FormatItem>>::from_lua(v, &*lua)?;
+            if v.is_unit() {
+                return Ok(None);
+            }
+            if v.is_array() || v.is_map() {
+                let items: Vec<FormatItem> = config::rhai_value::rhai_dynamic_to_value(&v)
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-                    let esc = format_as_escapes(items.clone())?;
-                    let line = parse_status_text(&esc, CellAttributes::default());
+                let esc = format_as_escapes(items.clone())?;
+                let line = parse_status_text(&esc, CellAttributes::default());
 
-                    Ok(Some(TitleText {
-                        items,
-                        len: line.len(),
-                        has_indeterminate: false,
-                    }))
-                }
-                _ => {
-                    let s = String::from_lua(v, &*lua)?;
-                    let line = parse_status_text(&s, CellAttributes::default());
-                    Ok(Some(TitleText {
-                        len: line.len(),
-                        items: vec![FormatItem::Text(s)],
-                        has_indeterminate: false,
-                    }))
-                }
+                Ok(Some(TitleText {
+                    items,
+                    len: line.len(),
+                    has_indeterminate: false,
+                }))
+            } else {
+                let s = v
+                    .into_string()
+                    .map_err(|ty| anyhow::anyhow!("format-tab-title: expected string, got `{ty}`"))?;
+                let line = parse_status_text(&s, CellAttributes::default());
+                Ok(Some(TitleText {
+                    len: line.len(),
+                    items: vec![FormatItem::Text(s)],
+                    has_indeterminate: false,
+                }))
             }
         } else {
             Ok(None)
