@@ -1,20 +1,27 @@
 ## Configuring Key Assignments
 
 The default key table assignments can be overridden or extended using the
-`keys` section in your `~/.wezterm.lua` config file.  For example, you can
+`keys` section in your `~/.wezterm.rhai` config file.  For example, you can
 disable a default assignment like this:
 
-```lua
-config.keys = {
-  -- Turn off the default CMD-m Hide action, allowing CMD-m to
-  -- be potentially recognized and handled by the tab
-  {
-    key = 'm',
-    mods = 'CMD',
-    action = wezterm.action.DisableDefaultAssignment,
-  },
+```rhai
+#{
+    keys: [
+        // Turn off the default CMD-m Hide action, allowing CMD-m to
+        // be potentially recognized and handled by the tab
+        #{ key: "m", mods: "CMD", action: "DisableDefaultAssignment" },
+    ],
 }
 ```
+
+!!! tip "Migrating from Lua?"
+
+    In a Lua config this used `action = wezterm.action.DisableDefaultAssignment`.
+    In rhai there is no `wezterm.action` helper: a simple action is its name as
+    a string (`"DisableDefaultAssignment"`), and a parameterized action is a
+    single-key map (e.g. `#{ SpawnCommandInNewTab: #{ cwd: "/tmp" } }`). See the
+    [migration guide](../migration-lua-to-rhai.md#key-bindings-and-actions) for
+    the full translation.
 
 The `action` value can be one of the [available key
 assignments](lua/keyassignment/index.md).  Every action has an example that shows
