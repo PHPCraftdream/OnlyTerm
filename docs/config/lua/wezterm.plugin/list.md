@@ -2,10 +2,10 @@
 
 {{since('20230320-124340-559cb7b0')}}
 
-Will return a table array listing all the plugin repos in the plugin directory
+!!! Warning
 
-Each entry has three fields:
-
-* `url`: The URL of the plugin repo, as provided to the `wezterm.plugin.require` function
-* `component`: The encoded name of the plugin, derived from the repo URL
-* `plugin_dir`: The absolute location of the plugin checkout in the Wezterm runtime directory. Use this to set the plugin path if needed
+    Git-based plugin installation has been removed from wezterm. There is no
+    longer a managed clone directory for `list()` to enumerate, so calling
+    this function now raises an error explaining the removal. Plugins are
+    installed and tracked by the user directly on the local filesystem; see
+    [Installing a Plugin](../../plugins.md#installing-a-plugin).
