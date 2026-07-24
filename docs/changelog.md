@@ -30,6 +30,22 @@ As features stabilize some brief notes about them will accumulate here.
   [unix domains](multiplexing.md#unix-domains) is unaffected. If you relied on
   SSH domains or TLS-mux, use a system `ssh` client together with a local
   unix domain instead.
+* **Breaking**: the configuration language has switched from **Lua** (the
+  embedded `mlua`/LuaJIT engine) to [**rhai**](https://rhai.rs/) (a pure-Rust
+  scripting language), and `mlua`/`luahelper` have been removed from the
+  workspace. Your config file must now be a `.wezterm.rhai` file (previously
+  `.wezterm.lua`). The configuration *schema* — every option, event name and
+  key-assignment action — is unchanged, but the *syntax* is different (rhai is
+  Lua-like but not Lua: `#{}` object maps instead of tables, `let` instead of
+  `local`, `//` comments instead of `--`, `+` instead of `..`, actions written
+  as tagged maps like `#{ SpawnCommandInNewTab: #{ cwd: "/tmp" } }` instead of
+  `wezterm.action.SpawnCommandInNewTab{...}`, etc.). If a legacy `.wezterm.lua`
+  is found with no `.wezterm.rhai` sibling, WezTerm prints a clear error naming
+  the file to migrate. Plugins must now be rhai (`plugin/init.rhai`, not
+  `plugin/init.lua`) and required by local path via `plugin::require(path)` —
+  git-URL plugin installation was already removed separately. See the
+  [Lua → rhai migration guide](migration-lua-to-rhai.md) for a side-by-side
+  translation of real configs.
 * DECRQCRA is now disabled by default to prevent silent screen scraping.
   Set `enable_checksum_rectangular_area = true` to re-enable it.
   Thanks to @jquast! #7701

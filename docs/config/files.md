@@ -1,33 +1,34 @@
 
 ## Quick Start
 
-Create a file named `.wezterm.lua` in your home directory, with the following
+Create a file named `.wezterm.rhai` in your home directory, with the following
 contents:
 
-```lua
--- Pull in the wezterm API
-local wezterm = require 'wezterm'
+```rhai
+// The whole script evaluates to a config object-map.
+// There is no `require` and no `config_builder()`: every option is just
+// a key in the map returned as the last expression.
+#{
+    // For example, changing the initial geometry for new windows:
+    initial_cols: 120,
+    initial_rows: 28,
 
--- This will hold the configuration.
-local config = wezterm.config_builder()
-
--- This is where you actually apply your config choices.
-
--- For example, changing the initial geometry for new windows:
-config.initial_cols = 120
-config.initial_rows = 28
-
--- or, changing the font size and color scheme.
-config.font_size = 10
-config.color_scheme = 'AdventureTime'
-
--- Finally, return the configuration to wezterm:
-return config
+    // or, changing the font size and color scheme.
+    font_size: 10.0,
+    color_scheme: "AdventureTime",
+}
 ```
+
+!!! tip "Migrating from a `.wezterm.lua`?"
+
+    WezTerm's config language changed from Lua to [rhai](https://rhai.rs/).
+    If you have an existing Lua config, see the
+    [Lua → rhai migration guide](../migration-lua-to-rhai.md) for a
+    side-by-side syntax translation. A leftover `.wezterm.lua` with no
+    `.wezterm.rhai` sibling will produce a clear error pointing you at it.
 
 For more details, see:
 
-- [wezterm.config_builder](lua/wezterm/config_builder.md)
 - [initial_cols](lua/config/initial_cols.md)
 - [initial_rows](lua/config/initial_rows.md)
 - [font_size](lua/config/font_size.md)
@@ -35,16 +36,17 @@ For more details, see:
 
 ## Configuration Files
 
-`wezterm` will look for a [lua](https://www.lua.org/manual/5.3/manual.html)
-configuration file using the logic shown below.
+`wezterm` will look for a [rhai](https://rhai.rs/) configuration file using the
+logic shown below. (Earlier releases looked for a Lua `.wezterm.lua` file; see
+the [migration guide](../migration-lua-to-rhai.md) to translate one.)
 
 !!! tip
-    The recommendation is to place your configuration file at `$HOME/.wezterm.lua`
-    (`%USERPROFILE%/.wezterm.lua` on Windows) to get started.
+    The recommendation is to place your configuration file at `$HOME/.wezterm.rhai`
+    (`%USERPROFILE%/.wezterm.rhai` on Windows) to get started.
 
-More complex configurations that need to span multiple files can be placed in
-`$XDG_CONFIG_HOME/wezterm/wezterm.lua` (for X11/Wayland) or
-`$HOME/.config/wezterm/wezterm.lua` (for all other systems).
+More complex configurations can be placed in
+`$XDG_CONFIG_HOME/wezterm/wezterm.rhai` (for X11/Wayland) or
+`$HOME/.config/wezterm/wezterm.rhai` (for all other systems).
 
 {% raw %}
 ```mermaid
@@ -55,14 +57,14 @@ graph TD
   B -->|No| D[Use built-in default configuration]
   A -->|No| E{{$WEZTERM_CONFIG_FILE<br/>environment set?}}
   E -->|Yes| B
-  E -->|No| F{{"Running on Windows and<br/>wezterm.lua exists in same<br/>dir as wezterm.exe?<br/>(Thumb drive mode)"}}
+  E -->|No| F{{"Running on Windows and<br/>wezterm.rhai exists in same<br/>dir as wezterm.exe?<br/>(Thumb drive mode)"}}
   F -->|Yes| B
-  F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>wezterm/wezterm.lua<br/>exists inside it?}}
+  F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>wezterm/wezterm.rhai<br/>exists inside it?}}
   H -->|Yes| B
   J --> B
-  H -->|No| K{{Does $HOME/.config/wezterm/wezterm.lua exist?}}
+  H -->|No| K{{Does $HOME/.config/wezterm/wezterm.rhai exist?}}
   K -->|Yes| B
-  K -->|No| J[Use $HOME/.wezterm.lua]
+  K -->|No| J[Use $HOME/.wezterm.rhai]
 ```
 {% endraw %}
 
@@ -114,115 +116,62 @@ for more information and examples of how to use that functionality.
 
 ## Configuration File Structure
 
-The `wezterm.lua` configuration file is a lua script which allows for a high
-degree of flexibility.   The script is expected to return a configuration
-table, so a basic empty (and rather useless!) configuration file will look like
-this:
-
-```lua
-return {}
-```
-
-Throughout these docs you'll find configuration fragments that demonstrate
-configuration and that look something like this:
-
-```lua
-local wezterm = require 'wezterm'
-local config = {}
-
-config.color_scheme = 'Batman'
-
-return config
-```
-
-and perhaps another one like this:
-
-```lua
-local wezterm = require 'wezterm'
-local config = {}
-
-config.font = wezterm.font 'JetBrains Mono'
-
-return config
-```
-
-If you wanted to use both of these in the same file, you would merge them together
+The `.wezterm.rhai` configuration file is a rhai script which allows for a high
+degree of flexibility. The script is expected to evaluate to a configuration
+object-map, so a basic empty (and rather useless!) configuration file will look
 like this:
 
-```lua
-local wezterm = require 'wezterm'
-local config = {}
-
-config.font = wezterm.font 'JetBrains Mono'
-config.color_scheme = 'Batman'
-
-return config
+```rhai
+#{}
 ```
 
-For the sake of brevity in these docs, individual snippets may be shown as
-just the config assignments:
+Throughout these docs many configuration fragments are still shown in Lua syntax
+(they predate the rhai switch); the [migration guide](../migration-lua-to-rhai.md)
+explains how to read them as rhai. A simple fragment like this:
 
-```lua
-config.color_scheme = 'Batman'
+```rhai
+#{
+    color_scheme: "Batman",
+}
 ```
 
-## Making your own Lua Modules
+sets `color_scheme`, and to also set the font in the same file you merge the keys
+into one map:
 
-If you'd like to break apart your configuration into multiple files, you'll
-be interested in this information.
-
-The Lua `package.path` is configured with the following paths in this order:
-
-* On Windows: a `wezterm_modules` dir in the same directory as `wezterm.exe`. This is for thumb drive mode, and is not recommended to be used otherwise.
-* `~/.config/wezterm`
-* `~/.wezterm`
-* A system specific set of paths which may (or may not!) find locally installed lua modules
-
-That means that if you wanted to break your config up into a `helpers.lua` file
-you would place it in `~/.config/wezterm/helpers.lua` with contents like this:
-
-```lua
--- I am helpers.lua and I should live in ~/.config/wezterm/helpers.lua
-
-local wezterm = require 'wezterm'
-
--- This is the module table that we will export
-local module = {}
-
--- This function is private to this module and is not visible
--- outside.
-local function private_helper()
-  wezterm.log_error 'hello!'
-end
-
--- define a function in the module table.
--- Only functions defined in `module` will be exported to
--- code that imports this module.
--- The suggested convention for making modules that update
--- the config is for them to export an `apply_to_config`
--- function that accepts the config object, like this:
-function module.apply_to_config(config)
-  private_helper()
-
-  config.color_scheme = 'Batman'
-end
-
--- return our module table
-return module
+```rhai
+#{
+    font: #{ font: [#{ family: "JetBrains Mono" }] },
+    color_scheme: "Batman",
+}
 ```
 
-and then in your `wezterm.lua`
-you would use it like this:
+(`wezterm.font(...)` has no rhai helper — the `font` option is a `TextStyle`
+object whose `font` field is an array of `FontAttributes`; see the migration
+guide.)
 
-```lua
-local helpers = require 'helpers'
-local config = {}
-helpers.apply_to_config(config)
-return config
+For the sake of brevity, individual snippets may be shown as just a single key:
+
+```rhai
+color_scheme: "Batman",
 ```
+
+## Splitting your configuration across files
+
+!!! note
+
+    WezTerm's Lua config let you split a config across multiple files via Lua's
+    `package.path` / `require`. **The rhai engine does not yet wire up rhai's
+    `import`/module resolution**, so a rhai config is currently a single
+    `.wezterm.rhai` file. To share code, package it as a
+    [plugin](plugins.md) (a directory with a `plugin/init.rhai` entry point,
+    loaded via `plugin::require("path")`). The legacy `package.path`-based
+    Lua module layout below no longer applies to the rhai engine.
 
 
 ## Configuration Reference
 
 Continue browsing this section of the docs for an overview of the commonly
-adjusted settings, or visit the [Lua Config Reference](lua/config/index.md) for a more detailed list of possibilities.
+adjusted settings, or visit the [config reference](lua/config/index.md) for a
+more detailed list of possibilities (the per-option reference pages still show
+Lua examples; use the [migration guide](../migration-lua-to-rhai.md) to read
+them as rhai).
