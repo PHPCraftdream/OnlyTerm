@@ -2,17 +2,19 @@
 
 {{since('20230320-124340-559cb7b0')}}
 
-Will clone the plugin repo if it doesn't already
-exist and store it in the runtime dir under `plugins/NAME` where
-`NAME` is derived from the repo URL. Once cloned, the repo is
-NOT automatically updated when `require` is called again.
+!!! Warning
 
-The function takes a single string parameter, the Git repo URL
+    Git-based plugin installation has been removed from wezterm. `require()`
+    no longer accepts a Git URL and will no longer clone anything; only a
+    local filesystem path/directory is accepted. Install plugins by placing
+    their files locally (for example by cloning the repo yourself from the
+    command line) and requiring that local path instead.
 
-Only HTTP(S) or local filesystem repos are allowed for the git URL.
+The function takes a single string parameter: the path to a local directory
+containing the plugin (specifically, a `plugin/init.lua` inside that
+directory).
 
 ```lua
-local remote_plugin = wezterm.plugin.require 'https://github.com/owner/repo'
 local local_plugin =
-  wezterm.plugin.require 'file:///Users/developer/projects/my.Plugin'
+  wezterm.plugin.require '/Users/developer/projects/my.Plugin'
 ```

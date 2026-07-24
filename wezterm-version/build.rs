@@ -1,3 +1,22 @@
+use std::path::{Path, PathBuf};
+
+/// Walks up from `start` looking for a `.git` entry (either a directory, for
+/// a normal checkout, or a file, for a worktree/submodule that points
+/// elsewhere via a `gitdir:` line) without depending on a git library.
+/// Returns the path to that `.git` entry, if found.
+fn find_dot_git(start: &Path) -> Option<PathBuf> {
+    let mut dir = start.canonicalize().ok()?;
+    loop {
+        let candidate = dir.join(".git");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -10,20 +29,36 @@ fn main() {
             println!("cargo:rerun-if-changed=../.tag");
         }
     } else {
-        // Otherwise we'll derive it from the git information
-
-        if let Ok(repo) = git2::Repository::discover(".") {
-            if let Ok(ref_head) = repo.find_reference("HEAD") {
-                let repo_path = repo.path().to_path_buf();
-
-                if let Ok(resolved) = ref_head.resolve() {
-                    if let Some(name) = resolved.name() {
-                        let path = repo_path.join(name);
+        // Otherwise we'll derive it from the git information.
+        //
+        // We used to use `git2::Repository::discover` just to locate the
+        // `.git` directory so that we could set up a `cargo:rerun-if-changed`
+        // on the resolved HEAD ref file (so that rebuilds are triggered by
+        // switching branches/commits). That's the only thing git2 was used
+        // for here -- the actual version string below has always come from
+        // shelling out to the `git` binary via `std::process::Command`, not
+        // from git2/libgit2. Replaced with a plain filesystem walk so this
+        // build script doesn't need to link libgit2 at all.
+        if let Some(dot_git) = find_dot_git(Path::new(".")) {
+            // Resolve HEAD (possibly a symlink-like "ref: refs/heads/foo"
+            // pointer file) to the actual ref file that changes on checkout,
+            // so that cargo knows to rerun this build script when the
+            // current branch/commit changes.
+            if dot_git.is_dir() {
+                let head_path = dot_git.join("HEAD");
+                if let Ok(contents) = std::fs::read_to_string(&head_path) {
+                    let contents = contents.trim();
+                    if let Some(refname) = contents.strip_prefix("ref: ") {
+                        let path = dot_git.join(refname);
                         if path.exists() {
-                            println!(
-                                "cargo:rerun-if-changed={}",
-                                path.canonicalize().unwrap().display()
-                            );
+                            if let Ok(canon) = path.canonicalize() {
+                                println!("cargo:rerun-if-changed={}", canon.display());
+                            }
+                        }
+                    } else if head_path.exists() {
+                        // Detached HEAD: HEAD itself contains the commit sha.
+                        if let Ok(canon) = head_path.canonicalize() {
+                            println!("cargo:rerun-if-changed={}", canon.display());
                         }
                     }
                 }
