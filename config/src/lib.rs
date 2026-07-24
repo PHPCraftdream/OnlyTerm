@@ -576,14 +576,27 @@ impl ConfigInner {
     /// configuration.
     /// On failure, retain the existing configuration but
     /// replace any captured error message.
-    fn reload(&mut self) {
+    ///
+    /// `loaded` must have been produced by a call to `Config::load()` made
+    /// *before* the `Configuration`'s mutex was locked (see
+    /// `Configuration::reload`): `Config::load()` runs arbitrary
+    /// `SETUP_FUNCS` (via `make_lua_context`, itself reached from
+    /// `Config::try_default`/`try_load`) as a side effect of parsing the
+    /// config, and at least one of those (`time-funcs::register`) calls back
+    /// into `config::subscribe_to_config_reload`, which locks this same
+    /// `Configuration`'s mutex. Calling `Config::load()` while already
+    /// holding that mutex self-deadlocks the very first time a process
+    /// loads its configuration (`std::sync::Mutex` is not reentrant) -- see
+    /// BUG8. Accepting the already-loaded result here keeps that
+    /// computation entirely outside of the lock.
+    fn reload(&mut self, loaded: LoadedConfig) {
         let LoadedConfig {
             config,
             file_name,
             lua,
             warnings,
             rhai_watch_paths,
-        } = Config::load();
+        } = loaded;
 
         self.warnings = warnings;
 
@@ -749,8 +762,17 @@ impl Configuration {
 
     /// Reload the configuration
     pub fn reload(&self) {
+        // Deliberately computed *before* taking the lock below: `Config::load()`
+        // runs arbitrary config-setup code (via `make_lua_context`'s
+        // `SETUP_FUNCS`) that can call back into this `Configuration` (e.g.
+        // `time-funcs::register` -> `subscribe_to_config_reload` -> `subscribe`,
+        // below) to lock the same mutex. Since `std::sync::Mutex` is not
+        // reentrant, doing the load while holding the lock would deadlock the
+        // very first time any process loads its config. See BUG8 and the doc
+        // comment on `ConfigInner::reload`.
+        let loaded = Config::load();
         let mut inner = self.inner.lock().unwrap();
-        inner.reload();
+        inner.reload(loaded);
     }
 
     /// Returns a copy of any captured error message.
