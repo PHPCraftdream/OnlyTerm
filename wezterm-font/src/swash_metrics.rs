@@ -238,6 +238,28 @@ impl SwashFontInfo {
     /// [`SwashFontInfo::instances`]/`normalized_coords`).
     pub fn from_locator(source: &FontDataSource, index: u32) -> anyhow::Result<Self> {
         let data = source.load_data()?.into_owned().into_boxed_slice();
+        Self::from_data(data, index)
+    }
+
+    /// Like [`SwashFontInfo::from_locator`], but takes already-loaded font
+    /// file bytes instead of reading `source` itself.
+    ///
+    /// This exists for callers (namely
+    /// `parser::parse_and_collect_font_info`, used by font enumeration --
+    /// `ls-fonts --list-system` and friends) that already have the whole
+    /// file in memory (e.g. because they needed it to compute
+    /// `ttf_parser::fonts_in_collection` for a `.ttc`/`.otc` collection)
+    /// and iterate every sub-face index in that same file: without this,
+    /// each sub-face would independently re-read (and re-heap-allocate) the
+    /// *entire* file via [`SwashFontInfo::from_locator`], even though
+    /// collection sub-faces all share one on-disk file. For large CJK
+    /// collections (e.g. `mingliub.ttc` at ~37MB with 3 faces, or
+    /// `Sitka*.ttc` with 6 faces each) that turns one file read into
+    /// `num_faces + 1` full re-reads of the same bytes -- a measured,
+    /// avoidable contributor to `enumerate_all_fonts`/`ls-fonts
+    /// --list-system` being slower than the old FreeType-based path (see
+    /// the PERF1 investigation notes).
+    pub fn from_data(data: Box<[u8]>, index: u32) -> anyhow::Result<Self> {
         let font = FontRef::from_index(&data, index as usize)
             .ok_or_else(|| anyhow::anyhow!("swash failed to parse font face at index {index}"))?;
         let offset = font.offset;
