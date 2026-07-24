@@ -79,7 +79,13 @@ impl FontRasterizer for FreeTypeRasterizer {
                                 load_flags | FT_LOAD_NO_HINTING as i32,
                             );
                         }
-                        FontRasterizerSelection::Harfbuzz => {
+                        // `Swash` isn't a meaningful choice for
+                        // `font_colr_rasterizer` (`SwashRasterizer` itself
+                        // delegates COLR glyphs to the `Harfbuzz` paint
+                        // rasterizer rather than implementing its own COLR
+                        // paint graph -- see `rasterizer/swash.rs`), so
+                        // treat it the same as `Harfbuzz` here.
+                        FontRasterizerSelection::Harfbuzz | FontRasterizerSelection::Swash => {
                             return self.hb_raster.rasterize_glyph(glyph_pos, size, dpi);
                         }
                     }
