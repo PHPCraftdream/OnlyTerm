@@ -1065,7 +1065,7 @@ impl LocalPane {
 
         #[cfg(windows)]
         if let Some(fg) = self.divine_foreground_process(policy) {
-            return Url::from_directory_path(fg.cwd).ok();
+            return Url::from_directory_path(fg.cwd.clone()).ok();
         }
 
         #[allow(unreachable_code)]
@@ -1095,12 +1095,17 @@ impl LocalPane {
                 // in the console
                 let mut youngest = &root;
 
-                fn find_youngest<'a>(
-                    proc: &'a LocalProcessInfo,
-                    youngest: &mut &'a LocalProcessInfo,
-                ) {
+                // Walk the process tree with an explicit stack rather
+                // than recursion: this tree is rebuilt from a live
+                // system-wide process snapshot every time the cache
+                // expires, and its depth is not bounded by anything
+                // wezterm controls, so a recursive walk here could in
+                // principle overflow the stack for a sufficiently deep
+                // process tree.
+                let mut stack: Vec<&LocalProcessInfo> = vec![&root];
+                while let Some(proc) = stack.pop() {
                     if proc.start_time >= youngest.start_time {
-                        *youngest = proc;
+                        youngest = proc;
                     }
 
                     for child in proc.children.values() {
@@ -1108,11 +1113,9 @@ impl LocalPane {
                         if child.console == 0 {
                             continue;
                         }
-                        find_youngest(child, youngest);
+                        stack.push(child);
                     }
                 }
-
-                find_youngest(&root, &mut youngest);
                 let mut foreground = youngest.clone();
                 foreground.children.clear();
 
