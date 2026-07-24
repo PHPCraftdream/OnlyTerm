@@ -8,16 +8,17 @@ use image::{ImageBuffer, Rgba};
 pub(crate) const FAKE_ITALIC_SKEW: f64 = 0.2;
 
 pub mod colr;
-pub mod freetype;
-pub mod harfbuzz;
+pub mod colr_paint;
 pub mod paint;
 /// `FontRasterizer` for non-COLR glyphs on top of `swash::scale` (phase H3
-/// of docs/plans/2026-07-23-freetype-harfbuzz-migration.md), wired in as
+/// of the freetype+harfbuzz -> rustybuzz+swash migration), wired in as
 /// the default `FontRasterizerSelection::Swash` option as of phase H3.5.
 /// See the module doc comment in `swash.rs` for scope/limitations
 /// (notably: it internally delegates COLR/COLRv1/CBDT/sbix color glyphs to
-/// `harfbuzz::HarfbuzzRasterizer`, so `new_rasterizer` below does not need
-/// any special-casing for color glyphs).
+/// `colr_paint::ColrRasterizer`, a pure-Rust COLR paint-graph rasterizer
+/// built on `ttf_parser::colr` (phase H4) that replaced the former
+/// HarfBuzz-paint-API-based fallback, so `new_rasterizer` below does not
+/// need any special-casing for color glyphs).
 pub mod swash;
 
 /// A bitmap representation of a glyph.
@@ -58,12 +59,20 @@ pub fn new_rasterizer(
         FontRasterizerSelection::Swash => {
             Ok(Box::new(swash::SwashRasterizer::from_locator(handle)?))
         }
-        FontRasterizerSelection::FreeType => Ok(Box::new(
-            freetype::FreeTypeRasterizer::from_locator(handle, pixel_geometry)?,
-        )),
-        FontRasterizerSelection::Harfbuzz => Ok(Box::new(
-            harfbuzz::HarfbuzzRasterizer::from_locator(handle)?,
-        )),
+        FontRasterizerSelection::FreeType => {
+            let _ = pixel_geometry;
+            anyhow::bail!(
+                "The FreeType rasterizer (and the vendored freetype C library backing it) has \
+                 been removed; use the default Swash rasterizer instead"
+            );
+        }
+        FontRasterizerSelection::Harfbuzz => {
+            anyhow::bail!(
+                "The Harfbuzz paint rasterizer (and the vendored harfbuzz C++ library backing \
+                 it) has been removed; use the default Swash rasterizer instead, which now \
+                 renders COLR/COLRv1 color glyphs via colr_paint::ColrRasterizer"
+            );
+        }
     }
 }
 

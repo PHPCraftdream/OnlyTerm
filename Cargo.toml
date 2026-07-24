@@ -95,7 +95,6 @@ flume = "0.11"
 fnv = "1.0"
 fontconfig = { path = "deps/fontconfig" }
 frecency = { path = "frecency" }
-freetype = { path = "deps/freetype" }
 futures = "0.3"
 futures-lite = "2.3"
 futures-util = "0.3"
@@ -106,7 +105,6 @@ gl_generator = "0.14"
 glium = { version = "0.35", default-features = false }
 governor = {version="0.5", default-features=false, features=["std"]}
 guillotiere = "0.6"
-harfbuzz = { path = "deps/harfbuzz" }
 heapless = "0.8"
 hdrhistogram = "7.1"
 hex = {version="0.4", default-features=false}

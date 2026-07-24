@@ -1,5 +1,6 @@
 use crate::locator::{FontDataHandle, FontDataSource, FontOrigin};
 use crate::shaper::GlyphInfo;
+use crate::swash_metrics::SwashFontInfo;
 use config::{FontAttributes, FontStyle, FreeTypeLoadFlags, FreeTypeLoadTarget};
 pub use config::{FontStretch, FontWeight};
 use rangeset::RangeSet;
@@ -137,110 +138,51 @@ pub struct Names {
     pub aliases: Vec<String>,
 }
 
-/// Returns the "best" name from a set of records.
-/// Best is English from a MS entry if available, as freetype's
-/// source claims that a number of Mac entries have somewhat
-/// broken encodings.
-fn best_name(records: &[crate::ftwrap::NameRecord]) -> String {
-    let mut win = None;
-    let mut uni = None;
-    let mut apple = None;
-
-    for rec in records {
-        match rec.platform_id as u32 {
-            freetype::TT_PLATFORM_APPLE_UNICODE | freetype::TT_PLATFORM_ISO => {
-                uni.replace(rec);
-            }
-            freetype::TT_PLATFORM_MACINTOSH => {
-                apple.replace(rec);
-            }
-            freetype::TT_PLATFORM_MICROSOFT => {
-                let is_english = (rec.language_id & 0x3ff) == 0x9;
-                if is_english {
-                    return rec.name.clone();
-                }
-                win.replace(rec);
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(rec) = apple {
-        return rec.name.clone();
-    }
-    if let Some(rec) = win {
-        return rec.name.clone();
-    }
-    if let Some(rec) = uni {
-        return rec.name.clone();
-    }
-    records[0].name.clone()
-}
-
-/// Return a single name from a table.
-/// The list of ids are tried in order: the first id with corresponding
-/// names is taken, and the "best" of those names is returned.
-fn name_from_table(
-    names: &std::collections::HashMap<u32, Vec<crate::ftwrap::NameRecord>>,
-    ids: &[u32],
-) -> Option<String> {
-    for id in ids {
-        if let Some(name_list) = names.get(id) {
-            return Some(best_name(name_list));
-        }
-    }
-    None
-}
-
-/// Returns the sorted, deduplicated set of names across the list of ids
-fn names_from_table(
-    names: &std::collections::HashMap<u32, Vec<crate::ftwrap::NameRecord>>,
-    ids: &[u32],
-) -> Vec<String> {
-    let mut result = vec![];
-
-    for id in ids {
-        if let Some(name_list) = names.get(id) {
-            for rec in name_list {
-                result.push(rec.name.clone());
-            }
-        }
-    }
+/// Returns the sorted, deduplicated set of distinct family-name strings
+/// found across a font's `TypographicFamily`/`Family` name records (i.e.
+/// every language/platform variant of those two ids), used to populate
+/// `Names::aliases` below. `SwashFontInfo::sfnt_names` already restricts
+/// itself to the small set of name ids wezterm cares about (family/
+/// subfamily/postscript, both typographic and legacy), so this just
+/// filters further down to the family-ish ids and dedups the resulting
+/// strings.
+fn family_aliases_from_sfnt_names(font_info: &SwashFontInfo) -> Vec<String> {
+    let mut result: Vec<String> = font_info
+        .sfnt_names()
+        .into_iter()
+        .filter(|rec| {
+            matches!(
+                rec.id,
+                swash::StringId::TypographicFamily | swash::StringId::Family
+            )
+        })
+        .map(|rec| rec.name)
+        .collect();
     result.sort();
     result.dedup();
     result
 }
 
 impl Names {
-    pub fn from_ft_face(face: &crate::ftwrap::Face) -> Names {
-        // We don't simply use the freetype functions to retrieve names,
-        // as freetype has a limited set of encodings that it supports.
-        // We process the name table for ourselves to increase our chances
-        // of returning a good version of the name.
-        // See <https://github.com/wezterm/wezterm/issues/1761#issuecomment-1079150560>
-        // for a case where freetype returns `?????` for a name.
-        let names = face.get_sfnt_names();
-
-        let family = name_from_table(
-            &names,
-            &[
-                freetype::TT_NAME_ID_TYPOGRAPHIC_FAMILY,
-                freetype::TT_NAME_ID_FONT_FAMILY,
-            ],
-        )
-        .unwrap_or_else(|| face.family_name());
-
-        let sub_family = name_from_table(
-            &names,
-            &[
-                freetype::TT_NAME_ID_TYPOGRAPHIC_SUBFAMILY,
-                freetype::TT_NAME_ID_FONT_SUBFAMILY,
-            ],
-        )
-        .unwrap_or_else(|| face.style_name());
-
-        let postscript_name = name_from_table(&names, &[freetype::TT_NAME_ID_PS_NAME])
-            .unwrap_or_else(|| face.postscript_name());
+    /// Builds a `Names` from a parsed font face's name table.
+    ///
+    /// This used to go through FreeType's own name-table walk
+    /// (`ftwrap::Face::get_sfnt_names`/`family_name`/`style_name`/
+    /// `postscript_name`) because, per
+    /// <https://github.com/wezterm/wezterm/issues/1761#issuecomment-1079150560>,
+    /// FreeType's own built-in name accessors have a limited set of
+    /// encodings and can return `?????` for some fonts. `swash`'s
+    /// `localized_strings()`/`find_by_id` (backing
+    /// [`SwashFontInfo::family_name`]/[`style_name`]/[`postscript_name`])
+    /// independently walks the same `name` table with its own (Unicode +
+    /// Mac Roman) decoder and prefers Unicode-encoded records, achieving
+    /// the same goal by a different route -- see the module doc comment
+    /// on `swash_metrics.rs` for the parity testing that established this
+    /// is a safe replacement for the common (non-broken-encoding) case.
+    pub fn from_face(font_info: &SwashFontInfo) -> Names {
+        let family = font_info.family_name();
+        let sub_family = font_info.style_name();
+        let postscript_name = font_info.postscript_name();
 
         let full_name = if sub_family.is_empty() {
             family.to_string()
@@ -248,13 +190,7 @@ impl Names {
             format!("{} {}", family, sub_family)
         };
 
-        let mut aliases = names_from_table(
-            &names,
-            &[
-                freetype::TT_NAME_ID_TYPOGRAPHIC_FAMILY,
-                freetype::TT_NAME_ID_FONT_FAMILY,
-            ],
-        );
+        let mut aliases = family_aliases_from_sfnt_names(font_info);
         aliases.retain(|n| *n != full_name && *n != family);
 
         Names {
@@ -269,9 +205,8 @@ impl Names {
 
 impl ParsedFont {
     pub fn from_locator(handle: &FontDataHandle) -> anyhow::Result<Self> {
-        let lib = crate::ftwrap::Library::new()?;
-        let face = lib.face_from_locator(handle)?;
-        Self::from_face(&face, handle.clone())
+        let font_info = SwashFontInfo::from_locator(&handle.source, handle.index)?;
+        Self::from_face(&font_info, handle.clone())
     }
 
     pub fn aka(&self) -> String {
@@ -382,39 +317,41 @@ impl ParsedFont {
         code
     }
 
-    pub fn from_face(face: &crate::ftwrap::Face, handle: FontDataHandle) -> anyhow::Result<Self> {
-        let style = if face.italic() {
+    pub fn from_face(font_info: &SwashFontInfo, handle: FontDataHandle) -> anyhow::Result<Self> {
+        let style = if font_info.is_italic() {
             FontStyle::Italic
         } else {
             FontStyle::Normal
         };
-        let (ot_weight, width) = face.weight_and_width();
+        // `handle.variation` selects a named instance the same way
+        // `ftwrap::Face::variations()` used to (see
+        // `parse_and_collect_font_info`/`SwashFontInfo::instances`
+        // below): instance 0 means "the font's default (non-variable, or
+        // variable-at-defaults) instance", matching FreeType's
+        // `FT_Set_Named_Instance(face, 0)` convention.
+        let instance_index = if handle.variation == 0 {
+            None
+        } else {
+            Some((handle.variation - 1) as usize)
+        };
+        let (ot_weight, width) = font_info.weight_and_width(instance_index);
         let weight = FontWeight::from_opentype_weight(ot_weight);
         let stretch = FontStretch::from_opentype_stretch(width);
-        let cap_height = face.cap_height();
-        let pixel_sizes = face.pixel_sizes();
+        let cap_height = font_info.cap_height_ratio();
+        let pixel_sizes = font_info.pixel_sizes();
 
-        let palettes = match face.get_palette_data() {
-            Ok(info) => info
-                .palettes
-                .iter()
-                .map(|p| FontPaletteInfo {
-                    name: p.name.to_string(),
-                    palette_index: p.palette_index,
-                    usable_with_light_bg: (p.flags
-                        & crate::ftwrap::FT_PALETTE_FOR_LIGHT_BACKGROUND as u16)
-                        != 0,
-                    usable_with_dark_bg: (p.flags
-                        & crate::ftwrap::FT_PALETTE_FOR_DARK_BACKGROUND as u16)
-                        != 0,
-                })
-                .collect(),
-            Err(_) => vec![],
-        };
+        let palettes = font_info
+            .palettes()
+            .into_iter()
+            .map(|p| FontPaletteInfo {
+                name: p.name.unwrap_or_default(),
+                palette_index: p.index as usize,
+                usable_with_light_bg: p.usable_with_light_bg,
+                usable_with_dark_bg: p.usable_with_dark_bg,
+            })
+            .collect();
 
-        let has_svg = unsafe {
-            (((*face.face).face_flags as u32) & (crate::ftwrap::FT_FACE_FLAG_SVG as u32)) != 0
-        };
+        let has_svg = font_info.has_svg();
 
         if has_svg {
             if config::configuration().ignore_svg_fonts {
@@ -422,12 +359,10 @@ impl ParsedFont {
             }
         }
 
-        let has_color = unsafe {
-            (((*face.face).face_flags as u32) & (crate::ftwrap::FT_FACE_FLAG_COLOR as u32)) != 0
-        };
+        let has_color = font_info.has_color();
         let assume_emoji_presentation = has_color;
 
-        let names = Names::from_ft_face(&face);
+        let names = Names::from_face(font_info);
         // Objectively gross, but freetype's italic property is very coarse grained.
         // fontconfig resorts to name matching, so we do too :-/
         let style = match style {
@@ -541,9 +476,8 @@ impl ParsedFont {
         let mut cov = self.coverage.lock().unwrap();
         if cov.is_empty() {
             let t = std::time::Instant::now();
-            let lib = crate::ftwrap::Library::new()?;
-            let face = lib.face_from_locator(&self.handle)?;
-            *cov = face.compute_coverage();
+            let font_info = SwashFontInfo::from_locator(&self.handle.source, self.handle.index)?;
+            *cov = font_info.compute_coverage();
             let elapsed = t.elapsed();
             metrics::histogram!("font.compute.codepoint.coverage").record(elapsed);
             log::debug!(
@@ -553,6 +487,21 @@ impl ParsedFont {
             );
         }
         Ok(wanted.intersection(&cov))
+    }
+
+    /// Returns the human-readable glyph name (e.g. a PostScript/AGL glyph
+    /// name such as `"A"` or `"uni25CF"`) for the given glyph id, if the
+    /// font provides one. Diagnostic-only (used by `wezterm-gui`'s `ls-fonts`/
+    /// text-shaping debug CLI output); equivalent to the removed
+    /// `ftwrap::Face::get_glyph_name` (`FT_Get_Glyph_Name`), backed by
+    /// `ttf_parser::Face::glyph_name` instead (reads the same `post`/CFF
+    /// charstring glyph-name data FreeType did, just without a C library
+    /// in the loop).
+    pub fn glyph_name(&self, glyph_pos: u32) -> Option<String> {
+        let data = self.handle.source.load_data().ok()?;
+        let face = ttf_parser::Face::parse(&data, self.handle.index).ok()?;
+        face.glyph_name(ttf_parser::GlyphId(glyph_pos as u16))
+            .map(|s| s.to_string())
     }
 
     pub fn names(&self) -> &Names {
@@ -824,7 +773,6 @@ pub(crate) fn load_built_in_fonts(font_info: &mut Vec<ParsedFont>) -> anyhow::Re
             (include_bytes!($font) as &'static [u8], $font)
         };
     }
-    let lib = crate::ftwrap::Library::new()?;
 
     let built_ins: &[&[(&[u8], &str)]] = &[
         #[cfg(any(test, feature = "vendor-jetbrains"))]
@@ -875,8 +823,7 @@ pub(crate) fn load_built_in_fonts(font_info: &mut Vec<ParsedFont>) -> anyhow::Re
                 origin: FontOrigin::BuiltIn,
                 coverage: None,
             };
-            let face = lib.face_from_locator(&locator)?;
-            let mut parsed = ParsedFont::from_face(&face, locator)?;
+            let mut parsed = ParsedFont::from_locator(&locator)?;
             parsed.is_built_in_fallback = true;
             font_info.push(parsed);
         }
@@ -902,11 +849,17 @@ pub(crate) fn parse_and_collect_font_info(
     font_info: &mut Vec<ParsedFont>,
     origin: FontOrigin,
 ) -> anyhow::Result<()> {
-    let lib = crate::ftwrap::Library::new()?;
-    let num_faces = lib.query_num_faces(&source)?;
+    // `ttf_parser::fonts_in_collection` mirrors what
+    // `ftwrap::Library::query_num_faces` used to get via
+    // `FT_Open_Face(.., face_index=-1, ..)` (a documented FreeType
+    // convention for "just tell me how many faces are in this file
+    // without loading one") - `None` means "not a collection", i.e.
+    // exactly 1 face, matching how a non-TTC `num_faces` is always 1.
+    let data = source.load_data()?;
+    let num_faces = ttf_parser::fonts_in_collection(&data).unwrap_or(1);
+    drop(data);
 
     fn load_one(
-        lib: &crate::ftwrap::Library,
         source: &FontDataSource,
         index: u32,
         font_info: &mut Vec<ParsedFont>,
@@ -920,20 +873,42 @@ pub(crate) fn parse_and_collect_font_info(
             coverage: None,
         };
 
-        let face = lib.face_from_locator(&locator)?;
-        if let Ok(variations) = face.variations() {
-            for parsed in variations {
-                font_info.push(parsed);
+        let font_ref_info = SwashFontInfo::from_locator(&locator.source, locator.index)?;
+        let instances = font_ref_info.instances();
+        if !instances.is_empty() {
+            // Named-instance (variable font) enumeration: mirrors
+            // `ftwrap::Face::variations()`, which built one `ParsedFont`
+            // per `fvar` named instance by temporarily selecting it via
+            // `FT_Set_Named_Instance` on the shared FT face. `handle.variation`
+            // (1-indexed, 0 reserved for "no variation selected") records
+            // which instance was used so that later per-glyph consumers
+            // (`RustybuzzShaper::variation_coords_for` and friends) can
+            // re-select the same coordinates.
+            for (idx, _instance) in instances.iter().enumerate() {
+                let variation_locator = FontDataHandle {
+                    variation: (idx + 1) as u32,
+                    ..locator.clone()
+                };
+                match ParsedFont::from_face(&font_ref_info, variation_locator) {
+                    Ok(parsed) => font_info.push(parsed),
+                    Err(err) => log::trace!(
+                        "error while parsing {:?} index {} instance {}: {}",
+                        source,
+                        index,
+                        idx,
+                        err
+                    ),
+                }
             }
         } else {
-            let parsed = ParsedFont::from_locator(&locator)?;
+            let parsed = ParsedFont::from_face(&font_ref_info, locator)?;
             font_info.push(parsed);
         }
         Ok(())
     }
 
     for index in 0..num_faces {
-        if let Err(err) = load_one(&lib, &source, index, font_info, &origin) {
+        if let Err(err) = load_one(&source, index, font_info, &origin) {
             log::trace!("error while parsing {:?} index {}: {}", source, index, err);
         }
     }

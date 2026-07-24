@@ -844,7 +844,6 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
             Some(&unicode_version),
         );
         let cell_clusters = line.cluster(bidi_hint);
-        let ft_lib = wezterm_font::ftwrap::Library::new()?;
 
         let mut glyph_cache = GlyphCache::new_in_memory(&font_config, 256)?;
 
@@ -865,10 +864,6 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
             // We must grab the handles after shaping, so that we get the
             // revised list that includes system fallbacks!
             let handles = font.clone_handles();
-            let faces: Vec<_> = handles
-                .iter()
-                .map(|p| ft_lib.face_from_locator(&p.handle).ok())
-                .collect();
 
             let mut iter = infos.iter().peekable();
 
@@ -928,12 +923,9 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
                 }
 
                 if !is_custom {
-                    let glyph_name = faces[info.font_idx]
-                        .as_ref()
-                        .and_then(|face| {
-                            face.get_glyph_name(info.glyph_pos)
-                                .map(|name| format!("{},", name))
-                        })
+                    let glyph_name = parsed
+                        .glyph_name(info.glyph_pos)
+                        .map(|name| format!("{},", name))
                         .unwrap_or_else(String::new);
 
                     println!(

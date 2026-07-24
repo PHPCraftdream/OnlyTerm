@@ -4,27 +4,27 @@
 //! This is part of the freetype+harfbuzz -> rustybuzz+swash migration
 //! (see docs/plans/2026-07-23-freetype-harfbuzz-migration.md, phase H1).
 //!
-//! H0 (`wezterm-font/examples/dump_shaping.rs`) already established that:
-//! - `glyph_id`/`cluster` sequences from raw `rustybuzz::shape()` match the
-//!   production `HarfbuzzShaper` 1:1 on latin text, ligatures (FiraCode-style)
+//! H0 (formerly `wezterm-font/examples/dump_shaping.rs`, a comparison tool
+//! deleted in phase H4 once the harfbuzz crate it compared against was
+//! removed - see git history if you need the original side-by-side
+//! output) established that:
+//! - `glyph_id`/`cluster` sequences from raw `rustybuzz::shape()` matched the
+//!   old production `HarfbuzzShaper` 1:1 on latin text, ligatures (FiraCode-style)
 //!   and emoji ZWJ sequences.
-//! - `x_advance`/`y_advance`/`x_offset`/`y_offset` differ, because the
-//!   production harfbuzz path (`USE_OT_FUNCS=false` in `shaper/harfbuzz.rs`)
-//!   delegates glyph metrics to FreeType via `hb_ft_font_create_referenced`
-//!   + `hb_ft_font_set_load_flags`, which means every advance/offset that
-//!   comes back from `hb_shape` has already been hinted (grid-fit) by
-//!   FreeType's TrueType bytecode interpreter/autohinter and expressed in
-//!   26.6 fixed-point pixels (`make_glyphinfo` in `shaper/harfbuzz.rs` simply
-//!   divides by 64.0 to get pixels).
+//! - `x_advance`/`y_advance`/`x_offset`/`y_offset` differed, because the old
+//!   production harfbuzz path (`USE_OT_FUNCS=false`) delegated glyph metrics
+//!   to FreeType via `hb_ft_font_create_referenced` + `hb_ft_font_set_load_flags`,
+//!   which meant every advance/offset that came back from `hb_shape` had
+//!   already been hinted (grid-fit) by FreeType's TrueType bytecode
+//!   interpreter/autohinter and expressed in 26.6 fixed-point pixels.
 //!
 //!   rustybuzz has no equivalent of `hb_font_set_scale`/`hb_ft_font_*`: it
 //!   always reports glyph positions in the font's raw design units
 //!   (`unitsPerEm` space) with no hinting/grid-fitting applied at all. To be
-//!   directly comparable we must scale ourselves:
+//!   directly comparable we had to scale ourselves:
 //!       advance_px = raw_units * (point_size * dpi / 72) / units_per_em
-//!   (this is the same formula `ftwrap::Face::set_font_size` uses to compute
-//!   the nominal pixel height, and the same one dump_shaping.rs's
-//!   `shape_with_rustybuzz` already applies).
+//!   (this is the same formula `SwashFontInfo::selected_font_size` uses to
+//!   compute the nominal pixel height).
 //!
 //!   FreeType's hinting on top of that scaling mostly manifests as rounding
 //!   to whole pixels (26.6 fixed-point, i.e. 1/64 pixel granularity, but for
@@ -41,7 +41,6 @@
 //!   way but do not force them to integral pixels (FreeType doesn't either;
 //!   only the *advance* is grid-fit, offsets follow the outline hinting and
 //!   can be fractional).
-use crate::ftwrap;
 use crate::parser::ParsedFont;
 use crate::shaper::{FallbackIdx, FontMetrics, FontShaper, GlyphInfo, PresentationWidth};
 use crate::units::*;
@@ -131,72 +130,64 @@ fn make_glyphinfo(text: &str, num_cells: u8, font_idx: usize, info: &Info) -> Gl
     }
 }
 
-/// Converts a big-endian-packed FreeType 4cc tag (as used by
-/// `FT_Var_Axis::tag`) into the 4 raw bytes that `ttf_parser::Tag`/
-/// `rustybuzz::Tag` expect.
-fn ft_tag_to_bytes(tag: u32) -> [u8; 4] {
-    [
-        ((tag >> 24) & 0xff) as u8,
-        ((tag >> 16) & 0xff) as u8,
-        ((tag >> 8) & 0xff) as u8,
-        (tag & 0xff) as u8,
-    ]
-}
-
-/// If `handle` selects a named instance of a variable font (as FreeType
-/// resolves it via `FT_Set_Named_Instance`, one per `ParsedFont` produced by
-/// `Face::variations()`), extract that instance's design-space coordinates
-/// via `FT_Get_MM_Var` so that we can apply the equivalent variation to the
-/// rustybuzz/ttf-parser face (which, unlike FreeType, has no notion of
-/// "face index selects a named instance" - it only understands explicit
-/// axis tag/value pairs via `set_variation`).
-fn variation_coords_for(face: &ftwrap::Face) -> Vec<rustybuzz::Variation> {
+/// If `handle` selects a named instance of a variable font (as
+/// enumerated by `SwashFontInfo::instances`/`parse_and_collect_font_info`,
+/// one `ParsedFont` per `fvar` named instance, with `handle.variation`
+/// recording which one - see `parser.rs`), resolve that instance's
+/// design-space (user-unit, not normalized) coordinates so we can apply
+/// the equivalent variation to the rustybuzz/ttf-parser face (which has
+/// no notion of "this face index selects a named instance" - it only
+/// understands explicit axis tag/value pairs via `set_variation`).
+///
+/// `SwashInstance::user_values` (from `font.instances()`) already reports
+/// each axis's coordinate in the same user-space units
+/// `rustybuzz::Face::set_variation`/`ttf_parser::Face::set_variation`
+/// expect (the same units as `VariationAxis::min_value`/`def_value`/
+/// `max_value`, e.g. a `wght` value like `700.0`), so this only needs to
+/// pair each value up with its axis tag - no fvar/avar
+/// normalization-math is involved (unlike `SwashInstance::
+/// normalized_coords`, which *is* normalized to -1.0..=1.0 and would
+/// need denormalizing against axis min/default/max to get here).
+fn variation_coords_for(
+    ttf_face: &ttf_parser::Face,
+    font_info: &crate::swash_metrics::SwashFontInfo,
+    handle: &crate::parser::ParsedFont,
+) -> Vec<rustybuzz::Variation> {
     let mut coords = vec![];
-    unsafe {
-        let ft_face = face.face;
-        let index = (*ft_face).face_index;
-        let variation = index >> 16;
-        if variation <= 0 {
-            return coords;
-        }
-        let vidx = (variation - 1) as usize;
+    if handle.handle.variation == 0 {
+        return coords;
+    }
+    let vidx = (handle.handle.variation - 1) as usize;
+    let instances = font_info.instances();
+    let Some(instance) = instances.get(vidx) else {
+        return coords;
+    };
 
-        let mut mm = std::ptr::null_mut();
-        if !ftwrap::succeeded(ftwrap::FT_Get_MM_Var(ft_face, &mut mm)) {
-            return coords;
-        }
-
-        {
-            let mm = &*mm;
-            let num_axis = mm.num_axis as usize;
-            if (vidx as u32) < mm.num_namedstyles {
-                let styles = std::slice::from_raw_parts(mm.namedstyle, mm.num_namedstyles as usize);
-                let instance = &styles[vidx];
-                let axes = std::slice::from_raw_parts(mm.axis, num_axis);
-                let instance_coords = std::slice::from_raw_parts(instance.coords, num_axis);
-
-                for (axis, &value) in axes.iter().zip(instance_coords.iter()) {
-                    let tag = rustybuzz::ttf_parser::Tag::from_bytes(&ft_tag_to_bytes(axis.tag as u32));
-                    coords.push(rustybuzz::Variation {
-                        tag,
-                        value: value.to_num::<f64>() as f32,
-                    });
-                }
-            }
-        }
-
-        ftwrap::FT_Done_MM_Var(face.library(), mm);
+    for (axis, &value) in ttf_face
+        .variation_axes()
+        .into_iter()
+        .zip(instance.user_values.iter())
+    {
+        coords.push(rustybuzz::Variation {
+            tag: axis.tag,
+            value,
+        });
     }
     coords
 }
 
 struct FontPair {
-    face: ftwrap::Face,
+    /// Parsing/metrics counterpart to `rb_face`, built on `swash` (see
+    /// `swash_metrics.rs`) rather than FreeType - used by `metrics_for_idx`/
+    /// `metrics` for cell/underline/cap-height metrics, and by
+    /// `variation_coords_for` (via `ensure_rb_face`) to resolve named
+    /// instances.
+    font_info: crate::swash_metrics::SwashFontInfo,
     rb_face: RefCell<Option<OwnedRbFace>>,
     shaped_any: bool,
     presentation: Presentation,
     features: Vec<rustybuzz::Feature>,
-    variations: Vec<rustybuzz::Variation>,
+    variations: RefCell<Option<Vec<rustybuzz::Variation>>>,
     last_size_and_dpi: RefCell<Option<(f64, u32)>>,
     units_per_em: RefCell<Option<f64>>,
 }
@@ -211,7 +202,6 @@ struct MetricsKey {
 pub struct RustybuzzShaper {
     handles: Vec<ParsedFont>,
     fonts: Vec<RefCell<Option<FontPair>>>,
-    lib: ftwrap::Library,
     metrics: RefCell<HashMap<MetricsKey, FontMetrics>>,
     features: Vec<rustybuzz::Feature>,
     lang: rustybuzz::Language,
@@ -257,7 +247,6 @@ fn rb_feature_from_string(s: &str) -> anyhow::Result<rustybuzz::Feature> {
 
 impl RustybuzzShaper {
     pub fn new(config: &ConfigHandle, handles: &[ParsedFont]) -> anyhow::Result<Self> {
-        let lib = ftwrap::Library::new()?;
         let handles = handles.to_vec();
         let mut fonts = vec![];
         for _ in 0..handles.len() {
@@ -275,7 +264,6 @@ impl RustybuzzShaper {
         Ok(Self {
             fonts,
             handles,
-            lib,
             metrics: RefCell::new(HashMap::new()),
             features,
             lang,
@@ -297,9 +285,10 @@ impl RustybuzzShaper {
                 if opt_pair.is_none() {
                     let handle = &self.handles[font_idx];
                     log::trace!("rustybuzz shaper wants {} {:?}", font_idx, handle);
-                    let face = self.lib.face_from_locator(&handle.handle)?;
-
-                    let variations = variation_coords_for(&face);
+                    let font_info = crate::swash_metrics::SwashFontInfo::from_locator(
+                        &handle.handle.source,
+                        handle.handle.index,
+                    )?;
 
                     let features = match &handle.harfbuzz_features {
                         Some(features) => features
@@ -310,7 +299,7 @@ impl RustybuzzShaper {
                     };
 
                     *opt_pair = Some(FontPair {
-                        face,
+                        font_info,
                         rb_face: RefCell::new(None),
                         shaped_any: false,
                         presentation: if handle.assume_emoji_presentation {
@@ -319,7 +308,7 @@ impl RustybuzzShaper {
                             Presentation::Text
                         },
                         features,
-                        variations,
+                        variations: RefCell::new(None),
                         last_size_and_dpi: RefCell::new(None),
                         units_per_em: RefCell::new(None),
                     });
@@ -344,22 +333,33 @@ impl RustybuzzShaper {
         let data = handle.handle.source.load_data().with_context(|| {
             format!("loading raw font bytes for rustybuzz face {:?}", handle.handle)
         })?;
-        let mut ft_index = handle.handle.index;
-        if handle.handle.variation != 0 {
-            // Match FreeType's own face_index convention
-            // (see ftwrap::Library::face_from_locator) so that, at minimum,
-            // we select the right sub-face out of a TTC. The named-instance
-            // bits aren't understood by ttf-parser, but we compensate for
-            // that separately via `variations` (explicit axis coordinates
-            // applied with `set_variation` below).
-            ft_index |= handle.handle.variation << 16;
-        }
-        // ttf-parser's face_index is a plain collection index; mask off any
-        // named-instance bits so we don't hand it a nonsensical value.
-        let face_index = ft_index & 0xffff;
+        // `handle.handle.index` is a plain collection index (see
+        // `parse_and_collect_font_info`/`ParsedFont::from_face`, which
+        // keep the named-instance selector entirely in the separate
+        // `variation` field rather than bit-packing it into `index` the
+        // way FreeType's own face-index convention used to require).
+        let face_index = handle.handle.index;
 
-        let mut owned = OwnedRbFace::from_bytes(data.into_owned().into_boxed_slice(), face_index)?;
-        for variation in &pair.variations {
+        let mut owned = OwnedRbFace::from_bytes(data.clone().into_owned().into_boxed_slice(), face_index)?;
+
+        // Resolve named-instance coordinates (if any) using the same raw
+        // bytes, via a transient `ttf_parser::Face` purely to read
+        // `variation_axes()` - see `variation_coords_for`'s doc comment
+        // for why this needs ttf_parser rather than rustybuzz's own
+        // (variation-application-only) API.
+        let variations = {
+            let mut cached = pair.variations.borrow_mut();
+            if cached.is_none() {
+                let computed = match ttf_parser::Face::parse(&data, face_index) {
+                    Ok(ttf_face) => variation_coords_for(&ttf_face, &pair.font_info, handle),
+                    Err(_) => vec![],
+                };
+                cached.replace(computed);
+            }
+            cached.clone().unwrap_or_default()
+        };
+
+        for variation in &variations {
             owned.face.set_variation(variation.tag, variation.value);
         }
 
@@ -661,7 +661,7 @@ impl FontShaper for RustybuzzShaper {
     }
 
     fn metrics_for_idx(&self, font_idx: usize, size: f64, dpi: u32) -> anyhow::Result<FontMetrics> {
-        let mut pair = self
+        let pair = self
             .load_fallback(font_idx, dpi)?
             .ok_or_else(|| anyhow!("metrics_for_idx: there is no font with idx={font_idx}!?"))?;
 
@@ -676,25 +676,19 @@ impl FontShaper for RustybuzzShaper {
 
         let scale = self.handles[font_idx].scale.unwrap_or(1.);
 
-        // We reuse ftwrap::Face::set_font_size to compute metrics: rustybuzz/
+        // `SwashFontInfo::selected_font_size` is the swash-based
+        // equivalent of `ftwrap::Face::set_font_size`: rustybuzz/
         // ttf-parser doesn't have a "cell metrics" helper equivalent, and
         // reproducing FreeType's exact hinted cell metrics here matters for
         // grid alignment (this is the same reasoning as HarfbuzzShaper's
         // metrics_for_idx, and is unaffected by the shaping-engine swap).
-        let selected_size = pair.face.set_font_size(size * scale, dpi)?;
-        let y_scale = unsafe { (*(*pair.face.face).size).metrics.y_scale.to_num::<f64>() };
+        let selected_size = pair.font_info.selected_font_size(size * scale, dpi);
         let mut metrics = FontMetrics {
             cell_height: PixelLength::new(selected_size.height),
             cell_width: PixelLength::new(selected_size.width),
-            descender: PixelLength::new(unsafe {
-                (*(*pair.face.face).size).metrics.descender.f26d6().to_num()
-            }),
-            underline_thickness: PixelLength::new(
-                unsafe { (*pair.face.face).underline_thickness as f64 } * y_scale / 64.,
-            ),
-            underline_position: PixelLength::new(
-                unsafe { (*pair.face.face).underline_position as f64 } * y_scale / 64.,
-            ),
+            descender: PixelLength::new(selected_size.descender),
+            underline_thickness: PixelLength::new(selected_size.underline_thickness),
+            underline_position: PixelLength::new(selected_size.underline_position),
             cap_height_ratio: selected_size.cap_height_to_height_ratio,
             cap_height: selected_size.cap_height.map(PixelLength::new),
             is_scaled: selected_size.is_scaled,
@@ -731,10 +725,10 @@ impl FontShaper for RustybuzzShaper {
             theoretical_height,
             self.handles
         );
-        while let Ok(Some(mut pair)) = self.load_fallback(metrics_idx, dpi) {
+        while let Ok(Some(pair)) = self.load_fallback(metrics_idx, dpi) {
             let selected_size = pair
-                .face
-                .set_font_size(size * self.handles[metrics_idx].scale.unwrap_or(1.), dpi)?;
+                .font_info
+                .selected_font_size(size * self.handles[metrics_idx].scale.unwrap_or(1.), dpi);
             let diff = (theoretical_height - selected_size.height).abs();
             let factor = diff / theoretical_height;
             if factor < 2.0 {
@@ -857,7 +851,6 @@ impl<'a> ClusterResolver<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::shaper::harfbuzz::HarfbuzzShaper;
     use crate::FontDatabase;
     use config::FontAttributes;
 
@@ -884,66 +877,71 @@ mod test {
         .clone()
     }
 
-    /// Assert that RustybuzzShaper and HarfbuzzShaper agree on glyph_id and
-    /// cluster for every glyph produced for `text` (the H0-established
-    /// guarantee), and that x_advance is within `eps` pixels for each glyph
-    /// (not bit-exact, since rustybuzz has no FreeType-hinting equivalent -
-    /// see the module doc comment).
-    fn assert_shape_parity(text: &str, eps: f64) {
+    /// One shaped glyph's regression-relevant fields, used by
+    /// `assert_shape_matches_baseline` below.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    struct GlyphBaseline {
+        glyph_pos: u32,
+        cluster: u32,
+        x_advance: f64,
+    }
+
+    /// Shapes `text` with `RustybuzzShaper` (size=10, dpi=72, JetBrains
+    /// Mono) and asserts the result matches a hardcoded baseline exactly
+    /// for `glyph_pos`/`cluster`, and within `eps` pixels for `x_advance`
+    /// (not bit-exact against the baseline capture, to tolerate
+    /// float-rounding jitter across platforms/toolchains rather than
+    /// requiring the environment that captured the baseline).
+    ///
+    /// This replaces a former harfbuzz-vs-rustybuzz parity comparison
+    /// (see the module doc comment on the H0-established guarantee): now
+    /// that the `harfbuzz` crate/`HarfbuzzShaper` have been removed
+    /// (phase H4), there is no live oracle to compare against, so this
+    /// instead pins down the current `RustybuzzShaper` output as a
+    /// regression baseline (captured by actually running the shaper, not
+    /// guessed) -- it will still catch a shaping regression from a
+    /// rustybuzz/ttf-parser upgrade or a refactor of `do_shape`, just not
+    /// a *divergence from harfbuzz* (which H0/H1 already established was
+    /// zero for glyph_id/cluster, and small/tolerance-bounded for
+    /// x_advance, before this crate was removed).
+    fn assert_shape_matches_baseline(text: &str, eps: f64, expected: &[GlyphBaseline]) {
         let config = config::configuration();
         let handle = jetbrains_handle();
-
-        let hb_shaper = HarfbuzzShaper::new(&config, &[handle.clone()]).unwrap();
         let rb_shaper = RustybuzzShaper::new(&config, &[handle]).unwrap();
 
-        let mut hb_no_glyphs = vec![];
-        let hb_info = hb_shaper
+        let mut no_glyphs = vec![];
+        let info = rb_shaper
             .shape(
                 text,
                 10.,
                 72,
-                &mut hb_no_glyphs,
+                &mut no_glyphs,
                 None,
                 Direction::LeftToRight,
                 None,
                 None,
             )
             .unwrap();
-        assert!(hb_no_glyphs.is_empty(), "{:?}", hb_no_glyphs);
-
-        let mut rb_no_glyphs = vec![];
-        let rb_info = rb_shaper
-            .shape(
-                text,
-                10.,
-                72,
-                &mut rb_no_glyphs,
-                None,
-                Direction::LeftToRight,
-                None,
-                None,
-            )
-            .unwrap();
-        assert!(rb_no_glyphs.is_empty(), "{:?}", rb_no_glyphs);
+        assert!(no_glyphs.is_empty(), "{:?}", no_glyphs);
 
         assert_eq!(
-            hb_info.len(),
-            rb_info.len(),
-            "glyph count mismatch for {text:?}: harfbuzz={hb_info:#?} rustybuzz={rb_info:#?}"
+            expected.len(),
+            info.len(),
+            "glyph count mismatch for {text:?}: expected={expected:#?} actual={info:#?}"
         );
 
-        for (hb, rb) in hb_info.iter().zip(rb_info.iter()) {
+        for (want, got) in expected.iter().zip(info.iter()) {
             assert_eq!(
-                hb.glyph_pos, rb.glyph_pos,
-                "glyph_id mismatch for {text:?}: hb={hb:?} rb={rb:?}"
+                want.glyph_pos, got.glyph_pos,
+                "glyph_id mismatch for {text:?}: want={want:?} got={got:?}"
             );
             assert_eq!(
-                hb.cluster, rb.cluster,
-                "cluster mismatch for {text:?}: hb={hb:?} rb={rb:?}"
+                want.cluster, got.cluster,
+                "cluster mismatch for {text:?}: want={want:?} got={got:?}"
             );
             assert!(
-                (hb.x_advance.get() - rb.x_advance.get()).abs() <= eps,
-                "x_advance mismatch beyond eps={eps} for {text:?}: hb={hb:?} rb={rb:?}"
+                (want.x_advance - got.x_advance.get()).abs() <= eps,
+                "x_advance mismatch beyond eps={eps} for {text:?}: want={want:?} got={got:?}"
             );
         }
     }
@@ -954,9 +952,37 @@ mod test {
             .is_test(true)
             .filter_level(log::LevelFilter::Trace)
             .try_init();
-        assert_shape_parity("abc", 1.0);
-        assert_shape_parity("x x", 1.0);
-        assert_shape_parity("x\u{3000}x", 1.0);
+        // Baselines captured from a real `RustybuzzShaper::shape` run
+        // against JetBrainsMono-Regular.ttf at size=10, dpi=72 (see
+        // `assert_shape_matches_baseline`'s doc comment for why these are
+        // hardcoded rather than compared live against harfbuzz).
+        assert_shape_matches_baseline(
+            "abc",
+            1.0,
+            &[
+                GlyphBaseline { glyph_pos: 189, cluster: 0, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 214, cluster: 1, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 215, cluster: 2, x_advance: 6.0 },
+            ],
+        );
+        assert_shape_matches_baseline(
+            "x x",
+            1.0,
+            &[
+                GlyphBaseline { glyph_pos: 367, cluster: 0, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 958, cluster: 1, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 367, cluster: 2, x_advance: 6.0 },
+            ],
+        );
+        assert_shape_matches_baseline(
+            "x\u{3000}x",
+            1.0,
+            &[
+                GlyphBaseline { glyph_pos: 367, cluster: 0, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 958, cluster: 1, x_advance: 10.0 },
+                GlyphBaseline { glyph_pos: 367, cluster: 4, x_advance: 6.0 },
+            ],
+        );
     }
 
     #[test]
@@ -965,12 +991,40 @@ mod test {
             .is_test(true)
             .filter_level(log::LevelFilter::Trace)
             .try_init();
-        // JetBrains Mono ligates `<-`/`<--` etc, exercising the same
-        // ligature-clustering path that HarfbuzzShaper's `ligatures` test
-        // covers.
-        assert_shape_parity("<", 1.0);
-        assert_shape_parity("<-", 1.0);
-        assert_shape_parity("<--", 1.0);
+        // JetBrains Mono applies contextual (`calt`) substitution to
+        // `<-`/`<--` (each character gets a different glyph id than its
+        // standalone form, e.g. `<`'s glyph_pos changes from 1052 to
+        // 1742 once followed by `-`), exercising the same
+        // feature-driven substitution path a former `HarfbuzzShaper`
+        // comparison test covered (see `assert_shape_matches_baseline`'s
+        // doc comment) -- note this does not collapse into a single
+        // merged glyph per sequence at this size/config (each character
+        // keeps its own glyph and cluster), so the baselines below have
+        // one entry per input character, not one per ligated sequence.
+        // Baselines captured from a real shaper run, same as
+        // `parity_simple_latin`.
+        assert_shape_matches_baseline(
+            "<",
+            1.0,
+            &[GlyphBaseline { glyph_pos: 1052, cluster: 0, x_advance: 6.0 }],
+        );
+        assert_shape_matches_baseline(
+            "<-",
+            1.0,
+            &[
+                GlyphBaseline { glyph_pos: 1742, cluster: 0, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 1588, cluster: 1, x_advance: 6.0 },
+            ],
+        );
+        assert_shape_matches_baseline(
+            "<--",
+            1.0,
+            &[
+                GlyphBaseline { glyph_pos: 1742, cluster: 0, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 1742, cluster: 1, x_advance: 6.0 },
+                GlyphBaseline { glyph_pos: 1589, cluster: 2, x_advance: 6.0 },
+            ],
+        );
     }
 
     #[test]
