@@ -316,11 +316,14 @@ where
 
 fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
     // Cause the default config to be re-evaluated with the overrides applied
-    let lua = lua::make_lua_context(Path::new("override")).context("make_lua_context")?;
-    let table = mlua::Value::Table(lua.create_table()?);
-    let config = Config::apply_overrides_to(&lua, table).context("apply_overrides_to")?;
+    let rhai_engine =
+        rhai_engine::make_rhai_engine(Path::new("override")).context("make_rhai_engine")?;
+    let table = rhai::Dynamic::from_map(rhai::Map::new());
+    let config =
+        Config::apply_overrides_to_rhai(&rhai_engine, table).context("apply_overrides_to_rhai")?;
 
-    let dyn_config = luahelper::lua_value_to_dynamic(config)?;
+    let dyn_config =
+        rhai_value::rhai_dynamic_to_dynamic(&config).map_err(|e| anyhow!("{e}"))?;
 
     let cfg: Config = Config::from_dynamic(
         &dyn_config,
@@ -329,7 +332,7 @@ fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
             deprecated_fields: UnknownFieldAction::Warn,
         },
     )
-    .context("Error converting lua value from overrides to Config struct")?;
+    .context("Error converting rhai value from overrides to Config struct")?;
     // Compute but discard the key bindings here so that we raise any
     // problems earlier than we use them.
     let _ = cfg.key_bindings();
@@ -579,6 +582,7 @@ impl ConfigInner {
             file_name,
             lua,
             warnings,
+            rhai_watch_paths,
         } = Config::load();
 
         self.warnings = warnings;
@@ -602,6 +606,9 @@ impl ConfigInner {
         }
         if let Some(lua) = &lua {
             ConfigInner::accumulate_watch_paths(lua, &mut watch_paths);
+        }
+        for path in rhai_watch_paths {
+            watch_paths.push(PathBuf::from(path));
         }
 
         match config {
@@ -817,6 +824,14 @@ pub struct LoadedConfig {
     pub file_name: Option<PathBuf>,
     pub lua: Option<mlua::Lua>,
     pub warnings: Vec<String>,
+    /// Paths accumulated via `add_to_config_reload_watch_list` while
+    /// evaluating a `.rhai` config script (see `rhai_engine::ConfigReloadWatchList`).
+    /// Populated in addition to `lua`'s own `"wezterm-watch-paths"` registry
+    /// value (which the companion mlua context, kept alive purely to host
+    /// the runtime `wezterm.on`/`emit` event bridge, may also carry) so that
+    /// `ConfigInner::accumulate_watch_paths` can watch files referenced from
+    /// either engine.
+    pub rhai_watch_paths: Vec<String>,
 }
 
 fn default_one_point_oh_f64() -> f64 {
