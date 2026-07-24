@@ -1,6 +1,5 @@
 use crate::impl_rhai_conversion_dynamic;
 use crate::{default_one_point_oh, Config, Dimension, HsbTransform, PixelUnit, RgbaColor};
-use luahelper::impl_lua_conversion_dynamic;
 use termwiz::color::SrgbaTuple;
 use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 
@@ -456,7 +455,6 @@ pub struct Gradient {
     #[dynamic(default)]
     pub noise: Option<usize>,
 }
-impl_lua_conversion_dynamic!(Gradient);
 // L4a: needed so color-funcs's rhai `gradient`/`gradient_colors` binding can
 // accept a `Gradient` object-map argument from a .rhai script.
 impl_rhai_conversion_dynamic!(Gradient);

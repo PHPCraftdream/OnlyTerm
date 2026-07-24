@@ -26,7 +26,6 @@ use crate::{
     CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
 };
 use anyhow::Context;
-use luahelper::impl_lua_conversion_dynamic;
 use portable_pty::CommandBuilder;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -882,7 +881,6 @@ pub struct Config {
     #[dynamic(default = "default_ulimit_nproc")]
     pub ulimit_nproc: u64,
 }
-impl_lua_conversion_dynamic!(Config);
 
 fn default_one() -> usize {
     1

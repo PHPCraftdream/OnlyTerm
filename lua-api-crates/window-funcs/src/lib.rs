@@ -1,16 +1,5 @@
-use config::lua::get_or_create_sub_module;
-use config::lua::mlua::{self, Lua};
-use luahelper::impl_lua_conversion_dynamic;
 use std::collections::HashMap;
-use std::rc::Rc;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
-use window::{Appearance, Connection, ConnectionOps};
-
-fn get_conn() -> mlua::Result<Rc<Connection>> {
-    Connection::get().ok_or_else(|| {
-        mlua::Error::external("cannot get window Connection: not running on the gui thread?")
-    })
-}
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic)]
 pub struct ScreenInfo {
@@ -23,7 +12,6 @@ pub struct ScreenInfo {
     pub max_fps: Option<usize>,
     pub effective_dpi: Option<f64>,
 }
-impl_lua_conversion_dynamic!(ScreenInfo);
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic)]
 pub struct Screens {
@@ -35,7 +23,6 @@ pub struct Screens {
     pub virtual_width: isize,
     pub virtual_height: isize,
 }
-impl_lua_conversion_dynamic!(Screens);
 
 impl From<window::screen::ScreenInfo> for ScreenInfo {
     fn from(info: window::screen::ScreenInfo) -> Self {
@@ -72,35 +59,4 @@ impl From<window::screen::Screens> for Screens {
             virtual_height,
         }
     }
-}
-
-pub fn register(lua: &Lua) -> anyhow::Result<()> {
-    let window_mod = get_or_create_sub_module(lua, "gui")?;
-
-    window_mod.set(
-        "screens",
-        lua.create_function(|_, _: ()| {
-            let conn = get_conn()?;
-            let screens: Screens = conn
-                .screens()
-                .map_err(|err| mlua::Error::external(format!("{err:#}")))?
-                .into();
-            Ok(screens)
-        })?,
-    )?;
-
-    window_mod.set(
-        "get_appearance",
-        lua.create_function(|_, _: ()| {
-            Ok(match Connection::get() {
-                Some(conn) => conn.get_appearance().to_string(),
-                None => {
-                    // Gui hasn't started yet, assume light
-                    Appearance::Light.to_string()
-                }
-            })
-        })?,
-    )?;
-
-    Ok(())
 }
