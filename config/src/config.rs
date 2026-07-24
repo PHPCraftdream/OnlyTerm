@@ -14,7 +14,7 @@ use crate::keyassignment::{
     KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger, SpawnCommand,
 };
 use crate::keys::{Key, LeaderKey, Mouse};
-use crate::lua::make_lua_context;
+use crate::rhai_engine::{make_rhai_engine, RhaiConfigEngine};
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
 use crate::wsl::WslDomain;
@@ -27,7 +27,6 @@ use crate::{
 };
 use anyhow::Context;
 use luahelper::impl_lua_conversion_dynamic;
-use mlua::FromLua;
 use portable_pty::CommandBuilder;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -991,9 +990,9 @@ impl Config {
         // multiple.  In addition, it spawns a lot of subprocesses,
         // so we do this bit "by-hand"
 
-        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".wezterm.lua"))];
+        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".wezterm.rhai"))];
         for dir in CONFIG_DIRS.iter() {
-            paths.push(PathPossibility::optional(dir.join("wezterm.lua")))
+            paths.push(PathPossibility::optional(dir.join("wezterm.rhai")))
         }
 
         if cfg!(windows) {
@@ -1007,7 +1006,7 @@ impl Config {
             // dir as the executable that will take precedence.
             if let Ok(exe_name) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_name.parent() {
-                    paths.insert(0, PathPossibility::optional(exe_dir.join("wezterm.lua")));
+                    paths.insert(0, PathPossibility::optional(exe_dir.join("wezterm.rhai")));
                 }
             }
         }
@@ -1033,6 +1032,7 @@ impl Config {
                         file_name: Some(path_item.path.clone()),
                         lua: None,
                         warnings: vec![],
+                        rhai_watch_paths: vec![],
                     }
                 }
                 Ok(None) => continue,
@@ -1040,7 +1040,7 @@ impl Config {
             }
         }
 
-        // We didn't find (or were asked to skip) a wezterm.lua file, so
+        // We didn't find (or were asked to skip) a wezterm.rhai file, so
         // update the environment to make it simpler to understand this
         // state.
         std::env::remove_var("WEZTERM_CONFIG_FILE");
@@ -1052,6 +1052,7 @@ impl Config {
                 file_name: None,
                 lua: None,
                 warnings: vec![],
+                rhai_watch_paths: vec![],
             },
             Ok(cfg) => cfg,
         }
@@ -1066,9 +1067,51 @@ impl Config {
         Ok(LoadedConfig {
             config: Ok(config?),
             file_name: None,
-            lua: Some(make_lua_context(Path::new(""))?),
+            // The companion mlua context: real config *parsing* now happens
+            // via rhai (see `try_load` below), but the runtime event-callback
+            // bridge (`wezterm.on`/`emit`, consumed by mux/wezterm-gui via
+            // `config::lua::emit_sync_callback` et al) still runs on mlua,
+            // since `rhai::Engine`/`rhai::AST` are not `Send` (no `sync`
+            // feature enabled workspace-wide) and thus cannot cross the
+            // background config-reload-watcher thread -> main thread
+            // `LUA_PIPE` channel the way `mlua::Lua` can. Retiring this
+            // companion context is tracked as follow-up work (L5, full mlua
+            // removal) once the reload pipeline is redesigned to not require
+            // a `Send` engine value.
+            lua: Some(crate::lua::make_lua_context(Path::new(""))?),
             warnings,
+            rhai_watch_paths: vec![],
         })
+    }
+
+    /// If `p` (a `.rhai` candidate path) doesn't exist, but a legacy
+    /// `.lua`-suffixed sibling does, produce a clear, actionable error
+    /// explaining that Lua configs are no longer supported at runtime:
+    /// mlua has been retired from the live config-loading path and users
+    /// must migrate their config to rhai syntax and rename the file.
+    ///
+    /// This is purely a diagnostic: we never parse the `.lua` file with
+    /// mlua here, we only check for its existence on disk so that the
+    /// error message can point the user at the specific file that needs
+    /// migrating instead of a generic "file not found".
+    fn legacy_lua_sibling(p: &Path) -> Option<PathBuf> {
+        let file_name = p.file_name()?.to_str()?;
+        let lua_name = if file_name == "wezterm.rhai" {
+            "wezterm.lua".to_string()
+        } else if file_name == ".wezterm.rhai" {
+            ".wezterm.lua".to_string()
+        } else if let Some(stripped) = file_name.strip_suffix(".rhai") {
+            format!("{stripped}.lua")
+        } else {
+            return None;
+        };
+
+        let lua_path = p.with_file_name(lua_name);
+        if lua_path.is_file() {
+            Some(lua_path)
+        } else {
+            None
+        }
     }
 
     fn try_load(
@@ -1080,32 +1123,49 @@ impl Config {
         let mut file = match std::fs::File::open(p) {
             Ok(file) => file,
             Err(err) => match err.kind() {
-                std::io::ErrorKind::NotFound if !path_item.is_required => return Ok(None),
+                std::io::ErrorKind::NotFound if !path_item.is_required => {
+                    if let Some(lua_path) = Self::legacy_lua_sibling(p) {
+                        anyhow::bail!(
+                            "Found a legacy Lua configuration file at {} but Lua \
+                             configs are no longer supported: mlua has been removed \
+                             from wezterm's live config-loading path. Please rename \
+                             {} to {} and adapt its syntax to rhai. See the migration \
+                             guide for details on translating a wezterm.lua config to \
+                             wezterm.rhai.",
+                            lua_path.display(),
+                            lua_path.display(),
+                            p.display()
+                        );
+                    }
+                    return Ok(None);
+                }
                 _ => anyhow::bail!("Error opening {}: {}", p.display(), err),
             },
         };
 
         let mut s = String::new();
         file.read_to_string(&mut s)?;
-        let lua = make_lua_context(p)?;
+        let rhai_engine = make_rhai_engine(p)?;
 
         let (config, warnings) =
             wezterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
                 let cfg: Config;
 
-                let config: mlua::Value = smol::block_on(
-                    // Skip a potential BOM that Windows software may have placed in the
-                    // file. Note that we can't catch this happening for files that are
-                    // imported via the lua require function.
-                    lua.load(s.trim_start_matches('\u{FEFF}'))
-                        .set_name(p.to_string_lossy())
-                        .eval_async(),
-                )?;
-                let config = Config::apply_overrides_to(&lua, config)?;
-                let config = Config::apply_overrides_obj_to(&lua, config, overrides)?;
-                cfg = Config::from_lua(config, &lua).with_context(|| {
+                // Skip a potential BOM that Windows software may have placed in the
+                // file.
+                let script = s.trim_start_matches('\u{FEFF}');
+                let (_ast, config_value) = rhai_engine.compile_and_eval(script).map_err(|e| {
+                    anyhow::anyhow!("Error evaluating {}: {}", p.display(), e)
+                })?;
+
+                let config_value =
+                    Config::apply_overrides_to_rhai(&rhai_engine, config_value)?;
+                let config_value =
+                    Config::apply_overrides_obj_to_rhai(config_value, overrides)?;
+
+                cfg = Config::from_rhai_dynamic(config_value).with_context(|| {
                     format!(
-                        "Error converting lua value returned by script {} to Config struct",
+                        "Error converting rhai value returned by script {} to Config struct",
                         p.display()
                     )
                 })?;
@@ -1123,78 +1183,122 @@ impl Config {
             });
         let cfg = config?;
 
+        // Grab any paths that the .rhai script added to its reload watch
+        // list (via `add_to_config_reload_watch_list`) before the engine
+        // that owns them goes out of scope; see `LoadedConfig::rhai_watch_paths`.
+        let rhai_watch_paths = rhai_engine.watch_list.paths();
+
+        // Companion mlua context: see the comment on this same construction
+        // in `try_default` above for why this still exists. We build it from
+        // `p` (rather than a blank path) so that `wezterm.config_file`/
+        // `wezterm.config_dir` and any lua-api-crate that keys off the
+        // config file location behave the same as before for the runtime
+        // event bridge.
+        let lua = crate::lua::make_lua_context(p)?;
+
         Ok(Some(LoadedConfig {
             config: Ok(cfg.compute_extra_defaults(Some(p))),
             file_name: Some(p.to_path_buf()),
             lua: Some(lua),
             warnings,
+            rhai_watch_paths,
         }))
     }
 
-    pub(crate) fn apply_overrides_obj_to<'l>(
-        lua: &'l mlua::Lua,
-        mut config: mlua::Value<'l>,
-        overrides: &wezterm_dynamic::Value,
-    ) -> anyhow::Result<mlua::Value<'l>> {
-        // config may be a table, or it may be a config builder.
-        // We'll leave it up to lua to call the appropriate
-        // index function as managing that from Rust is a PITA.
-        let setter: mlua::Function = lua
-            .load(
-                r#"
-                    return function(config, key, value)
-                        config[key] = value;
-                        return config;
-                    end
-                    "#,
-            )
-            .eval()?;
+    /// Convert a `rhai::Dynamic` (the result of evaluating a `.rhai` config
+    /// script) into a `Config`, in the same "strict: deny unknown fields"
+    /// mode that the mlua config-builder path enforced via
+    /// `config_builder_new_index` (see `config/src/lua.rs`).
+    fn from_rhai_dynamic(value: rhai::Dynamic) -> anyhow::Result<Config> {
+        let dyn_value = crate::rhai_value::rhai_dynamic_to_dynamic(&value)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Config::from_dynamic(
+            &dyn_value,
+            wezterm_dynamic::FromDynamicOptions {
+                unknown_fields: wezterm_dynamic::UnknownFieldAction::Deny,
+                deprecated_fields: wezterm_dynamic::UnknownFieldAction::Warn,
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))
+    }
 
+    /// rhai analogue of `apply_overrides_obj_to`: apply an overrides object
+    /// (as used by `overridden_config`/palette previews) directly onto the
+    /// value returned by the config script, without needing a running
+    /// engine (the values are plain data, no callbacks are involved).
+    pub(crate) fn apply_overrides_obj_to_rhai(
+        mut config: rhai::Dynamic,
+        overrides: &wezterm_dynamic::Value,
+    ) -> anyhow::Result<rhai::Dynamic> {
         match overrides {
             wezterm_dynamic::Value::Object(obj) => {
-                for (key, value) in obj {
-                    let key = luahelper::dynamic_to_lua_value(lua, key.clone())?;
-                    let value = luahelper::dynamic_to_lua_value(lua, value.clone())?;
-                    config = setter.call((config, key, value))?;
+                if obj.is_empty() {
+                    return Ok(config);
                 }
+                let mut map = config.try_cast::<rhai::Map>().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "expected the config script to evaluate to an object/map, \
+                         so that overrides could be applied"
+                    )
+                })?;
+                for (key, value) in obj {
+                    let key = match key {
+                        wezterm_dynamic::Value::String(s) => s.clone(),
+                        other => format!("{other:?}"),
+                    };
+                    let value = crate::rhai_value::dynamic_to_rhai_dynamic(value);
+                    map.insert(key.into(), value);
+                }
+                config = rhai::Dynamic::from_map(map);
                 Ok(config)
             }
             _ => Ok(config),
         }
     }
 
-    pub(crate) fn apply_overrides_to<'l>(
-        lua: &'l mlua::Lua,
-        mut config: mlua::Value<'l>,
-    ) -> anyhow::Result<mlua::Value<'l>> {
+    /// rhai analogue of `apply_overrides_to`: apply the `--config key=value`
+    /// command line overrides by evaluating each `value` as a rhai
+    /// expression against `rhai_engine`, then setting `config[key] = value`.
+    pub(crate) fn apply_overrides_to_rhai(
+        rhai_engine: &RhaiConfigEngine,
+        mut config: rhai::Dynamic,
+    ) -> anyhow::Result<rhai::Dynamic> {
         let overrides = CONFIG_OVERRIDES.lock().unwrap();
         for (key, value) in &*overrides {
-            if value == "nil" {
-                // Literal nil as the value is the same as not specifying the value.
-                // We special case this here as we want to explicitly check for
-                // the value evaluating as nil, as can happen in the case where the
-                // user specifies something like: `--config term=xterm`.
-                // The RHS references a global that doesn't exist and evaluates as
-                // nil. We want to raise this as an error.
+            if value == "nil" || value == "()" {
+                // Literal nil/unit as the value is the same as not specifying
+                // the value.  We special case this here as we want to
+                // explicitly check for the value evaluating as unit, as can
+                // happen in the case where the user specifies something like:
+                // `--config term=xterm`.
+                // The RHS references a global that doesn't exist and
+                // evaluates as unit. We want to raise this as an error.
                 continue;
             }
-            let literal = value.escape_debug();
-            let code = format!(
-                r#"
-                local wezterm = require 'wezterm';
-                local value = {value};
-                if value == nil then
-                    error("{literal} evaluated as nil. Check for missing quotes or other syntax issues")
-                end
-                config.{key} = value;
-                return config;
-                "#,
-            );
-            let chunk = lua.load(&code);
-            let chunk = chunk.set_name(format!("--config {}={}", key, value));
-            lua.globals().set("config", config.clone())?;
+
+            let evaluated = rhai_engine.eval(value).map_err(|e| {
+                anyhow::anyhow!("--config {}={}: error evaluating value: {}", key, value, e)
+            })?;
+            if evaluated.is_unit() {
+                anyhow::bail!(
+                    "--config {}={}: value evaluated as (). Check for missing \
+                     quotes or other syntax issues",
+                    key,
+                    value
+                );
+            }
+
+            let mut map = config.try_cast::<rhai::Map>().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "expected the config script to evaluate to an object/map, \
+                     so that --config {}={} could be applied",
+                    key,
+                    value
+                )
+            })?;
             log::debug!("Apply {}={} to config", key, value);
-            config = chunk.eval()?;
+            map.insert(key.as_str().into(), evaluated);
+            config = rhai::Dynamic::from_map(map);
         }
         Ok(config)
     }
@@ -2174,4 +2278,149 @@ fn default_macos_forward_mods() -> Modifiers {
 
 fn default_colr_rasterizer() -> FontRasterizerSelection {
     FontRasterizerSelection::Harfbuzz
+}
+
+#[cfg(test)]
+mod rhai_config_load_test {
+    use super::*;
+    use std::io::Write;
+
+    /// `CONFIG_OVERRIDES` is a process-wide `lazy_static` `Mutex`, and Rust test
+    /// binaries run tests concurrently on multiple threads by default. Any test
+    /// that reads or writes `CONFIG_OVERRIDES` must serialize against every other
+    /// such test via this mutex, or a test elsewhere in this module can observe
+    /// another test's overrides mid-flight (which is exactly what happened before
+    /// this guard existed: `loads_a_rhai_config_file`, which never touches
+    /// `CONFIG_OVERRIDES` itself, intermittently failed with `font_size=22.5`
+    /// leaking in from `applies_config_overrides_as_rhai_expressions` running
+    /// concurrently on another thread).
+    static CONFIG_OVERRIDES_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// End to end proof that the real, public config-loading path (`Config::load`,
+    /// via `Config::try_load`) parses a `.rhai` config file: previously this
+    /// exercised `wezterm.lua`/`.wezterm.lua` text through `make_lua_context`; this
+    /// is the rhai-side equivalent, confirming the switch described in
+    /// `docs/plans/2026-07-23-lua-rhai-migration.md`'s L4.5 phase actually takes
+    /// effect for the production loader, not just the standalone `rhai_engine`
+    /// unit tests.
+    #[test]
+    fn loads_a_rhai_config_file() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`: this test doesn't set any
+        // overrides itself, but must still serialize against
+        // `applies_config_overrides_as_rhai_expressions` (which does), since
+        // both call through `Config::try_load` -> `apply_overrides_to_rhai`,
+        // which reads the same global `CONFIG_OVERRIDES`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("wezterm.rhai");
+        std::fs::write(
+            &config_path,
+            r#"
+                #{
+                    font_size: 14.0,
+                    term: "screen-256color",
+                }
+            "#,
+        )
+        .unwrap();
+
+        let path_item = PathPossibility::required(config_path.clone());
+        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            .expect("try_load should succeed")
+            .expect("a config was found at the required path");
+
+        let cfg = loaded.config.expect("config should parse");
+        assert_eq!(cfg.font_size, 14.0);
+        assert_eq!(cfg.term, "screen-256color");
+        assert_eq!(loaded.file_name.as_deref(), Some(config_path.as_path()));
+        // The companion mlua context (see the comment in `try_load`) should
+        // still be present, since mux/wezterm-gui's runtime event bridge
+        // (`wezterm.on`/`emit`) depends on it until that bridge itself moves
+        // to rhai (tracked separately as L5 follow-up work).
+        assert!(loaded.lua.is_some());
+    }
+
+    /// `--config key=value`-style overrides (see `CONFIG_OVERRIDES`) are
+    /// evaluated as rhai expressions and applied on top of the parsed config,
+    /// exactly like the old `apply_overrides_to` did for Lua expressions.
+    #[test]
+    fn applies_config_overrides_as_rhai_expressions() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("wezterm.rhai");
+        std::fs::write(&config_path, "#{ font_size: 10.0 }").unwrap();
+
+        *CONFIG_OVERRIDES.lock().unwrap() = vec![("font_size".to_string(), "22.5".to_string())];
+
+        let path_item = PathPossibility::required(config_path);
+        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            .expect("try_load should succeed")
+            .expect("a config was found");
+        let cfg = loaded.config.expect("config should parse");
+        assert_eq!(cfg.font_size, 22.5);
+
+        // Clean up global state so other tests in this process aren't affected.
+        CONFIG_OVERRIDES.lock().unwrap().clear();
+    }
+
+    /// If a legacy `wezterm.lua`/`.wezterm.lua` file exists but there is no
+    /// `.rhai` sibling, `try_load` must not silently ignore it (which would
+    /// look to the user like "wezterm forgot my config"); it must fail with
+    /// an actionable message telling them Lua configs are no longer
+    /// supported and pointing at the specific file to rename/migrate.
+    #[test]
+    fn legacy_lua_only_config_produces_actionable_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let lua_path = dir.path().join("wezterm.lua");
+        let mut f = std::fs::File::create(&lua_path).unwrap();
+        writeln!(f, "return {{}}").unwrap();
+        drop(f);
+
+        let rhai_path = dir.path().join("wezterm.rhai");
+        let path_item = PathPossibility::optional(rhai_path);
+        let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
+            Err(err) => err,
+            Ok(_) => panic!("a legacy .lua-only directory must error, not silently skip"),
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("no longer supported"),
+            "unexpected error message: {}",
+            message
+        );
+        assert!(
+            message.contains("wezterm.rhai"),
+            "error should mention the expected new filename: {}",
+            message
+        );
+    }
+
+    /// Sanity check for the pure path-diagnostics helper itself: only exact
+    /// `<stem>.rhai` -> `<stem>.lua` siblings are detected, and only when the
+    /// `.lua` file actually exists on disk (we must never claim a legacy file
+    /// exists when it doesn't, else every fresh/no-config user would see the
+    /// migration error instead of falling through to defaults).
+    #[test]
+    fn legacy_lua_sibling_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let rhai_path = dir.path().join("wezterm.rhai");
+        assert_eq!(Config::legacy_lua_sibling(&rhai_path), None);
+
+        std::fs::write(dir.path().join("wezterm.lua"), "return {}").unwrap();
+        assert_eq!(
+            Config::legacy_lua_sibling(&rhai_path),
+            Some(dir.path().join("wezterm.lua"))
+        );
+
+        let dot_rhai_path = dir.path().join(".wezterm.rhai");
+        assert_eq!(Config::legacy_lua_sibling(&dot_rhai_path), None);
+        std::fs::write(dir.path().join(".wezterm.lua"), "return {}").unwrap();
+        assert_eq!(
+            Config::legacy_lua_sibling(&dot_rhai_path),
+            Some(dir.path().join(".wezterm.lua"))
+        );
+    }
 }
