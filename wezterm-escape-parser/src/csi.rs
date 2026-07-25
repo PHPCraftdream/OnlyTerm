@@ -1510,7 +1510,7 @@ impl Display for Sgr {
                         $(AnsiColor::$Ansi => code!($code) ,)*
                     }
                 } else {
-                    write!(f, "{}:5:{}m", SgrCode::$eightbit as i64, $idx)?
+                    write!(f, "{};5;{}m", SgrCode::$eightbit as i64, $idx)?
                 }
             }
         }
@@ -1672,7 +1672,7 @@ impl Display for Sgr {
                 }
             }
             Sgr::UnderlineColor(ColorSpec::PaletteIndex(idx)) => {
-                write!(f, "{}:5:{}m", SgrCode::UnderlineColor as i64, *idx)?
+                write!(f, "{};5;{}m", SgrCode::UnderlineColor as i64, *idx)?
             }
         }
         Ok(())
@@ -3115,7 +3115,7 @@ mod test {
             )))]
         );
         assert_eq!(
-            parse('m', &[58, 5, 220, 255, 255], "\x1b[58:5:220m\x1b[255;255m"),
+            parse('m', &[58, 5, 220, 255, 255], "\x1b[58;5;220m\x1b[255;255m"),
             vec![
                 CSI::Sgr(Sgr::UnderlineColor(ColorSpec::PaletteIndex(220))),
                 CSI::Unspecified(Box::new(Unspecified {
@@ -3155,7 +3155,7 @@ mod test {
             )))]
         );
         assert_eq!(
-            parse('m', &[38, 5, 220, 255, 255], "\x1b[38:5:220m\x1b[255;255m"),
+            parse('m', &[38, 5, 220, 255, 255], "\x1b[38;5;220m\x1b[255;255m"),
             vec![
                 CSI::Sgr(Sgr::Foreground(ColorSpec::PaletteIndex(220))),
                 CSI::Unspecified(Box::new(Unspecified {
