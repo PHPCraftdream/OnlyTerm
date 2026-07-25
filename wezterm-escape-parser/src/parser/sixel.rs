@@ -97,11 +97,15 @@ impl SixelBuilder {
         match self.current_command {
             b'#' if self.param_no >= 4 => {
                 // Define a color
-                let color_number = self.params[0] as u16;
-                let system = self.params[1] as u16;
-                let a = self.params[2] as u16;
-                let b = self.params[3] as u8;
-                let c = self.params[4] as u8;
+                let param = |i| match self.params.get(i).copied().unwrap_or(-1) {
+                    -1 => 0,
+                    v => v.max(0),
+                };
+                let color_number = param(0) as u16;
+                let system = param(1) as u16;
+                let a = param(2) as u16;
+                let b = param(3) as u8;
+                let c = param(4) as u8;
 
                 if system == 1 {
                     self.sixel.data.push(SixelData::DefineColorMapHSL {
@@ -296,6 +300,41 @@ mod test {
                             data: 1
                         }
                     ]
+                })),
+                Action::Esc(Esc::Code(EscCode::StringTerminator)),
+            ],
+            actions
+        );
+    }
+
+    #[test]
+    fn sixel_missing_color_params_default_to_zero() {
+        // Regression test for upstream #7345 / issue #7344: a color
+        // definition command (`#`) whose trailing parameter is omitted
+        // (trailing semicolon with no following digit) must default the
+        // missing parameter to 0 instead of reading the stale `-1` sentinel
+        // and casting it to a garbage value.
+        //
+        // Without the fix, `params[4]` stays at -1 and `(-1i64) as u8`
+        // wraps to 255, making the blue channel 255 (rgb 255,255,255).
+        // With the fix the missing param maps to 0, giving rgb 255,255,0.
+        let mut p = Parser::new();
+        let actions = p.parse_as_vec(b"\x1bPq#0;2;100;100;\x1b\\");
+
+        use SixelData::*;
+        assert_eq!(
+            vec![
+                Action::Sixel(Box::new(Sixel {
+                    pan: 2,
+                    pad: 1,
+                    pixel_width: None,
+                    pixel_height: None,
+                    background_is_transparent: false,
+                    horizontal_grid_size: None,
+                    data: vec![DefineColorMapRGB {
+                        color_number: 0,
+                        rgb: RgbColor::new_8bpc(255, 255, 0)
+                    }]
                 })),
                 Action::Esc(Esc::Code(EscCode::StringTerminator)),
             ],
