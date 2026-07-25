@@ -57,6 +57,15 @@ fn encoded_length(value: u64) -> usize {
 
 const COMPRESSED_MASK: u64 = 1 << 63;
 
+/// Upper bound on the payload size we are willing to allocate for a single PDU.
+///
+/// PDUs are framed with a leb128 length that is taken directly from the peer
+/// over the network/pipe. A corrupt, truncated or malicious frame can declare
+/// an arbitrarily large length, which previously led to an unbounded
+/// `vec![0u8; data_len]` and an OOM-abort of the whole process. Rejecting
+/// anything above this size turns that into a clean error instead.
+const MAX_PDU_SIZE: usize = 256 * 1024 * 1024;
+
 fn encode_raw_as_vec(
     ident: u64,
     serial: u64,
@@ -210,6 +219,13 @@ async fn decode_raw_async<R: Unpin + AsyncRead + std::fmt::Debug>(
             (data_len, false) => data_len,
         };
 
+    if data_len > MAX_PDU_SIZE {
+        return Err(CorruptResponse(format!(
+            "decode_raw_async: PDU data length {data_len} exceeds the maximum of {MAX_PDU_SIZE} bytes"
+        ))
+        .into());
+    }
+
     if is_compressed {
         metrics::histogram!("pdu.decode.compressed.size").record(data_len as f64);
     } else {
@@ -257,6 +273,14 @@ fn decode_raw<R: std::io::Read>(mut r: R) -> anyhow::Result<Decoded> {
             }
             (data_len, false) => data_len,
         };
+
+    if data_len > MAX_PDU_SIZE {
+        anyhow::bail!(
+            "decode_raw: PDU data length {} exceeds the maximum of {} bytes",
+            data_len,
+            MAX_PDU_SIZE
+        );
+    }
 
     if is_compressed {
         metrics::histogram!("pdu.decode.compressed.size").record(data_len as f64);
@@ -1261,5 +1285,64 @@ mod test {
             },
             Pdu::decode(encoded.as_slice()).unwrap()
         );
+    }
+
+    /// A declared payload length well above MAX_PDU_SIZE (256 MiB) so that the
+    /// size guard fires before any large allocation or body read is attempted.
+    const TEST_OVERSIZED_DATA_LEN: u64 = 4 * 1024 * 1024 * 1024; // 4 GiB
+
+    /// Build a PDU frame whose header advertises `declared_data_len` bytes of
+    /// payload, but whose body contains no actual bytes. Used to verify the
+    /// size guard rejects oversized/corrupt frames *before* allocating.
+    fn make_oversized_frame(declared_data_len: u64) -> Vec<u8> {
+        // serial and ident are chosen so their leb128 encodings are a single
+        // byte each; only the declared length is inflated.
+        let serial: u64 = 0;
+        let ident: u64 = 1;
+        let len = declared_data_len + encoded_length(serial) as u64 + encoded_length(ident) as u64;
+        let mut buf = Vec::new();
+        leb128::write::unsigned(&mut buf, len).unwrap();
+        leb128::write::unsigned(&mut buf, serial).unwrap();
+        leb128::write::unsigned(&mut buf, ident).unwrap();
+        buf
+    }
+
+    #[test]
+    fn oversized_pdu_is_rejected_without_allocating() {
+        // A corrupt/malicious frame declaring ~4 GiB of payload but carrying no
+        // body bytes must be rejected by the size guard rather than triggering a
+        // multi-gigabyte allocation.
+        let frame = make_oversized_frame(TEST_OVERSIZED_DATA_LEN);
+        let err = decode_raw(frame.as_slice()).unwrap_err().to_string();
+        assert!(
+            err.contains("exceeds the maximum"),
+            "expected the size guard to reject the oversized PDU, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn oversized_pdu_is_rejected_by_async_decoder() {
+        let frame = make_oversized_frame(TEST_OVERSIZED_DATA_LEN);
+        let mut cursor = smol::io::Cursor::new(frame);
+        let err = smol::block_on(decode_raw_async(&mut cursor, None))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("exceeds the maximum"),
+            "expected the async size guard to reject the oversized PDU, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn valid_pdu_still_decodes_after_size_guard() {
+        // The size guard must not interfere with the normal decode path.
+        let mut encoded = Vec::new();
+        encode_raw(0x42, 0x10, b"small payload", false, &mut encoded).unwrap();
+        let decoded = decode_raw(encoded.as_slice()).unwrap();
+        assert_eq!(decoded.ident, 0x42);
+        assert_eq!(decoded.serial, 0x10);
+        assert_eq!(decoded.data, b"small payload");
     }
 }
