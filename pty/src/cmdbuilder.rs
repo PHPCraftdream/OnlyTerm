@@ -609,9 +609,13 @@ impl CommandBuilder {
                 // user specified path, so this is potentially wrong.
                 for ext in std::env::split_paths(&extensions) {
                     // PATHEXT includes the leading `.`, but `with_extension`
-                    // doesn't want that
+                    // doesn't want that. `strip_prefix` also guards against
+                    // empty entries (e.g. from a `;;` separator in PATHEXT,
+                    // which would otherwise panic on `&ext[1..]`) and entries
+                    // without a leading dot.
                     let ext = ext.to_str().expect("PATHEXT entries must be utf8");
-                    let path = path.join(&exe).with_extension(&ext[1..]);
+                    let ext = ext.strip_prefix('.').unwrap_or(ext);
+                    let path = path.join(&exe).with_extension(ext);
                     if path.exists() {
                         return path.into_os_string();
                     }
@@ -835,5 +839,21 @@ mod tests {
 
         cmd.env_remove("cARGO_pKG_aUTHORS");
         assert!(cmd.get_env("CARGO_PKG_AUTHORS").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_search_path_empty_pathext_entries() {
+        // Regression test for wezterm/wezterm#6499: a PATHEXT containing
+        // empty segments (e.g. from a stray `;;` separator) used to panic
+        // in `search_path` due to indexing `&ext[1..]` on an empty string.
+        let mut cmd = CommandBuilder::new("dummy");
+        cmd.env("PATH", std::env::temp_dir());
+        cmd.env("PATHEXT", ";;.EXE;.CMD;;");
+
+        // Must not panic regardless of PATHEXT contents; the returned value
+        // is allowed to be the bare exe name when nothing is found on PATH.
+        let resolved = cmd.search_path(OsStr::new("cmd"));
+        assert!(!resolved.is_empty());
     }
 }
