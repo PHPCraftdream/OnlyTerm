@@ -62,6 +62,13 @@ struct CopyRenderable {
     delegate: Arc<dyn Pane>,
     start: Option<SelectionCoordinate>,
     selection_mode: SelectionMode,
+    /// The selection range computed by the most recent CopyMode action.
+    /// Stored synchronously so that selection readers (CopyTo, etc.) within
+    /// the same synchronous dispatch pass see the up-to-date range without
+    /// waiting for the deferred TermWindow mirror update via window.notify.
+    /// See issue #3302.
+    selection_range: Option<SelectionRange>,
+    selection_rectangular: bool,
     viewport: Option<StableRowIndex>,
     /// We use this to cancel ourselves later
     window: ::window::Window,
@@ -158,6 +165,8 @@ impl CopyOverlay {
             editing_search: params.editing_search,
             result_pos: None,
             selection_mode: SelectionMode::Cell,
+            selection_range: None,
+            selection_rectangular: false,
             typing_cookie: 0,
             searching: None,
             pending_jump: None,
@@ -213,6 +222,17 @@ impl CopyOverlay {
             }
             render.viewport = viewport;
         }
+    }
+
+    /// Returns the authoritative selection range and rectangular flag set by
+    /// the most recent CopyMode action. Unlike the TermWindow's selection
+    /// mirror (updated asynchronously via window.notify), this reflects
+    /// selection changes immediately, so it is correct even within the same
+    /// synchronous dispatch pass — e.g. when CopyTo runs after CopyMode
+    /// actions inside action.Multiple. See issue #3302.
+    pub fn current_selection(&self) -> Option<(SelectionRange, bool)> {
+        let render = self.render.lock();
+        Some((*render.selection_range.as_ref()?, render.selection_rectangular))
     }
 }
 
@@ -420,6 +440,7 @@ impl CopyRenderable {
     }
 
     fn clear_selection(&mut self) {
+        self.selection_range = None;
         let pane_id = self.delegate.pane_id();
         self.window
             .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
@@ -508,7 +529,14 @@ impl CopyRenderable {
         }
     }
 
-    fn adjust_selection(&self, start: SelectionCoordinate, range: SelectionRange) {
+    fn adjust_selection(&mut self, start: SelectionCoordinate, range: SelectionRange) {
+        // Store synchronously: CopyTo/CompleteSelection dispatched in the same
+        // Multiple action sequence read the selection before the deferred
+        // window.notify below drains, so we keep an authoritative copy here.
+        // See issue #3302.
+        self.selection_range = Some(range);
+        self.selection_rectangular = self.selection_mode == SelectionMode::Block;
+
         let pane_id = self.delegate.pane_id();
         let window = self.window.clone();
         let mode = self.selection_mode;
