@@ -182,8 +182,11 @@ impl GlState {
             log::trace!("opengl extensions: {:?}", extensions);
 
             if has_extension(&extensions, "WGL_ARB_pixel_format") {
-                return match Self::create_ext(wgl, extensions, hdc) {
-                    Ok(state) => Ok(state),
+                return match Self::create_ext(wgl, extensions.clone(), hdc) {
+                    Ok(state) => {
+                        state.disable_vsync(&extensions);
+                        Ok(state)
+                    }
                     Err(err) => {
                         log::warn!(
                             "failed to created extended OpenGL context \
@@ -191,13 +194,69 @@ impl GlState {
                             err
                         );
                         let wgl = WglWrapper::load()?;
-                        Self::create_basic(wgl, window)
+                        let state = Self::create_basic(wgl, window)?;
+                        state.disable_vsync(&extensions);
+                        Ok(state)
                     }
                 };
             }
         }
 
         Self::create_basic(wgl, window)
+    }
+
+    /// Attempt to disable vsync (swap interval) via the `WGL_EXT_swap_control`
+    /// extension.
+    ///
+    /// By default, the GPU driver typically enforces a swap interval of 1,
+    /// which means that `SwapBuffers` (see the `swap_buffers` impl below)
+    /// blocks the calling thread until the next vsync event, for up to
+    /// ~16ms on a 60Hz display. Since `SwapBuffers` is called from the same
+    /// thread that pumps window messages, this can delay processing of
+    /// input events (WM_KEYDOWN, WM_MOUSEWHEEL, etc.) by that same amount.
+    ///
+    /// We already throttle our own frame rate (see `paint_throttled` /
+    /// `max_fps` in window.rs), so disabling the driver-level vsync wait
+    /// doesn't cause unbounded rendering; it just removes the blocking
+    /// wait inside `SwapBuffers`.
+    ///
+    /// This mirrors what we do for EGL, where we explicitly request
+    /// `SwapInterval(display, 0)` for the same reason (see egl.rs).
+    fn disable_vsync(&self, extensions: &str) {
+        if !has_extension(extensions, "WGL_EXT_swap_control") {
+            log::debug!(
+                "WGL_EXT_swap_control is not supported by this driver; \
+                vsync will use the driver default swap interval"
+            );
+            return;
+        }
+
+        let ext = match self.wgl.as_ref().and_then(|wgl| wgl.ext.as_ref()) {
+            Some(ext) => ext,
+            None => return,
+        };
+
+        if !ext.SwapIntervalEXT.is_loaded() {
+            log::debug!(
+                "wglSwapIntervalEXT is not available even though \
+                WGL_EXT_swap_control was advertised; \
+                vsync will use the driver default swap interval"
+            );
+            return;
+        }
+
+        // Request non-blocking buffer swaps; we manage frame throttling
+        // ourselves at the application level.
+        let res = unsafe { ext.SwapIntervalEXT(0) };
+        if res == 0 {
+            log::debug!(
+                "wglSwapIntervalEXT(0) failed (GetLastError={}); \
+                vsync will use the driver default swap interval",
+                std::io::Error::last_os_error()
+            );
+        } else {
+            log::trace!("wglSwapIntervalEXT(0): disabled vsync wait in SwapBuffers");
+        }
     }
 
     fn create_ext(wgl: WglWrapper, extensions: String, hdc: HDC) -> anyhow::Result<Self> {
@@ -449,5 +508,62 @@ unsafe impl glium::backend::Backend for GlState {
             .unwrap()
             .wgl
             .MakeCurrent(self.hdc as *mut _, self.rc);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn has_extension_finds_exact_match() {
+        assert!(has_extension(
+            "WGL_ARB_pixel_format WGL_EXT_swap_control WGL_ARB_multisample",
+            "WGL_EXT_swap_control"
+        ));
+    }
+
+    #[test]
+    fn has_extension_finds_match_at_start() {
+        assert!(has_extension(
+            "WGL_EXT_swap_control WGL_ARB_multisample",
+            "WGL_EXT_swap_control"
+        ));
+    }
+
+    #[test]
+    fn has_extension_finds_match_at_end() {
+        assert!(has_extension(
+            "WGL_ARB_multisample WGL_EXT_swap_control",
+            "WGL_EXT_swap_control"
+        ));
+    }
+
+    #[test]
+    fn has_extension_single_entry() {
+        assert!(has_extension("WGL_EXT_swap_control", "WGL_EXT_swap_control"));
+    }
+
+    #[test]
+    fn has_extension_missing() {
+        assert!(!has_extension(
+            "WGL_ARB_pixel_format WGL_ARB_multisample",
+            "WGL_EXT_swap_control"
+        ));
+    }
+
+    #[test]
+    fn has_extension_empty_string() {
+        assert!(!has_extension("", "WGL_EXT_swap_control"));
+    }
+
+    #[test]
+    fn has_extension_does_not_match_substring() {
+        // "WGL_EXT_swap_control" should not match on a mere substring
+        // relationship such as being a prefix of another extension name.
+        assert!(!has_extension(
+            "WGL_EXT_swap_control_tear",
+            "WGL_EXT_swap_control"
+        ));
     }
 }
