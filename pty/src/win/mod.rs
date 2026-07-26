@@ -54,21 +54,40 @@ impl ChildKiller for WinChild {
     }
 
     fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
-        let proc = self.proc.lock().unwrap().try_clone().unwrap();
+        // Duplicating the process handle is a fallible kernel operation
+        // (eg: handle table exhaustion). `clone_killer` has an infallible
+        // signature, so rather than panicking here (which used to bring
+        // down the whole process just because a `ChildKiller` was cloned;
+        // see wezterm/wezterm#5107) we degrade gracefully: produce a
+        // killer with no handle, whose `kill()` becomes a harmless no-op.
+        let proc = self.proc.lock().unwrap().try_clone().ok();
+        if proc.is_none() {
+            log::warn!(
+                "WinChild::clone_killer: failed to duplicate the process \
+                 handle; the returned killer will be unable to terminate \
+                 the process"
+            );
+        }
         Box::new(WinChildKiller { proc })
     }
 }
 
 #[derive(Debug)]
 pub struct WinChildKiller {
-    proc: OwnedHandle,
+    proc: Option<OwnedHandle>,
 }
 
 impl ChildKiller for WinChildKiller {
     fn kill(&mut self) -> IoResult<()> {
-        let proc = self.proc.try_clone().map_err(|e| {
-            IoError::new(std::io::ErrorKind::Other, format!("Failed to clone handle: {}", e))
-        })?;
+        let proc = match &self.proc {
+            Some(proc) => proc.try_clone().map_err(|e| {
+                IoError::new(std::io::ErrorKind::Other, format!("Failed to clone handle: {}", e))
+            })?,
+            // No handle available (eg: because an earlier duplication
+            // attempt failed); treat this as a no-op rather than panicking
+            // or erroring out.
+            None => return Ok(()),
+        };
         std::thread::spawn(move || {
             unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
         });
@@ -76,7 +95,7 @@ impl ChildKiller for WinChildKiller {
     }
 
     fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
-        let proc = self.proc.try_clone().unwrap();
+        let proc = self.proc.as_ref().and_then(|proc| proc.try_clone().ok());
         Box::new(WinChildKiller { proc })
     }
 }
@@ -142,5 +161,33 @@ impl std::future::Future for WinChild {
                 Poll::Pending
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression test for wezterm/wezterm#5107: `clone_killer()` used to
+    // `.unwrap()` the result of duplicating the process handle, which
+    // panics if `DuplicateHandle` ever fails (eg: handle table exhaustion,
+    // or the underlying process handle having become otherwise unusable).
+    // A `ChildKiller` may be cloned and used from an independent thread
+    // specifically so that callers can signal a process while another
+    // thread is blocked in `.wait()`, so a panic here can bring down an
+    // otherwise-healthy process. `WinChildKiller::kill()` must instead
+    // degrade to a harmless no-op when it holds no handle.
+    #[test]
+    fn clone_killer_with_no_handle_does_not_panic() {
+        let mut killer = WinChildKiller { proc: None };
+
+        // kill() on a handle-less killer must be a harmless no-op, not a
+        // panic or a hard error.
+        assert!(killer.kill().is_ok());
+
+        // clone_killer() must likewise not panic when there is no handle
+        // to duplicate, and the clone must itself still be inert.
+        let mut cloned = killer.clone_killer();
+        assert!(cloned.kill().is_ok());
     }
 }
