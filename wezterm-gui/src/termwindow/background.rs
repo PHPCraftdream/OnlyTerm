@@ -564,7 +564,19 @@ impl crate::TermWindow {
                 // log::info!("quad {origin_x},{origin_y} {width}x{height}");
                 quad.set_position(origin_x, origin_y, origin_x + width, origin_y + height);
 
-                let coords = sprite.texture_coords();
+                // Inset the sprite's texture coords by 1 texel on every side to
+                // avoid sampling padding/atlas-bleeding that produces a visible
+                // seam between adjacent background tiles (upstream #7030).
+                let mut coords = sprite.texture_coords();
+
+                let shrink_x = 1.0 / sprite.texture.width() as f32;
+                let shrink_y = 1.0 / sprite.texture.height() as f32;
+
+                coords.origin.x += shrink_x;
+                coords.origin.y += shrink_y;
+                coords.size.width -= 2.0 * shrink_x;
+                coords.size.height -= 2.0 * shrink_y;
+
                 let mut x1 = coords.min_x();
                 let mut x2 = coords.max_x();
                 let mut y1 = coords.min_y();
