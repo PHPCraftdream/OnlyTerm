@@ -106,8 +106,52 @@ impl CommandDef {
     ///
     /// The synthesis here requires that the defaults in
     /// the keymap below use the lowercase form of single characters!
+    ///
+    /// In addition to the SHIFT-related permutations above, this also
+    /// synthesizes a `KeyCode::Physical` variant alongside any binding
+    /// that combines a `KeyCode::Char` with CTRL and/or SUPER.
+    /// Those modifier chords are the ones typically used for application-level
+    /// shortcuts (Copy, Paste, tab/pane navigation, etc.) and their intent
+    /// is defined by the *position* of the key on the keyboard (eg: the "C"
+    /// key on a US ANSI layout), not by the Unicode character that the
+    /// active keyboard layout happens to produce for that position.
+    ///
+    /// On layouts that are not Latin-based (Cyrillic, Greek, CJK IMEs, etc.)
+    /// the character produced for that physical key won't match the
+    /// `KeyCode::Char` we registered (eg: the "C" position on a Russian
+    /// ЙЦУКЕН layout produces 'с', not 'c'), so without a physical fallback
+    /// entry the default binding would silently fail to trigger.
+    /// Registering the physical variant alongside the mapped one allows the
+    /// physical-key-first lookup pass (see `raw_key_event_impl` in
+    /// `keyevent.rs`) to resolve these regardless of the active layout,
+    /// while leaving plain, unmodified text entry (no CTRL/SUPER) completely
+    /// untouched so CJK/Cyrillic/etc. typing keeps working exactly as before.
     fn permute_keys(&self, config: &ConfigHandle) -> Vec<(Modifiers, KeyCode)> {
         let mut keys = vec![];
+
+        // Only Char keys combined with CTRL and/or SUPER are eligible for a
+        // layout-independent physical fallback; bare typing (no modifiers)
+        // and pure-SHIFT combinations must resolve exactly as before so that
+        // non-Latin scripts are never affected.
+        fn push_with_phys_fallback(
+            keys: &mut Vec<(Modifiers, KeyCode)>,
+            mods: Modifiers,
+            key: KeyCode,
+        ) {
+            let wants_phys_fallback = matches!(key, KeyCode::Char(_))
+                && (mods.contains(Modifiers::CTRL) || mods.contains(Modifiers::SUPER));
+
+            if wants_phys_fallback {
+                if let Some(phys) = key.to_phys() {
+                    let phys_key = KeyCode::Physical(phys);
+                    if phys_key != key {
+                        keys.push((mods, phys_key));
+                    }
+                }
+            }
+
+            keys.push((mods, key));
+        }
 
         for (mods, label) in &self.keys {
             let mods = *mods;
@@ -121,17 +165,21 @@ impl CommandDef {
                 .resolve(config.key_map_preference)
                 .clone();
 
-            keys.push((mods, key.clone()));
+            push_with_phys_fallback(&mut keys, mods, key.clone());
 
             if mods == Modifiers::SUPER {
                 // We want each SUPER/CMD version of the keys to also have
                 // CTRL+SHIFT version(s) for environments where SUPER/CMD
                 // is reserved for the window manager.
                 // This bit synthesizes those.
-                keys.push((Modifiers::CTRL | Modifiers::SHIFT, key.clone()));
+                push_with_phys_fallback(&mut keys, Modifiers::CTRL | Modifiers::SHIFT, key.clone());
                 if ukey != key {
-                    keys.push((Modifiers::CTRL | Modifiers::SHIFT, ukey.clone()));
-                    keys.push((Modifiers::CTRL, ukey.clone()));
+                    push_with_phys_fallback(
+                        &mut keys,
+                        Modifiers::CTRL | Modifiers::SHIFT,
+                        ukey.clone(),
+                    );
+                    push_with_phys_fallback(&mut keys, Modifiers::CTRL, ukey.clone());
                 }
             } else if mods.contains(Modifiers::SHIFT) && ukey != key {
                 keys.push((mods, ukey.clone()));
