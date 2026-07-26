@@ -15,6 +15,7 @@ log.workspace = true
 mux.workspace = true
 parking_lot.workspace = true
 portable-pty.workspace = true
+promise.workspace = true
 rhai = { workspace = true, features = ["serde"] }
 serde.workspace = true
 smol.workspace = true

@@ -192,8 +192,8 @@ fn handle_notification(
         MuxNotification::PaneFocused(pane_id) => {
             send_pdu(write_tx, Pdu::PaneFocused(codec::PaneFocused { pane_id }));
         }
-        MuxNotification::TabResized(tab_id) => {
-            send_pdu(write_tx, Pdu::TabResized(codec::TabResized { tab_id }));
+        MuxNotification::TabReflowed(tab_id) => {
+            send_pdu(write_tx, Pdu::TabReflowed(codec::TabReflowed { tab_id }));
         }
         MuxNotification::TabTitleChanged { tab_id, title } => {
             send_pdu(
