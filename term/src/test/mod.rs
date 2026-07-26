@@ -7,6 +7,7 @@ use bitflags::bitflags;
 mod c1;
 mod csi;
 mod image;
+mod mouse;
 // mod selection; FIXME: port to render layer
 use crate::color::ColorPalette;
 use k9::assert_equal as assert_eq;
@@ -63,6 +64,15 @@ impl TerminalConfiguration for TestTermConfig {
 
 impl TestTerm {
     fn new(height: usize, width: usize, scrollback: usize) -> Self {
+        Self::new_with_writer(height, width, scrollback, Box::new(Vec::new()))
+    }
+
+    fn new_with_writer(
+        height: usize,
+        width: usize,
+        scrollback: usize,
+        writer: Box<dyn std::io::Write + Send>,
+    ) -> Self {
         let _ = env_logger::Builder::new()
             .is_test(true)
             .filter_level(log::LevelFilter::Trace)
@@ -79,7 +89,7 @@ impl TestTerm {
             Arc::new(TestTermConfig { scrollback }),
             "WezTerm",
             "O_o",
-            Box::new(Vec::new()),
+            writer,
         );
         let clip: Arc<dyn Clipboard> = Arc::new(LocalClip::new());
         term.set_clipboard(&clip);
