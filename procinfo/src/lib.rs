@@ -158,8 +158,14 @@ impl LocalProcessInfo {
 
         let mut stack: Vec<&LocalProcessInfo> = vec![self];
         while let Some(item) = stack.pop() {
-            if let Some(exe) = item.executable.file_name() {
-                names.insert(exe.to_string_lossy().into_owned());
+            match item.executable.file_name() {
+                Some(exe) if !exe.is_empty() => {
+                    names.insert(exe.to_string_lossy().into_owned());
+                }
+                // Handle no permission to read executable path program, like 'sudo'
+                _ => {
+                    names.insert(item.name.clone());
+                }
             }
             stack.extend(item.children.values());
         }
@@ -446,5 +452,46 @@ mod tests {
         assert_eq!(names, cloned_names);
         assert_eq!(cloned.children.len(), 2);
         assert_eq!(cloned.children[&2].children.len(), 1);
+    }
+
+    #[test]
+    fn flatten_falls_back_to_name_when_executable_unreadable() {
+        // Mirrors upstream #7398: when a process' executable path can't
+        // be resolved (eg. a privileged process such as `sudo`, or a
+        // process owned by another user), `file_name()` returns `None`.
+        // Before the fix such a process silently dropped out of the name
+        // set, so `can_close_without_prompting` would not warn the user.
+        // The fix falls back to `item.name` (the COMM/argv0 name) instead.
+        fn make(pid: u32, name: &str, executable: PathBuf) -> LocalProcessInfo {
+            LocalProcessInfo {
+                pid,
+                ppid: 1,
+                name: name.into(),
+                executable,
+                argv: vec![],
+                cwd: PathBuf::new(),
+                status: LocalProcessStatus::Run,
+                start_time: pid as u64,
+                #[cfg(windows)]
+                console: 0,
+                children: HashMap::new(),
+            }
+        }
+
+        // Root with a normal executable path.
+        let mut root = make(1, "wezterm", PathBuf::from("/usr/bin/wezterm"));
+
+        // A privileged child whose executable path is entirely empty
+        // (no permission to read it); only its COMM name is available.
+        let sudo = make(2, "sudo", PathBuf::new());
+        root.children.insert(sudo.pid, sudo);
+
+        let names = root.flatten_to_exe_names();
+        // The normal process contributes its executable base name.
+        assert!(names.contains("wezterm"));
+        // The privileged process, with no resolvable executable path,
+        // must still appear via its COMM name rather than vanishing.
+        assert!(names.contains("sudo"));
+        assert_eq!(names.len(), 2);
     }
 }
