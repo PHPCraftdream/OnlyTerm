@@ -186,12 +186,22 @@ mod windows {
         /// Publish path as the path for class_name.
         pub fn new(path: &Path, class_name: &str) -> anyhow::Result<Self> {
             let (mutex_name, map_name) = Self::compute_names(class_name);
+            // Publish the full path rather than just the file name.
+            // Unix domain socket connect() on Windows resolves relative
+            // paths against the cwd of the *connecting* process, so a
+            // published bare file name like `gui-sock-1234` is only
+            // connectable when the client happens to have its cwd set
+            // to the runtime dir. Publishing the absolute path makes
+            // `wezterm cli` work from any shell/cwd.
             let path = path
-                .file_name()
-                .ok_or_else(|| anyhow::anyhow!("path has no file_name!?"))?
                 .to_str()
                 .ok_or_else(|| anyhow::anyhow!("path is not UTF8!"))?
                 .to_string();
+            anyhow::ensure!(
+                path.len() < MAX_NAME,
+                "socket path {} is too long to publish",
+                path
+            );
 
             let mutex = NamedMutex::new(&mutex_name)?;
             mutex.with_lock(|| {
@@ -232,8 +242,26 @@ mod windows {
 
                 let path: PathBuf = path.into();
 
+                // Compatibility: older GUI instances published just the
+                // socket file name rather than the full path. Anchor such
+                // relative names to the runtime dir so that connecting
+                // works regardless of our current directory.
+                let path = resolve_relative_to_runtime(path);
+
                 Ok(path)
             })
+        }
+    }
+
+    /// Anchor a possibly-relative published socket name to the runtime dir.
+    /// Newer GUI instances publish the full absolute path (returned as-is);
+    /// older instances published only the file name, which must be joined
+    /// with `RUNTIME_DIR` to be connectable regardless of our cwd.
+    fn resolve_relative_to_runtime(path: PathBuf) -> PathBuf {
+        if path.is_absolute() {
+            path
+        } else {
+            config::RUNTIME_DIR.join(path)
         }
     }
 
@@ -244,6 +272,57 @@ mod windows {
             .encode_wide()
             .chain(std::iter::once(0))
             .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// A new() then resolve() round-trip must yield the *full* published
+        /// path unchanged (the fix publishes the whole path, not just file_name).
+        #[test]
+        fn roundtrip_publishes_full_path() {
+            let class_name = format!("up15-rt-{}", std::process::id());
+            let path = std::env::temp_dir().join(format!("gui-sock-test{}", std::process::id()));
+            assert!(
+                path.is_absolute(),
+                "temp_dir must be absolute for this test to be meaningful"
+            );
+
+            let holder = NameHolder::new(&path, &class_name).expect("NameHolder::new");
+            let resolved = NameHolder::resolve(&class_name).expect("NameHolder::resolve");
+
+            assert_eq!(resolved, path, "resolve must return the full published path");
+            drop(holder);
+        }
+
+        /// An absolute published path must be returned verbatim.
+        #[test]
+        fn absolute_name_is_not_reanchored() {
+            let abs = PathBuf::from(r"C:\some\runtime\dir\gui-sock-1234");
+            let resolved = resolve_relative_to_runtime(abs.clone());
+            assert_eq!(resolved, abs);
+        }
+
+        /// A bare file name (the old GUI format) must be anchored under
+        /// RUNTIME_DIR so it is connectable from any cwd.
+        #[test]
+        fn relative_name_is_anchored_to_runtime_dir() {
+            let rel = PathBuf::from("gui-sock-1234");
+            let anchored = resolve_relative_to_runtime(rel);
+
+            assert!(anchored.is_absolute(), "anchored path must be absolute");
+            assert_eq!(
+                anchored.file_name().and_then(|s| s.to_str()),
+                Some("gui-sock-1234"),
+                "file name must be preserved"
+            );
+            assert!(
+                anchored.starts_with(&*config::RUNTIME_DIR),
+                "relative name must be joined under RUNTIME_DIR, got {}",
+                anchored.display()
+            );
+        }
     }
 }
 
