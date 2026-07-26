@@ -1,7 +1,8 @@
 use std::io::Error as IoError;
 use std::ptr::{null, null_mut};
 use winapi::um::handleapi::CloseHandle;
-use winapi::um::synchapi::{CreateEventW, ResetEvent, SetEvent};
+use winapi::um::synchapi::{CreateEventW, ResetEvent, SetEvent, WaitForSingleObject};
+use winapi::um::winbase::WAIT_OBJECT_0;
 use winapi::um::winnt::HANDLE;
 
 pub struct EventHandle(pub HANDLE);
@@ -35,5 +36,11 @@ impl EventHandle {
         unsafe {
             ResetEvent(self.0);
         }
+    }
+
+    /// Returns true if the event is currently signalled, without blocking.
+    #[cfg(test)]
+    pub fn is_signalled(&self) -> bool {
+        unsafe { WaitForSingleObject(self.0, 0) == WAIT_OBJECT_0 }
     }
 }
