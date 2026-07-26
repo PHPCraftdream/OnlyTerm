@@ -1,4 +1,4 @@
-use config::keyassignment::PaneDirection;
+use config::keyassignment::{PaneDirection, RotationDirection};
 
 use super::*;
 use std::sync::Arc;
@@ -169,7 +169,17 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
         |this: &mut MuxTab| -> Result<(), Box<rhai::EvalAltResult>> {
             let mux = get_mux_rhai()?;
             let tab = resolve_rhai(this, &mux)?;
-            tab.rotate_counter_clockwise();
+
+            let tab_id = tab.tab_id();
+            let direction = RotationDirection::CounterClockwise;
+            promise::spawn::spawn(async move {
+                let mux = Mux::get();
+                if let Err(err) = mux.rotate_panes(tab_id, direction).await {
+                    log::error!("Unable to rotate panes: {:#}", err);
+                }
+            })
+            .detach();
+
             Ok(())
         },
     );
@@ -179,13 +189,20 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
         |this: &mut MuxTab| -> Result<(), Box<rhai::EvalAltResult>> {
             let mux = get_mux_rhai()?;
             let tab = resolve_rhai(this, &mux)?;
-            // Mirrors the mlua path's own `rotate_clockwise` binding above,
-            // which (pre-existing behavior, not introduced by this port)
-            // itself calls `rotate_counter_clockwise` -- kept identical here
-            // so this rhai port's behavior can't drift from the mlua path it
-            // mirrors, even though that looks like a copy/paste bug in the
-            // original.
-            tab.rotate_counter_clockwise();
+            // Pre-existing behavior, kept identical here intentionally: this
+            // binding uses the CounterClockwise direction, mirroring the
+            // (likely copy/paste) bug that upstream's `rotate_clockwise` mlua
+            // binding also carries. Do not "fix" it here.
+            let tab_id = tab.tab_id();
+            let direction = RotationDirection::CounterClockwise;
+            promise::spawn::spawn(async move {
+                let mux = Mux::get();
+                if let Err(err) = mux.rotate_panes(tab_id, direction).await {
+                    log::error!("Unable to rotate panes: {:#}", err);
+                }
+            })
+            .detach();
+
             Ok(())
         },
     );
