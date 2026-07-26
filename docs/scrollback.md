@@ -1,4 +1,4 @@
-WezTerm provides a searchable scrollback buffer with a configurable maximum
+OnlyTerm provides a searchable scrollback buffer with a configurable maximum
 size limit that allows you to review information that doesn't fit in the
 physical window size.  As content is printed to the display, it may be
 scrolled up to accommodate newly added lines.  The scrolled lines are moved
@@ -33,7 +33,7 @@ on rebinding this key.
 
 ### Enable/Disable scrollbar
 
-You can control whether WezTerm displays a scrollbar via your configuration
+You can control whether OnlyTerm displays a scrollbar via your configuration
 file:
 
 ```lua
@@ -59,7 +59,7 @@ on this key binding assignment.
 By default, `CTRL-SHIFT-F` and `CMD-F` (`F` for `Find`) will activate the
 search overlay in the current tab.
 
-When the search overlay is active the behavior of wezterm changes:
+When the search overlay is active the behavior of OnlyTerm changes:
 
 * Typing (or pasting) text will populate the *search pattern* in the bar at the bottom of the screen.
 * Text from the scrollback that matches the *search pattern* will be highlighted and
@@ -87,15 +87,15 @@ The key assignments for search mode are specified by the `search_mode` [Key Tabl
 
 You may use
 [wezterm.gui.default_key_tables](config/lua/wezterm.gui/default_key_tables.md)
-to obtain the defaults and extend them. In earlier versions of wezterm there
+to obtain the defaults and extend them. In earlier versions of WezTerm there
 wasn't a way to override portions of the key table, only to replace the entire
 table.
 
 The default configuration at the time that these docs were built (which
-may be more recent than your version of wezterm) is shown below.
+may be more recent than your version of OnlyTerm) is shown below.
 
-You can see the configuration in your version of wezterm by running
-`wezterm show-keys --lua --key-table search_mode`.
+You can see the configuration in your version of OnlyTerm by running
+`onlyterm show-keys --lua --key-table search_mode`.
 
 {% include "examples/default-search-mode-key-table.markdown" %}
 

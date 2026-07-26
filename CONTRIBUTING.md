@@ -1,4 +1,4 @@
-# Contributing to wezterm
+# Contributing to OnlyTerm
 
 Thanks for considering donating your time and energy!  I value any contribution,
 even if it is just to highlight a typo.
@@ -41,23 +41,23 @@ If you are new to the Rust language check out <https://doc.rust-lang.org/rust-by
 
 ### Building from source
 
-To build wezterm from source, you will need a local Rust toolchain, and a few platform-specific dependencies.
-Follow the [Install from Source](https://wezfurlong.org/wezterm/install/source.html) guide to get started!
+To build OnlyTerm from source, you will need a local Rust toolchain, and a few platform-specific dependencies.
+Follow the upstream [Install from Source](https://wezfurlong.org/wezterm/install/source.html) guide to get started!
 
 Some platforms like Windows have a few specific steps, make sure to check the dedicated sections in the guide.
 
 ### Where to find things?
 
-The `term` directory holds the core terminal model code. This is agnostic
+The `crates/term` directory holds the core terminal model code. This is agnostic
 of any windowing system. If you want to add support for terminal escape
-sequences and that sort of thing, you probably want to be in the `term` directory.
-Keep in mind that for maximal compatibility and utility `wezterm` aims to
+sequences and that sort of thing, you probably want to be in the `crates/term` directory.
+Keep in mind that for maximal compatibility and utility the terminal model aims to
 be compatible with the `xterm` behavior.
 https://invisible-island.net/xterm/ctlseqs/ctlseqs.html is a useful resource!
 
-The `src` directory holds the code for the `wezterm` program. This is
-the GUI renderer for the terminal model.  If you want to change something
-about the GUI you want to be in the `src` dir.
+The `crates/wezterm-gui` directory holds the code for the GUI renderer for the
+terminal model.  If you want to change something about the GUI you want to be
+in that directory.
 
 ### Iterating
 
@@ -83,16 +83,16 @@ If you get a panic and want to examine local variables, you'll need to use gdb:
 
 ```console
 $ cargo build
-$ gdb ./target/debug/wezterm
+$ gdb ./target/debug/onlyterm
 $ break rust_panic               # hit tab to complete the name of the panic symbol!
 $ run
 $ bt
 ```
 
-Starting WezTerm with `wezterm-gui start --always-new-process` is useful to ensure Mux logs are not
+Starting OnlyTerm with `onlyterm-gui start --always-new-process` is useful to ensure Mux logs are not
 hidden in an background process started in an earlier test.
 
-Start WezTerm with `wezterm-gui --config-file ./test-conf.lua ……` to test a custom config file.
+Start OnlyTerm with `onlyterm-gui --config-file ./test-conf.lua ……` to test a custom config file.
 
 
 ### Please include tests to cover your changes!
@@ -114,7 +114,7 @@ clarify the intent of the test!
 
 ### Testing in a NixOS VM
 
-If you need to test WezTerm in a clean desktop environment (e.g. to reproduce a
+If you need to test OnlyTerm in a clean desktop environment (e.g. to reproduce a
 display server bug or verify a desktop integration), you can use the provided
 NixOS VM configurations.
 
@@ -127,7 +127,7 @@ Two desktop variants are available:
 **Workflow:**
 
 ```console
-$ cargo build                                            # build wezterm locally
+$ cargo build                                            # build OnlyTerm locally
 $ nixos-rebuild build-vm --flake ./nix#testing-on-plasma # build the Plasma VM image
 $ REPO=$PWD ./result/bin/run-nixos-vm                    # start the VM
 ```
@@ -141,14 +141,14 @@ Inside the VM, open a terminal (e.g. _Console_ on GNOME, _Konsole_ on Plasma), t
 
 ```console
 $ cd repo                      # go into ~/repo
-$ ./target/debug/wezterm-gui   # run wezterm for your tests
+$ ./target/debug/onlyterm-gui   # run OnlyTerm for your tests
 ```
 
 The host repository is mounted into the VM at `/home/dev/repo` via a 9p shared directory,
 so changes on the host (rebuilds, test config file, ..) are immediately visible inside the VM.
 
-Keep the VM running and make your changes locally, re-build wezterm on your host and kill/start
-wezterm again in the VM for your tests.
+Keep the VM running and make your changes locally, re-build OnlyTerm on your host and kill/start
+OnlyTerm again in the VM for your tests.
 
 > [!WARNING]
 > The host repo is supposed to be mounted in read-write but I (@bew) don't know why changes in the

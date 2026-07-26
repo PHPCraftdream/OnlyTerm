@@ -22,12 +22,12 @@ or `$HOME/.local/share/wezterm` on macOS and Windows systems.
 ### Increasing Log Verbosity
 
 The `WEZTERM_LOG` environment variable can be used to adjust the level
-of logging for different modules within wezterm.
+of logging for different modules within OnlyTerm.
 
-To see maximum verbosity, you can start wezterm like this:
+To see maximum verbosity, you can start OnlyTerm like this:
 
 ```
-WEZTERM_LOG=debug wezterm
+WEZTERM_LOG=debug onlyterm
 ```
 
 to see debug level logs for everything on stdout.
@@ -38,14 +38,14 @@ Using `cmd.exe`:
 
 ```
 C:\> set WEZTERM_LOG=debug
-C:\> wezterm
+C:\> onlyterm
 ```
 
 Using powershell:
 
 ```
 PS C:\> $env:WEZTERM_LOG="debug"
-PS C:\> wezterm
+PS C:\> onlyterm
 ```
 
 When using a flatpak you must first enter the flatpak container by running:
@@ -54,7 +54,7 @@ When using a flatpak you must first enter the flatpak container by running:
 flatpak run --command=sh --devel org.wezfurlong.wezterm
 ```
 
-Before then running `wezterm`.
+Before then running `onlyterm`.
 
 Each log line will include the module name, which is a colon separated
 namespace; in the output below the modules are `config`,
@@ -70,7 +70,7 @@ namespace; in the output below the modules are `config`,
 ```
 
 Those modules generally match up to directories and file names within the
-wezterm source code, or to external modules that wezterm depends upon.
+OnlyTerm source code, or to external modules that OnlyTerm depends upon.
 
 You can set a more restrictive filter to focus in on just the things you want.
 For example, if you wanted to debug only configuration related things you might
@@ -100,7 +100,7 @@ for more details on the syntax/possibilities.
 Turn on [debug_key_events](config/lua/config/debug_key_events.md) to log
 information about key presses.
 
-Use [wezterm show-keys](cli/show-keys.md) or `wezterm show-keys --lua` to show
+Use [onlyterm show-keys](cli/show-keys.md) or `onlyterm show-keys --lua` to show
 the effective set of key and mouse assignments defined by your config.
 
 Consider changing [use_ime](config/lua/config/use_ime.md) to see that is
@@ -112,13 +112,13 @@ trying to use.
 
 ## Debugging Font Display
 
-Use `wezterm ls-fonts` to explain which fonts will be used for different styles
+Use `onlyterm ls-fonts` to explain which fonts will be used for different styles
 of text.
 
-Use `wezterm ls-fonts --list-system` to get a list of fonts available on your
+Use `onlyterm ls-fonts --list-system` to get a list of fonts available on your
 system, in a form that you can use in your config file.
 
-Use `wezterm ls-fonts --text foo` to explain how wezterm will render the text
-`foo`, and `wezterm ls-fonts --text foo --rasterize-ascii` to show an ascii art
+Use `onlyterm ls-fonts --text foo` to explain how OnlyTerm will render the text
+`foo`, and `onlyterm ls-fonts --text foo --rasterize-ascii` to show an ascii art
 rendition of that text.
 

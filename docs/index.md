@@ -3,9 +3,7 @@ hide:
   - toc
 ---
 
-*WezTerm is a powerful cross-platform terminal emulator and multiplexer written by <a href="https://github.com/wez/">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>*
-
-![Screenshot](screenshots/wezterm-vday-screenshot.png)
+*OnlyTerm is a fork of WezTerm, a powerful cross-platform terminal emulator and multiplexer originally written by <a href="https://github.com/wez/">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>*
 
 [Download :material-tray-arrow-down:](installation.md){ .md-button }
 
@@ -21,10 +19,3 @@ Looking for a [configuration reference?](config/files.md)
 
 **These docs are searchable: press `S` or click on the magnifying glass icon
 to activate the search function!**
-
-<figure markdown>
-
-![Screenshot](screenshots/two.png)
-
-<figcaption>Screenshot of wezterm on macOS, running vim</figcaption>
-</figure>
