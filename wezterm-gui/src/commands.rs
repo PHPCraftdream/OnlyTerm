@@ -1760,6 +1760,22 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                 icon: Some("oct_browser"),
             },
         },
+        SendString(text) if text == "\n" => CommandDef {
+            brief: "Send newline".into(),
+            doc: "Sends a line feed (LF, 0x0A) to the active pane, \
+                  as though you typed it. Bound by default to CTRL+Enter \
+                  and SHIFT+Enter so that a newline can be inserted \
+                  reliably regardless of what plain Enter is otherwise \
+                  configured to do (eg: in a multi-line prompt)."
+                .into(),
+            keys: vec![
+                (Modifiers::CTRL, "Enter".into()),
+                (Modifiers::SHIFT, "Enter".into()),
+            ],
+            args: &[ArgType::ActivePane],
+            menubar: &[],
+            icon: Some("md_keyboard_return"),
+        },
         SendString(text) => CommandDef {
             brief: format!(
                 "Sends `{text}` to the active pane, \
@@ -2097,6 +2113,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         DetachDomain(SpawnTabDomain::CurrentPaneDomain),
         ResetTerminal,
         // ----------------- Edit
+        SendString("\n".to_string()),
         #[cfg(not(target_os = "macos"))]
         PasteFrom(ClipboardPasteSource::PrimarySelection),
         #[cfg(not(target_os = "macos"))]

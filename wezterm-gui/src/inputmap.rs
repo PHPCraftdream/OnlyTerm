@@ -959,4 +959,88 @@ mod tests {
             "bare 'c' with no modifiers must not be captured by the Copy binding"
         );
     }
+
+    /// Regression tests for reliably sending a newline to the pty via
+    /// CTRL+Enter, SHIFT+Enter and CTRL+J (see task "Добавить три
+    /// сочетания клавиш для перевода строки: Ctrl+Enter, Shift+Enter,
+    /// Ctrl+J").
+    ///
+    /// CTRL+Enter and SHIFT+Enter have no natural pty-encoding behavior:
+    /// without an explicit default binding they would fall through to
+    /// `KeyCode::Enter`'s CSI-u/modified-key encoding path (see
+    /// `termwiz::input::KeyCode::encode`), which -- absent an app that
+    /// negotiated CSI-u/kitty keyboard protocol -- degrades to a bare
+    /// carriage return ('\r'), identical to plain Enter and NOT a line
+    /// feed. So both are given an explicit default `SendString("\n")`
+    /// binding, which unconditionally writes the raw byte to the pane,
+    /// bypassing that encoding path entirely.
+    #[test]
+    fn ctrl_enter_sends_newline() {
+        let input_map = InputMap::default_input_map();
+
+        let entry = input_map
+            .lookup_key(&KeyCode::Char('\r'), Modifiers::CTRL, None)
+            .expect("CTRL+Enter must have a default binding");
+        assert_eq!(entry.action, KeyAssignment::SendString("\n".to_string()));
+    }
+
+    #[test]
+    fn shift_enter_sends_newline() {
+        let input_map = InputMap::default_input_map();
+
+        let entry = input_map
+            .lookup_key(&KeyCode::Char('\r'), Modifiers::SHIFT, None)
+            .expect("SHIFT+Enter must have a default binding");
+        assert_eq!(entry.action, KeyAssignment::SendString("\n".to_string()));
+    }
+
+    /// Regression test: CTRL+Enter must also resolve via its physical-key
+    /// fallback, consistent with the layout-independent CTRL-chord handling
+    /// added in `CommandDef::permute_keys` (see task "Сделать сопоставление
+    /// стандартных Ctrl-сочетаний независимым от раскладки/языка по
+    /// умолчанию"). Enter is not a letter key, so it is not affected by
+    /// non-Latin layouts in practice, but the physical fallback entry
+    /// should still be present and resolve to the same action.
+    #[test]
+    fn ctrl_enter_resolves_via_physical_key_too() {
+        let input_map = InputMap::default_input_map();
+        let mapped = input_map
+            .lookup_key(&KeyCode::Char('\r'), Modifiers::CTRL, None)
+            .expect("mapped CTRL+Enter has a default newline binding");
+
+        let physical = input_map
+            .lookup_key(
+                &KeyCode::Physical(PhysKeyCode::Return),
+                Modifiers::CTRL,
+                None,
+            )
+            .expect("physical CTRL+Enter must resolve to the same newline binding");
+        assert_eq!(physical.action, mapped.action);
+    }
+
+    /// Regression test: CTRL+J must NOT be captured by any default key
+    /// binding (eg: tab/pane navigation or anything else). Since it is
+    /// free, the raw key event falls through to the terminal's standard
+    /// ASCII control-code encoding, where CTRL+J naturally encodes to
+    /// 0x0A (line feed) via `ctrl_mapping('j')`. That is exactly the
+    /// desired behavior, so no new default binding is required for it --
+    /// only this assertion that nothing has claimed the chord.
+    #[test]
+    fn ctrl_j_has_no_default_binding_and_passes_through_as_raw_byte() {
+        let input_map = InputMap::default_input_map();
+
+        assert!(
+            input_map
+                .lookup_key(&KeyCode::Char('j'), Modifiers::CTRL, None)
+                .is_none(),
+            "CTRL+J must be free of any default KeyAssignment so that it \
+             passes through to the pty as a raw 0x0A byte"
+        );
+        assert!(
+            input_map
+                .lookup_key(&KeyCode::Char('J'), Modifiers::CTRL, None)
+                .is_none(),
+            "CTRL+J (uppercase variant) must also be free of any default KeyAssignment"
+        );
+    }
 }
