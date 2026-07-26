@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::fmt::{Debug, Write};
 use std::io::Write as _;
 use std::sync::Arc;
-use termwiz::escape::csi::{Cursor, CSI};
+use termwiz::escape::csi::{Cursor, DecPrivateMode, DecPrivateModeCode, Mode, CSI};
 use termwiz::escape::{Action, OneBased};
 use termwiz::tmux_cc::*;
 use wezterm_term::TerminalSize;
@@ -35,6 +35,8 @@ pub(crate) struct PaneItem {
     pane_left: u64,
     pane_top: u64,
     pane_active: bool,
+    pane_mouse_any: bool,
+    pane_mouse_buttton: bool,
 }
 
 #[derive(Debug)]
@@ -166,6 +168,18 @@ impl TmuxDomainState {
         ))]);
     }
 
+    fn enable_mouse_reporting_any(&self, pane: &Arc<dyn Pane>) {
+        pane.perform_actions(vec![Action::CSI(CSI::Mode(Mode::SetDecPrivateMode(
+            DecPrivateMode::Code(DecPrivateModeCode::AnyEventMouse),
+        )))]);
+    }
+
+    fn enable_mouse_reporting_button(&self, pane: &Arc<dyn Pane>) {
+        pane.perform_actions(vec![Action::CSI(CSI::Mode(Mode::SetDecPrivateMode(
+            DecPrivateMode::Code(DecPrivateModeCode::ButtonEventMouse),
+        )))]);
+    }
+
     fn create_pane(&self, pane: &PaneItem) -> anyhow::Result<Arc<dyn Pane>> {
         let local_pane_id = alloc_pane_id();
         let active_lock = Arc::new((Mutex::new(false), Condvar::new()));
@@ -274,6 +288,8 @@ impl TmuxDomainState {
             pane_left: 0,
             pane_top: 0,
             pane_active: false,
+            pane_mouse_any: false,
+            pane_mouse_buttton: false,
         };
 
         let pane = self.create_pane(&p).context("failed to create pane")?;
@@ -332,6 +348,14 @@ impl TmuxDomainState {
                         );
                     }
                 }
+                if pane.pane_mouse_any {
+                    self.enable_mouse_reporting_any(&local_pane);
+                }
+
+                if pane.pane_mouse_buttton {
+                    self.enable_mouse_reporting_button(&local_pane);
+                }
+
                 if pane.pane_active {
                     let gui_tabs = self.gui_tabs.lock();
 
@@ -403,6 +427,8 @@ impl TmuxDomainState {
                             cursor_x: 0,
                             cursor_y: 0,
                             pane_active: false,
+                            pane_mouse_any: false,
+                            pane_mouse_buttton: false,
                             pane_id: x.pane_id,
                             pane_width: x.pane_width,
                             pane_height: x.pane_height,
@@ -435,6 +461,8 @@ impl TmuxDomainState {
                         cursor_x: 0,
                         cursor_y: 0,
                         pane_active: false,
+                        pane_mouse_any: false,
+                        pane_mouse_buttton: false,
                         pane_id: x.pane_id,
                         pane_width: x.pane_width,
                         pane_height: x.pane_height,
@@ -631,6 +659,85 @@ fn parse_sigil_number(text: &str) -> anyhow::Result<u64> {
     Ok(num)
 }
 
+/// Parse a single line emitted by `tmux list-panes -F` into a [`PaneItem`].
+///
+/// The field order must match the format string built in
+/// [`ListAllPanes::get_command`]:
+/// `session_id window_id pane_id pane_index cursor_x cursor_y pane_width
+/// pane_height pane_left pane_top pane_active mouse_any_flag mouse_button_flag`.
+fn parse_pane_line(line: &str) -> anyhow::Result<PaneItem> {
+    let mut fields = line.split(' ');
+    // These ids all have various sigils such as `$`, `%`, `@`,
+    // so skip those prior to parsing them
+    let session_id =
+        parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing session_id"))?)?;
+    let window_id =
+        parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing window_id"))?)?;
+    let pane_id =
+        parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing pane_id"))?)?;
+    let _pane_index = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_index"))?
+        .parse()?;
+    let cursor_x = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing cursor_x"))?
+        .parse()?;
+    let cursor_y = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing cursor_y"))?
+        .parse()?;
+    let pane_width = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_width"))?
+        .parse()?;
+    let pane_height = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_height"))?
+        .parse()?;
+    let pane_left = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_left"))?
+        .parse()?;
+    let pane_top = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_top"))?
+        .parse()?;
+    let pane_active = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_active"))?
+        .parse::<usize>()?;
+    let pane_active = pane_active == 1;
+
+    let pane_mouse_any = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_any_flag"))?
+        .parse::<usize>()?;
+    let pane_mouse_any = pane_mouse_any == 1;
+
+    let pane_mouse_buttton = fields
+        .next()
+        .ok_or_else(|| anyhow!("missing pane_button_flag"))?
+        .parse::<usize>()?;
+    let pane_mouse_buttton = pane_mouse_buttton == 1;
+
+    Ok(PaneItem {
+        session_id,
+        window_id,
+        pane_id,
+        _pane_index,
+        cursor_x,
+        cursor_y,
+        pane_width,
+        pane_height,
+        pane_left,
+        pane_top,
+        pane_active,
+        pane_mouse_any,
+        pane_mouse_buttton,
+    })
+}
+
 #[derive(Debug)]
 pub(crate) struct ListAllPanes {
     pub window_id: TmuxWindowId,
@@ -667,7 +774,8 @@ impl TmuxCommand for ListAllPanes {
         format!(
             "list-panes -F '#{{session_id}} #{{window_id}} #{{pane_id}} \
             #{{pane_index}} #{{cursor_x}} #{{cursor_y}} #{{pane_width}} #{{pane_height}} \
-            #{{pane_left}} #{{pane_top}} #{{pane_active}}' -t @{}\n",
+            #{{pane_left}} #{{pane_top}} #{{pane_active}} \
+            #{{mouse_any_flag}} #{{mouse_button_flag}}' -t @{}\n",
             self.window_id
         )
     }
@@ -684,65 +792,9 @@ impl TmuxCommand for ListAllPanes {
             if line.is_empty() {
                 continue;
             }
-            let mut fields = line.split(' ');
-            // These ids all have various sigils such as `$`, `%`, `@`,
-            // so skip those prior to parsing them
-            let session_id =
-                parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing session_id"))?)?;
-            let window_id =
-                parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing window_id"))?)?;
-            let pane_id =
-                parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing pane_id"))?)?;
-            let _pane_index = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing pane_index"))?
-                .parse()?;
-            let cursor_x = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing cursor_x"))?
-                .parse()?;
-            let cursor_y = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing cursor_y"))?
-                .parse()?;
-            let pane_width = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing pane_width"))?
-                .parse()?;
-            let pane_height = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing pane_height"))?
-                .parse()?;
-            let pane_left = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing pane_left"))?
-                .parse()?;
-            let pane_top = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing pane_top"))?
-                .parse()?;
-            let pane_active = fields
-                .next()
-                .ok_or_else(|| anyhow!("missing pane_active"))?
-                .parse::<usize>()?;
-
-            let pane_active = pane_active == 1;
-
-            pane_set.insert(pane_id);
-
-            items.push(PaneItem {
-                session_id,
-                window_id,
-                pane_id,
-                _pane_index,
-                cursor_x,
-                cursor_y,
-                pane_width,
-                pane_height,
-                pane_left,
-                pane_top,
-                pane_active,
-            });
+            let pane = parse_pane_line(line)?;
+            pane_set.insert(pane.pane_id);
+            items.push(pane);
         }
 
         log::debug!("panes in domain_id {}: {:?}", domain_id, items);
@@ -1194,5 +1246,58 @@ impl TmuxCommand for AttachDone {
         // Do nothing, just change the state.
         *tmux_domain.inner.attach_state.lock() = AttachState::Done;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Fields order matches the format string in ListAllPanes::get_command:
+    // session_id window_id pane_id pane_index cursor_x cursor_y
+    // pane_width pane_height pane_left pane_top pane_active
+    // mouse_any_flag mouse_button_flag
+    #[test]
+    fn parse_pane_line_any_mouse() {
+        let line = "$1 @2 %3 0 4 5 80 24 0 0 1 1 0";
+        let pane = parse_pane_line(line).expect("parse ok");
+        assert_eq!(pane.session_id, 1);
+        assert_eq!(pane.window_id, 2);
+        assert_eq!(pane.pane_id, 3);
+        assert_eq!(pane.cursor_x, 4);
+        assert_eq!(pane.cursor_y, 5);
+        assert_eq!(pane.pane_width, 80);
+        assert_eq!(pane.pane_height, 24);
+        assert!(pane.pane_active);
+        assert!(pane.pane_mouse_any);
+        assert!(!pane.pane_mouse_buttton);
+    }
+
+    #[test]
+    fn parse_pane_line_no_mouse() {
+        let line = "$1 @2 %3 0 0 0 80 24 0 0 0 0 0";
+        let pane = parse_pane_line(line).expect("parse ok");
+        assert!(!pane.pane_active);
+        assert!(!pane.pane_mouse_any);
+        assert!(!pane.pane_mouse_buttton);
+    }
+
+    #[test]
+    fn parse_pane_line_button_mouse() {
+        let line = "$10 @20 %30 2 7 8 100 40 5 6 1 0 1";
+        let pane = parse_pane_line(line).expect("parse ok");
+        assert_eq!(pane.pane_left, 5);
+        assert_eq!(pane.pane_top, 6);
+        assert!(pane.pane_active);
+        assert!(!pane.pane_mouse_any);
+        assert!(pane.pane_mouse_buttton);
+    }
+
+    #[test]
+    fn parse_pane_line_missing_mouse_flag_errors() {
+        // Trailing mouse flags omitted -> parse must fail rather than silently
+        // defaulting to false.
+        let line = "$1 @2 %3 0 0 0 80 24 0 0 1";
+        assert!(parse_pane_line(line).is_err());
     }
 }
