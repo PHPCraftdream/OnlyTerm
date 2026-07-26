@@ -932,6 +932,7 @@ impl Screen {
         F: FnMut(&[&Line]),
     {
         let (first, second) = self.lines.as_slices();
+        let first_len = first.len();
         let first_range = 0..first.len();
         let second_range = first.len()..first.len() + second.len();
         let first_range = phys_intersection(&first_range, &phys_range);
@@ -941,7 +942,9 @@ impl Screen {
         for line in &first[first_range] {
             lines.push(line);
         }
-        for line in &second[second_range] {
+        for line in &second[second_range.start.saturating_sub(first_len)
+            ..second_range.end.saturating_sub(first_len)]
+        {
             lines.push(line);
         }
         func(&lines)
@@ -1151,5 +1154,145 @@ fn phys_intersection(r1: &Range<PhysRowIndex>, r2: &Range<PhysRowIndex>) -> Rang
         start..end
     } else {
         0..0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::color::ColorPalette;
+    use wezterm_bidi::ParagraphDirectionHint;
+    use wezterm_surface::SEQ_ZERO;
+
+    #[derive(Debug)]
+    struct TestConfig {
+        scrollback: usize,
+    }
+
+    impl TerminalConfiguration for TestConfig {
+        fn scrollback_size(&self) -> usize {
+            self.scrollback
+        }
+
+        fn color_palette(&self) -> ColorPalette {
+            ColorPalette::default()
+        }
+    }
+
+    fn make_screen(physical_rows: usize, scrollback: usize) -> Screen {
+        let config: Arc<dyn TerminalConfiguration> = Arc::new(TestConfig { scrollback });
+        Screen::new(
+            TerminalSize {
+                rows: physical_rows,
+                cols: 1,
+                pixel_width: physical_rows * 8,
+                pixel_height: physical_rows * 16,
+                dpi: 0,
+            },
+            &config,
+            true,
+            SEQ_ZERO,
+            BidiMode {
+                enabled: false,
+                hint: ParagraphDirectionHint::LeftToRight,
+            },
+        )
+    }
+
+    fn line_text(line: &Line) -> String {
+        line.as_str().to_string()
+    }
+
+    /// Regression test for the upstream bug fixed by
+    /// <https://github.com/wezterm/wezterm/pull/7177>: `with_phys_lines`
+    /// failed to translate the absolute `second_range` (computed against
+    /// the whole `VecDeque`) into an index relative to the `second` slice
+    /// returned by `VecDeque::as_slices()`, whereas its sibling
+    /// `with_phys_lines_mut` did this translation correctly. Whenever the
+    /// backing `VecDeque` had physically wrapped around its ring buffer
+    /// (i.e. both halves returned by `as_slices()` were non-empty), the
+    /// unpatched `with_phys_lines` would silently read from the wrong
+    /// offset into `second`, returning the wrong lines (or panicking with
+    /// an out-of-bounds slice index) instead of the requested physical
+    /// rows.
+    #[test]
+    fn with_phys_lines_matches_mut_after_vecdeque_wraps() {
+        let mut screen = make_screen(4, 4);
+
+        // Force the backing VecDeque's ring buffer to physically wrap by
+        // repeatedly popping a line off the front and pushing a new,
+        // uniquely labelled line onto the back. This keeps the number of
+        // rows constant while advancing the internal head index through
+        // every possible offset, so `as_slices()` is guaranteed to
+        // eventually report two non-empty slices with the front slice
+        // shorter than the back slice (the scenario that silently
+        // corrupts data rather than merely panicking).
+        let mut wrapped_with_shorter_front = false;
+        for i in 0..512 {
+            screen.lines.pop_front();
+            screen.lines.push_back(Line::from(format!("L{i}").as_str()));
+
+            let (first, second) = screen.lines.as_slices();
+            if !first.is_empty() && !second.is_empty() && first.len() < second.len() {
+                wrapped_with_shorter_front = true;
+                break;
+            }
+        }
+        assert!(
+            wrapped_with_shorter_front,
+            "test setup failed to force the VecDeque to wrap with a front slice \
+             shorter than the back slice; as_slices() = {:?}",
+            {
+                let (first, second) = screen.lines.as_slices();
+                (first.len(), second.len())
+            }
+        );
+
+        let (first_len, second_len) = {
+            let (first, second) = screen.lines.as_slices();
+            (first.len(), second.len())
+        };
+        let total = screen.lines.len();
+        assert_eq!(total, first_len + second_len);
+
+        // Ground truth: the logical (phys-index-ordered) content of the
+        // screen, independent of how the ring buffer happens to be laid
+        // out internally.
+        let ground_truth: Vec<String> = screen.lines.iter().map(line_text).collect();
+
+        // Query a range that dips into the "second" slice but stops
+        // short of the very end of the deque, so that a buggy
+        // implementation would read valid-but-wrong memory (a silent
+        // content mismatch) rather than merely panicking on an
+        // out-of-bounds slice.
+        let phys_range = 0..(total - 1);
+        assert!(phys_range.end > first_len, "range must cross into the second slice");
+
+        let mut from_mut: Vec<String> = vec![];
+        screen.with_phys_lines_mut(phys_range.clone(), |lines| {
+            from_mut = lines.iter().map(|l| line_text(l)).collect();
+        });
+
+        let mut from_immutable: Vec<String> = vec![];
+        screen.with_phys_lines(phys_range.clone(), |lines| {
+            from_immutable = lines.iter().map(|l| line_text(l)).collect();
+        });
+
+        let expected = ground_truth[phys_range.clone()].to_vec();
+
+        assert_eq!(
+            from_mut, expected,
+            "with_phys_lines_mut (known-correct reference) did not match ground truth"
+        );
+        assert_eq!(
+            from_immutable, expected,
+            "with_phys_lines returned the wrong lines after the VecDeque wrapped \
+             (first_len={first_len}, second_len={second_len}); this is the bug fixed \
+             by upstream PR #7177"
+        );
+        assert_eq!(
+            from_immutable, from_mut,
+            "with_phys_lines and with_phys_lines_mut disagree on the same phys_range"
+        );
     }
 }
