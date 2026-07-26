@@ -665,6 +665,33 @@ impl CommandBuilder {
             value,
         } in self.envs.values()
         {
+            // An entry with an empty name is not a valid `name=value` pair
+            // and would produce a block entry that is just `=value\0`.
+            // CreateProcessW rejects such a malformed environment block
+            // wholesale with ERROR_INVALID_PARAMETER (87), which prevents
+            // *any* process from spawning until the offending variable is
+            // removed from the environment.
+            //
+            // This can happen in practice when a stray environment
+            // variable with an empty name ends up in the user or system
+            // environment registry keys (for example, if the `(Default)`
+            // value under `HKEY_CURRENT_USER\Environment` has been
+            // explicitly set to an empty string instead of being left
+            // unset). See <https://github.com/wezterm/wezterm/issues/4364>.
+            //
+            // Skip any such entries defensively; losing a nameless
+            // variable is harmless, whereas including it breaks process
+            // creation entirely.
+            if preferred_key.is_empty() {
+                log::warn!(
+                    "skipping environment variable with an empty name \
+                     (value {:?}); it would produce an invalid Windows \
+                     environment block entry",
+                    value
+                );
+                continue;
+            }
+
             block.extend(preferred_key.encode_wide());
             block.push(b'=' as u16);
             block.extend(value.encode_wide());
@@ -839,6 +866,39 @@ mod tests {
 
         cmd.env_remove("cARGO_pKG_aUTHORS");
         assert!(cmd.get_env("CARGO_PKG_AUTHORS").is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_environment_block_skips_empty_name() {
+        // Regression test for wezterm/wezterm#4364: a stray environment
+        // variable with an empty name (which can end up in the user
+        // environment if e.g. the `(Default)` value under
+        // `HKEY_CURRENT_USER\Environment` is explicitly set to an empty
+        // string) used to be encoded verbatim as a bare `=value\0` entry
+        // in the block passed to `CreateProcessW`. That malformed block
+        // caused `CreateProcessW` to fail wholesale with
+        // ERROR_INVALID_PARAMETER (os error 87), so no program at all
+        // could be spawned in the pty. Such entries must be dropped when
+        // building the environment block.
+        let mut cmd = CommandBuilder::new("dummy");
+        cmd.env("", "should be dropped");
+        cmd.env("REGULAR_VAR", "regular value");
+
+        let block = cmd.environment_block();
+        let block_str = String::from_utf16_lossy(&block[..block.len().saturating_sub(1)]);
+
+        for entry in block_str.split('\0').filter(|s| !s.is_empty()) {
+            assert!(
+                !entry.starts_with('='),
+                "environment block must not contain an entry with an empty \
+                 name (found {:?}); this produces ERROR_INVALID_PARAMETER \
+                 from CreateProcessW",
+                entry
+            );
+        }
+
+        assert!(block_str.contains("REGULAR_VAR=regular value"));
     }
 
     #[cfg(windows)]
