@@ -20,7 +20,7 @@
 use std::process::Command;
 
 fn wezterm_exe() -> &'static str {
-    env!("CARGO_BIN_EXE_wezterm")
+    env!("CARGO_BIN_EXE_onlyterm")
 }
 
 #[test]
