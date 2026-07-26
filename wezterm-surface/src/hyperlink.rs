@@ -160,8 +160,14 @@ impl<'t> Match<'t> {
         result
     }
 }
+// The parenthesized tail is matched as either a run of non-paren,
+// non-space characters, or a single nested `(...)` group; this keeps
+// the match's trailing parenthesis properly balanced against the one
+// that opens it, instead of greedily absorbing any `)` that happens to
+// follow (which would otherwise swallow an unrelated wrapping
+// parenthesis from the surrounding text, e.g. `(see http://example.com/Foo_(Bar))`).
 pub const CLOSING_PARENTHESIS_HYPERLINK_PATTERN: &str =
-    r"\b\w+://[^\s()]*\(\S*\)(?=\s|$|[^_/a-zA-Z0-9-])";
+    r"\b\w+://[^\s()]*\((?:[^\s()]|\([^\s()]*\))*\)(?=\s|$|[^_/a-zA-Z0-9-])";
 pub const GENERIC_HYPERLINK_PATTERN: &str = r"\b\w+://\S+[_/a-zA-Z0-9-]";
 
 impl Rule {
@@ -286,14 +292,66 @@ mod test {
 
         assert_helper(
             "http://example.com/(complete_parentheses))",
-            "http://example.com/(complete_parentheses))",
-            "Non-terminating parentheses should not impact matching the entire URL - Terminated with )",
+            "http://example.com/(complete_parentheses)",
+            "A second, unbalanced trailing parenthesis should not be captured, consistent with the single-dangling-parenthesis case above.",
         );
 
         assert_helper(
             "http://example.com/(complete_parentheses)-((-)-()-_-",
             "http://example.com/(complete_parentheses)-((-)-()-_-",
             "Non-terminating parentheses should not impact matching the entire URL - Terminated with a valid character",
+        );
+    }
+
+    #[test]
+    fn parse_url_wrapped_in_surrounding_parentheses() {
+        // Regression test: a bare URL that is wrapped in a pair of
+        // parentheses that belong to the *surrounding text* (not the URL
+        // itself) must not have the closing parenthesis captured as part
+        // of the URL. This mirrors config::default_hyperlink_rules(),
+        // which layers a `\(...\)`-stripping rule ahead of
+        // CLOSING_PARENTHESIS_HYPERLINK_PATTERN / GENERIC_HYPERLINK_PATTERN.
+        fn rules() -> Vec<Rule> {
+            vec![
+                Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1).unwrap(),
+                Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1).unwrap(),
+                Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1).unwrap(),
+                Rule::new(CLOSING_PARENTHESIS_HYPERLINK_PATTERN, "$0").unwrap(),
+                Rule::new(GENERIC_HYPERLINK_PATTERN, "$0").unwrap(),
+            ]
+        }
+
+        fn assert_helper(test_uri: &str, expected_uri: &str, msg: &str) {
+            assert_eq!(
+                Rule::match_hyperlinks(test_uri, &rules())[0].link.uri(),
+                expected_uri,
+                "{}",
+                msg,
+            );
+        }
+
+        assert_helper(
+            "see (http://example.com/foo) for details",
+            "http://example.com/foo",
+            "Wrapping parenthesis from surrounding text should not be captured.",
+        );
+
+        // The URL itself legitimately contains a balanced parenthesis pair
+        // (as in Wikipedia-style URLs), and is *also* wrapped in an outer
+        // pair of parentheses that belong to the surrounding sentence.
+        // Only the inner, URL-owned parenthesis should be kept.
+        assert_helper(
+            "see (http://en.wikipedia.org/wiki/Bar_(foo)) for details",
+            "http://en.wikipedia.org/wiki/Bar_(foo)",
+            "Outer wrapping parenthesis must be dropped even when the URL has its own balanced parenthesis.",
+        );
+
+        // Sanity check: without any outer wrapping, a URL-owned balanced
+        // parenthesis pair must still be preserved in full.
+        assert_helper(
+            "http://en.wikipedia.org/wiki/Bar_(foo)",
+            "http://en.wikipedia.org/wiki/Bar_(foo)",
+            "A URL's own balanced parenthesis must be preserved when there is no outer wrapping.",
         );
     }
 }
