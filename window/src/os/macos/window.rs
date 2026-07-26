@@ -19,7 +19,7 @@ use cocoa::appkit::{
     self, CGFloat, NSApplication, NSApplicationActivateIgnoringOtherApps,
     NSApplicationPresentationOptions, NSBackingStoreBuffered, NSEvent, NSEventModifierFlags,
     NSOpenGLContext, NSOpenGLPixelFormat, NSPasteboard, NSRunningApplication, NSScreen, NSView,
-    NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowStyleMask,
+    NSViewHeightSizable, NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowStyleMask,
 };
 use cocoa::base::*;
 use cocoa::foundation::{
@@ -920,9 +920,33 @@ impl WindowOps for Window {
             None
         };
 
+        let title_bar_padding_left = if config
+            .window_decorations
+            .contains(WindowDecorations::INTEGRATED_BUTTONS)
+        {
+            unsafe {
+                let window_id: id = self.ns_window;
+                let close_button: id =
+                    msg_send![window_id, standardWindowButton: NSWindowButton::NSWindowCloseButton];
+                let zoom_button: id =
+                    msg_send![window_id, standardWindowButton: NSWindowButton::NSWindowZoomButton];
+                if close_button == nil || zoom_button == nil {
+                    64.0
+                } else {
+                    let zoom_frame: NSRect = msg_send![zoom_button, frame];
+                    let total_width_in_points = zoom_frame.origin.x + zoom_frame.size.width;
+                    let scale_factor: CGFloat = msg_send![window_id, backingScaleFactor];
+                    let total_width_in_pixels = total_width_in_points * scale_factor;
+                    total_width_in_pixels
+                }
+            }
+        } else {
+            0.0
+        };
+
         Ok(Some(Parameters {
             title_bar: TitleBar {
-                padding_left: ULength::new(0),
+                padding_left: ULength::new(title_bar_padding_left as usize),
                 padding_right: ULength::new(0),
                 height: None,
                 font_and_size: None,
