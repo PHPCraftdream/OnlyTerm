@@ -76,51 +76,80 @@ impl TerminalState {
     fn mouse_wheel(&mut self, event: MouseEvent) -> anyhow::Result<()> {
         let (button, _button) = self.mouse_report_button_number(&event);
 
+        // Precision pointing devices (trackpads, Magic Mouse, high-res mice)
+        // report a continuous magnitude for a single wheel gesture rather
+        // than a single discrete "tick" the way a mechanical wheel does.
+        // The xterm mouse reporting protocols have no field for "how much",
+        // so the only way to convey "scrolled by N" to an application that
+        // has enabled mouse tracking (vim, tmux, less, etc.) is to emit N
+        // separate wheel events in a row. Clamp to a sane upper bound so
+        // that a single spurious huge value from a driver can't be used to
+        // flood the pty with events.
+        const MAX_WHEEL_TICKS: usize = 128;
+        let ticks = match event.button {
+            MouseButton::WheelUp(n)
+            | MouseButton::WheelDown(n)
+            | MouseButton::WheelLeft(n)
+            | MouseButton::WheelRight(n) => n.max(1).min(MAX_WHEEL_TICKS),
+            _ => 1,
+        };
+
         if self.mouse_encoding == MouseEncoding::SGR
             && (self.mouse_tracking || self.button_event_mouse || self.any_event_mouse)
         {
-            log::trace!(
-                "wheel {event:?} ESC [<{};{};{}M",
-                button,
-                event.x + 1,
-                event.y + 1
-            );
-            write!(
-                self.writer,
-                "\x1b[<{};{};{}M",
-                button,
-                event.x + 1,
-                event.y + 1
-            )?;
-            self.writer.flush()?;
+            for _ in 0..ticks {
+                log::trace!(
+                    "wheel {event:?} ESC [<{};{};{}M",
+                    button,
+                    event.x + 1,
+                    event.y + 1
+                );
+                write!(
+                    self.writer,
+                    "\x1b[<{};{};{}M",
+                    button,
+                    event.x + 1,
+                    event.y + 1
+                )?;
+                self.writer.flush()?;
+            }
         } else if self.mouse_encoding == MouseEncoding::SgrPixels
             && (self.mouse_tracking || self.button_event_mouse || self.any_event_mouse)
         {
             let height = self.screen.physical_rows as usize;
             let width = self.screen.physical_cols as usize;
-            log::trace!(
-                "wheel {event:?} ESC [<{};{};{}M",
-                button,
-                (event.x * (self.pixel_width / width)) + event.x_pixel_offset.max(0) as usize + 1,
-                (event.y as usize * (self.pixel_height / height))
-                    + event.y_pixel_offset.max(0) as usize
-                    + 1
-            );
-            write!(
-                self.writer,
-                "\x1b[<{};{};{}M",
-                button,
-                (event.x * (self.pixel_width / width)) + event.x_pixel_offset.max(0) as usize + 1,
-                (event.y as usize * (self.pixel_height / height))
-                    + event.y_pixel_offset.max(0) as usize
-                    + 1
-            )?;
-            self.writer.flush()?;
+            for _ in 0..ticks {
+                log::trace!(
+                    "wheel {event:?} ESC [<{};{};{}M",
+                    button,
+                    (event.x * (self.pixel_width / width))
+                        + event.x_pixel_offset.max(0) as usize
+                        + 1,
+                    (event.y as usize * (self.pixel_height / height))
+                        + event.y_pixel_offset.max(0) as usize
+                        + 1
+                );
+                write!(
+                    self.writer,
+                    "\x1b[<{};{};{}M",
+                    button,
+                    (event.x * (self.pixel_width / width))
+                        + event.x_pixel_offset.max(0) as usize
+                        + 1,
+                    (event.y as usize * (self.pixel_height / height))
+                        + event.y_pixel_offset.max(0) as usize
+                        + 1
+                )?;
+                self.writer.flush()?;
+            }
         } else if self.mouse_tracking || self.button_event_mouse || self.any_event_mouse {
-            self.encode_x10_or_utf8(event, button)?;
+            for _ in 0..ticks {
+                self.encode_x10_or_utf8(event, button)?;
+            }
         } else if self.screen.is_alt_screen_active() {
             // Send cursor keys instead (equivalent to xterm's alternateScroll mode)
-            for _ in 0..self.config.alternate_buffer_wheel_scroll_speed() {
+            let repeats = (self.config.alternate_buffer_wheel_scroll_speed() as usize) * ticks;
+            for _ in 0..repeats {
                 self.key_down(
                     match event.button {
                         MouseButton::WheelDown(_) => KeyCode::DownArrow,
