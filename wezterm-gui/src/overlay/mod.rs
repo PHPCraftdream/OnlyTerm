@@ -27,10 +27,10 @@ pub fn start_overlay<T, F>(
     term_window: &TermWindow,
     tab: &Arc<Tab>,
     func: F,
-) -> (
+) -> anyhow::Result<(
     Arc<dyn Pane>,
     Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>>>>,
-)
+)>
 where
     T: Send + 'static,
     F: Send + 'static + FnOnce(TabId, TermWizTerminal) -> anyhow::Result<T>,
@@ -39,7 +39,7 @@ where
     let tab_size = tab.get_size();
     let term_config: Arc<dyn TerminalConfiguration + Send + Sync> =
         Arc::new(config::TermConfig::with_config(term_window.config.clone()));
-    let (tw_term, tw_tab) = allocate(tab_size, term_config);
+    let (tw_term, tw_tab) = allocate(tab_size, term_config)?;
 
     let window = term_window.window.clone().unwrap();
 
@@ -51,17 +51,17 @@ where
         res
     });
 
-    (tw_tab, Box::pin(future))
+    Ok((tw_tab, Box::pin(future)))
 }
 
 pub fn start_overlay_pane<T, F>(
     term_window: &TermWindow,
     pane: &Arc<dyn Pane>,
     func: F,
-) -> (
+) -> anyhow::Result<(
     Arc<dyn Pane>,
     Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>>>>,
-)
+)>
 where
     T: Send + 'static,
     F: Send + 'static + FnOnce(PaneId, TermWizTerminal) -> anyhow::Result<T>,
@@ -77,7 +77,7 @@ where
     };
     let term_config: Arc<dyn TerminalConfiguration + Send + Sync> =
         Arc::new(config::TermConfig::with_config(term_window.config.clone()));
-    let (tw_term, tw_tab) = allocate(size, term_config);
+    let (tw_term, tw_tab) = allocate(size, term_config)?;
 
     let window = term_window.window.clone().unwrap();
 
@@ -87,5 +87,5 @@ where
         res
     });
 
-    (tw_tab, Box::pin(future))
+    Ok((tw_tab, Box::pin(future)))
 }
