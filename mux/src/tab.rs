@@ -2009,6 +2009,9 @@ impl TabInner {
                 } else {
                     self.resize(split_info.second.clone());
                 }
+                // Resize the tab back to the original tab size
+                // to avoid leaving unusable space within the tab
+                self.resize(tab_size);
             }
 
             let mut cursor = self.pane.take().unwrap().cursor();
@@ -2515,6 +2518,73 @@ mod test {
         assert_eq!(24, panes[2].height);
         assert_eq!(400, panes[2].pixel_width);
         assert_eq!(600, panes[2].pixel_height);
+    }
+
+    #[test]
+    fn top_level_split_restores_tab_size() {
+        // Regression test for upstream wezterm/wezterm#5969 (issues #4984/#4686):
+        // a top_level split performed while the tab already holds more than one
+        // pane temporarily shrinks the tab to reuse the resize logic, and must
+        // restore the original tab size afterwards; otherwise unusable "ghost"
+        // space is left inside the tab.
+        let size = TerminalSize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 800,
+            pixel_height: 600,
+            dpi: 96,
+        };
+
+        let tab = Tab::new(&size);
+        tab.assign_pane(&FakePane::new(1, size));
+
+        // First (non-top-level) split: the tab now holds two leaves, which is
+        // the precondition for needs_resize on a subsequent top_level split.
+        tab.split_and_insert(
+            0,
+            SplitRequest {
+                direction: SplitDirection::Horizontal,
+                target_is_second: true,
+                ..Default::default()
+            },
+            FakePane::new(2, size),
+        )
+        .unwrap();
+        assert_eq!(tab.get_size(), size);
+        assert_eq!(2, tab.iter_panes().len());
+
+        // Top-level split: triggers the needs_resize path because the tab has
+        // more than one leaf.
+        let top_level_split = tab
+            .compute_split_size(
+                0,
+                SplitRequest {
+                    direction: SplitDirection::Horizontal,
+                    top_level: true,
+                    target_is_second: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        tab.split_and_insert(
+            0,
+            SplitRequest {
+                direction: SplitDirection::Horizontal,
+                top_level: true,
+                target_is_second: true,
+                ..Default::default()
+            },
+            FakePane::new(3, top_level_split.second),
+        )
+        .unwrap();
+
+        // The defining assertion of this bug: the tab's own size must be back to
+        // the original dimensions, not stuck at the shrunk split_info.first.
+        assert_eq!(tab.get_size(), size);
+
+        // The top_level split inserted a new pane at the top of the tree.
+        let panes = tab.iter_panes();
+        assert_eq!(3, panes.len());
     }
 
     fn is_send_and_sync<T: Send + Sync>() -> bool {
