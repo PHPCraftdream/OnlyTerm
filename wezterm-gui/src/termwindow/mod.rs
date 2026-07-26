@@ -572,9 +572,15 @@ impl TermWindow {
                     return;
                 }
                 let window = self.window.clone().unwrap();
-                let (overlay, future) = start_overlay(self, &tab, move |tab_id, term| {
+                let (overlay, future) = match start_overlay(self, &tab, move |tab_id, term| {
                     confirm_close_window(term, mux_window_id, window, tab_id)
-                });
+                }) {
+                    Ok(res) => res,
+                    Err(err) => {
+                        log::error!("Failed to show close-window confirmation overlay: {err:#}");
+                        return;
+                    }
+                };
                 self.assign_overlay(tab.tab_id(), overlay);
                 promise::spawn::spawn(future).detach();
 
@@ -2386,9 +2392,15 @@ impl TermWindow {
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+        let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
             crate::overlay::selector::selector(term, args, gui_win, pane)
-        });
+        }) {
+            Ok(res) => res,
+            Err(err) => {
+                log::error!("Failed to show selector overlay: {err:#}");
+                return;
+            }
+        };
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
     }
@@ -2410,9 +2422,15 @@ impl TermWindow {
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+        let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
             crate::overlay::prompt::show_line_prompt_overlay(term, args, gui_win, pane)
-        });
+        }) {
+            Ok(res) => res,
+            Err(err) => {
+                log::error!("Failed to show prompt input line overlay: {err:#}");
+                return;
+            }
+        };
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
     }
@@ -2434,9 +2452,15 @@ impl TermWindow {
         let gui_win = GuiWin::new(self);
         let pane = MuxPane(pane.pane_id());
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+        let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
             crate::overlay::confirm::show_confirmation_overlay(term, args, gui_win, pane)
-        });
+        }) {
+            Ok(res) => res,
+            Err(err) => {
+                log::error!("Failed to show confirmation overlay: {err:#}");
+                return;
+            }
+        };
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
     }
@@ -2453,9 +2477,15 @@ impl TermWindow {
         let opengl_info = self.opengl_info.as_deref().unwrap_or("Unknown").to_string();
         let connection_info = self.connection_name.clone();
 
-        let (overlay, future) = start_overlay(self, &tab, move |_tab_id, term| {
+        let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
             crate::overlay::show_debug_overlay(term, gui_win, opengl_info, connection_info)
-        });
+        }) {
+            Ok(res) => res,
+            Err(err) => {
+                log::error!("Failed to show debug overlay: {err:#}");
+                return;
+            }
+        };
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
     }
@@ -2547,9 +2577,15 @@ impl TermWindow {
                 if let Some(tab) = mux.get_tab(tab_id) {
                     let window = window.clone();
                     let (overlay, future) =
-                        start_overlay(term_window, &tab, move |_tab_id, term| {
+                        match start_overlay(term_window, &tab, move |_tab_id, term| {
                             launcher(args, term, window, initial_choice_idx)
-                        });
+                        }) {
+                            Ok(res) => res,
+                            Err(err) => {
+                                log::error!("Failed to show launcher overlay: {err:#}");
+                                return;
+                            }
+                        };
 
                     term_window.assign_overlay(tab_id, overlay);
                     promise::spawn::spawn(future).detach();
@@ -2905,7 +2941,7 @@ impl TermWindow {
                         let window = self.window.clone().unwrap();
                         let (overlay, future) = start_overlay(self, &tab, move |tab_id, term| {
                             confirm_quit_program(term, window, tab_id)
-                        });
+                        })?;
                         self.assign_overlay(tab.tab_id(), overlay);
                         promise::spawn::spawn(future).detach();
                     }
@@ -3326,9 +3362,15 @@ impl TermWindow {
         let pane_id = pane.pane_id();
         if confirm && !pane.can_close_without_prompting(CloseReason::Pane) {
             let window = self.window.clone().unwrap();
-            let (overlay, future) = start_overlay_pane(self, &pane, move |pane_id, term| {
+            let (overlay, future) = match start_overlay_pane(self, &pane, move |pane_id, term| {
                 confirm_close_pane(pane_id, term, mux_window_id, window)
-            });
+            }) {
+                Ok(res) => res,
+                Err(err) => {
+                    log::error!("Failed to show close-pane confirmation overlay: {err:#}");
+                    return;
+                }
+            };
             self.assign_overlay_for_pane(pane_id, overlay);
             promise::spawn::spawn(future).detach();
         } else {
@@ -3357,9 +3399,15 @@ impl TermWindow {
             }
 
             let window = self.window.clone().unwrap();
-            let (overlay, future) = start_overlay(self, &tab, move |tab_id, term| {
+            let (overlay, future) = match start_overlay(self, &tab, move |tab_id, term| {
                 confirm_close_tab(tab_id, term, mux_window_id, window)
-            });
+            }) {
+                Ok(res) => res,
+                Err(err) => {
+                    log::error!("Failed to show close-tab confirmation overlay: {err:#}");
+                    return;
+                }
+            };
             self.assign_overlay(tab_id, overlay);
             promise::spawn::spawn(future).detach();
         } else {
@@ -3377,9 +3425,15 @@ impl TermWindow {
         let mux_window_id = self.mux_window_id;
         if confirm && !tab.can_close_without_prompting(CloseReason::Tab) {
             let window = self.window.clone().unwrap();
-            let (overlay, future) = start_overlay(self, &tab, move |tab_id, term| {
+            let (overlay, future) = match start_overlay(self, &tab, move |tab_id, term| {
                 confirm_close_tab(tab_id, term, mux_window_id, window)
-            });
+            }) {
+                Ok(res) => res,
+                Err(err) => {
+                    log::error!("Failed to show close-tab confirmation overlay: {err:#}");
+                    return;
+                }
+            };
             self.assign_overlay(tab_id, overlay);
             promise::spawn::spawn(future).detach();
         } else {

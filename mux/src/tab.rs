@@ -2254,12 +2254,11 @@ mod test {
     use wezterm_term::color::ColorPalette;
     use wezterm_term::{KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex};
 
-    // The mux is a process-global singleton (`Mux::set_mux`), and focus
-    // notifications dispatch through `Mux::get()`. Tests that install a mux must
-    // therefore run serially; cargo's default parallel runner would otherwise let
-    // them clobber each other's global and cross-deliver notifications. Hold this
-    // guard for the lifetime of any such test.
-    static MUX_TEST_GUARD: Mutex<()> = Mutex::new(());
+    // See `crate::test::MUX_TEST_GUARD`: the mux is a process-global
+    // singleton, so tests that install one via `Mux::set_mux` must run
+    // serially with every other such test in the crate, not just within
+    // this module.
+    use crate::test::MUX_TEST_GUARD;
 
     struct FakePane {
         id: PaneId,
