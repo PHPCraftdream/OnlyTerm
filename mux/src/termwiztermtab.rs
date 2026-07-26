@@ -447,8 +447,16 @@ impl termwiz::terminal::Terminal for TermWizTerminal {
 pub fn allocate(
     size: TerminalSize,
     config: Arc<dyn TerminalConfiguration + Send + Sync>,
-) -> (TermWizTerminal, Arc<dyn Pane>) {
-    let render_pipe = Pipe::new().expect("Pipe creation not to fail");
+) -> anyhow::Result<(TermWizTerminal, Arc<dyn Pane>)> {
+    // Pipe::new() allocates a socketpair (or equivalent) from the OS and can
+    // fail, most commonly with EMFILE/ENFILE ("Too many open files") when the
+    // process (or system) file descriptor limit has been exhausted, eg: from
+    // repeatedly opening overlays/panes. Propagate the error to the caller
+    // instead of panicking and taking down the whole process (#3107).
+    let render_pipe = anyhow::Context::context(
+        Pipe::new(),
+        "allocating pipe for termwiz terminal tab",
+    )?;
 
     let (input_tx, input_rx) = channel();
 
@@ -476,9 +484,12 @@ pub fn allocate(
     let pane: Arc<dyn Pane> = Arc::new(pane);
 
     let mux = Mux::get();
-    mux.add_pane(&pane).expect("to be able to add pane to mux");
+    anyhow::Context::context(
+        mux.add_pane(&pane),
+        "adding termwiz terminal tab pane to mux",
+    )?;
 
-    (tw_term, pane)
+    Ok((tw_term, pane))
 }
 
 /// This function spawns a thread and constructs a GUI window with an
@@ -496,7 +507,12 @@ pub async fn run<
     f: F,
     term_config: Option<Arc<dyn TerminalConfiguration + Send + Sync>>,
 ) -> anyhow::Result<T> {
-    let render_pipe = Pipe::new().expect("Pipe creation not to fail");
+    // See the comment in `allocate` above: this can fail under fd exhaustion,
+    // and should be reported rather than panicking the whole process (#3107).
+    let render_pipe = anyhow::Context::context(
+        Pipe::new(),
+        "allocating pipe for termwiz terminal tab",
+    )?;
     let render_rx = render_pipe.read;
     let (input_tx, input_rx) = channel();
     let should_close_window = window_id.is_none();
@@ -583,4 +599,107 @@ pub async fn run<
     .detach();
 
     result
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    // See `crate::test::MUX_TEST_GUARD`: `allocate` reaches into the
+    // process-global `Mux` singleton (`Mux::set_mux`/`Mux::get`), so tests
+    // that install one must run serially with every other such test in the
+    // crate, not just within this module.
+    use crate::test::MUX_TEST_GUARD;
+
+    fn test_term_config() -> Arc<dyn TerminalConfiguration + Send + Sync> {
+        Arc::new(config::TermConfig::new())
+    }
+
+    #[test]
+    fn allocate_succeeds_under_normal_conditions() {
+        let _guard = MUX_TEST_GUARD.lock();
+        let mux = Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        let size = TerminalSize::default();
+        let result = allocate(size, test_term_config());
+        assert!(
+            result.is_ok(),
+            "allocate() should succeed when fds/pipes are available: {:?}",
+            result.err()
+        );
+
+        Mux::shutdown();
+    }
+
+    // Regression test for https://github.com/wez/wezterm/issues/3107: opening
+    // the debug overlay (or any termwiz overlay/pane) used to call
+    // `Pipe::new().expect(...)`, which panicked and took down the *entire*
+    // process whenever the OS ran out of file descriptors (a condition users
+    // hit in practice by rapidly opening overlays/panes, exhausting
+    // RLIMIT_NOFILE). `allocate` must instead return an `Err` so the caller
+    // can log the failure and keep the rest of wezterm running.
+    #[cfg(unix)]
+    #[test]
+    fn allocate_reports_error_instead_of_panicking_on_fd_exhaustion() {
+        let _guard = MUX_TEST_GUARD.lock();
+        let mux = Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        // Save the current fd limit so we can restore it even if an
+        // assertion below fails.
+        let mut saved: libc::rlimit = unsafe { std::mem::zeroed() };
+        let got = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut saved) };
+        assert_eq!(got, 0, "getrlimit failed");
+
+        // Open files until we're right at the edge of the current soft
+        // limit, then lower the soft limit to the current fd count so that
+        // the very next fd allocation (the pipe/socketpair in `allocate`)
+        // fails with EMFILE, exactly as reported in #3107.
+        let mut keepalive = Vec::new();
+        loop {
+            match std::fs::File::open("/dev/null") {
+                Ok(f) => keepalive.push(f),
+                Err(_) => break,
+            }
+            if keepalive.len() > 100_000 {
+                // Safety valve: don't loop forever if something is wrong
+                // with the environment.
+                break;
+            }
+        }
+
+        let current_fd_count = keepalive.len() as libc::rlim_t;
+        let tight = libc::rlimit {
+            rlim_cur: current_fd_count.saturating_sub(1).max(3),
+            rlim_max: saved.rlim_max,
+        };
+        let set = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &tight) };
+
+        let result = if set == 0 {
+            allocate(TerminalSize::default(), test_term_config())
+        } else {
+            // If we couldn't lower the limit (eg: insufficient privilege in
+            // this environment) fall back to asserting on the error message
+            // path is at least well-formed by closing all of our extra fds;
+            // there's nothing further we can assert here.
+            Err(anyhow::anyhow!("could not lower RLIMIT_NOFILE in this environment"))
+        };
+
+        // Restore the fd limit and release our held-open files before making
+        // any assertions, so a failing assertion doesn't leave the test
+        // process (and subsequent tests) starved of file descriptors.
+        unsafe {
+            libc::setrlimit(libc::RLIMIT_NOFILE, &saved);
+        }
+        drop(keepalive);
+
+        if set == 0 {
+            assert!(
+                result.is_err(),
+                "allocate() should return Err on fd exhaustion instead of panicking"
+            );
+        }
+
+        Mux::shutdown();
+    }
 }

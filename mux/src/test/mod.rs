@@ -20,6 +20,14 @@ use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSi
 
 mod sync_update;
 
+// The mux is a process-global singleton (`Mux::set_mux`/`Mux::get`), so any
+// test in this crate that installs one must run serially with every other
+// such test, or they will clobber each other's global state (installing a
+// different `Mux`, calling `Mux::shutdown()` out from under another test,
+// etc). Hold this guard for the lifetime of any test that calls
+// `Mux::set_mux`.
+pub(crate) static MUX_TEST_GUARD: Mutex<()> = Mutex::new(());
+
 pub(crate) struct RecordingPane {
     batches: Mutex<Vec<Vec<Action>>>,
 }
