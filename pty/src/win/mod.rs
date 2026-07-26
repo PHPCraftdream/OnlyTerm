@@ -13,7 +13,7 @@ use winapi::um::winbase::INFINITE;
 
 pub mod conpty;
 mod procthreadattr;
-mod psuedocon;
+mod pseudocon;
 
 use filedescriptor::OwnedHandle;
 
@@ -40,13 +40,10 @@ impl WinChild {
 
     fn do_kill(&mut self) -> IoResult<()> {
         let proc = self.proc.lock().unwrap().try_clone().unwrap();
-        let res = unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
-        let err = IoError::last_os_error();
-        if res == 0 {
-            Err(err)
-        } else {
-            Ok(())
-        }
+        std::thread::spawn(move || {
+            unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
+        });
+        Ok(())
     }
 }
 
@@ -69,13 +66,13 @@ pub struct WinChildKiller {
 
 impl ChildKiller for WinChildKiller {
     fn kill(&mut self) -> IoResult<()> {
-        let res = unsafe { TerminateProcess(self.proc.as_raw_handle() as _, 1) };
-        let err = IoError::last_os_error();
-        if res == 0 {
-            Err(err)
-        } else {
-            Ok(())
-        }
+        let proc = self.proc.try_clone().map_err(|e| {
+            IoError::new(std::io::ErrorKind::Other, format!("Failed to clone handle: {}", e))
+        })?;
+        std::thread::spawn(move || {
+            unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
+        });
+        Ok(())
     }
 
     fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
