@@ -883,6 +883,112 @@ pub struct LoadedConfig {
     pub rhai_watch_paths: Vec<String>,
 }
 
+#[cfg(test)]
+mod reload_notify_test {
+    use super::*;
+    use std::sync::atomic::AtomicUsize as StdAtomicUsize;
+
+    /// Build a minimal `LoadedConfig` carrying the default `Config`, as if
+    /// `Config::load()` had succeeded, without touching the filesystem or the
+    /// process-wide `CONFIG`/`CONFIG_OVERRIDES` singletons that other tests in
+    /// this crate serialize on (see `CONFIG_OVERRIDES_TEST_LOCK` in
+    /// `config.rs`). This lets the notification-fanout behavior below be
+    /// exercised against a private `Configuration` instance in complete
+    /// isolation.
+    fn loaded_default() -> LoadedConfig {
+        LoadedConfig {
+            config: Ok(Config::default_config()),
+            file_name: None,
+            event_script: None,
+            warnings: vec![],
+            rhai_watch_paths: vec![],
+        }
+    }
+
+    /// UP-46 investigation: every live TermWindow subscribes to config
+    /// reloads via `subscribe_to_config_reload` (see
+    /// `wezterm-gui/src/termwindow/mod.rs`'s `TermWindow::new_window`), and
+    /// *every* reload trigger -- the config-file watcher, the OS
+    /// `AppearanceChanged` notification handler, and manual
+    /// Ctrl+Shift+R -- funnels through this same
+    /// `Configuration::reload`/`ConfigInner::reload` -> `ConfigInner::notify`
+    /// path (`config::reload()` at the top of this module just calls
+    /// `CONFIG.reload()`, which is this method).
+    ///
+    /// The reported symptom for UP-46 (upstream #3328/#5451/#6607/#2446/#4437)
+    /// is that a live theme/appearance change doesn't reach every open
+    /// window. This test locks in that the shared fanout mechanism itself is
+    /// not the culprit: a single `reload()` call synchronously invokes every
+    /// subscriber registered so far -- there is no "notify only the window
+    /// that triggered the reload" shortcut, no skip based on subscription
+    /// order, and no silently dropped subscriber. If this ever regresses (for
+    /// example, someone reintroduces an early-return once `find` on the
+    /// map hits one match, or a `HashMap` iteration accidentally gets bounded)
+    /// this test fails immediately, without needing multiple live OS windows.
+    ///
+    /// What this test deliberately does NOT and CANNOT establish (see the
+    /// UP-46 session notes): whether every OS-level window HWND actually
+    /// receives its own `WM_SETTINGCHANGE`/`AppearanceChanged` notification in
+    /// the same tick, and whether each window's own
+    /// `wezterm.on('window-config-reloaded', ...)` handler (which
+    /// independently calls `window:get_appearance()` and
+    /// `window:set_config_overrides()`, per
+    /// `docs/config/lua/window/get_appearance.md`) observes a consistent
+    /// appearance value across windows. That requires multiple live native
+    /// windows and a real OS theme toggle, which is outside what a unit test
+    /// in this crate can exercise.
+    #[test]
+    fn reload_notifies_every_subscriber_not_just_one() {
+        let configuration = Configuration::new();
+
+        const N: usize = 5;
+        let counters: Vec<Arc<StdAtomicUsize>> =
+            (0..N).map(|_| Arc::new(StdAtomicUsize::new(0))).collect();
+
+        let _subs: Vec<ConfigSubscription> = counters
+            .iter()
+            .map(|counter| {
+                let counter = Arc::clone(counter);
+                ConfigSubscription(configuration.subscribe(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    true
+                }))
+            })
+            .collect();
+
+        {
+            let mut inner = configuration.inner.lock().unwrap();
+            inner.reload(loaded_default());
+        }
+
+        for (idx, counter) in counters.iter().enumerate() {
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                1,
+                "subscriber {idx} of {N} was not notified by a single reload() call \
+                 (per-window updates should all fire together, not a subset)"
+            );
+        }
+
+        // A second reload should notify all of them again -- confirms no
+        // subscriber gets silently dropped after the first cycle (which
+        // would manifest as "the first appearance change works, later ones
+        // don't reach every window").
+        {
+            let mut inner = configuration.inner.lock().unwrap();
+            inner.reload(loaded_default());
+        }
+
+        for (idx, counter) in counters.iter().enumerate() {
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                2,
+                "subscriber {idx} of {N} stopped receiving notifications after the first reload"
+            );
+        }
+    }
+}
+
 fn default_one_point_oh_f64() -> f64 {
     1.0
 }
