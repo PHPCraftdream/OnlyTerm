@@ -1077,7 +1077,22 @@ impl WaylandWindowInner {
             }
         }
         if let Some(window) = self.window.as_ref() {
-            window.set_title(title.clone());
+            // The Wayland wire protocol caps the *entire* message at 4096
+            // bytes (see wayland-client's `wl_display@1: error 1: message
+            // length N exceeds 4096`). xdg_toplevel.set_title sends the
+            // title as a length-prefixed string argument in that message,
+            // so an oversized title (eg. a shell echoing a huge command
+            // line into the window title via OSC) can blow the limit and
+            // the compositor responds with a fatal protocol error that
+            // currently tears down the whole process (see #7725). Clamp
+            // the string we hand to the wire protocol well below the
+            // limit to leave headroom for the rest of the message
+            // (object id, opcode, length prefix, padding); the untruncated
+            // title is still kept for the CSD title bar below, since that
+            // is rendered locally and isn't subject to the wire limit.
+            const MAX_WIRE_TITLE_BYTES: usize = 4000;
+            let wire_title = clamp_to_byte_boundary(&title, MAX_WIRE_TITLE_BYTES);
+            window.set_title(wire_title.to_string());
         }
         self.refresh_frame();
         self.title = Some(title);
@@ -1703,5 +1718,78 @@ impl HasWindowHandle for WaylandWindow {
         let inner = handle.borrow();
         let handle = inner.window_handle()?;
         unsafe { Ok(WindowHandle::borrow_raw(handle.as_raw())) }
+    }
+}
+
+/// Truncate `s` to at most `max_bytes` bytes, without splitting a UTF-8
+/// character. Used to keep strings we hand to Wayland protocol requests
+/// (which are bounded by the wire protocol's 4096-byte message limit)
+/// safely within that limit regardless of how long the source string is.
+fn clamp_to_byte_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+#[cfg(test)]
+mod clamp_tests {
+    use super::clamp_to_byte_boundary;
+
+    #[test]
+    fn short_string_is_unchanged() {
+        assert_eq!(clamp_to_byte_boundary("hello", 4000), "hello");
+    }
+
+    #[test]
+    fn empty_string_is_unchanged() {
+        assert_eq!(clamp_to_byte_boundary("", 4000), "");
+    }
+
+    #[test]
+    fn exact_length_is_unchanged() {
+        let s = "a".repeat(4000);
+        assert_eq!(clamp_to_byte_boundary(&s, 4000).len(), 4000);
+    }
+
+    #[test]
+    fn oversized_ascii_is_truncated_to_exact_byte_count() {
+        let s = "a".repeat(5000);
+        let clamped = clamp_to_byte_boundary(&s, 4000);
+        assert_eq!(clamped.len(), 4000);
+    }
+
+    #[test]
+    fn truncation_never_splits_a_multibyte_char() {
+        // Each of these is a 3-byte UTF-8 character (e.g. many CJK/box
+        // drawing code points), repeated so that a naive byte-index slice
+        // at the requested boundary would land mid-character.
+        let ch = '\u{4e2d}'; // U+4E2D, "中", 3 bytes in UTF-8
+        let s: String = std::iter::repeat(ch).take(2000).collect();
+        assert_eq!(s.len(), 6000);
+
+        // 4000 is not a multiple of 3, so a naive slice at byte 4000 would
+        // split a character; the clamp must back off to a valid boundary.
+        let clamped = clamp_to_byte_boundary(&s, 4000);
+        assert!(clamped.len() <= 4000);
+        assert!(s.is_char_boundary(clamped.len()));
+        // The result must still be valid UTF-8 and decodable.
+        assert!(clamped.chars().all(|c| c == ch));
+    }
+
+    #[test]
+    fn result_is_always_within_requested_limit() {
+        for extra in 0..10 {
+            let s: String = std::iter::repeat('\u{1F600}') // 4-byte emoji
+                .take(1000)
+                .collect();
+            let limit = 4000 + extra;
+            let clamped = clamp_to_byte_boundary(&s, limit);
+            assert!(clamped.len() <= limit);
+        }
     }
 }
