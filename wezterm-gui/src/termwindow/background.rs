@@ -567,15 +567,11 @@ impl crate::TermWindow {
                 // Inset the sprite's texture coords by 1 texel on every side to
                 // avoid sampling padding/atlas-bleeding that produces a visible
                 // seam between adjacent background tiles (upstream #7030).
-                let mut coords = sprite.texture_coords();
-
-                let shrink_x = 1.0 / sprite.texture.width() as f32;
-                let shrink_y = 1.0 / sprite.texture.height() as f32;
-
-                coords.origin.x += shrink_x;
-                coords.origin.y += shrink_y;
-                coords.size.width -= 2.0 * shrink_x;
-                coords.size.height -= 2.0 * shrink_y;
+                let coords = inset_texture_coords(
+                    sprite.texture_coords(),
+                    sprite.texture.width() as f32,
+                    sprite.texture.height() as f32,
+                );
 
                 let mut x1 = coords.min_x();
                 let mut x2 = coords.max_x();
@@ -596,5 +592,67 @@ impl crate::TermWindow {
         }
 
         Ok(emitted)
+    }
+}
+
+/// Inset a sprite's texture coordinates by 1 texel on every side.
+///
+/// Sampling right up to the edge of a sprite's region in the texture atlas
+/// can pick up padding/neighboring-sprite pixels (atlas bleeding), which
+/// shows up as a visible seam between adjacent tiles of a repeated
+/// background image. Shrinking the sampled rectangle by one texel on each
+/// side keeps sampling within the sprite's own pixels. Regression fix for
+/// upstream #7030.
+fn inset_texture_coords(
+    mut coords: window::bitmaps::TextureRect,
+    texture_width: f32,
+    texture_height: f32,
+) -> window::bitmaps::TextureRect {
+    let shrink_x = 1.0 / texture_width;
+    let shrink_y = 1.0 / texture_height;
+
+    coords.origin.x += shrink_x;
+    coords.origin.y += shrink_y;
+    coords.size.width -= 2.0 * shrink_x;
+    coords.size.height -= 2.0 * shrink_y;
+
+    coords
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inset_texture_coords_shrinks_by_one_texel_each_side() {
+        // A 100x200 texture: 1 texel is 0.01 in normalized x, 0.005 in y.
+        let coords = window::bitmaps::TextureRect::new(
+            euclid::point2(0.0, 0.0),
+            euclid::size2(1.0, 1.0),
+        );
+        let inset = inset_texture_coords(coords, 100.0, 200.0);
+
+        assert_eq!(inset.origin.x, 0.01);
+        assert_eq!(inset.origin.y, 0.005);
+        assert_eq!(inset.size.width, 0.98);
+        assert_eq!(inset.size.height, 0.99);
+        assert_eq!(inset.max_x(), 0.99);
+        assert_eq!(inset.max_y(), 0.995);
+    }
+
+    #[test]
+    fn inset_texture_coords_preserves_non_zero_origin() {
+        // A sub-rectangle of an atlas, not starting at (0, 0).
+        let coords = window::bitmaps::TextureRect::new(
+            euclid::point2(0.5, 0.25),
+            euclid::size2(0.25, 0.25),
+        );
+        let inset = inset_texture_coords(coords, 256.0, 256.0);
+
+        let shrink = 1.0 / 256.0;
+        assert_eq!(inset.origin.x, 0.5 + shrink);
+        assert_eq!(inset.origin.y, 0.25 + shrink);
+        assert_eq!(inset.size.width, 0.25 - 2.0 * shrink);
+        assert_eq!(inset.size.height, 0.25 - 2.0 * shrink);
     }
 }
