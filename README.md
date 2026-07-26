@@ -1,40 +1,34 @@
-# Wez's Terminal
+# OnlyTerm
 
-<img height="128" alt="WezTerm Icon" src="https://raw.githubusercontent.com/wezterm/wezterm/main/assets/icon/wezterm-icon.svg" align="left"> *A GPU-accelerated cross-platform terminal emulator and multiplexer written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>*
+OnlyTerm — форк [wezterm/wezterm](https://github.com/wezterm/wezterm), ориентированный на стабильность и простоту использования на Windows. Остальные платформы (macOS, Linux/X11, Wayland), поддерживаемые апстримом, здесь развиваются во вторую очередь — их сопровождение расширится по мере появления дополнительных мейнтейнеров, готовых уделять этому время и располагающих современными AI-инструментами/подписками для ускорения разработки.
 
-User facing docs and guide at: https://wezterm.org/
+*A GPU-accelerated cross-platform terminal emulator and multiplexer, forked from the project originally written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>.*
 
-![Screenshot](docs/screenshots/two.png)
+## Что это
 
-*Screenshot of wezterm on macOS, running vim*
+OnlyTerm — эмулятор терминала и мультиплексор с GPU-ускоренным рендерингом. От апстрима унаследованы ключевые возможности:
 
-## Installation
+* Кроссплатформенная архитектура (Windows/macOS/Linux, X11/Wayland) — с фокусом сопровождения на Windows в этом форке.
+* Мультиплексирование панелей/вкладок/окон, в том числе через удалённые (SSH/unix-domain) mux-домены.
+* Гибкая настройка через Lua/Rhai-конфигурацию: цветовые схемы, шрифты, горячие клавиши, кастомные события.
+* Поддержка современных терминальных протоколов (Kitty graphics/keyboard, OSC 52 clipboard, синхронизированный вывод и др.).
 
-https://wezterm.org/installation
+## В чём фокус этого форка
 
-## Getting help
+За основу взята кодовая база wezterm/wezterm, и в неё портирован набор исправлений реальных багов и стабильности — в первую очередь тех, что затрагивают Windows: зависания и крэши GUI под нагрузкой, гонки при работе с ConPTY, корректность обработки resize/split-панелей, отзывчивость ввода и скролла, независимость стандартных сочетаний клавиш от раскладки клавиатуры, и другие точечные исправления. Внутренний нейминг кода (имена крейтов, переменные окружения, системные идентификаторы) сохранён как есть — в знак признательности авторам и контрибьюторам апстрима.
 
-This is a spare time project, so please bear with me.  There are a couple of channels for support:
+## Установка
 
-* You can use the [GitHub issue tracker](https://github.com/wezterm/wezterm/issues) to see if someone else has a similar issue, or to file a new one.
-* Start or join a thread in our [GitHub Discussions](https://github.com/wezterm/wezterm/discussions); if you have general
-  questions or want to chat with other wezterm users, you're welcome here!
-* There is a [Matrix room via Element.io](https://matrix.to/#/#wezterm:matrix.org)
-  for (potentially!) real time discussions.
+Готовой отдельной раздачи бинарников для OnlyTerm пока нет — соберите форк из исходников (`cargo build --release`) или ориентируйтесь на общую инструкцию апстрима: https://wezterm.org/installation
 
-The GitHub Discussions and Element/Gitter rooms are better suited for questions
-than bug reports, but don't be afraid to use whichever you are most comfortable
-using and we'll work it out.
+## Получение помощи
 
-## Supporting the Project
+Так как это личный/небольшой форк, в первую очередь стоит смотреть issue-трекер этого репозитория. По общим вопросам работы терминала (не специфичным для этого форка) также можно обращаться к сообществу апстрима:
 
-If you use and like WezTerm, please consider sponsoring it: your support helps
-to cover the fees required to maintain the project and to validate the time
-spent working on it!
+* [GitHub issue tracker апстрима](https://github.com/wezterm/wezterm/issues)
+* [GitHub Discussions апстрима](https://github.com/wezterm/wezterm/discussions)
+* [Matrix room апстрима via Element.io](https://matrix.to/#/#wezterm:matrix.org)
 
-[Read more about sponsoring](https://wezterm.org/sponsor.html).
+## Атрибуция и лицензия
 
-* [![Sponsor WezTerm](https://img.shields.io/github/sponsors/wez?label=Sponsor%20WezTerm&logo=github&style=for-the-badge)](https://github.com/sponsors/wez)
-* [Patreon](https://patreon.com/WezFurlong)
-* [Ko-Fi](https://ko-fi.com/wezfurlong)
-* [Liberapay](https://liberapay.com/wez)
+Этот проект — форк [wezterm/wezterm](https://github.com/wezterm/wezterm), созданного и поддерживаемого [Wez Furlong](https://github.com/wez) и контрибьюторами апстрима. Лицензия и копирайт оригинального проекта сохранены без изменений — см. [LICENSE.md](LICENSE.md).
