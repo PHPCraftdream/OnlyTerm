@@ -491,6 +491,15 @@ pub struct Config {
     #[dynamic(default)]
     pub tab_and_split_indices_are_zero_based: bool,
 
+    /// If true, the default tab title (used when the tab doesn't have an
+    /// explicitly assigned title and no `format-tab-title` event handler
+    /// is registered) is derived from the last path component (basename)
+    /// of the active pane's current working directory, rather than from
+    /// the pane's title (which is usually the running program's name).
+    /// The default is false, which preserves the pre-existing behavior.
+    #[dynamic(default)]
+    pub use_cwd_basename_as_tab_title: bool,
+
     /// Specifies the maximum width that a tab can have in the
     /// tab bar.  Defaults to 16 glyphs in width.
     #[dynamic(default = "default_tab_max_width")]
