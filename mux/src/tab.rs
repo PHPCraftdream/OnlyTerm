@@ -2727,6 +2727,108 @@ mod test {
     }
 
     #[test]
+    fn resize_extreme_shrink_does_not_hang() {
+        // Regression/verification test for a candidate infinite-loop report
+        // surfaced while auditing the third-party fork wakamex/wakterm: they
+        // claimed adjust_x_size/adjust_y_size could spin forever when a
+        // window containing many splits is crushed down to a size smaller
+        // than the sum of every leaf's minimum size.
+        //
+        // Reading the current implementation (post upstream #5011/#6052 fix,
+        // which rewrote these functions to preserve split ratios via
+        // compute_min_size-clamped proportional distribution) shows this
+        // cannot happen structurally: adjust_x_size/adjust_y_size are a
+        // single recursive descent that visits each tree node exactly once
+        // (one call into `left`, one call into `right`, no loop/while/retry
+        // anywhere in either function), so runtime is strictly bounded by
+        // the number of splits regardless of how extreme the requested
+        // shrink is. This test builds a deep chain of splits and drives a
+        // sequence of extreme resizes (down to 1x1 and back up) to
+        // demonstrate that in practice, guarded by a background-thread
+        // timeout so the test itself fails fast instead of hanging forever
+        // if this analysis is ever invalidated by a future change.
+        let _guard = MUX_TEST_GUARD.lock();
+        let size = TerminalSize {
+            rows: 200,
+            cols: 200,
+            pixel_width: 2000,
+            pixel_height: 2000,
+            dpi: 96,
+        };
+
+        let tab = Tab::new(&size);
+        tab.assign_pane(&FakePane::new(1, size));
+
+        // Build a deep chain of 20 nested splits, alternating direction, so
+        // compute_min_size has to recurse through 20 levels and every
+        // resize touches every node in the tree. Each split peels off just
+        // 1 cell (plus a 1-cell divider) for the new pane -- using the
+        // default 50% split here would halve the remaining space on every
+        // step and exhaust the 200-cell budget well before 20 splits.
+        const NUM_SPLITS: usize = 20;
+        for i in 0..NUM_SPLITS {
+            let direction = if i % 2 == 0 {
+                SplitDirection::Horizontal
+            } else {
+                SplitDirection::Vertical
+            };
+            let request = SplitRequest {
+                direction,
+                target_is_second: true,
+                size: SplitSize::Cells(1),
+                ..Default::default()
+            };
+            let split = tab.compute_split_size(0, request).unwrap();
+            tab.split_and_insert(0, request, FakePane::new(2 + i, split.second))
+                .unwrap();
+        }
+        assert_eq!(tab.iter_panes().len(), NUM_SPLITS + 1);
+
+        // Run the extreme resize sequence on a background thread and join
+        // with a generous but finite timeout: if adjust_x_size/adjust_y_size
+        // ever regress into a genuine infinite loop, this test fails with a
+        // clear timeout message instead of hanging the test suite forever.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            // Crush the window down to 1x1 -- far smaller than the sum of
+            // the minimum sizes of the 21 leaves in this tree -- and then
+            // grow it back, repeatedly, to also exercise the shrink/grow
+            // boundary that #5011/#6052 cared about.
+            for &(rows, cols) in &[
+                (1usize, 1usize),
+                (200, 200),
+                (1, 200),
+                (200, 1),
+                (1, 1),
+                (5, 5),
+                (200, 200),
+            ] {
+                tab.resize(TerminalSize {
+                    rows,
+                    cols,
+                    pixel_width: cols * 10,
+                    pixel_height: rows * 10,
+                    dpi: 96,
+                });
+            }
+            let _ = tx.send(());
+        });
+
+        match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+            Ok(()) => {
+                handle.join().expect("resize thread panicked");
+            }
+            Err(_) => {
+                panic!(
+                    "adjust_x_size/adjust_y_size did not complete within 10s under \
+                     extreme shrink of a {}-split tree -- possible infinite loop",
+                    NUM_SPLITS
+                );
+            }
+        }
+    }
+
+    #[test]
     fn set_active_pane_can_suppress_mux_notification() {
         let _guard = MUX_TEST_GUARD.lock();
         let size = TerminalSize {
