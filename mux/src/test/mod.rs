@@ -18,6 +18,7 @@ use url::Url;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 
+mod domain_detach;
 mod sync_update;
 
 // The mux is a process-global singleton (`Mux::set_mux`/`Mux::get`), so any

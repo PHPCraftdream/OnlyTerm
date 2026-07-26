@@ -1228,6 +1228,26 @@ impl Mux {
         self.prune_dead_windows();
     }
 
+    /// Test-only probe: returns `true` if `self.windows` is currently free
+    /// to acquire for write (i.e. not already held on this thread), `false`
+    /// otherwise. Used by regression tests to prove that no code path
+    /// synchronously calls back into pane teardown (e.g. `resize`/`kill`)
+    /// while still holding `windows` for write, which would deadlock a
+    /// non-reentrant lock. See `domain_was_detached`.
+    #[cfg(test)]
+    pub(crate) fn probe_windows_try_write(&self) -> bool {
+        self.windows.try_write().is_some()
+    }
+
+    /// Test-only helper to register a `Window` built outside of
+    /// `new_empty_window` (which requires a live `Activity`/config
+    /// machinery not needed by unit tests).
+    #[cfg(test)]
+    pub(crate) fn insert_window_for_test(&self, window_id: WindowId, window: Window) {
+        self.windows.write().insert(window_id, window);
+        self.recompute_pane_count();
+    }
+
     pub fn set_banner(&self, banner: Option<String>) {
         *self.banner.write() = banner;
     }
