@@ -312,6 +312,35 @@ const MAX_INTERMEDIATES: usize = 2;
 const MAX_OSC: usize = 64;
 const MAX_PARAMS: usize = 256;
 
+/// Threshold above which we proactively release excess capacity from the
+/// OSC/APC scratch buffers once they've been consumed.
+///
+/// Below this size we deliberately *keep* the existing allocation around:
+/// `Action::Clear` fires on every escape/CSI/DCS entry (i.e. very
+/// frequently), and `Action::OscStart`/`Action::ApcStart` fire at the start
+/// of every OSC/APC string.  Real-world sessions commonly emit many
+/// similarly-sized OSC sequences in a row (window title updates, shell
+/// integration markers, hyperlinks, etc.), so unconditionally calling
+/// `shrink_to_fit()` after every single one just forces the allocator to
+/// free and immediately re-grow the same buffer over and over, which shows
+/// up as allocator churn inside `OscState::put`/`VTParser::action`.
+///
+/// Only buffers that grew unusually large (e.g. a big embedded image
+/// payload) are shrunk back down, so we still avoid holding on to a large
+/// allocation indefinitely after a one-off outlier sequence.
+#[cfg(any(feature = "std", feature = "alloc"))]
+const SHRINK_THRESHOLD: usize = 64 * 1024;
+
+/// Release a scratch buffer's excess capacity, but only if it has grown
+/// past `SHRINK_THRESHOLD`.  See its documentation for the rationale.
+#[cfg(any(feature = "std", feature = "alloc"))]
+#[inline]
+fn shrink_if_oversized(buf: &mut Vec<u8>) {
+    if buf.capacity() > SHRINK_THRESHOLD {
+        buf.shrink_to_fit();
+    }
+}
+
 struct OscState {
     #[cfg(any(feature = "std", feature = "alloc"))]
     buffer: Vec<u8>,
@@ -535,9 +564,9 @@ impl VTParser {
                 #[cfg(any(feature = "std", feature = "alloc"))]
                 {
                     self.apc_data.clear();
-                    self.apc_data.shrink_to_fit();
+                    shrink_if_oversized(&mut self.apc_data);
                     self.osc.buffer.clear();
-                    self.osc.buffer.shrink_to_fit();
+                    shrink_if_oversized(&mut self.osc.buffer);
                 }
             }
             Action::Collect => {
@@ -612,7 +641,7 @@ impl VTParser {
             Action::OscStart => {
                 self.osc.buffer.clear();
                 #[cfg(any(feature = "std", feature = "alloc"))]
-                self.osc.buffer.shrink_to_fit();
+                shrink_if_oversized(&mut self.osc.buffer);
                 self.osc.num_params = 0;
                 self.osc.full = false;
             }
@@ -642,7 +671,7 @@ impl VTParser {
                 #[cfg(any(feature = "std", feature = "alloc"))]
                 {
                     self.apc_data.clear();
-                    self.apc_data.shrink_to_fit();
+                    shrink_if_oversized(&mut self.apc_data);
                 }
             }
             Action::ApcPut => {
@@ -1159,6 +1188,97 @@ mod test {
                     ignored_excess_intermediates: false,
                     byte: b'\\',
                 }
+            ]
+        );
+    }
+
+    /// Repeated small/medium OSC sequences (eg. window title updates) are a
+    /// common real-world pattern.  We should not be freeing and
+    /// immediately re-growing the OSC scratch buffer on every single one
+    /// of them; the allocation should be reused across sequences as long
+    /// as it doesn't grow past `SHRINK_THRESHOLD`.
+    #[test]
+    fn osc_buffer_capacity_is_reused_for_small_sequences() {
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+
+        parser.parse(b"\x1b]0;first title\x07", &mut actor);
+        let cap_after_first = parser.osc.buffer.capacity();
+        assert!(cap_after_first > 0);
+
+        // A subsequent CSI sequence (Action::Clear on CsiEntry) must not
+        // discard the OSC buffer's capacity.
+        parser.parse(b"\x1b[1;32m", &mut actor);
+        assert_eq!(
+            parser.osc.buffer.capacity(),
+            cap_after_first,
+            "CSI entry should not shrink an OSC buffer within the reuse threshold"
+        );
+
+        // Starting a new OSC sequence of similar size should reuse the
+        // existing allocation rather than reallocating from scratch.
+        parser.parse(b"\x1b]0;second title\x07", &mut actor);
+        assert_eq!(
+            parser.osc.buffer.capacity(),
+            cap_after_first,
+            "starting a new small OSC sequence should reuse the existing buffer capacity"
+        );
+    }
+
+    /// An unusually large OSC/APC payload (eg. a big embedded image) should
+    /// still have its buffer capacity released afterwards, so that we don't
+    /// hold on to a large allocation for the remaining lifetime of the
+    /// parser.
+    #[test]
+    fn oversized_osc_buffer_is_shrunk_after_use() {
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+
+        let huge_payload = "a".repeat(SHRINK_THRESHOLD * 2);
+        let sequence = format!("\x1b]0;{}\x07", huge_payload);
+        parser.parse(sequence.as_bytes(), &mut actor);
+        assert!(parser.osc.buffer.capacity() > SHRINK_THRESHOLD);
+
+        // Starting the next OSC sequence should trigger the shrink since
+        // the buffer is well over the threshold.
+        parser.parse(b"\x1b]0;small\x07", &mut actor);
+        assert!(
+            parser.osc.buffer.capacity() <= SHRINK_THRESHOLD,
+            "oversized OSC buffer should be released once it exceeds the threshold, got capacity {}",
+            parser.osc.buffer.capacity()
+        );
+    }
+
+    /// The APC scratch buffer is handed off via `mem::take` in
+    /// `Action::ApcEnd` (its contents are passed by value to
+    /// `VTActor::apc_dispatch`), so unlike the OSC buffer it never actually
+    /// carries capacity into the next sequence. This just confirms that
+    /// repeated APC sequences interleaved with CSI sequences keep working
+    /// correctly now that the scratch-buffer shrink is conditional.
+    #[test]
+    fn apc_sequences_still_dispatch_correctly_after_shrink_change() {
+        assert_eq!(
+            parse_as_vec(b"\x1b_Gf=24,s=10,v=20;payload\x1b\\\x1b[1;32m\x1b_Ga=1;more\x1b\\"),
+            vec![
+                VTAction::ApcDispatch(b"Gf=24,s=10,v=20;payload".to_vec()),
+                VTAction::EscDispatch {
+                    params: vec![],
+                    intermediates: vec![],
+                    ignored_excess_intermediates: false,
+                    byte: b'\\',
+                },
+                VTAction::CsiDispatch {
+                    params: vec![CsiParam::Integer(1), CsiParam::P(b';'), CsiParam::Integer(32)],
+                    parameters_truncated: false,
+                    byte: b'm',
+                },
+                VTAction::ApcDispatch(b"Ga=1;more".to_vec()),
+                VTAction::EscDispatch {
+                    params: vec![],
+                    intermediates: vec![],
+                    ignored_excess_intermediates: false,
+                    byte: b'\\',
+                },
             ]
         );
     }
