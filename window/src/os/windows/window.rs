@@ -1536,9 +1536,18 @@ unsafe fn wm_enter_exit_size_move(
 ) -> Option<LRESULT> {
     let mut should_size = false;
     if let Some(inner) = rc_from_hwnd(hwnd) {
-        let mut inner = inner.borrow_mut();
-        inner.in_size_move = msg == WM_ENTERSIZEMOVE;
-        should_size = !inner.in_size_move;
+        // This can be called re-entrantly: Windows may synchronously
+        // dispatch a nested message (eg. the IME/TSF subsystem showing
+        // a candidate/completion popup) while we're already holding a
+        // mutable borrow of `inner` higher up the call stack.
+        // Use `try_borrow_mut` and simply skip updating the state for
+        // this particular re-entrant invocation rather than panicking;
+        // the next, non-reentrant, invocation will observe and set the
+        // correct state. See: <https://github.com/wezterm/wezterm/issues/7358>
+        if let Ok(mut inner) = inner.try_borrow_mut() {
+            inner.in_size_move = msg == WM_ENTERSIZEMOVE;
+            should_size = !inner.in_size_move;
+        }
     }
 
     if should_size {
