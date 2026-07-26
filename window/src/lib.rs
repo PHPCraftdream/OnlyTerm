@@ -116,12 +116,16 @@ bitflags! {
         const ALWAYS_ON_TOP = 1<<4;
         /// Always on bottom (docked) window
         const ALWAYS_ON_BOTTOM = 1<<5;
+        /// Tiled by the window manager along one or more edges (eg: a tiling
+        /// Wayland compositor such as sway). The compositor owns the window
+        /// size, so the application must not resize itself.
+        const TILED = 1<<6;
     }
 }
 
 impl WindowState {
     pub fn can_resize(self) -> bool {
-        !self.intersects(Self::FULL_SCREEN | Self::MAXIMIZED)
+        !self.intersects(Self::FULL_SCREEN | Self::MAXIMIZED | Self::TILED)
     }
 
     pub fn can_paint(self) -> bool {
@@ -387,5 +391,58 @@ impl ResizeIncrement {
             base_width: 0,
             base_height: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WindowState;
+
+    #[test]
+    fn empty_state_can_resize_and_paint() {
+        let state = WindowState::default();
+        assert!(state.can_resize(), "empty state should be resizable");
+        assert!(state.can_paint(), "empty state should be paintable");
+    }
+
+    #[test]
+    fn fullscreen_and_maximized_block_resize() {
+        // Established behavior that must not regress when TILED is added
+        // to the can_resize intersection.
+        assert!(!WindowState::FULL_SCREEN.can_resize());
+        assert!(!WindowState::MAXIMIZED.can_resize());
+        // HIDDEN is intentionally NOT in the can_resize intersection:
+        // it blocks painting, not resizing.
+        assert!(WindowState::HIDDEN.can_resize());
+    }
+
+    #[test]
+    fn tiled_blocks_resize() {
+        // A window tiled by the compositor (eg. sway) must not resize
+        // itself; the compositor owns the geometry.
+        assert!(
+            !WindowState::TILED.can_resize(),
+            "tiled window must not be resizable"
+        );
+    }
+
+    #[test]
+    fn tiled_combined_with_other_flags_blocks_resize() {
+        // Any combination that includes TILED must block resizing, even
+        // if none of the legacy blocking bits (FULL_SCREEN/MAXIMIZED) are set.
+        assert!(WindowState::empty().can_resize(), "empty state is resizable");
+        assert!(!(WindowState::TILED | WindowState::ALWAYS_ON_TOP).can_resize());
+        assert!(!(WindowState::TILED | WindowState::HIDDEN).can_resize());
+        assert!(
+            !(WindowState::TILED | WindowState::FULL_SCREEN | WindowState::MAXIMIZED).can_resize()
+        );
+    }
+
+    #[test]
+    fn non_blocking_flags_remain_resizable() {
+        // Flags unrelated to geometry ownership must not block resizing.
+        assert!((WindowState::ALWAYS_ON_TOP).can_resize());
+        assert!((WindowState::ALWAYS_ON_BOTTOM).can_resize());
+        assert!((WindowState::ALWAYS_ON_TOP | WindowState::ALWAYS_ON_BOTTOM).can_resize());
     }
 }
