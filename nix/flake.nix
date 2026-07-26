@@ -232,7 +232,7 @@
                   }
                   ''
                     mkdir -p $out/share/terminfo $out/nix-support
-                    tic -x -o $out/share/terminfo ${finalAttrs.src}/termwiz/data/wezterm.terminfo
+                    tic -x -o $out/share/terminfo ${finalAttrs.src}/crates/termwiz/data/wezterm.terminfo
                   '';
             };
 

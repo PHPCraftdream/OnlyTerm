@@ -8,7 +8,7 @@ fn main() {
         use std::path::Path;
         let repo_dir = std::env::current_dir()
             .ok()
-            .and_then(|cwd| cwd.parent().map(|p| p.to_path_buf()))
+            .and_then(|cwd| cwd.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
             .unwrap();
         // Derive the actual target/<profile> directory from OUT_DIR
         // (<target_dir>/<profile>/build/<pkg>-<hash>/out) rather than
@@ -74,10 +74,10 @@ fn main() {
         // If a file named `.tag` is present, we'll take its contents for the
         // version number that we report in wezterm -h.
         let mut ci_tag = String::new();
-        if let Ok(tag) = std::fs::read("../.tag") {
+        if let Ok(tag) = std::fs::read("../../.tag") {
             if let Ok(s) = String::from_utf8(tag) {
                 ci_tag = s.trim().to_string();
-                println!("cargo:rerun-if-changed=../.tag");
+                println!("cargo:rerun-if-changed=../../.tag");
             }
         }
         let version = if ci_tag.is_empty() {
@@ -105,7 +105,7 @@ fn main() {
 
         let rcfile_name = Path::new(&std::env::var_os("OUT_DIR").unwrap()).join("resource.rc");
         let mut rcfile = std::fs::File::create(&rcfile_name).unwrap();
-        println!("cargo:rerun-if-changed=../assets/windows/terminal.ico");
+        println!("cargo:rerun-if-changed=../../assets/windows/terminal.ico");
         write!(
             rcfile,
             r#"
@@ -166,7 +166,7 @@ END
         let profile = std::env::var("PROFILE").unwrap();
         let repo_dir = std::env::current_dir()
             .ok()
-            .and_then(|cwd| cwd.parent().map(|p| p.to_path_buf()))
+            .and_then(|cwd| cwd.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
             .unwrap();
 
         // We need to copy the plist to avoid the UNUserNotificationCenter asserting
@@ -181,7 +181,7 @@ END
             .and_then(|s| Ok(std::path::PathBuf::from(s)))
             .unwrap_or(repo_dir.join("target").join(profile));
         let dest_plist = build_target_dir.join("Info.plist");
-        println!("cargo:rerun-if-changed=assets/macos/WezTerm.app/Contents/Info.plist");
+        println!("cargo:rerun-if-changed=../../assets/macos/WezTerm.app/Contents/Info.plist");
 
         std::fs::copy(&src_plist, &dest_plist)
             .context(format!(

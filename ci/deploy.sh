@@ -36,7 +36,7 @@ case $OSTYPE in
     mkdir -p $zipdir/WezTerm.app/Contents/Resources
     cp -r assets/shell-integration/* $zipdir/WezTerm.app/Contents/Resources
     cp -r assets/shell-completion $zipdir/WezTerm.app/Contents/Resources
-    tic -xe wezterm -o $zipdir/WezTerm.app/Contents/Resources/terminfo termwiz/data/wezterm.terminfo
+    tic -xe wezterm -o $zipdir/WezTerm.app/Contents/Resources/terminfo crates/termwiz/data/wezterm.terminfo
 
     for bin in wezterm wezterm-mux-server wezterm-gui strip-ansi-escapes ; do
       # If the user ran a simple `cargo build --release`, then we want to allow
@@ -409,7 +409,7 @@ source="
   assets/wezterm.appdata.xml
   assets/icon/terminal.png
   assets/icon/wezterm-icon.svg
-  termwiz/data/wezterm.terminfo
+  crates/termwiz/data/wezterm.terminfo
 "
 builddir="\$srcdir"
 

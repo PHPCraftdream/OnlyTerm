@@ -328,6 +328,8 @@ mod test {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
+            .parent()
+            .unwrap()
             .join("assets/fonts")
             .join(name)
     }

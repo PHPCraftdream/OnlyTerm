@@ -34,7 +34,7 @@ TRIGGER_PATHS_UNIX = [
     "assets/wezterm.desktop",
     "get-deps",
     "ci/tag-name.sh",
-    "termwiz/data/wezterm.terminfo",
+    "crates/termwiz/data/wezterm.terminfo",
 ]
 
 TRIGGER_PATHS_MAC = [

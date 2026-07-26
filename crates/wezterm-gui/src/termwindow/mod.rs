@@ -92,7 +92,7 @@ lazy_static::lazy_static! {
     static ref POSITION: Mutex<Option<GuiPosition>> = Mutex::new(None);
 }
 
-pub const ICON_DATA: &'static [u8] = include_bytes!("../../../assets/icon/terminal.png");
+pub const ICON_DATA: &'static [u8] = include_bytes!("../../../../assets/icon/terminal.png");
 
 pub fn set_window_position(pos: GuiPosition) {
     POSITION.lock().unwrap().replace(pos);
