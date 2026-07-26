@@ -447,6 +447,18 @@ pub struct TermWindow {
     /// Tracks whether the current mouse-down event is part of click-focus.
     /// If so, we ignore mouse events until released
     is_click_to_focus_window: bool,
+    /// Coordinates of a button-down event that arrived while the window was
+    /// still becoming focused (see `focused`). Some window managers/OSes
+    /// (observed on Windows; <https://github.com/wezterm/wezterm/issues/2414>,
+    /// <https://github.com/wezterm/wezterm/issues/5309>) synthesize an extra
+    /// `WM_MOUSEMOVE` for the same coordinates immediately after the
+    /// activating click is delivered. If forwarded to the pane, that
+    /// synthetic, zero-motion Move is misread by mouse-reporting-aware
+    /// programs (e.g. tmux) as a real drag and can clobber their selection/
+    /// clipboard state. We remember the activating click's coordinates here
+    /// and suppress exactly one immediately-following Move that lands on the
+    /// same spot; any real motion or the next press/release clears it.
+    suppress_move_after_focus_click: Option<(isize, isize)>,
     last_mouse_coords: (usize, i64),
     window_drag_position: Option<MouseEvent>,
     current_mouse_event: Option<MouseEvent>,
@@ -583,6 +595,7 @@ impl TermWindow {
             self.current_mouse_buttons.clear();
             self.current_mouse_capture = None;
             self.is_click_to_focus_window = false;
+            self.suppress_move_after_focus_click = None;
 
             for state in self.pane_state.borrow_mut().values_mut() {
                 state.mouse_terminal_coords.take();
@@ -766,6 +779,7 @@ impl TermWindow {
             right_status: String::new(),
             left_status: String::new(),
             last_mouse_coords: (0, -1),
+            suppress_move_after_focus_click: None,
             window_drag_position: None,
             current_mouse_event: None,
             current_modifier_and_leds: Default::default(),

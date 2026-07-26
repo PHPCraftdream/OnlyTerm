@@ -16,7 +16,7 @@ use std::convert::TryInto;
 use std::ops::Sub;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use termwiz::hyperlink::Hyperlink;
 use termwiz::surface::Line;
 use wezterm_dynamic::ToDynamic;
@@ -155,6 +155,21 @@ impl super::TermWindow {
                 self.last_mouse_click = Some(click);
                 self.current_mouse_buttons.retain(|p| p != press);
                 self.current_mouse_buttons.push(*press);
+
+                // If this press arrives while the window is still within its
+                // just-focused grace period, arm the same-position Move
+                // suppression below: some window managers (observed on
+                // Windows; see #2414 and #5309) synthesize a spurious
+                // WM_MOUSEMOVE at the same coordinates immediately after the
+                // activating click, which would otherwise be misreported to
+                // mouse-aware programs (e.g. tmux) as a real drag.
+                self.suppress_move_after_focus_click = if should_arm_focus_click_move_suppression(
+                    self.focused.as_ref().map(Instant::elapsed),
+                ) {
+                    Some((event.coords.x, event.coords.y))
+                } else {
+                    None
+                };
             }
 
             WMEK::Move => {
@@ -183,8 +198,25 @@ impl super::TermWindow {
                     self.drag_ui_item(item, start_event, x, y, event, context);
                     return;
                 }
+
+                if let Some(armed) = self.suppress_move_after_focus_click.take() {
+                    if armed == (event.coords.x, event.coords.y) {
+                        // Zero-motion Move immediately following the click that
+                        // (re)focused this window: this is the synthetic event
+                        // described in #2414/#5309, not real mouse motion.
+                        // Swallow it rather than forwarding a spurious drag to
+                        // the pane's mouse reporting.
+                        log::trace!(
+                            "swallowing zero-motion Move immediately after focus-click at {:?}",
+                            event.coords
+                        );
+                        return;
+                    }
+                }
             }
-            _ => {}
+            _ => {
+                self.suppress_move_after_focus_click = None;
+            }
         }
 
         let prior_ui_item = self.last_ui_item.clone();
@@ -1091,5 +1123,91 @@ fn mouse_press_to_tmb(press: &MousePress) -> TMB {
         MousePress::Left => TMB::Left,
         MousePress::Right => TMB::Right,
         MousePress::Middle => TMB::Middle,
+    }
+}
+
+/// How long after gaining focus a button-down is still considered to be
+/// "the activating click", for the purposes of arming suppression of a
+/// same-position synthetic Move (see #2414, #5309). This only needs to
+/// bridge a single OS message-pump tick, so it is deliberately much shorter
+/// than the 200ms grace period used by `swallow_mouse_click_on_window_focus`
+/// (which governs a different, opt-in policy: whether the activating click
+/// itself is forwarded to the pane).
+const FOCUS_CLICK_MOVE_SUPPRESSION_GRACE: Duration = Duration::from_millis(50);
+
+/// Decide whether a button-down event should arm suppression of the next
+/// same-position Move, given how long ago (if at all) the window most
+/// recently gained focus.
+fn should_arm_focus_click_move_suppression(focused_elapsed: Option<Duration>) -> bool {
+    matches!(focused_elapsed, Some(elapsed) if elapsed <= FOCUS_CLICK_MOVE_SUPPRESSION_GRACE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arms_when_press_is_within_focus_grace_period() {
+        assert!(should_arm_focus_click_move_suppression(Some(
+            Duration::from_millis(0)
+        )));
+        assert!(should_arm_focus_click_move_suppression(Some(
+            FOCUS_CLICK_MOVE_SUPPRESSION_GRACE
+        )));
+    }
+
+    #[test]
+    fn does_not_arm_once_grace_period_has_elapsed() {
+        assert!(!should_arm_focus_click_move_suppression(Some(
+            FOCUS_CLICK_MOVE_SUPPRESSION_GRACE + Duration::from_millis(1)
+        )));
+        assert!(!should_arm_focus_click_move_suppression(Some(
+            Duration::from_secs(5)
+        )));
+    }
+
+    #[test]
+    fn does_not_arm_when_window_was_never_focused() {
+        // `self.focused` is `None` whenever the window doesn't currently
+        // have focus (e.g. it was never focused, or focus was just lost);
+        // there is no activating click to protect in that case.
+        assert!(!should_arm_focus_click_move_suppression(None));
+    }
+
+    /// Regression test for #2414 / #5309: a same-position Move that arrives
+    /// immediately after the click that (re)focused the window must be
+    /// recognized as suppressible, while a Move at a different position
+    /// (real motion) must not be, and neither should be a Move that arrives
+    /// well after the focus-granting click.
+    #[test]
+    fn suppresses_only_the_exact_zero_motion_move_after_focus_click() {
+        let click_coords: (isize, isize) = (1, 1);
+
+        // Simulates arming: a Press landed inside the grace period.
+        let armed = if should_arm_focus_click_move_suppression(Some(Duration::from_millis(0))) {
+            Some(click_coords)
+        } else {
+            None
+        };
+        assert_eq!(armed, Some(click_coords));
+
+        // A same-position Move should match the armed coordinates (and thus
+        // be suppressed by the caller).
+        let same_position_move = click_coords;
+        assert_eq!(armed, Some(same_position_move));
+
+        // A Move at different coordinates is real motion and must not match.
+        let real_motion_move: (isize, isize) = (1, 2);
+        assert_ne!(armed, Some(real_motion_move));
+
+        // If the Press arrived outside the grace period, nothing is armed,
+        // so even a same-position Move afterwards is left untouched.
+        let not_armed =
+            if should_arm_focus_click_move_suppression(Some(Duration::from_millis(200))) {
+                Some(click_coords)
+            } else {
+                None
+            };
+        assert_eq!(not_armed, None);
     }
 }
