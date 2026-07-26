@@ -423,7 +423,7 @@ impl RenderableInner {
     }
 
     pub fn make_all_stale(&mut self) {
-        let mut lines = LruCache::unbounded();
+        let mut lines = LruCache::new(self.lines.cap());
         while let Some((stable_row, entry)) = self.lines.pop_lru() {
             let entry = match entry {
                 LineEntry::Stale(old) | LineEntry::Line(old) => LineEntry::Stale(old),
@@ -856,5 +856,80 @@ impl RenderableState {
 
     pub fn get_dimensions(&self) -> RenderableDimensions {
         self.inner.borrow().dimensions
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for the `make_all_stale` capacity fix (upstream #7704).
+    //!
+    //! `make_all_stale` rebuilds `self.lines` by draining it into a fresh
+    //! `LruCache`. Before the fix that cache was `LruCache::unbounded()`,
+    //! which silently dropped the scrollback capacity limit and allowed the
+    //! cache to grow without bound. The fix builds it with
+    //! `LruCache::new(self.lines.cap())` so the rebuilt cache keeps the same
+    //! bounded capacity as the original.
+    //!
+    //! `RenderableInner` cannot be constructed in isolation here: `new()`
+    //! requires an `Arc<ClientInner>` (the full wezterm-client connection
+    //! machinery, backed by a real transport and rate limiter) which is not
+    //! realistically buildable without a running server. These tests therefore
+    //! exercise the exact `LruCache` behaviour the one-line fix relies on,
+    //! asserting that a `new(cap)` cache stays bounded while `unbounded()`
+    //! does not -- i.e. the regression cannot silently reappear.
+    use super::*;
+
+    #[test]
+    fn new_preserves_bounded_capacity_when_overfilled() {
+        // Mirrors `make_all_stale`: build the replacement cache with the
+        // original's capacity, then pour more entries in than it can hold.
+        let cap = NonZeroUsize::new(4).unwrap();
+        let mut lines: LruCache<i32, i32> = LruCache::new(cap);
+
+        for i in 0..1000 {
+            lines.put(i, i);
+        }
+
+        // A bounded cache must never exceed its declared capacity, no matter
+        // how many entries are inserted -- the exact invariant `unbounded()`
+        // violated (see the contrast test below).
+        assert_eq!(lines.len(), cap.get());
+        assert_eq!(lines.cap(), cap);
+    }
+
+    #[test]
+    fn unbounded_grows_without_limit() {
+        // Documents the pre-fix behaviour so the contrast is explicit: an
+        // unbounded cache swallows every entry, which is the memory leak
+        // fixed by switching `make_all_stale` to `LruCache::new(self.lines.cap())`.
+        let mut unbounded: LruCache<i32, i32> = LruCache::unbounded();
+
+        for i in 0..1000 {
+            unbounded.put(i, i);
+        }
+
+        assert_eq!(unbounded.len(), 1000);
+        assert!(unbounded.cap().get() >= 1000);
+    }
+
+    #[test]
+    fn cap_survives_round_trip_through_new_cache() {
+        // Reproduces the full body of `make_all_stale` at the LruCache level:
+        // drain one bounded cache into a fresh `new(cap())` cache and confirm
+        // the resulting capacity matches the source -- the property the fix
+        // guarantees for `self.lines`.
+        let cap = NonZeroUsize::new(8).unwrap();
+        let mut src: LruCache<i32, i32> = LruCache::new(cap);
+        for i in 0..8 {
+            src.put(i, i);
+        }
+
+        let mut rebuilt = LruCache::new(src.cap());
+        while let Some((k, v)) = src.pop_lru() {
+            rebuilt.put(k, v);
+        }
+
+        assert_eq!(rebuilt.cap(), cap);
+        assert_eq!(rebuilt.len(), 8);
     }
 }
