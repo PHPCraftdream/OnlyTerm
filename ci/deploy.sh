@@ -102,21 +102,21 @@ case $OSTYPE in
 
     ;;
   msys|cygwin)
-    zipdir=WezTerm-windows-$TAG_NAME
+    zipdir=OnlyTerm-windows-$TAG_NAME
     if [[ "$BUILD_REASON" == "Schedule" ]] ; then
-      zipname=WezTerm-windows-nightly.zip
-      instname=WezTerm-nightly-setup
+      zipname=OnlyTerm-windows-nightly.zip
+      instname=OnlyTerm-nightly-setup
     else
       zipname=$zipdir.zip
-      instname=WezTerm-${TAG_NAME}-setup
+      instname=OnlyTerm-${TAG_NAME}-setup
     fi
     rm -rf $zipdir $zipname
     mkdir $zipdir
-    cp $TARGET_DIR/release/wezterm.exe \
-      $TARGET_DIR/release/wezterm-mux-server.exe \
-      $TARGET_DIR/release/wezterm-gui.exe \
+    cp $TARGET_DIR/release/onlyterm.exe \
+      $TARGET_DIR/release/onlyterm-mux-server.exe \
+      $TARGET_DIR/release/onlyterm-gui.exe \
       $TARGET_DIR/release/strip-ansi-escapes.exe \
-      $TARGET_DIR/release/wezterm.pdb \
+      $TARGET_DIR/release/onlyterm.pdb \
       assets/windows/conhost/conpty.dll \
       assets/windows/conhost/OpenConsole.exe \
       assets/windows/angle/libEGL.dll \
