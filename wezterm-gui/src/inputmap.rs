@@ -214,6 +214,18 @@ impl InputMap {
                 ],
                 [
                     MouseEventTriggerMods {
+                        mods: Modifiers::NONE,
+                        mouse_reporting: false,
+                        alt_screen: MouseEventAltScreen::Any,
+                    },
+                    MouseEventTrigger::Up {
+                        streak: 1,
+                        button: MouseButton::Right
+                    },
+                    CopyLinkAtMouseCursor(ClipboardCopyDestination::ClipboardAndPrimarySelection)
+                ],
+                [
+                    MouseEventTriggerMods {
                         mods: Modifiers::ALT | Modifiers::SHIFT,
                         mouse_reporting: false,
                         alt_screen: MouseEventAltScreen::Any,
@@ -807,5 +819,55 @@ fn show_key_table_as_lua(table: &config::keyassignment::KeyTable, indent: usize)
     for ((key, mods), entry) in ordered {
         let action = &entry.action;
         println!("{pad}{},", lua_key(key, *mods, action));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use config::keyassignment::ClipboardCopyDestination;
+
+    fn no_mods() -> MouseEventTriggerMods {
+        MouseEventTriggerMods {
+            mods: Modifiers::NONE,
+            mouse_reporting: false,
+            alt_screen: MouseEventAltScreen::False,
+        }
+    }
+
+    /// Regression test: a left-click release on a hyperlink must keep
+    /// opening it (unchanged behavior), while a right-click release on a
+    /// hyperlink must copy its URL to the clipboard instead of opening it.
+    #[test]
+    fn right_click_copies_left_click_opens_hyperlink() {
+        let input_map = InputMap::default_input_map();
+
+        let left_click_up = MouseEventTrigger::Up {
+            streak: 1,
+            button: MouseButton::Left,
+        };
+        let action = input_map
+            .lookup_mouse(left_click_up, no_mods())
+            .expect("left-click-up has a default binding");
+        assert_eq!(
+            action,
+            KeyAssignment::CompleteSelectionOrOpenLinkAtMouseCursor(
+                ClipboardCopyDestination::ClipboardAndPrimarySelection
+            )
+        );
+
+        let right_click_up = MouseEventTrigger::Up {
+            streak: 1,
+            button: MouseButton::Right,
+        };
+        let action = input_map
+            .lookup_mouse(right_click_up, no_mods())
+            .expect("right-click-up has a default binding");
+        assert_eq!(
+            action,
+            KeyAssignment::CopyLinkAtMouseCursor(
+                ClipboardCopyDestination::ClipboardAndPrimarySelection
+            )
+        );
     }
 }

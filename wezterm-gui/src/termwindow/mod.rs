@@ -30,8 +30,8 @@ use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
 use ::window::*;
 use anyhow::{anyhow, ensure, Context};
 use config::keyassignment::{
-    Confirmation, KeyAssignment, LauncherActionArgs, PaneDirection, Pattern, PromptInputLine,
-    QuickSelectArguments, SpawnCommand, SplitSize,
+    ClipboardCopyDestination, Confirmation, KeyAssignment, LauncherActionArgs, PaneDirection,
+    Pattern, PromptInputLine, QuickSelectArguments, SpawnCommand, SplitSize,
 };
 use config::window::WindowLevel;
 use config::{
@@ -2960,6 +2960,9 @@ impl TermWindow {
             OpenLinkAtMouseCursor => {
                 self.do_open_link_at_mouse_cursor(pane);
             }
+            CopyLinkAtMouseCursor(destination) => {
+                self.do_copy_link_at_mouse_cursor(*destination);
+            }
             EmitEvent(name) => {
                 self.emit_window_event(name, None);
             }
@@ -3345,6 +3348,17 @@ impl TermWindow {
                 open_uri(state, window, pane, link.uri().to_string())
             }))
             .detach();
+        }
+    }
+
+    fn do_copy_link_at_mouse_cursor(&self, destination: ClipboardCopyDestination) {
+        // Right-click on a hyperlink copies its URL instead of opening it;
+        // see `hyperlink_click_action` for the pure decision logic.
+        if let Some(link) = self.current_highlight.as_ref().cloned() {
+            self.copy_to_clipboard(destination, link.uri().to_string());
+            if let Some(window) = self.window.as_ref() {
+                window.invalidate();
+            }
         }
     }
     fn close_current_pane(&mut self, confirm: bool) {
