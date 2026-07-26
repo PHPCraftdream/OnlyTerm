@@ -8,7 +8,7 @@ fn main() {
 
         let repo_dir = std::env::current_dir()
             .ok()
-            .and_then(|cwd| cwd.parent().map(|p| p.to_path_buf()))
+            .and_then(|cwd| cwd.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
             .unwrap();
         let windows_dir = repo_dir.join("assets").join("windows");
 

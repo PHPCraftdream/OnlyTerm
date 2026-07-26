@@ -839,8 +839,10 @@ mod test {
     }
 
     fn asset_path(name: &str) -> PathBuf {
-        // wezterm-font's CARGO_MANIFEST_DIR is `<repo>/wezterm-font`
+        // wezterm-font's CARGO_MANIFEST_DIR is `<repo>/crates/wezterm-font`
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
             .parent()
             .unwrap()
             .join("assets/fonts")
