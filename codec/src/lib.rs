@@ -949,6 +949,8 @@ pub struct GetPaneRenderChangesResponse {
 
     pub input_serial: Option<InputSerial>,
     pub seqno: SequenceNo,
+    #[serde(default)]
+    pub user_vars: HashMap<String, String>,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
@@ -1344,5 +1346,95 @@ mod test {
         assert_eq!(decoded.ident, 0x42);
         assert_eq!(decoded.serial, 0x10);
         assert_eq!(decoded.data, b"small payload");
+    }
+
+    fn sample_render_changes_response() -> GetPaneRenderChangesResponse {
+        let mut user_vars = HashMap::new();
+        user_vars.insert("foo".to_string(), "bar".to_string());
+        user_vars.insert("baz".to_string(), "qux".to_string());
+        GetPaneRenderChangesResponse {
+            pane_id: 42,
+            mouse_grabbed: false,
+            cursor_position: StableCursorPosition::default(),
+            dimensions: RenderableDimensions::default(),
+            dirty_lines: vec![],
+            title: "test pane".to_string(),
+            working_dir: None,
+            bonus_lines: SerializedLines::default(),
+            input_serial: None,
+            seqno: 7,
+            user_vars,
+        }
+    }
+
+    #[test]
+    fn test_render_changes_user_vars_round_trip() {
+        // user_vars must survive a PDU encode/decode round-trip through the
+        // real mux wire format (varbincode). Regression for upstream #7610:
+        // GetPaneRenderChangesResponse previously carried no user_vars field,
+        // so a freshly-reattached ClientPane always started with an empty map
+        // and lost the OSC 1337 SetUserVar state until the next change.
+        let original = sample_render_changes_response();
+        let expected_user_vars = original.user_vars.clone();
+        let expected_pane_id = original.pane_id;
+        let expected_seqno = original.seqno;
+        let mut encoded = Vec::new();
+        Pdu::GetPaneRenderChangesResponse(original)
+            .encode(&mut encoded, 0x10)
+            .unwrap();
+        let decoded = Pdu::decode(encoded.as_slice()).unwrap();
+        match decoded.pdu {
+            Pdu::GetPaneRenderChangesResponse(resp) => {
+                assert_eq!(resp.user_vars, expected_user_vars);
+                assert_eq!(resp.pane_id, expected_pane_id);
+                assert_eq!(resp.seqno, expected_seqno);
+            }
+            other => panic!(
+                "expected GetPaneRenderChangesResponse, got {}",
+                other.pdu_name()
+            ),
+        }
+    }
+
+    /// Mirrors the on-wire shape of `GetPaneRenderChangesResponse` as it was
+    /// *before* upstream #7610 added the trailing `user_vars` field, so we can
+    /// verify the backward-compatibility properties of that addition.
+    #[derive(Serialize, Deserialize)]
+    struct LegacyRenderChangesResponse {
+        pane_id: PaneId,
+        mouse_grabbed: bool,
+        cursor_position: StableCursorPosition,
+        dimensions: RenderableDimensions,
+        dirty_lines: Vec<Range<StableRowIndex>>,
+        title: String,
+        working_dir: Option<SerdeUrl>,
+        bonus_lines: SerializedLines,
+        input_serial: Option<InputSerial>,
+        seqno: SequenceNo,
+    }
+
+    #[test]
+    fn test_render_changes_new_payload_decodes_as_legacy_shape() {
+        // Adding the trailing `user_vars` field must not break a decoder built
+        // from the older struct shape (new server -> old client): the legacy
+        // decoder reads its fields and ignores the trailing user_vars bytes.
+        // This is the backward-compatible direction for the varbincode wire
+        // format, which serializes structs as an ordered field sequence.
+        //
+        // NOTE: the reverse direction (old server -> new client) is *not*
+        // covered, because varbincode is a sequential format: when the new
+        // struct tries to read the trailing user_vars field from a payload that
+        // lacks it, it hits EOF ("failed to fill whole buffer") regardless of
+        // `#[serde(default)]`. That attribute is therefore defensive / for
+        // self-describing formats only; both ends of a mux connection must run
+        // compatible versions.
+        let original = sample_render_changes_response();
+        let (data, is_compressed) = serialize(&original).unwrap();
+        let legacy: LegacyRenderChangesResponse =
+            deserialize(data.as_slice(), is_compressed).unwrap();
+        assert_eq!(legacy.pane_id, original.pane_id);
+        assert_eq!(legacy.mouse_grabbed, original.mouse_grabbed);
+        assert_eq!(legacy.seqno, original.seqno);
+        assert_eq!(legacy.title, original.title);
     }
 }
