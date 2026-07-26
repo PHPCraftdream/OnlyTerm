@@ -1,4 +1,4 @@
-wezterm has support for both implicit and explicit hyperlinks.
+OnlyTerm has support for both implicit and explicit hyperlinks.
 
 ### Implicit Hyperlinks
 
@@ -44,7 +44,7 @@ See also [hyperlink_rules](config/lua/config/hyperlink_rules.md) and
 
 ### Explicit Hyperlinks
 
-wezterm supports the relatively new [Hyperlinks in Terminal
+OnlyTerm supports the relatively new [Hyperlinks in Terminal
 Emulators](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
 specification that allows emitting text that can be clicked and resolve to a
 specific URL, without the URL being part of the display text.  This allows

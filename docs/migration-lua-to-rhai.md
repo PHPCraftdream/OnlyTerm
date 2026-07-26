@@ -2,10 +2,10 @@
 
 !!! danger "Breaking change"
 
-    WezTerm's configuration language has changed from **Lua** (via the embedded
+    OnlyTerm's configuration language has changed from **Lua** (via the embedded
     `mlua`/LuaJIT engine) to [**rhai**](https://rhai.rs/) (a pure-Rust scripting
     language with JavaScript/Rust-like syntax). The Lua engine has been removed
-    entirely: WezTerm no longer parses, evaluates, or understands `.lua` config
+    entirely: OnlyTerm no longer parses, evaluates, or understands `.lua` config
     files at runtime.
 
     If you have an existing `.wezterm.lua`, it will **no longer load** and you
@@ -15,7 +15,7 @@
 This is a *syntax* change, not just a file-rename. rhai is intentionally
 Lua-like in spirit (dynamically typed, garbage-collected, expression-oriented)
 but it is **not** Lua, and a Lua config will not run as-is. The good news is
-that WezTerm's *configuration schema* — every option, every event name, every
+that OnlyTerm's *configuration schema* — every option, every event name, every
 key-assignment action — is unchanged. Only the language you write it in changed.
 
 ## TL;DR — the one-minute migration
@@ -31,8 +31,8 @@ key-assignment action — is unchanged. Only the language you write it in change
 2. Translate the *shape* of the file from Lua to rhai (see
    [Syntax translation cheat sheet](#syntax-translation-cheat-sheet) below).
 
-3. If a `.lua` file is still present next to where WezTerm looks for a `.rhai`
-   file but no `.rhai` sibling exists, WezTerm prints a dedicated error pointing
+3. If a `.lua` file is still present next to where OnlyTerm looks for a `.rhai`
+   file but no `.rhai` sibling exists, OnlyTerm prints a dedicated error pointing
    at the exact file to migrate (see *What happens to an old `.wezterm.lua`*
    below).
 
@@ -82,7 +82,7 @@ Key differences you can already see:
 
 | Concept | Lua | rhai |
 |---|---|---|
-| Get the WezTerm API | `local wezterm = require 'wezterm'` | nothing — functions are global or in modules like `color::`, `serde::`, `plugin::` |
+| Get the OnlyTerm API | `local wezterm = require 'wezterm'` | nothing — functions are global or in modules like `color::`, `serde::`, `plugin::` |
 | Build the config | `local config = wezterm.config_builder()` then mutate it | write an object-map literal `#{ ... }` (or build one with `let mut`) |
 | Return it | `return config` | the **last expression** in the file is the value; an explicit `return` also works but is rarely needed |
 | Comments | `-- line`, `--[[ block ]]` | `// line`, `/* block */` |
@@ -120,7 +120,7 @@ key/value map (or both at once). rhai keeps these strictly separate:
 * `#{ key: value, ... }` is an object **Map**, the analogue of a Lua record
   table.
 
-WezTerm config values map onto these directly:
+OnlyTerm config values map onto these directly:
 
 ```lua
 -- Lua
@@ -263,7 +263,7 @@ Lua uses `nil` for "no value". rhai has no `nil`; the closest equivalent is the
 **unit** value `()`, written as `()` in scripts. Optional fields are simply
 omitted from a map rather than set to `nil`.
 
-## Calling WezTerm helpers (`wezterm.*` → globals and modules)
+## Calling OnlyTerm helpers (`wezterm.*` → globals and modules)
 
 In Lua, helpers lived under the `wezterm` table returned by
 `require 'wezterm'` (e.g. `wezterm.on`, `wezterm.color.parse`,
@@ -330,7 +330,7 @@ on("update-right-status", |window, pane| {
 Notes:
 
 * `on` is a global function — no `wezterm.` prefix.
-* The handler arguments (`window`, `pane`, ...) are the same WezTerm objects as
+* The handler arguments (`window`, `pane`, ...) are the same OnlyTerm objects as
   before; you call their methods with a dot (`window.set_right_status(...)`)
   rather than a colon (see *Method calls and the `:` vs `.` distinction* above).
 * Returning `false` from a handler suppresses the default action, exactly as the
@@ -340,7 +340,7 @@ Notes:
   `#{ Foreground: ... }` / `#{ Text: ... }` records are plain object maps).
 
 There is no script-visible `emit(...)` function: emitting events is something
-WezTerm itself does internally to drive your handlers. (The `EmitEvent` key
+OnlyTerm itself does internally to drive your handlers. (The `EmitEvent` key
 action still works to trigger a named event you registered with `on`.)
 
 ## Key bindings and actions
@@ -392,7 +392,7 @@ whether a name is a valid action from a script, use `has_action("Name")`.
 
 ## What happens to an old `.wezterm.lua`
 
-When WezTerm looks for a config file in one of the [standard
+When OnlyTerm looks for a config file in one of the [standard
 locations](config/files.md) and finds a `.lua` file there but **no** `.rhai`
 sibling, it stops and prints an error like:
 
@@ -404,7 +404,7 @@ config-loading path. Please rename /home/you/.wezterm.lua to
 for details on translating a wezterm.lua config to wezterm.rhai.
 ```
 
-WezTerm **does not** attempt to parse the `.lua` file — it only checks for its
+OnlyTerm **does not** attempt to parse the `.lua` file — it only checks for its
 existence so the error can name the exact file. To resolve it, rename the file
 to `.rhai` and translate it using this guide.
 
@@ -415,7 +415,7 @@ file is silently ignored (you can delete it once your migration is complete).
 
 !!! warning "Git-based plugin installation was already removed"
 
-    Separately from the Lua→rhai change, WezTerm no longer embeds a Git
+    Separately from the Lua→rhai change, OnlyTerm no longer embeds a Git
     implementation, so cloning a plugin by URL is no longer possible in *any*
     config language. This section covers what that means now that the config
     language is rhai.
@@ -530,7 +530,7 @@ Things to notice in the port:
 
 ## Quick reference: config-file discovery
 
-WezTerm looks for a `wezterm.rhai` (or `.wezterm.rhai`) file in the same
+OnlyTerm looks for a `wezterm.rhai` (or `.wezterm.rhai`) file in the same
 locations and order it previously looked for `.lua` files. See
 [Configuration Files](config/files.md) for the full search order. The
 `WEZTERM_CONFIG_FILE` environment variable, the `--config-file` CLI argument,

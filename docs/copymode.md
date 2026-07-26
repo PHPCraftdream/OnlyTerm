@@ -84,14 +84,14 @@ it.
 
 You may use
 [wezterm.gui.default_key_tables](config/lua/wezterm.gui/default_key_tables.md)
-to obtain the defaults and extend them. In earlier versions of wezterm there
+to obtain the defaults and extend them. In earlier versions of WezTerm there
 wasn't a way to override portions of the key table, only to replace the entire
 table.
 
 The default configuration at the time that these docs were built (which
-may be more recent than your version of wezterm) is shown below.
+may be more recent than your version of OnlyTerm) is shown below.
 
-You can see the configuration in your version of wezterm by running
-`wezterm show-keys --lua --key-table copy_mode`.
+You can see the configuration in your version of OnlyTerm by running
+`onlyterm show-keys --lua --key-table copy_mode`.
 
 {% include "examples/default-copy-mode-key-table.markdown" %}

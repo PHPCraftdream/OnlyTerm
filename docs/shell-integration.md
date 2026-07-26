@@ -1,4 +1,4 @@
-wezterm supports integrating with the shell through the following means:
+OnlyTerm supports integrating with the shell through the following means:
 
 * `OSC 7` Escape sequences to advise the terminal of the working directory
 * `OSC 133` Escape sequence to define Input, Output and Prompt zones
@@ -14,10 +14,10 @@ or [conveniently selecting the complete output from a command](config/lua/keyass
 In order for these features to be enabled, you will need to configure your
 shell program to emit the escape sequences at the appropriate place.
 
-You can find some [examples for various shells in the wezterm
+You can find some [examples for various shells in the upstream WezTerm
 repo](https://github.com/wezterm/wezterm/tree/main/assets/shell-integration).
 
-To use this file to setup shell integration in wezterm with Bash or Zsh, you can
+To use this file to setup shell integration in OnlyTerm with Bash or Zsh, you can
 copy the file to your computer and source it via `. /path/to/file.sh` in your `.bashrc`
 or `.zshrc`, or you can install it at `/etc/profile.d` on most unix systems.
 
@@ -39,7 +39,7 @@ can be found below.
 to environment variables, except that they are variables associated with a
 given pane rather than a process.
 
-Installing the wezterm shell integration will define the following user vars
+Installing the OnlyTerm shell integration will define the following user vars
 by default:
 
 * `WEZTERM_PROG` - the command line being executed by the shell
@@ -154,7 +154,7 @@ function Invoke-Starship-PreCommand {
 [Clink](https://github.com/chrisant996/clink) brings bash style line editing,
 completions and autosuggestions to your Windows cmd.exe experience. If you
 haven't installed clink to be the global default on your system, you can
-configure wezterm to launch clink by setting the `default_prog` configuration
+configure OnlyTerm to launch clink by setting the `default_prog` configuration
 in your `.wezterm.lua`; for example, if you have extracted clink to `c:\clink`
 you might configure this:
 
