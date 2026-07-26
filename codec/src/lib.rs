@@ -465,7 +465,7 @@ macro_rules! pdu {
 /// The overall version of the codec.
 /// This must be bumped when backwards incompatible changes
 /// are made to the types and protocol.
-pub const CODEC_VERSION: usize = 45;
+pub const CODEC_VERSION: usize = 46;
 
 // Defines the Pdu enum.
 // Each struct has an explicit identifying number.
@@ -707,6 +707,9 @@ pub struct SpawnV2 {
     pub command_dir: Option<String>,
     pub size: TerminalSize,
     pub workspace: String,
+    /// If true, attach to the domain and reuse existing panes
+    /// rather than unconditionally spawning a new tab.
+    pub attach: bool,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
@@ -1436,5 +1439,52 @@ mod test {
         assert_eq!(legacy.mouse_grabbed, original.mouse_grabbed);
         assert_eq!(legacy.seqno, original.seqno);
         assert_eq!(legacy.title, original.title);
+    }
+
+    fn sample_spawn_v2(attach: bool) -> SpawnV2 {
+        SpawnV2 {
+            domain: config::keyassignment::SpawnTabDomain::DefaultDomain,
+            window_id: None,
+            command: None,
+            command_dir: None,
+            size: TerminalSize::default(),
+            workspace: "default".to_string(),
+            attach,
+        }
+    }
+
+    #[test]
+    fn test_spawn_v2_attach_round_trip() {
+        // The `attach` field must survive a PDU encode/decode round-trip through
+        // the real mux wire format (varbincode). Regression for upstream #7583:
+        // SpawnV2 previously carried no `attach` field, so the --attach flag of
+        // `wezterm start`/`wezterm connect` was silently dropped when the client
+        // delegated spawn to an already-running GUI process via the SpawnV2 PDU,
+        // causing the server to unconditionally spawn a new tab instead of
+        // reusing an existing pane of the domain.
+        for attach in [false, true] {
+            let original = sample_spawn_v2(attach);
+            let mut encoded = Vec::new();
+            Pdu::SpawnV2(original).encode(&mut encoded, 0x10).unwrap();
+            let decoded = Pdu::decode(encoded.as_slice()).unwrap();
+            match decoded.pdu {
+                Pdu::SpawnV2(resp) => {
+                    assert_eq!(resp.attach, attach, "attach field did not survive round-trip");
+                }
+                other => panic!("expected SpawnV2, got {}", other.pdu_name()),
+            }
+        }
+
+        // The two attach values must also produce distinct on-wire payloads, so
+        // that a server cannot mistake one for the other.
+        let mut enc_false = Vec::new();
+        Pdu::SpawnV2(sample_spawn_v2(false))
+            .encode(&mut enc_false, 0x10)
+            .unwrap();
+        let mut enc_true = Vec::new();
+        Pdu::SpawnV2(sample_spawn_v2(true))
+            .encode(&mut enc_true, 0x10)
+            .unwrap();
+        assert_ne!(enc_false, enc_true, "attach value must influence the wire encoding");
     }
 }
