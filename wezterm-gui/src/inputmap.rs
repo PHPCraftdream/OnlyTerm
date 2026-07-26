@@ -870,4 +870,93 @@ mod tests {
             )
         );
     }
+
+    /// Regression test for layout-independent modifier chords (see task
+    /// tracked as "Сделать сопоставление стандартных Ctrl-сочетаний
+    /// независимым от раскладки/языка по умолчанию").
+    ///
+    /// The default binding for "copy to clipboard" is CTRL+SHIFT+C
+    /// (registered via the SUPER permutation in `CommandDef::permute_keys`).
+    /// On a non-Latin keyboard layout (eg: Russian ЙЦУКЕН) the physical "C"
+    /// key does not produce the Unicode character 'c'/'C', so a real
+    /// WM_KEYDOWN on Windows would resolve `ToUnicode` to a Cyrillic
+    /// character instead. The physical-key-first lookup pass performed by
+    /// `raw_key_event_impl` (see `keyevent.rs`) relies on the default table
+    /// containing a `KeyCode::Physical(PhysKeyCode::C)` entry alongside the
+    /// mapped `KeyCode::Char('C')` one; this test asserts that entry exists
+    /// and resolves to the same action, without having to drive a real
+    /// WM_KEYDOWN/ToUnicode round trip on an actual Russian keyboard layout.
+    #[test]
+    fn ctrl_shift_c_resolves_via_physical_key_regardless_of_layout() {
+        let input_map = InputMap::default_input_map();
+        let mods = Modifiers::CTRL | Modifiers::SHIFT;
+
+        let mapped = input_map
+            .lookup_key(&KeyCode::Char('C'), mods, None)
+            .expect("mapped CTRL+SHIFT+C has a default Copy binding");
+        assert_eq!(
+            mapped.action,
+            KeyAssignment::CopyTo(ClipboardCopyDestination::Clipboard)
+        );
+
+        // Simulates the physical-key-first lookup pass: even though the
+        // active keyboard layout may have produced a completely different
+        // Unicode character for this physical position, the position
+        // itself (physical "C") must still resolve to the same Copy action.
+        let physical = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::C), mods, None)
+            .expect("physical CTRL+SHIFT+C must resolve to Copy independent of keyboard layout");
+        assert_eq!(physical.action, mapped.action);
+    }
+
+    #[test]
+    fn ctrl_shift_v_resolves_via_physical_key_regardless_of_layout() {
+        let input_map = InputMap::default_input_map();
+        let mods = Modifiers::CTRL | Modifiers::SHIFT;
+
+        let mapped = input_map
+            .lookup_key(&KeyCode::Char('V'), mods, None)
+            .expect("mapped CTRL+SHIFT+V has a default Paste binding");
+        assert_eq!(
+            mapped.action,
+            KeyAssignment::PasteFrom(ClipboardPasteSource::Clipboard)
+        );
+
+        let physical = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::V), mods, None)
+            .expect("physical CTRL+SHIFT+V must resolve to Paste independent of keyboard layout");
+        assert_eq!(physical.action, mapped.action);
+    }
+
+    /// Control test: plain, unmodified text entry (no CTRL/SUPER) must be
+    /// completely unaffected by the physical-fallback synthesis above.
+    /// Typing a bare Cyrillic character (eg: on a Russian layout, the
+    /// physical "C" key normally produces 'с') must not accidentally
+    /// resolve to any key binding at all: CJK, Cyrillic and any other
+    /// non-Latin text input must keep behaving exactly as before this
+    /// change, since `permute_keys` only ever synthesizes physical
+    /// fallbacks for CTRL/SUPER chords.
+    #[test]
+    fn bare_non_latin_char_input_is_not_affected_by_physical_fallback() {
+        let input_map = InputMap::default_input_map();
+
+        // Bare Cyrillic 'с' (as ToUnicode would produce for the physical
+        // "C" key on a Russian ЙЦУКЕН layout) with no modifiers at all.
+        assert!(
+            input_map
+                .lookup_key(&KeyCode::Char('с'), Modifiers::NONE, None)
+                .is_none(),
+            "bare non-Latin text entry must never be captured by a key binding"
+        );
+
+        // Also confirm that plain, unmodified 'c' (Latin) has no default
+        // key binding either -- Copy/Paste are only bound with CTRL+SHIFT
+        // or SUPER, never with plain unmodified text entry.
+        assert!(
+            input_map
+                .lookup_key(&KeyCode::Char('c'), Modifiers::NONE, None)
+                .is_none(),
+            "bare 'c' with no modifiers must not be captured by the Copy binding"
+        );
+    }
 }
