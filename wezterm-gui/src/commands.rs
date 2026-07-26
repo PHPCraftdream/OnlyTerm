@@ -1622,6 +1622,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Shell"],
             icon: None,
         },
+        CopyLinkAtMouseCursor(destination) => CommandDef {
+            brief: format!("Copy link at mouse cursor to {destination:?}").into(),
+            doc: "If there is no link under the mouse cursor, has no effect.".into(),
+            keys: vec![],
+            args: &[ArgType::ActivePane],
+            menubar: &["Shell"],
+            icon: None,
+        },
         ShowLauncherArgs(_) | ShowLauncher => CommandDef {
             brief: "Show the launcher".into(),
             doc: "Shows the launcher menu".into(),

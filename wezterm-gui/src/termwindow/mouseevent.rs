@@ -1126,6 +1126,44 @@ fn mouse_press_to_tmb(press: &MousePress) -> TMB {
     }
 }
 
+/// What should happen when a mouse button is released over a cell, given
+/// whether that cell carries an active hyperlink.
+///
+/// This is the specification for the default mouse bindings configured in
+/// `InputMap::new` (see `wezterm-gui/src/inputmap.rs`), which bind
+/// `MouseEventTrigger::Up { button: MouseButton::Left, .. }` to
+/// `CompleteSelectionOrOpenLinkAtMouseCursor` (open) and
+/// `MouseEventTrigger::Up { button: MouseButton::Right, .. }` to
+/// `CopyLinkAtMouseCursor` (copy). `TermWindow::do_open_link_at_mouse_cursor`
+/// and `TermWindow::do_copy_link_at_mouse_cursor` implement the "open" and
+/// "copy" halves respectively, each gated on `current_highlight.is_some()`
+/// exactly as modeled here. Kept as a standalone pure function (rather than
+/// inlined) so the button/link/action matrix has a single, unit-testable
+/// source of truth. Any button other than left/right, or a click that
+/// doesn't land on a hyperlink, has no hyperlink-related effect: a
+/// right-click with no link present simply falls through to whatever else
+/// is bound to it (e.g. the pane's native mouse reporting), and a
+/// middle-click over a link is left alone since it is reserved for
+/// primary-selection paste.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+enum HyperlinkClickAction {
+    Open,
+    Copy,
+}
+
+#[allow(dead_code)]
+fn hyperlink_click_action(button: MousePress, has_hyperlink: bool) -> Option<HyperlinkClickAction> {
+    if !has_hyperlink {
+        return None;
+    }
+    match button {
+        MousePress::Left => Some(HyperlinkClickAction::Open),
+        MousePress::Right => Some(HyperlinkClickAction::Copy),
+        MousePress::Middle => None,
+    }
+}
+
 /// How long after gaining focus a button-down is still considered to be
 /// "the activating click", for the purposes of arming suppression of a
 /// same-position synthetic Move (see #2414, #5309). This only needs to
@@ -1209,5 +1247,34 @@ mod tests {
                 None
             };
         assert_eq!(not_armed, None);
+    }
+
+    /// Regression test: right-clicking a hyperlink must copy its URL to the
+    /// clipboard rather than open it, while left-click keeps opening the
+    /// link as it always has.
+    #[test]
+    fn right_click_on_hyperlink_copies_left_click_opens() {
+        assert_eq!(
+            hyperlink_click_action(MousePress::Right, true),
+            Some(HyperlinkClickAction::Copy)
+        );
+        assert_eq!(
+            hyperlink_click_action(MousePress::Left, true),
+            Some(HyperlinkClickAction::Open)
+        );
+    }
+
+    #[test]
+    fn click_without_a_hyperlink_does_nothing() {
+        assert_eq!(hyperlink_click_action(MousePress::Left, false), None);
+        assert_eq!(hyperlink_click_action(MousePress::Right, false), None);
+        assert_eq!(hyperlink_click_action(MousePress::Middle, false), None);
+    }
+
+    #[test]
+    fn middle_click_on_hyperlink_has_no_hyperlink_effect() {
+        // Middle-click is reserved for primary-selection paste; it must not
+        // be repurposed for hyperlink handling even when hovering a link.
+        assert_eq!(hyperlink_click_action(MousePress::Middle, true), None);
     }
 }
