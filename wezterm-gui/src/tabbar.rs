@@ -12,6 +12,7 @@ use termwiz::surface::SEQ_ZERO;
 use termwiz_funcs::{format_as_escapes, FormatColor, FormatItem};
 use wezterm_dynamic::ToDynamic;
 use wezterm_term::{Line, Progress};
+use window::parameters::Parameters;
 use window::{IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -429,6 +430,8 @@ impl TabBarState {
         config: &ConfigHandle,
         left_status: &str,
         right_status: &str,
+        cell_width: f32,
+        os_parameters: Option<&Parameters>,
     ) -> Self {
         let colors = colors.cloned().unwrap_or_else(TabBarColors::default);
 
@@ -515,10 +518,11 @@ impl TabBarState {
 
         if use_integrated_title_buttons
             && config.integrated_title_button_style == IntegratedTitleButtonStyle::MacOsNative
-            && config.use_fancy_tab_bar == false
-            && config.tab_bar_at_bottom == false
+            && !config.use_fancy_tab_bar
+            && !config.tab_bar_at_bottom
         {
-            for _ in 0..10 as usize {
+            let num_padding_cells = Self::compute_num_padding_cells(cell_width, os_parameters);
+            for _ in 0..num_padding_cells {
                 line.insert_cell(0, black_cell.clone(), title_width, SEQ_ZERO);
                 x += 1;
             }
@@ -718,6 +722,19 @@ impl TabBarState {
 
         items
     }
+
+    fn compute_num_padding_cells(cell_width: f32, os_parameters: Option<&Parameters>) -> usize {
+        let left_pixel_margin = os_parameters
+            .map(|p| p.title_bar.padding_left.get() as f32)
+            .unwrap_or(0.0);
+        let extra_padding_in_pixels = 0.5 * cell_width;
+        let total_pixel_margin = left_pixel_margin + extra_padding_in_pixels;
+        if cell_width > 0.0 {
+            (total_pixel_margin / cell_width).ceil() as usize
+        } else {
+            10
+        }
+    }
 }
 
 pub fn parse_status_text(text: &str, default_cell: CellAttributes) -> Line {
@@ -823,4 +840,62 @@ pub fn parse_status_text(text: &str, default_cell: CellAttributes) -> Line {
     });
     flush_print(&mut print_buffer, &mut cells, &pen);
     Line::from_cells(cells, SEQ_ZERO)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TabBarState;
+    use window::parameters::{Parameters, TitleBar};
+    use window::ULength;
+
+    fn params_with_padding(padding: usize) -> Parameters {
+        Parameters {
+            title_bar: TitleBar {
+                padding_left: ULength::new(padding),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn num_padding_cells_without_os_parameters_uses_half_cell_minimum() {
+        // With no measured button geometry (None, e.g. non-macOS or pre-realize),
+        // left_pixel_margin defaults to 0.0, so only the half-cell breathing room
+        // applies and rounds up to a single cell. The fallback to 10 fires only
+        // when cell_width == 0 (see num_padding_cells_zero_cell_width_falls_back_to_10).
+        assert_eq!(TabBarState::compute_num_padding_cells(10.0, None), 1);
+        assert_eq!(TabBarState::compute_num_padding_cells(8.0, None), 1);
+        assert_eq!(TabBarState::compute_num_padding_cells(20.0, None), 1);
+    }
+
+    #[test]
+    fn num_padding_cells_zero_cell_width_falls_back_to_10() {
+        let params = params_with_padding(64);
+        assert_eq!(TabBarState::compute_num_padding_cells(0.0, Some(&params)), 10);
+    }
+
+    #[test]
+    fn num_padding_cells_rounds_up() {
+        // padding_left=64, cell_width=10: 64 + 0.5*10 = 69; 69/10 = 6.9 -> ceil 7
+        let params = params_with_padding(64);
+        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 7);
+
+        // padding_left=70, cell_width=10: 70 + 5 = 75; 75/10 = 7.5 -> ceil 8
+        let params = params_with_padding(70);
+        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 8);
+
+        // Exact multiple: 15 + 5 = 20; 20/10 = 2.0 -> ceil 2 (no over-reserve)
+        let params = params_with_padding(15);
+        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 2);
+    }
+
+    #[test]
+    fn num_padding_cells_zero_padding_keeps_half_cell() {
+        // Even with no measured button geometry, the half-cell breathing room
+        // rounds up to one whole cell.
+        let params = Parameters::default();
+        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 1);
+        assert_eq!(TabBarState::compute_num_padding_cells(7.0, Some(&params)), 1);
+    }
 }
