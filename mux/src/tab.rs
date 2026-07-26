@@ -587,12 +587,12 @@ impl Tab {
         self.inner.lock().iter_panes_ignoring_zoom()
     }
 
-    pub fn rotate_counter_clockwise(&self) {
-        self.inner.lock().rotate_counter_clockwise()
+    pub fn local_rotate_counter_clockwise(&self) {
+        self.inner.lock().local_rotate_counter_clockwise()
     }
 
-    pub fn rotate_clockwise(&self) {
-        self.inner.lock().rotate_clockwise()
+    pub fn local_rotate_clockwise(&self) {
+        self.inner.lock().local_rotate_clockwise()
     }
 
     pub fn iter_splits(&self) -> Vec<PositionedSplit> {
@@ -729,10 +729,10 @@ impl Tab {
     }
 
     /// Swap the active pane with the specified pane_index
-    pub fn swap_active_with_index(&self, pane_index: usize, keep_focus: bool) -> Option<()> {
+    pub fn local_swap_active_with_index(&self, pane_index: usize, keep_focus: bool) -> Option<()> {
         self.inner
             .lock()
-            .swap_active_with_index(pane_index, keep_focus)
+            .local_swap_active_with_index(pane_index, keep_focus)
     }
 
     /// Computes the size of the pane that would result if the specified
@@ -923,7 +923,7 @@ impl TabInner {
                 self.zoomed.replace(pane);
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
     fn contains_pane(&self, pane: PaneId) -> bool {
@@ -952,7 +952,7 @@ impl TabInner {
         self.iter_panes_impl(false)
     }
 
-    fn rotate_counter_clockwise(&mut self) {
+    fn local_rotate_counter_clockwise(&mut self) {
         let panes = self.iter_panes_ignoring_zoom();
         if panes.is_empty() {
             // Shouldn't happen, but we check for this here so that the
@@ -981,9 +981,10 @@ impl TabInner {
                 }
             }
         }
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
-    fn rotate_clockwise(&mut self) {
+    fn local_rotate_clockwise(&mut self) {
         let panes = self.iter_panes_ignoring_zoom();
         if panes.is_empty() {
             // Shouldn't happen, but we check for this here so that the
@@ -1012,7 +1013,7 @@ impl TabInner {
                 }
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
     fn iter_panes_impl(&mut self, respect_zoom_state: bool) -> Vec<PositionedPane> {
@@ -1194,7 +1195,7 @@ impl TabInner {
             apply_sizes_from_splits(self.pane.as_mut().unwrap(), &size);
         }
 
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
     fn apply_pane_size(&mut self, pane_size: TerminalSize, cursor: &mut Cursor) {
@@ -1270,7 +1271,7 @@ impl TabInner {
                 self.size = size;
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
     fn resize_split_by(&mut self, split_index: usize, delta: isize) {
@@ -1303,7 +1304,7 @@ impl TabInner {
         // Now cursor is looking at the split
         self.adjust_node_at_cursor(&mut cursor, delta);
         self.cascade_size_from_cursor(cursor);
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
     fn adjust_node_at_cursor(&mut self, cursor: &mut Cursor, delta: isize) {
@@ -1386,7 +1387,7 @@ impl TabInner {
                 }
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabResized(self.id)));
+        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
     }
 
     fn adjust_pane_size(&mut self, direction: PaneDirection, amount: usize) {
@@ -1831,7 +1832,7 @@ impl TabInner {
         cell_dimensions(&self.size)
     }
 
-    fn swap_active_with_index(&mut self, pane_index: usize, keep_focus: bool) -> Option<()> {
+    fn local_swap_active_with_index(&mut self, pane_index: usize, keep_focus: bool) -> Option<()> {
         let active_idx = self.get_active_idx();
         let mut pane = self.get_active_pane()?;
         log::trace!(

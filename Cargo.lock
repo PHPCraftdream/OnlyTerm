@@ -3239,6 +3239,7 @@ dependencies = [
  "mux",
  "parking_lot",
  "portable-pty",
+ "promise",
  "rhai",
  "serde",
  "smol",
