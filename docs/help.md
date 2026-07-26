@@ -1,10 +1,13 @@
 ## Getting Help
 
-This is a spare time project, so please bear with me.  There are a couple of channels for support:
+OnlyTerm is a personal/small fork, so please check this repository's own issue
+tracker first for anything specific to the fork. For general questions about
+terminal behavior that aren't specific to this fork, the upstream WezTerm
+community channels below are also useful:
 
 * You can use the GitHub issue tracker to see if someone else has a similar issue, or to file a new one: <https://github.com/wezterm/wezterm/issues>
-* Start or join a thread in our [GitHub Discussions](https://github.com/wezterm/wezterm/discussions); if you have general
-  questions or want to chat with other wezterm users, you're welcome here!
+* Start or join a thread in the upstream [GitHub Discussions](https://github.com/wezterm/wezterm/discussions); if you have general
+  questions or want to chat with other WezTerm users, you're welcome here!
 * There is a [Matrix room via Element.io](https://matrix.to/#/#wezterm:matrix.org)
   for (potentially!) real time discussions.
 

@@ -27,8 +27,6 @@ text, and cancel quick select mode.
 
 Pressing `ESCAPE` will cancel quick select mode.
 
-![Screenshot demonstrating the quickselect text highlights](screenshots/wezterm-quick-select.png)
-
 {{since('nightly')}}
 
 A configuration option [quick_select_remove_styling](config/lua/config/quick_select_remove_styling.md)
