@@ -4004,6 +4004,7 @@ dependencies = [
  "shared_library",
  "shell-words",
  "smol",
+ "tempfile",
  "winapi",
  "winreg",
 ]
