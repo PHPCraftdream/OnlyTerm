@@ -282,6 +282,11 @@ pub struct PaneInformation {
     pub title: String,
     pub user_vars: HashMap<String, String>,
     pub progress: Progress,
+    /// The active pane's current working directory, as reported by the
+    /// pane's `get_current_working_dir` (same source as the rhai-only
+    /// `current_working_dir` getter registered below), rendered as a
+    /// plain string. `None` if the pane hasn't reported a cwd yet.
+    pub current_working_dir: Option<String>,
 }
 
 /// L4.6 rhai binding for `PaneInformation`, mirroring the `impl UserData` block
@@ -3621,6 +3626,10 @@ impl TermWindow {
             title: pos.pane.get_title(),
             user_vars: pos.pane.copy_user_vars(),
             progress: pos.pane.get_progress(),
+            current_working_dir: pos
+                .pane
+                .get_current_working_dir(CachePolicy::AllowStale)
+                .map(|url| url.to_string()),
         }
     }
 

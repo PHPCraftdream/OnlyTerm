@@ -201,6 +201,48 @@ fn spinner_phase(tab_id: usize) -> u64 {
     z ^ (z >> 31)
 }
 
+/// Extracts the last path component (basename) from a `file://`-style URL
+/// string (as produced by `Pane::get_current_working_dir`, e.g.
+/// `file:///home/user/project` on Unix or `file:///C:/Users/foo/bar` on
+/// Windows) or, failing that, from a plain filesystem path string.
+///
+/// Trailing slashes are ignored. If the path has no component to strip (for
+/// example the Unix root `/`, a bare Windows drive root `C:/`, or an empty
+/// string), the original `path` is returned unchanged so callers always get
+/// a non-empty, human-meaningful string instead of an empty title.
+fn basename_of_path(path: &str) -> String {
+    // Prefer proper URL parsing so that percent-encoded characters and the
+    // `file://` scheme/host are stripped correctly. `Url::to_file_path()`
+    // fails for things like a bare root (`file:///`) that don't resolve to
+    // a valid platform path, so fall back to inspecting the URL's decoded
+    // `path()` component directly rather than re-parsing the whole URL
+    // string as if it were a raw filesystem path.
+    if let Ok(url) = url::Url::parse(path) {
+        if let Ok(file_path) = url.to_file_path() {
+            if let Some(name) = file_path.file_name().and_then(|n| n.to_str()) {
+                return name.to_string();
+            }
+            return path.to_string();
+        }
+
+        let trimmed = url.path().trim_end_matches('/');
+        return match std::path::Path::new(trimmed)
+            .file_name()
+            .and_then(|n| n.to_str())
+        {
+            Some(name) => name.to_string(),
+            None => path.to_string(),
+        };
+    }
+
+    // Not a URL at all; treat it as a plain filesystem path.
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    match std::path::Path::new(trimmed).file_name().and_then(|n| n.to_str()) {
+        Some(name) => name.to_string(),
+        None => path.to_string(),
+    }
+}
+
 fn compute_tab_title(
     tab: &TabInformation,
     tab_info: &[TabInformation],
@@ -219,10 +261,20 @@ fn compute_tab_title(
             let mut has_indeterminate = false;
 
             if let Some(pane) = &tab.active_pane {
-                let mut title = if tab.tab_title.is_empty() {
-                    pane.title.clone()
-                } else {
+                let mut title = if !tab.tab_title.is_empty() {
+                    // An explicitly assigned tab title (via `wezterm cli
+                    // set-tab-title` or similar) always wins.
                     tab.tab_title.clone()
+                } else if config.use_cwd_basename_as_tab_title {
+                    // Fall back to the cwd basename when requested and
+                    // available; otherwise fall back further to the pane's
+                    // own title (usually the foreground process name).
+                    match &pane.current_working_dir {
+                        Some(cwd) if !cwd.is_empty() => basename_of_path(cwd),
+                        _ => pane.title.clone(),
+                    }
+                } else {
+                    pane.title.clone()
                 };
 
                 let classic_spacing = if config.use_fancy_tab_bar { "" } else { " " };
@@ -897,5 +949,69 @@ mod tests {
         let params = Parameters::default();
         assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 1);
         assert_eq!(TabBarState::compute_num_padding_cells(7.0, Some(&params)), 1);
+    }
+
+    use super::basename_of_path;
+
+    #[test]
+    fn basename_of_unix_style_url() {
+        assert_eq!(basename_of_path("file:///home/user/project"), "project");
+    }
+
+    #[test]
+    fn basename_of_unix_style_url_with_trailing_slash() {
+        assert_eq!(basename_of_path("file:///home/user/project/"), "project");
+    }
+
+    #[test]
+    fn basename_of_unix_root() {
+        // No component to strip; falls back to the original string.
+        assert_eq!(basename_of_path("file:///"), "file:///");
+        assert_eq!(basename_of_path("/"), "/");
+    }
+
+    #[test]
+    fn basename_of_windows_style_url() {
+        assert_eq!(basename_of_path("file:///C:/Users/foo/bar"), "bar");
+    }
+
+    #[test]
+    fn basename_of_windows_style_url_with_trailing_slash() {
+        assert_eq!(basename_of_path("file:///C:/Users/foo/bar/"), "bar");
+    }
+
+    #[test]
+    fn basename_of_windows_drive_root() {
+        // A bare drive root has no basename component; falls back to original.
+        let result = basename_of_path("file:///C:/");
+        assert_eq!(result, "file:///C:/");
+    }
+
+    #[test]
+    fn basename_of_plain_path_single_component() {
+        assert_eq!(basename_of_path("project"), "project");
+    }
+
+    #[test]
+    fn basename_of_plain_unix_path() {
+        assert_eq!(basename_of_path("/home/user/project"), "project");
+    }
+
+    #[test]
+    fn basename_of_plain_windows_path() {
+        assert_eq!(basename_of_path("C:\\Users\\foo\\bar"), "bar");
+    }
+
+    #[test]
+    fn basename_of_plain_path_with_trailing_slash() {
+        assert_eq!(basename_of_path("/home/user/project/"), "project");
+    }
+
+    #[test]
+    fn basename_of_unc_path() {
+        // UNC paths (\\server\share\path) aren't produced by
+        // get_current_working_dir today, but basename_of_path should still
+        // degrade gracefully rather than panicking.
+        assert_eq!(basename_of_path("\\\\server\\share\\path"), "path");
     }
 }
