@@ -10,7 +10,6 @@ use winapi::um::handleapi::CloseHandle;
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::*;
 use winapi::um::synchapi::WaitForSingleObject;
-use winapi::um::wincon::{GenerateConsoleCtrlEvent, CTRL_BREAK_EVENT};
 use winapi::um::winbase::INFINITE;
 
 pub mod conpty;
@@ -19,9 +18,19 @@ mod pseudocon;
 
 use filedescriptor::OwnedHandle;
 
-/// How long to wait after politely asking the child's process group to
-/// exit (via CTRL_BREAK_EVENT) before we escalate to forcefully
-/// terminating it (and any surviving descendants via the Job Object).
+/// How long to wait for the child to exit on its own (eg. because the pty
+/// was already closed, or the process is shutting down for an unrelated
+/// reason) before forcefully terminating it (and any surviving descendants
+/// via the Job Object).
+///
+/// This used to also send CTRL_BREAK_EVENT as a "polite" first step, which
+/// required creating the child with CREATE_NEW_PROCESS_GROUP so the signal
+/// could be scoped to just this child. That flag has a Windows-documented
+/// side effect: processes created with it stop receiving CTRL_C_EVENT (ie.
+/// the user's physical Ctrl+C) entirely, only CTRL_BREAK_EVENT reaches them.
+/// That silently broke Ctrl+C for everything running in the pane, which is
+/// far more important than a slightly gentler kill sequence, so the
+/// CTRL_BREAK_EVENT step and CREATE_NEW_PROCESS_GROUP were both removed.
 const GRACEFUL_KILL_TIMEOUT_MS: DWORD = 5000;
 
 /// Handle to the Windows Job Object that a child (and any descendants it
@@ -75,14 +84,12 @@ impl WinChild {
     }
 }
 
-/// Two-phase kill: first ask the child's process group to exit cleanly via
-/// CTRL_BREAK_EVENT (the closest Windows equivalent to SIGTERM), and give it
-/// up to `GRACEFUL_KILL_TIMEOUT_MS` to do so. If it hasn't exited by then,
-/// forcefully terminate the direct child and close the Job Object handle
-/// (if we have one) to force-kill any surviving descendant processes via
+/// Give the child up to `GRACEFUL_KILL_TIMEOUT_MS` to exit on its own, then
+/// forcefully terminate it and close the Job Object handle (if we have one)
+/// to force-kill any surviving descendant processes via
 /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`.
 ///
-/// Even if the process exits gracefully within the timeout, we still close
+/// Even if the process exits on its own within the timeout, we still close
 /// the job handle afterwards: the user wants ALL descendant processes
 /// gone, not just the direct child, and any grandchildren that are still
 /// alive in the job at that point are cleaned up as a result.
@@ -90,18 +97,6 @@ impl WinChild {
 /// This runs on a background thread (spawned by `do_kill`/`WinChildKiller::kill`)
 /// so blocking here for up to 5 seconds does not stall the GUI/mux thread.
 fn kill_gracefully_then_forcefully(proc: OwnedHandle, job: Option<OwnedHandle>) {
-    // The child was created with CREATE_NEW_PROCESS_GROUP, so its own PID
-    // doubles as its process group id; GenerateConsoleCtrlEvent lets us
-    // target just that group without also signalling our own process
-    // group (pid 0 would mean "all processes attached to this console",
-    // which would include wezterm itself).
-    let pid = unsafe { GetProcessId(proc.as_raw_handle() as _) };
-    if pid != 0 {
-        unsafe {
-            GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid);
-        }
-    }
-
     let wait_result = unsafe { WaitForSingleObject(proc.as_raw_handle() as _, GRACEFUL_KILL_TIMEOUT_MS) };
     const WAIT_OBJECT_0: DWORD = 0;
     if wait_result != WAIT_OBJECT_0 {
@@ -110,7 +105,7 @@ fn kill_gracefully_then_forcefully(proc: OwnedHandle, job: Option<OwnedHandle>) 
         unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
     }
 
-    // Whether the process exited gracefully or we just forced it, close
+    // Whether the process exited on its own or we just forced it, close
     // the Job Object handle (if any) so that JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     // cleans up any descendant processes still assigned to it.
     if let Some(job) = job {

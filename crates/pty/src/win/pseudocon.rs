@@ -176,9 +176,15 @@ impl PseudoCon {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 0,
-                EXTENDED_STARTUPINFO_PRESENT
-                    | CREATE_UNICODE_ENVIRONMENT
-                    | CREATE_NEW_PROCESS_GROUP,
+                // NOTE: deliberately NOT setting CREATE_NEW_PROCESS_GROUP here.
+                // Windows explicitly stops delivering CTRL_C_EVENT (physical
+                // Ctrl+C) to processes created with that flag - only
+                // CTRL_BREAK_EVENT reaches them. That's fine for a process we
+                // want to signal selectively via GenerateConsoleCtrlEvent, but
+                // it silently breaks the far more common case of the user
+                // pressing Ctrl+C to interrupt/exit whatever is running in the
+                // pane, which must always keep working.
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
                 cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
                 cwd.as_ref()
                     .map(|c| c.as_slice().as_ptr())
