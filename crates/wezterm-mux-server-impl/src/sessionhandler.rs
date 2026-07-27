@@ -914,7 +914,7 @@ impl SessionHandler {
                             codec_vers: CODEC_VERSION,
                             version_string: config::wezterm_version().to_owned(),
                             executable_path,
-                            config_file_path: std::env::var_os("WEZTERM_CONFIG_FILE")
+                            config_file_path: std::env::var_os("ONLYTERM_CONFIG_FILE")
                                 .map(Into::into),
                         })))
                     }

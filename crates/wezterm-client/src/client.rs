@@ -858,7 +858,7 @@ impl Client {
         prefer_mux: bool,
         class_name: &str,
     ) -> anyhow::Result<config::UnixDomain> {
-        match std::env::var_os("WEZTERM_UNIX_SOCKET") {
+        match std::env::var_os("ONLYTERM_UNIX_SOCKET") {
             Some(path) if !path.is_empty() => Ok(config::UnixDomain {
                 socket_path: Some(path.into()),
                 ..Default::default()
@@ -880,7 +880,7 @@ impl Client {
                     .first()
                     .ok_or_else(|| {
                         anyhow!(
-                            "no default unix domain is configured and WEZTERM_UNIX_SOCKET \
+                            "no default unix domain is configured and ONLYTERM_UNIX_SOCKET \
                              is not set in the environment"
                         )
                     })?
@@ -927,7 +927,7 @@ impl Client {
         let pane_id: PaneId = match pane_id {
             Some(p) => p,
             None => {
-                if let Ok(pane) = std::env::var("WEZTERM_PANE") {
+                if let Ok(pane) = std::env::var("ONLYTERM_PANE") {
                     pane.parse()?
                 } else {
                     let mut clients = self.list_clients().await?.clients;
@@ -935,7 +935,7 @@ impl Client {
                     clients.sort_by(|a, b| b.last_input.cmp(&a.last_input));
                     if clients.is_empty() {
                         anyhow::bail!(
-                            "--pane-id was not specified and $WEZTERM_PANE
+                            "--pane-id was not specified and $ONLYTERM_PANE
                          is not set in the environment, and I couldn't
                          determine which pane was currently focused"
                         );

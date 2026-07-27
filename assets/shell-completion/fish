@@ -1,6 +1,6 @@
 complete -c wezterm -n "__fish_use_subcommand" -l config-file -d 'Specify the configuration file to use, overrides the normal configuration file resolution' -r -F
 complete -c wezterm -n "__fish_use_subcommand" -l config -d 'Override specific configuration values' -r
-complete -c wezterm -n "__fish_use_subcommand" -s n -l skip-config -d 'Skip loading wezterm.lua'
+complete -c wezterm -n "__fish_use_subcommand" -s n -l skip-config -d 'Skip loading wezterm.rhai'
 complete -c wezterm -n "__fish_use_subcommand" -s h -l help -d 'Print help'
 complete -c wezterm -n "__fish_use_subcommand" -s V -l version -d 'Print version'
 complete -c wezterm -n "__fish_use_subcommand" -f -a "start" -d 'Start the GUI, optionally running an alternative program [aliases: -e]'
@@ -94,12 +94,12 @@ complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcomm
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from proxy" -s h -l help -d 'Print help'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from tlscreds" -l pem -d 'Output a PEM file encoded copy of the credentials'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from tlscreds" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from move-pane-to-new-tab" -l pane-id -d 'Specify the pane that should be moved. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from move-pane-to-new-tab" -l pane-id -d 'Specify the pane that should be moved. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from move-pane-to-new-tab" -l window-id -d 'Specify the window into which the new tab will be created. If omitted, the window associated with the current pane is used' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from move-pane-to-new-tab" -l workspace -d 'If creating a new window, override the default workspace name with the provided name.  The default name is "default"' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from move-pane-to-new-tab" -l new-window -d 'Create tab in a new window, rather than the window currently containing the pane'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from move-pane-to-new-tab" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l pane-id -d 'Specify the pane that should be split. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l pane-id -d 'Specify the pane that should be split. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l cells -d 'The number of cells that the new split should have. If omitted, 50% of the available space is used' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l percent -d 'Specify the number of cells that the new split should have, expressed as a percentage of the available space' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l cwd -d 'Specify the current working directory for the initially spawned program' -r -f -a "(__fish_complete_directories)"
@@ -111,48 +111,48 @@ complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcomm
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l bottom -d 'Split vertically, with the new pane on the bottom'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -l top-level -d 'Rather than splitting the active pane, split the entire window'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from split-pane" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE. The pane is used to determine the current domain and window' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE. The pane is used to determine the current domain and window' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l domain-name -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l window-id -d 'Specify the window into which to spawn a tab. If omitted, the window associated with the current pane is used. Cannot be used with `--workspace` or `--new-window`' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l cwd -d 'Specify the current working directory for the initially spawned program' -r -f -a "(__fish_complete_directories)"
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l workspace -d 'When creating a new window, override the default workspace name with the provided name.  The default name is "default". Requires `--new-window`' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -l new-window -d 'Spawn into a new window, rather than a new tab'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from spawn" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from send-text" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from send-text" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from send-text" -l no-paste -d 'Send the text directly, rather than as a bracketed paste'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from send-text" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-text" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-text" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-text" -l start-line -d 'The starting line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value is unspecified is 0, the first line of the terminal screen' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-text" -l end-line -d 'The ending line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value if unspecified is the bottom of the terminal screen' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-text" -l escapes -d 'Include escape sequences that color and style the text. If omitted, unattributed text will be returned'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-text" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-pane-direction" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-pane-direction" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-pane-direction" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-pane-direction" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-pane-direction" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from get-pane-direction" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from kill-pane" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from kill-pane" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from kill-pane" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-pane" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-pane" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-pane" -s h -l help -d 'Print help'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from adjust-pane-size" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from adjust-pane-size" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from adjust-pane-size" -l amount -d 'Specify the number of cells to resize by, defaults to 1' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from adjust-pane-size" -s h -l help -d 'Print help'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -l tab-id -d 'Specify the target tab by its id' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -l tab-index -d 'Specify the target tab by its index within the window that holds the current pane. Indices are 0-based, with 0 being the left-most tab. Negative numbers can be used to reference the right-most tab, so -1 is the right-most tab, -2 is the penultimate tab and so on' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -l tab-relative -d 'Specify the target tab by its relative offset. -1 selects the tab to the left. -2 two tabs to the left. 1 is one tab to the right and so on' -r
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -l no-wrap -d 'When used with tab-relative, prevents wrapping around and will instead clamp to the left-most when moving left or right-most when moving right'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from activate-tab" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-tab-title" -l tab-id -d 'Specify the target tab by its id' -r
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-tab-title" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-tab-title" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-tab-title" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-window-title" -l window-id -d 'Specify the target window by its id' -r
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-window-title" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-window-title" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from set-window-title" -s h -l help -d 'Print help (see more with \'--help\')'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from rename-workspace" -l workspace -d 'Specify the workspace to rename' -r
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from rename-workspace" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from rename-workspace" -l pane-id -d 'Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from rename-workspace" -s h -l help -d 'Print help (see more with \'--help\')'
-complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from zoom-pane" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE' -r
+complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from zoom-pane" -l pane-id -d 'Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE' -r
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from zoom-pane" -l zoom -d 'Zooms the pane if it wasn\'t already zoomed'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from zoom-pane" -l unzoom -d 'Unzooms the pane if it was zoomed'
 complete -c wezterm -n "__fish_seen_subcommand_from cli; and __fish_seen_subcommand_from zoom-pane" -l toggle -d 'Toggles the zoom state of the pane'
