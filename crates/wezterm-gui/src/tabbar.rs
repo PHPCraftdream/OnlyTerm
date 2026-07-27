@@ -210,7 +210,7 @@ fn spinner_phase(tab_id: usize) -> u64 {
 /// example the Unix root `/`, a bare Windows drive root `C:/`, or an empty
 /// string), the original `path` is returned unchanged so callers always get
 /// a non-empty, human-meaningful string instead of an empty title.
-fn basename_of_path(path: &str) -> String {
+pub(crate) fn basename_of_path(path: &str) -> String {
     // Prefer proper URL parsing so that percent-encoded characters and the
     // `file://` scheme/host are stripped correctly. `Url::to_file_path()`
     // fails for things like a bare root (`file:///`) that don't resolve to

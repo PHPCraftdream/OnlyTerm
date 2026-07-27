@@ -1912,11 +1912,32 @@ impl KeyEvent {
                     *shifted_key
                 };
 
+                // Per the kitty spec, DISAMBIGUATE_ESCAPE_CODES alone is
+                // enough to require CSI-u encoding for every Ctrl+<letter>
+                // combo. In practice, only combos whose legacy control byte
+                // collides with a dedicated named key (Ctrl+H = Backspace's
+                // 0x08, Ctrl+I = Tab's 0x09, Ctrl+M = Enter's 0x0D, Ctrl+[ =
+                // Escape's 0x1B, Ctrl+8/Ctrl+? = Delete's 0x7F) are actually
+                // ambiguous - everything else (eg. Ctrl+C, Ctrl+D, Ctrl+A)
+                // has always meant exactly one thing and plenty of
+                // real-world software (readline, and at least one CLI tool
+                // tested against OnlyTerm) only understands the legacy byte
+                // for those, not the CSI-u form. Keep legacy encoding for
+                // the unambiguous combos even when an app has requested
+                // disambiguation, so eg. Ctrl+C still works alongside an
+                // app also using this protocol to distinguish Ctrl+Enter
+                // from a plain Enter.
+                let ctrl_collides_with_named_key = matches!(
+                    shifted_key.to_ascii_lowercase(),
+                    'h' | 'i' | 'm' | '[' | '{' | '3' | '8' | '?'
+                );
+
                 let use_legacy = !flags.contains(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS)
                     && event_type.is_empty()
                     && is_legacy_key
                     && !(flags.contains(KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES)
-                        && (self.modifiers.contains(Modifiers::CTRL)
+                        && ((self.modifiers.contains(Modifiers::CTRL)
+                            && ctrl_collides_with_named_key)
                             || self.modifiers.contains(Modifiers::ALT)))
                     && !self.modifiers.intersects(
                         Modifiers::SUPER, /* TODO: Hyper and Meta should be added here. */
@@ -2430,6 +2451,74 @@ mod test {
             win32_uni_char: None,
         };
         assert_eq!(multi.encode_kitty(flags), String::new());
+    }
+
+    #[test]
+    fn encode_kitty_ctrl_c_stays_legacy_under_disambiguate() {
+        // Ctrl+C has no collision with any other named key's legacy byte,
+        // so it must keep its traditional 0x03 encoding even when an app
+        // has requested DISAMBIGUATE_ESCAPE_CODES - apps that only
+        // understand the legacy byte for Ctrl+C (eg. to interrupt/exit)
+        // must keep working alongside Enter-disambiguation.
+        let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES;
+        let ctrl_c = KeyEvent {
+            key: KeyCode::Char('c'),
+            modifiers: Modifiers::CTRL,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: None,
+            #[cfg(windows)]
+            win32_uni_char: None,
+        };
+        assert_eq!(ctrl_c.encode_kitty(flags), "\x03".to_string());
+    }
+
+    #[test]
+    fn encode_kitty_ctrl_m_disambiguates_from_enter() {
+        // Ctrl+M shares Enter's legacy byte (0x0D) - it must still be
+        // escape-encoded under DISAMBIGUATE_ESCAPE_CODES so the two remain
+        // distinguishable, unlike Ctrl+C.
+        let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES;
+        let ctrl_m = KeyEvent {
+            key: KeyCode::Char('m'),
+            modifiers: Modifiers::CTRL,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: None,
+            #[cfg(windows)]
+            win32_uni_char: None,
+        };
+        assert_ne!(ctrl_m.encode_kitty(flags), "\x0d".to_string());
+        assert!(ctrl_m.encode_kitty(flags).starts_with("\x1b["));
+    }
+
+    #[test]
+    fn encode_kitty_ctrl_enter_disambiguates_from_plain_enter() {
+        // Enter itself is represented as KeyCode::Char('\r'); plain Enter
+        // with no modifiers must stay as the raw byte, but Ctrl+Enter
+        // (same KeyCode, CTRL held) must be escape-encoded so the two are
+        // distinguishable - this is the actual feature enabling this
+        // config option in the first place.
+        let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES;
+        let plain_enter = KeyEvent {
+            key: KeyCode::Char('\r'),
+            modifiers: Modifiers::NONE,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: None,
+            #[cfg(windows)]
+            win32_uni_char: None,
+        };
+        let ctrl_enter = KeyEvent {
+            modifiers: Modifiers::CTRL,
+            ..plain_enter.clone()
+        };
+        assert_eq!(plain_enter.encode_kitty(flags), "\r".to_string());
+        assert!(ctrl_enter.encode_kitty(flags).starts_with("\x1b["));
+        assert_ne!(plain_enter.encode_kitty(flags), ctrl_enter.encode_kitty(flags));
     }
 
     #[test]
