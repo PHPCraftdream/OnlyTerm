@@ -48,7 +48,7 @@ fn background_reload_handoff_reaches_main_thread_event_bridge() {
             font_size: 13.0,
         }
     "#;
-    let config_path = dir.path().join("wezterm.rhai");
+    let config_path = dir.path().join("onlyterm.rhai");
     std::fs::write(&config_path, script).unwrap();
 
     // Exactly what `wezterm-gui`/`wezterm-mux-server`'s `common_init` does:

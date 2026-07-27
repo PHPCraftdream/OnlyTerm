@@ -17,8 +17,8 @@ _wezterm() {
     _arguments "${_arguments_options[@]}" \
 '(-n --skip-config)--config-file=[Specify the configuration file to use, overrides the normal configuration file resolution]:CONFIG_FILE:_files' \
 '*--config=[Override specific configuration values]:name=value: ' \
-'-n[Skip loading wezterm.lua]' \
-'--skip-config[Skip loading wezterm.lua]' \
+'-n[Skip loading wezterm.rhai]' \
+'--skip-config[Skip loading wezterm.rhai]' \
 '-h[Print help]' \
 '--help[Print help]' \
 '-V[Print version]' \
@@ -145,7 +145,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (move-pane-to-new-tab)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the pane that should be moved. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the pane that should be moved. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '--window-id=[Specify the window into which the new tab will be created. If omitted, the window associated with the current pane is used]:WINDOW_ID: ' \
 '--workspace=[If creating a new window, override the default workspace name with the provided name.  The default name is "default"]:WORKSPACE: ' \
 '(--window-id)--new-window[Create tab in a new window, rather than the window currently containing the pane]' \
@@ -155,7 +155,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (split-pane)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the pane that should be split. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the pane that should be split. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '--cells=[The number of cells that the new split should have. If omitted, 50% of the available space is used]:CELLS: ' \
 '(--cells)--percent=[Specify the number of cells that the new split should have, expressed as a percentage of the available space]:PERCENT: ' \
 '--cwd=[Specify the current working directory for the initially spawned program]:CWD:_files -/' \
@@ -173,7 +173,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (spawn)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE. The pane is used to determine the current domain and window]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE. The pane is used to determine the current domain and window]:PANE_ID: ' \
 '--domain-name=[]:DOMAIN_NAME: ' \
 '(--workspace --new-window)--window-id=[Specify the window into which to spawn a tab. If omitted, the window associated with the current pane is used. Cannot be used with \`--workspace\` or \`--new-window\`]:WINDOW_ID: ' \
 '--cwd=[Specify the current working directory for the initially spawned program]:CWD:_files -/' \
@@ -186,7 +186,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (send-text)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '--no-paste[Send the text directly, rather than as a bracketed paste]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -195,7 +195,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (get-text)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '--start-line=[The starting line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value is unspecified is 0, the first line of the terminal screen]:START_LINE: ' \
 '--end-line=[The ending line number. 0 is the first line of terminal screen. Negative numbers proceed backwards into the scrollback. The default value if unspecified is the bottom of the terminal screen]:END_LINE: ' \
 '--escapes[Include escape sequences that color and style the text. If omitted, unattributed text will be returned]' \
@@ -205,7 +205,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (activate-pane-direction)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 ':direction -- The direction to switch to:(Up Down Left Right Next Prev)' \
@@ -213,7 +213,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (get-pane-direction)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':direction -- The direction to consider:(Up Down Left Right Next Prev)' \
@@ -221,21 +221,21 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (kill-pane)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (activate-pane)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (adjust-pane-size)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '--amount=[Specify the number of cells to resize by, defaults to 1]:AMOUNT: ' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -247,7 +247,7 @@ _arguments "${_arguments_options[@]}" \
 '(--tab-index --tab-relative --no-wrap --pane-id)--tab-id=[Specify the target tab by its id]:TAB_ID: ' \
 '--tab-index=[Specify the target tab by its index within the window that holds the current pane. Indices are 0-based, with 0 being the left-most tab. Negative numbers can be used to reference the right-most tab, so -1 is the right-most tab, -2 is the penultimate tab and so on]:TAB_INDEX: ' \
 '--tab-relative=[Specify the target tab by its relative offset. -1 selects the tab to the left. -2 two tabs to the left. 1 is one tab to the right and so on]:TAB_RELATIVE: ' \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '--no-wrap[When used with tab-relative, prevents wrapping around and will instead clamp to the left-most when moving left or right-most when moving right]' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
@@ -256,7 +256,7 @@ _arguments "${_arguments_options[@]}" \
 (set-tab-title)
 _arguments "${_arguments_options[@]}" \
 '(--pane-id)--tab-id=[Specify the target tab by its id]:TAB_ID: ' \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':title -- The new title for the tab:' \
@@ -265,7 +265,7 @@ _arguments "${_arguments_options[@]}" \
 (set-window-title)
 _arguments "${_arguments_options[@]}" \
 '(--pane-id)--window-id=[Specify the target window by its id]:WINDOW_ID: ' \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':title -- The new title for the window:' \
@@ -274,7 +274,7 @@ _arguments "${_arguments_options[@]}" \
 (rename-workspace)
 _arguments "${_arguments_options[@]}" \
 '--workspace=[Specify the workspace to rename]:WORKSPACE: ' \
-'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the current pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '-h[Print help (see more with '\''--help'\'')]' \
 '--help[Print help (see more with '\''--help'\'')]' \
 ':new_workspace -- The new name for the workspace:' \
@@ -282,7 +282,7 @@ _arguments "${_arguments_options[@]}" \
 ;;
 (zoom-pane)
 _arguments "${_arguments_options[@]}" \
-'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable WEZTERM_PANE]:PANE_ID: ' \
+'--pane-id=[Specify the target pane. The default is to use the current pane based on the environment variable ONLYTERM_PANE]:PANE_ID: ' \
 '(--unzoom --toggle)--zoom[Zooms the pane if it wasn'\''t already zoomed]' \
 '(--zoom --toggle)--unzoom[Unzooms the pane if it was zoomed]' \
 '(--zoom --unzoom)--toggle[Toggles the zoom state of the pane]' \

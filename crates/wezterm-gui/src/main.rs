@@ -70,7 +70,7 @@ pub use termwindow::{set_window_class, set_window_position, TermWindow, ICON_DAT
     version = config::wezterm_version()
 )]
 struct Opt {
-    /// Skip loading wezterm.lua
+    /// Skip loading wezterm.rhai
     #[arg(long, short = 'n')]
     skip_config: bool,
 
@@ -346,7 +346,7 @@ async fn async_run_terminal_gui(
 ) -> anyhow::Result<()> {
     let unix_socket_path =
         config::RUNTIME_DIR.join(format!("gui-sock-{}", unsafe { libc::getpid() }));
-    std::env::set_var("WEZTERM_UNIX_SOCKET", unix_socket_path.clone());
+    std::env::set_var("ONLYTERM_UNIX_SOCKET", unix_socket_path.clone());
     wezterm_blob_leases::register_storage(Arc::new(
         wezterm_blob_leases::simple_tempdir::SimpleTempDir::new_in(&*config::CACHE_DIR)?,
     ))?;
@@ -496,7 +496,7 @@ impl Publish {
                                 "Running GUI is a different executable from us, will start a new one");
                         }
                         if vers.config_file_path
-                            != std::env::var_os("WEZTERM_CONFIG_FILE").map(Into::into)
+                            != std::env::var_os("ONLYTERM_CONFIG_FILE").map(Into::into)
                         {
                             *self = Publish::NoConnectNoPublish;
                             anyhow::bail!(
@@ -1101,7 +1101,7 @@ fn run() -> anyhow::Result<()> {
     {
         unsafe {
             ::windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
-                ::windows::core::PCWSTR(wide_string("org.wezfurlong.wezterm").as_ptr()),
+                ::windows::core::PCWSTR(wide_string("org.wezfurlong.onlyterm").as_ptr()),
             )
             .unwrap();
         }

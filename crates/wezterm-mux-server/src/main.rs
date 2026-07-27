@@ -21,7 +21,7 @@ mod daemonize;
     trailing_var_arg = true,
 )]
 struct Opt {
-    /// Skip loading wezterm.lua
+    /// Skip loading wezterm.rhai
     #[arg(long, short = 'n')]
     skip_config: bool,
 
@@ -194,8 +194,8 @@ fn run() -> anyhow::Result<()> {
         "OLDPWD",
         "PWD",
         "SHLVL",
-        "WEZTERM_PANE",
-        "WEZTERM_UNIX_SOCKET",
+        "ONLYTERM_PANE",
+        "ONLYTERM_UNIX_SOCKET",
         "_",
     ] {
         std::env::remove_var(name);
@@ -309,7 +309,7 @@ fn terminate_with_error(err: anyhow::Error) -> ! {
 pub fn spawn_listener() -> anyhow::Result<()> {
     let config = configuration();
     for unix_dom in &config.unix_domains {
-        std::env::set_var("WEZTERM_UNIX_SOCKET", unix_dom.socket_path());
+        std::env::set_var("ONLYTERM_UNIX_SOCKET", unix_dom.socket_path());
         let mut listener = wezterm_mux_server_impl::local::LocalListener::with_domain(unix_dom)?;
         thread::spawn(move || {
             listener.run();

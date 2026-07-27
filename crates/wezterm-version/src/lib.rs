@@ -5,5 +5,5 @@ pub fn wezterm_version() -> &'static str {
 
 pub fn wezterm_target_triple() -> &'static str {
     // See build.rs
-    env!("WEZTERM_TARGET_TRIPLE")
+    env!("ONLYTERM_TARGET_TRIPLE")
 }

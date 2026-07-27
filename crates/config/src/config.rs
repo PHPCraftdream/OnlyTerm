@@ -211,6 +211,7 @@ pub struct Config {
     /// `default_prog` is implemented as an array where the 0th element
     /// is the command to run and the rest of the elements are passed
     /// as the positional arguments to that command.
+    #[dynamic(default = "windows_default_prog")]
     pub default_prog: Option<Vec<String>>,
 
     #[dynamic(default = "default_gui_startup_args")]
@@ -1022,9 +1023,9 @@ impl Config {
         // multiple.  In addition, it spawns a lot of subprocesses,
         // so we do this bit "by-hand"
 
-        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".wezterm.rhai"))];
+        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".onlyterm.rhai"))];
         for dir in CONFIG_DIRS.iter() {
-            paths.push(PathPossibility::optional(dir.join("wezterm.rhai")))
+            paths.push(PathPossibility::optional(dir.join("onlyterm.rhai")))
         }
 
         if cfg!(windows) {
@@ -1038,12 +1039,12 @@ impl Config {
             // dir as the executable that will take precedence.
             if let Ok(exe_name) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_name.parent() {
-                    paths.insert(0, PathPossibility::optional(exe_dir.join("wezterm.rhai")));
+                    paths.insert(0, PathPossibility::optional(exe_dir.join("onlyterm.rhai")));
                 }
             }
         }
-        if let Some(path) = std::env::var_os("WEZTERM_CONFIG_FILE") {
-            log::trace!("Note: WEZTERM_CONFIG_FILE is set in the environment");
+        if let Some(path) = std::env::var_os("ONLYTERM_CONFIG_FILE") {
+            log::trace!("Note: ONLYTERM_CONFIG_FILE is set in the environment");
             paths.insert(0, PathPossibility::required(path.into()));
         }
 
@@ -1072,11 +1073,11 @@ impl Config {
             }
         }
 
-        // We didn't find (or were asked to skip) a wezterm.rhai file, so
+        // We didn't find (or were asked to skip) a onlyterm.rhai file, so
         // update the environment to make it simpler to understand this
         // state.
-        std::env::remove_var("WEZTERM_CONFIG_FILE");
-        std::env::remove_var("WEZTERM_CONFIG_DIR");
+        std::env::remove_var("ONLYTERM_CONFIG_FILE");
+        std::env::remove_var("ONLYTERM_CONFIG_DIR");
 
         match Self::try_default() {
             Err(err) => LoadedConfig {
@@ -1124,10 +1125,10 @@ impl Config {
     /// migrating instead of a generic "file not found".
     fn legacy_lua_sibling(p: &Path) -> Option<PathBuf> {
         let file_name = p.file_name()?.to_str()?;
-        let lua_name = if file_name == "wezterm.rhai" {
-            "wezterm.lua".to_string()
-        } else if file_name == ".wezterm.rhai" {
-            ".wezterm.lua".to_string()
+        let lua_name = if file_name == "onlyterm.rhai" {
+            "onlyterm.lua".to_string()
+        } else if file_name == ".onlyterm.rhai" {
+            ".onlyterm.lua".to_string()
         } else if let Some(stripped) = file_name.strip_suffix(".rhai") {
             format!("{stripped}.lua")
         } else {
@@ -1158,8 +1159,8 @@ impl Config {
                              configs are no longer supported: mlua has been removed \
                              from wezterm's live config-loading path. Please rename \
                              {} to {} and adapt its syntax to rhai. See the migration \
-                             guide for details on translating a wezterm.lua config to \
-                             wezterm.rhai.",
+                             guide for details on translating a onlyterm.lua config to \
+                             onlyterm.rhai.",
                             lua_path.display(),
                             lua_path.display(),
                             p.display()
@@ -1206,9 +1207,9 @@ impl Config {
                 // problems earlier than we use them.
                 let _ = cfg.key_bindings();
 
-                std::env::set_var("WEZTERM_CONFIG_FILE", p);
+                std::env::set_var("ONLYTERM_CONFIG_FILE", p);
                 if let Some(dir) = p.parent() {
-                    std::env::set_var("WEZTERM_CONFIG_DIR", dir);
+                    std::env::set_var("ONLYTERM_CONFIG_DIR", dir);
                 }
                 Ok(cfg)
             });
@@ -1870,26 +1871,26 @@ fn default_font_size() -> f64 {
 
 pub(crate) fn compute_cache_dir() -> anyhow::Result<PathBuf> {
     if let Some(runtime) = dirs_next::cache_dir() {
-        return Ok(runtime.join("wezterm"));
+        return Ok(runtime.join("onlyterm"));
     }
 
-    Ok(crate::HOME_DIR.join(".local/share/wezterm"))
+    Ok(crate::HOME_DIR.join(".local/share/onlyterm"))
 }
 
 pub(crate) fn compute_data_dir() -> anyhow::Result<PathBuf> {
     if let Some(runtime) = dirs_next::data_dir() {
-        return Ok(runtime.join("wezterm"));
+        return Ok(runtime.join("onlyterm"));
     }
 
-    Ok(crate::HOME_DIR.join(".local/share/wezterm"))
+    Ok(crate::HOME_DIR.join(".local/share/onlyterm"))
 }
 
 pub(crate) fn compute_runtime_dir() -> anyhow::Result<PathBuf> {
     if let Some(runtime) = dirs_next::runtime_dir() {
-        return Ok(runtime.join("wezterm"));
+        return Ok(runtime.join("onlyterm"));
     }
 
-    Ok(crate::HOME_DIR.join(".local/share/wezterm"))
+    Ok(crate::HOME_DIR.join(".local/share/onlyterm"))
 }
 
 pub fn username_from_env() -> anyhow::Result<String> {
@@ -1911,6 +1912,21 @@ pub fn default_write_timeout() -> Duration {
 
 pub fn default_local_echo_threshold_ms() -> Option<u64> {
     Some(100)
+}
+
+/// OnlyTerm is Windows-focused: default new panes/tabs to `cmd.exe` rather
+/// than whatever the ambient `ComSpec` environment variable happens to hold
+/// (which is sometimes PowerShell, depending on how the shell was launched).
+/// Explicitly configuring `default_prog` makes this deterministic instead of
+/// relying on `CommandBuilder::new_default_prog()`'s `ComSpec` fallback.
+#[cfg(windows)]
+fn windows_default_prog() -> Option<Vec<String>> {
+    Some(vec!["cmd.exe".to_string()])
+}
+
+#[cfg(not(windows))]
+fn windows_default_prog() -> Option<Vec<String>> {
+    None
 }
 
 fn default_bypass_mouse_reporting_modifiers() -> Modifiers {
@@ -2348,7 +2364,7 @@ mod rhai_config_load_test {
 
     /// End to end proof that the real, public config-loading path (`Config::load`,
     /// via `Config::try_load`) parses a `.rhai` config file: previously this
-    /// exercised `wezterm.lua`/`.wezterm.lua` text through `make_lua_context`; this
+    /// exercised `onlyterm.lua`/`.onlyterm.lua` text through `make_lua_context`; this
     /// is the rhai-side equivalent, confirming the switch described in
     /// `docs/plans/2026-07-23-lua-rhai-migration.md`'s L4.5 phase actually takes
     /// effect for the production loader, not just the standalone `rhai_engine`
@@ -2363,7 +2379,7 @@ mod rhai_config_load_test {
         let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("wezterm.rhai");
+        let config_path = dir.path().join("onlyterm.rhai");
         std::fs::write(
             &config_path,
             r#"
@@ -2401,7 +2417,7 @@ mod rhai_config_load_test {
         let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("wezterm.rhai");
+        let config_path = dir.path().join("onlyterm.rhai");
         std::fs::write(&config_path, "#{ font_size: 10.0 }").unwrap();
 
         *CONFIG_OVERRIDES.lock().unwrap() = vec![("font_size".to_string(), "22.5".to_string())];
@@ -2417,7 +2433,7 @@ mod rhai_config_load_test {
         CONFIG_OVERRIDES.lock().unwrap().clear();
     }
 
-    /// If a legacy `wezterm.lua`/`.wezterm.lua` file exists but there is no
+    /// If a legacy `onlyterm.lua`/`.onlyterm.lua` file exists but there is no
     /// `.rhai` sibling, `try_load` must not silently ignore it (which would
     /// look to the user like "wezterm forgot my config"); it must fail with
     /// an actionable message telling them Lua configs are no longer
@@ -2425,12 +2441,12 @@ mod rhai_config_load_test {
     #[test]
     fn legacy_lua_only_config_produces_actionable_error() {
         let dir = tempfile::tempdir().unwrap();
-        let lua_path = dir.path().join("wezterm.lua");
+        let lua_path = dir.path().join("onlyterm.lua");
         let mut f = std::fs::File::create(&lua_path).unwrap();
         writeln!(f, "return {{}}").unwrap();
         drop(f);
 
-        let rhai_path = dir.path().join("wezterm.rhai");
+        let rhai_path = dir.path().join("onlyterm.rhai");
         let path_item = PathPossibility::optional(rhai_path);
         let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
             Err(err) => err,
@@ -2443,7 +2459,7 @@ mod rhai_config_load_test {
             message
         );
         assert!(
-            message.contains("wezterm.rhai"),
+            message.contains("onlyterm.rhai"),
             "error should mention the expected new filename: {}",
             message
         );
@@ -2457,21 +2473,21 @@ mod rhai_config_load_test {
     #[test]
     fn legacy_lua_sibling_detection() {
         let dir = tempfile::tempdir().unwrap();
-        let rhai_path = dir.path().join("wezterm.rhai");
+        let rhai_path = dir.path().join("onlyterm.rhai");
         assert_eq!(Config::legacy_lua_sibling(&rhai_path), None);
 
-        std::fs::write(dir.path().join("wezterm.lua"), "return {}").unwrap();
+        std::fs::write(dir.path().join("onlyterm.lua"), "return {}").unwrap();
         assert_eq!(
             Config::legacy_lua_sibling(&rhai_path),
-            Some(dir.path().join("wezterm.lua"))
+            Some(dir.path().join("onlyterm.lua"))
         );
 
-        let dot_rhai_path = dir.path().join(".wezterm.rhai");
+        let dot_rhai_path = dir.path().join(".onlyterm.rhai");
         assert_eq!(Config::legacy_lua_sibling(&dot_rhai_path), None);
-        std::fs::write(dir.path().join(".wezterm.lua"), "return {}").unwrap();
+        std::fs::write(dir.path().join(".onlyterm.lua"), "return {}").unwrap();
         assert_eq!(
             Config::legacy_lua_sibling(&dot_rhai_path),
-            Some(dir.path().join(".wezterm.lua"))
+            Some(dir.path().join(".onlyterm.lua"))
         );
     }
 }
