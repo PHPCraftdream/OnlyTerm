@@ -5,8 +5,7 @@ use crate::colorease::ColorEase;
 use crate::frontend::{front_end, try_front_end};
 use crate::inputmap::InputMap;
 use crate::overlay::{
-    confirm_close_pane, confirm_close_tab, confirm_close_window, confirm_quit_program, launcher,
-    start_overlay, start_overlay_pane, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
+    launcher, start_overlay, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
     QuickSelectOverlay,
 };
 use crate::resize_increment_calculator::ResizeIncrementCalculator;
@@ -36,11 +35,11 @@ use config::keyassignment::{
 use config::window::WindowLevel;
 use config::{
     configuration, AudibleBell, ConfigHandle, Dimension, DimensionContext, FrontEndSelection,
-    GeometryOrigin, GuiPosition, TermConfig, WindowCloseConfirmation,
+    GeometryOrigin, GuiPosition, TermConfig,
 };
 use lfucache::*;
 use mux::pane::{
-    CachePolicy, CloseReason, Pane, PaneId, Pattern as MuxPattern, PerformAssignmentResult,
+    CachePolicy, Pane, PaneId, Pattern as MuxPattern, PerformAssignmentResult,
 };
 use mux::renderable::RenderableDimensions;
 use mux::tab::{
@@ -545,54 +544,13 @@ impl TermWindow {
         }
     }
 
+    // OnlyTerm: never prompt on window close - close-confirmation overlays
+    // are removed entirely, not just defaulted off via config.
     fn close_requested(&mut self, window: &Window) {
         let mux = Mux::get();
-        match self.config.window_close_confirmation {
-            WindowCloseConfirmation::NeverPrompt => {
-                // Immediately kill the tabs and allow the window to close
-                mux.kill_window(self.mux_window_id);
-                window.close();
-                front_end().forget_known_window(window);
-            }
-            WindowCloseConfirmation::AlwaysPrompt => {
-                let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-                    Some(tab) => tab,
-                    None => {
-                        mux.kill_window(self.mux_window_id);
-                        window.close();
-                        front_end().forget_known_window(window);
-                        return;
-                    }
-                };
-
-                let mux_window_id = self.mux_window_id;
-
-                let can_close = mux
-                    .get_window(mux_window_id)
-                    .map_or(false, |w| w.can_close_without_prompting());
-                if can_close {
-                    mux.kill_window(self.mux_window_id);
-                    window.close();
-                    front_end().forget_known_window(window);
-                    return;
-                }
-                let window = self.window.clone().unwrap();
-                let (overlay, future) = match start_overlay(self, &tab, move |tab_id, term| {
-                    confirm_close_window(term, mux_window_id, window, tab_id)
-                }) {
-                    Ok(res) => res,
-                    Err(err) => {
-                        log::error!("Failed to show close-window confirmation overlay: {err:#}");
-                        return;
-                    }
-                };
-                self.assign_overlay(tab.tab_id(), overlay);
-                promise::spawn::spawn(future).detach();
-
-                // Don't close right now; let the close happen from
-                // the confirmation overlay
-            }
-        }
+        mux.kill_window(self.mux_window_id);
+        window.close();
+        front_end().forget_known_window(window);
     }
 
     fn focus_changed(&mut self, focused: bool, window: &Window) {
@@ -960,6 +918,9 @@ impl TermWindow {
             }
             myself.load_os_parameters();
             window.show();
+            if config.start_maximized {
+                window.maximize();
+            }
             myself.subscribe_to_pane_updates();
             myself.emit_window_event("window-config-reloaded", None);
             myself.emit_status_event();
@@ -2158,15 +2119,34 @@ impl TermWindow {
             Some(title) => title,
             None => {
                 if let (Some(pos), Some(tab)) = (active_pane, active_tab) {
+                    // Mirrors compute_tab_title's fallback (crate::tabbar):
+                    // prefer the cwd basename over the pane's own title (the
+                    // running program's name) when configured to do so, so
+                    // the window title tracks `cd` the same way the tab
+                    // title does.
+                    let pane_title = if self.config.use_cwd_basename_as_tab_title {
+                        match &pos.current_working_dir {
+                            Some(cwd) if !cwd.is_empty() => {
+                                crate::tabbar::basename_of_path(cwd)
+                            }
+                            _ => pos.title.clone(),
+                        }
+                    } else {
+                        pos.title.clone()
+                    };
                     if num_tabs == 1 {
-                        format!("{}{}", if pos.is_zoomed { "[Z] " } else { "" }, pos.title)
+                        format!(
+                            "{}{}",
+                            if pos.is_zoomed { "[Z] " } else { "" },
+                            pane_title
+                        )
                     } else {
                         format!(
                             "{}[{}/{}] {}",
                             if pos.is_zoomed { "[Z] " } else { "" },
                             tab.tab_index + 1,
                             num_tabs,
-                            pos.title
+                            pane_title
                         )
                     }
                 } else {
@@ -2927,30 +2907,12 @@ impl TermWindow {
                 let con = Connection::get().expect("call on gui thread");
                 con.hide_application();
             }
+            // OnlyTerm: never prompt on quit - close-confirmation overlays
+            // are removed entirely, not just defaulted off via config.
             QuitApplication => {
-                let mux = Mux::get();
-                let config = &self.config;
                 log::info!("QuitApplication over here (window)");
-
-                match config.window_close_confirmation {
-                    WindowCloseConfirmation::NeverPrompt => {
-                        let con = Connection::get().expect("call on gui thread");
-                        con.terminate_message_loop();
-                    }
-                    WindowCloseConfirmation::AlwaysPrompt => {
-                        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-                            Some(tab) => tab,
-                            None => anyhow::bail!("no active tab!?"),
-                        };
-
-                        let window = self.window.clone().unwrap();
-                        let (overlay, future) = start_overlay(self, &tab, move |tab_id, term| {
-                            confirm_quit_program(term, window, tab_id)
-                        })?;
-                        self.assign_overlay(tab.tab_id(), overlay);
-                        promise::spawn::spawn(future).detach();
-                    }
-                }
+                let con = Connection::get().expect("call on gui thread");
+                con.terminate_message_loop();
             }
             SelectTextAtMouseCursor(mode) => self.select_text_at_mouse_cursor(*mode, pane),
             ExtendSelectionToMouseCursor(mode) => {
@@ -3366,7 +3328,11 @@ impl TermWindow {
             }
         }
     }
-    fn close_current_pane(&mut self, confirm: bool) {
+    // OnlyTerm: never prompt on pane/tab close, regardless of the
+    // `confirm` argument any caller passes (default keybindings, mouse
+    // clicks on a tab's close button, etc.) - close-confirmation overlays
+    // for panes/tabs are removed entirely, not just defaulted off.
+    fn close_current_pane(&mut self, _confirm: bool) {
         let mux_window_id = self.mux_window_id;
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(mux_window_id) {
@@ -3378,26 +3344,10 @@ impl TermWindow {
             None => return,
         };
 
-        let pane_id = pane.pane_id();
-        if confirm && !pane.can_close_without_prompting(CloseReason::Pane) {
-            let window = self.window.clone().unwrap();
-            let (overlay, future) = match start_overlay_pane(self, &pane, move |pane_id, term| {
-                confirm_close_pane(pane_id, term, mux_window_id, window)
-            }) {
-                Ok(res) => res,
-                Err(err) => {
-                    log::error!("Failed to show close-pane confirmation overlay: {err:#}");
-                    return;
-                }
-            };
-            self.assign_overlay_for_pane(pane_id, overlay);
-            promise::spawn::spawn(future).detach();
-        } else {
-            mux.remove_pane(pane_id);
-        }
+        mux.remove_pane(pane.pane_id());
     }
 
-    fn close_specific_tab(&mut self, tab_idx: usize, confirm: bool) {
+    fn close_specific_tab(&mut self, tab_idx: usize, _confirm: bool) {
         let mux = Mux::get();
         let mux_window_id = self.mux_window_id;
         let mux_window = match mux.get_window(mux_window_id) {
@@ -3411,53 +3361,16 @@ impl TermWindow {
         };
         drop(mux_window);
 
-        let tab_id = tab.tab_id();
-        if confirm && !tab.can_close_without_prompting(CloseReason::Tab) {
-            if self.activate_tab(tab_idx as isize).is_err() {
-                return;
-            }
-
-            let window = self.window.clone().unwrap();
-            let (overlay, future) = match start_overlay(self, &tab, move |tab_id, term| {
-                confirm_close_tab(tab_id, term, mux_window_id, window)
-            }) {
-                Ok(res) => res,
-                Err(err) => {
-                    log::error!("Failed to show close-tab confirmation overlay: {err:#}");
-                    return;
-                }
-            };
-            self.assign_overlay(tab_id, overlay);
-            promise::spawn::spawn(future).detach();
-        } else {
-            mux.remove_tab(tab_id);
-        }
+        mux.remove_tab(tab.tab_id());
     }
 
-    fn close_current_tab(&mut self, confirm: bool) {
+    fn close_current_tab(&mut self, _confirm: bool) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
             Some(tab) => tab,
             None => return,
         };
-        let tab_id = tab.tab_id();
-        let mux_window_id = self.mux_window_id;
-        if confirm && !tab.can_close_without_prompting(CloseReason::Tab) {
-            let window = self.window.clone().unwrap();
-            let (overlay, future) = match start_overlay(self, &tab, move |tab_id, term| {
-                confirm_close_tab(tab_id, term, mux_window_id, window)
-            }) {
-                Ok(res) => res,
-                Err(err) => {
-                    log::error!("Failed to show close-tab confirmation overlay: {err:#}");
-                    return;
-                }
-            };
-            self.assign_overlay(tab_id, overlay);
-            promise::spawn::spawn(future).detach();
-        } else {
-            mux.remove_tab(tab_id);
-        }
+        mux.remove_tab(tab.tab_id());
     }
 
     pub fn pane_state(&self, pane_id: PaneId) -> RefMut<'_, PaneState> {
