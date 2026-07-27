@@ -743,6 +743,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             brief: "Paste from clipboard".into(),
             doc: "Pastes text from the clipboard".into(),
             keys: vec![
+                (Modifiers::CTRL, "v".into()),
                 (Modifiers::SUPER, "v".into()),
                 (Modifiers::NONE, "Paste".into()),
             ],

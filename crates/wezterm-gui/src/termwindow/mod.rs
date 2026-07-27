@@ -2942,8 +2942,10 @@ impl TermWindow {
                 // Otherwise, if there's a text selection, copy it to the
                 // clipboard and clear the selection - matching the same
                 // copy-then-clear pattern as CTRL+C's
-                // CopySelectionOrInterrupt and left-click's
-                // CompleteSelectionOrOpenLinkAtMouseCursor.
+                // CopySelectionOrInterrupt. Unlike left-click's
+                // CompleteSelectionOrOpenLinkAtMouseCursor, this is an
+                // explicit action to end the selection, so clearing here
+                // is correct.
                 if self.current_highlight.is_some() {
                     self.do_copy_link_at_mouse_cursor(*destination);
                 } else {
@@ -2961,10 +2963,16 @@ impl TermWindow {
                 self.emit_window_event(name, None);
             }
             CompleteSelectionOrOpenLinkAtMouseCursor(dest) => {
+                // Releasing the mouse button after a drag-select must leave
+                // the selection visible: it should only go away when the
+                // user clicks elsewhere (handled by `begin()` resetting the
+                // range on the next mouse-down), right-clicks it (copies and
+                // clears, see CopyLinkAtMouseCursor above), or presses
+                // Ctrl+C (CopySelectionOrInterrupt). So, unlike those two,
+                // this handler must not clear the selection itself.
                 let text = self.selection_text(pane);
                 if !text.is_empty() {
                     self.copy_to_clipboard(*dest, text);
-                    self.clear_selection(pane);
                     let window = self.window.as_ref().unwrap();
                     window.invalidate();
                 } else {
