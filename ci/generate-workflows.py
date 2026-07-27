@@ -563,7 +563,7 @@ rustup default {toolchain}
         if self.uses_yum() or self.uses_zypper():
             patterns += ["wezterm-*.rpm"]
         elif "win" in self.name:
-            patterns += ["WezTerm-*.zip", "WezTerm-*.exe"]
+            patterns += ["OnlyTerm-*.zip", "OnlyTerm-*.exe"]
         elif "mac" in self.name:
             patterns += ["WezTerm-*.zip"]
         elif ("ubuntu" in self.name) or ("debian" in self.name):

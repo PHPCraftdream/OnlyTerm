@@ -87,5 +87,5 @@ jobs:
         with:
           name: "windows"
           path: |
-            WezTerm-*.zip
-            WezTerm-*.exe
+            OnlyTerm-*.zip
+            OnlyTerm-*.exe

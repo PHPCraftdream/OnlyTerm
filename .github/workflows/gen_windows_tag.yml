@@ -76,8 +76,8 @@ jobs:
         with:
           name: "windows"
           path: |
-            WezTerm-*.zip
-            WezTerm-*.exe
+            OnlyTerm-*.zip
+            OnlyTerm-*.exe
 
   upload:
     runs-on: ubuntu-latest
@@ -97,7 +97,7 @@ jobs:
           name: "windows"
       - name: "Checksum"
         shell: bash
-        run: "for f in WezTerm-*.zip WezTerm-*.exe ; do sha256sum $f > $f.sha256 ; done"
+        run: "for f in OnlyTerm-*.zip OnlyTerm-*.exe ; do sha256sum $f > $f.sha256 ; done"
       - name: "Create pre-release"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -107,7 +107,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: "bash ci/retry.sh gh release upload --clobber $(ci/tag-name.sh) WezTerm-*.zip WezTerm-*.exe *.sha256"
+        run: "bash ci/retry.sh gh release upload --clobber $(ci/tag-name.sh) OnlyTerm-*.zip OnlyTerm-*.exe *.sha256"
       - name: "Checkout winget-pkgs"
         uses: actions/checkout@v5
         with:
