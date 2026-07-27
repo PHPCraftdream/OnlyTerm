@@ -3,11 +3,13 @@ tags:
   - appearance
   - scroll_bar
 ---
-# `min_scroll_bar_height = "0.5cell"`
+# `min_scroll_bar_height = "2cell"`
 
 {{since('20220624-141144-bd1b7c5d')}}
 
-Controls the minimum size of the scroll bar "thumb".
+Controls the minimum size of the scroll bar "thumb". OnlyTerm raises the
+default from upstream's `"0.5cell"` to `"2cell"` so the thumb doesn't shrink
+to an unusably thin sliver on long scrollback buffers.
 
 The value can be a number to specify the number of pixels, or a string with a unit suffix:
 
