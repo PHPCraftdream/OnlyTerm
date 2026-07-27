@@ -22,8 +22,8 @@ on:
       - "assets/wezterm.desktop"
       - "ci/deploy.sh"
       - "ci/tag-name.sh"
+      - "crates/termwiz/data/wezterm.terminfo"
       - "get-deps"
-      - "termwiz/data/wezterm.terminfo"
 
 jobs:
   build:
