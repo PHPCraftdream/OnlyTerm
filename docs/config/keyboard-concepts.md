@@ -100,6 +100,24 @@ If you are using VNC and a keyboard layout with dead keys, then you may wish to
 enable
 [treat_left_ctrlalt_as_altgr](reference/config/treat_left_ctrlalt_as_altgr.md).
 
+Unlike macOS, on Windows wezterm cannot reliably distinguish a plain press of
+the left `Alt` key from a plain press of the right `Alt` key: both are
+reported as the generic `Alt` modifier unless the current keyboard layout has
+an AltGr key, in which case the right `Alt` (or Ctrl+Alt, see above) is
+recognized specifically as `AltGr`. As a result, setting only
+`send_composed_key_when_left_alt_is_pressed = false` has no effect on
+Windows for a layout without AltGr: whether composition is bypassed for a
+plain `Alt` press is controlled by
+`send_composed_key_when_right_alt_is_pressed` as well, and composition is
+only bypassed when *both* options are set to `false`. If you want left `Alt`
+to always send the raw key (eg: so that it can be used to send `ESC`-prefixed
+Meta sequences) on Windows, set both:
+
+```lua
+config.send_composed_key_when_left_alt_is_pressed = false
+config.send_composed_key_when_right_alt_is_pressed = false
+```
+
 ### macOS Left and Right Option Key
 
 {{since('20200620-160318-e00b076c')}}
