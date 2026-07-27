@@ -50,7 +50,7 @@ use config::Config;
 static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn write_rhai_config(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
-    let config_path = dir.join("wezterm.rhai");
+    let config_path = dir.join("onlyterm.rhai");
     std::fs::write(&config_path, script).unwrap();
     config_path
 }

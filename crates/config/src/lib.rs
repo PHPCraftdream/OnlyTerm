@@ -408,9 +408,9 @@ pub fn create_user_owned_dirs(p: &Path) -> anyhow::Result<()> {
 }
 
 fn xdg_config_home() -> PathBuf {
-    match std::env::var_os("XDG_CONFIG_HOME").map(|s| PathBuf::from(s).join("wezterm")) {
+    match std::env::var_os("XDG_CONFIG_HOME").map(|s| PathBuf::from(s).join("onlyterm")) {
         Some(p) => p,
-        None => HOME_DIR.join(".config").join("wezterm"),
+        None => HOME_DIR.join(".onlyterm"),
     }
 }
 
@@ -420,7 +420,7 @@ fn config_dirs() -> Vec<PathBuf> {
 
     #[cfg(unix)]
     if let Some(d) = std::env::var_os("XDG_CONFIG_DIRS") {
-        dirs.extend(std::env::split_paths(&d).map(|s| PathBuf::from(s).join("wezterm")));
+        dirs.extend(std::env::split_paths(&d).map(|s| PathBuf::from(s).join("onlyterm")));
     }
 
     dirs
@@ -930,10 +930,10 @@ mod reload_notify_test {
     /// UP-46 session notes): whether every OS-level window HWND actually
     /// receives its own `WM_SETTINGCHANGE`/`AppearanceChanged` notification in
     /// the same tick, and whether each window's own
-    /// `wezterm.on('window-config-reloaded', ...)` handler (which
-    /// independently calls `window:get_appearance()` and
-    /// `window:set_config_overrides()`, per
-    /// `docs/config/lua/window/get_appearance.md`) observes a consistent
+    /// `on("window-config-reloaded", ...)` handler (which
+    /// independently calls `window.get_appearance()` and
+    /// `window.set_config_overrides()`, per
+    /// `docs/config/reference/window/get_appearance.md`) observes a consistent
     /// appearance value across windows. That requires multiple live native
     /// windows and a real OS theme toggle, which is outside what a unit test
     /// in this crate can exercise.
