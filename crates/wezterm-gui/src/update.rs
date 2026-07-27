@@ -136,7 +136,14 @@ fn schedule_set_banner_from_release_info(latest: &Release) {
     if latest.tag_name.as_str() <= current {
         return;
     }
-    promise::spawn::spawn_into_main_thread({
+    // This fires at most once per `check_for_updates_interval_seconds`
+    // (hours by default) and only sets an informational banner string;
+    // it is not something the user is waiting on, unlike pty output
+    // becoming visible or input being processed. Route it through the
+    // low priority queue (task #149) so that it never jumps ahead of
+    // pending high-priority GUI work (e.g. a backlog of pane output
+    // notifications) competing for the same main-thread spawn queue.
+    promise::spawn::spawn_into_main_thread_with_low_priority({
         let latest = latest.clone();
         async move {
             set_banner_from_release_info(&latest);
