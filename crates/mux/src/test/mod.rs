@@ -20,6 +20,7 @@ use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSi
 
 mod domain_detach;
 mod sync_update;
+mod terminal_lock_contention;
 
 // The mux is a process-global singleton (`Mux::set_mux`/`Mux::get`), so any
 // test in this crate that installs one must run serially with every other
