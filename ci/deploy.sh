@@ -125,6 +125,8 @@ case $OSTYPE in
       $TARGET_DIR/release/onlyterm-gui.exe \
       $TARGET_DIR/release/strip-ansi-escapes.exe \
       $TARGET_DIR/release/onlyterm.pdb \
+      $TARGET_DIR/release/onlyterm-mux-server.pdb \
+      $TARGET_DIR/release/onlyterm-gui.pdb \
       assets/windows/conhost/conpty.dll \
       assets/windows/conhost/OpenConsole.exe \
       assets/windows/angle/libEGL.dll \
