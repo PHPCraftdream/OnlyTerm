@@ -4,5 +4,29 @@
 # Counts are STATIC across runs so run wall-time is a comparable speed signal.
 # Hand-edit an N to pin/nudge it; delete a line to force recalibration.
 
+cell::cell/blank = 124087447
+cell::cell/new = 25864135
+cell::cell/new_grapheme = 22770076
+cell::cell/new_grapheme_with_width = 36131710
+cell::cell_attributes/blank = 190903534
 placeholder::placeholder/add = 320845459
 placeholder::placeholder/noop = 328829435
+rangeset::contig/100 = 397739
+rangeset::contig/10000 = 4872
+rangeset::contig/1000000 = 51
+rangeset::sparse/100 = 256604
+rangeset::sparse/10000 = 2607
+rangeset::sparse/1000000 = 9
+wcwidth::classify_ascii/lookup_table = 185189736
+wcwidth::classify_ascii/wcwidth = 164688820
+wcwidth::classify_double_width/lookup_table = 144081874
+wcwidth::classify_double_width/wcwidth = 13183217
+wcwidth::classify_unassigned/lookup_table = 178928343
+wcwidth::classify_unassigned/wcwidth = 9392147
+wcwidth::classify_widened_in9/lookup_table = 138090008
+wcwidth::classify_widened_in9/wcwidth = 5116625
+wcwidth::column_width_ascii/grapheme_column_width = 58387174
+wcwidth::column_width_unassigned/grapheme_column_width = 6368059
+wcwidth::column_width_variation_selector/grapheme_column_width = 14829638
+wcwidth::column_width_variation_selector_unicode14/grapheme_column_width = 15123195
+wcwidth::column_width_widened_in9/grapheme_column_width = 12623781

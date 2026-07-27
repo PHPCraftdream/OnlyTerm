@@ -9,7 +9,7 @@ publish = false
 num.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
+bench-scale-tool.workspace = true
 
 [[bench]]
 name = "rangeset"

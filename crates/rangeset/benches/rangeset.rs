@@ -1,5 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use bench_scale_tool::Harness;
 use rangeset::RangeSet;
+use std::hint::black_box;
 
 fn build_contig_rangeset(size: usize) -> RangeSet<usize> {
     let mut set = RangeSet::new();
@@ -17,27 +18,28 @@ fn build_sparse_rangeset(size: usize) -> RangeSet<usize> {
     set
 }
 
-pub fn criterion_benchmark(c: &mut Criterion) {
-    c.bench_function("Contig 100", |b| {
-        b.iter(|| black_box(build_contig_rangeset(100)))
+fn main() {
+    let mut h = Harness::new("rangeset", env!("CARGO_MANIFEST_DIR"));
+
+    h.bench("contig/100", || {
+        black_box(build_contig_rangeset(100));
     });
-    c.bench_function("Contig 10000", |b| {
-        b.iter(|| black_box(build_contig_rangeset(10000)))
+    h.bench("contig/10000", || {
+        black_box(build_contig_rangeset(10000));
     });
-    c.bench_function("Contig 1000000", |b| {
-        b.iter(|| black_box(build_contig_rangeset(1000000)))
+    h.bench("contig/1000000", || {
+        black_box(build_contig_rangeset(1000000));
     });
 
-    c.bench_function("Sparse 100", |b| {
-        b.iter(|| black_box(build_sparse_rangeset(100)))
+    h.bench("sparse/100", || {
+        black_box(build_sparse_rangeset(100));
     });
-    c.bench_function("Sparse 10000", |b| {
-        b.iter(|| black_box(build_sparse_rangeset(10000)))
+    h.bench("sparse/10000", || {
+        black_box(build_sparse_rangeset(10000));
     });
-    c.bench_function("Sparse 1000000", |b| {
-        b.iter(|| black_box(build_sparse_rangeset(1000000)))
+    h.bench("sparse/1000000", || {
+        black_box(build_sparse_rangeset(1000000));
     });
+
+    h.run();
 }
-
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
