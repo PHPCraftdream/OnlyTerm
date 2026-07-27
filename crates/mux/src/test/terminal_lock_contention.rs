@@ -34,6 +34,7 @@
 //! once the critical section has finished; the `_timed` accessors avoid
 //! that by measuring only up to the moment `.lock()` returns.
 use crate::localpane::LocalPane;
+use crate::pane::Pane;
 use parking_lot::Mutex;
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use std::io::{Read, Result as IoResult, Write};
@@ -459,4 +460,116 @@ fn perform_actions_hold_time_uncontended_baseline() {
         "terminal.lock() HOLD time -- perform_actions (uncontended, single-threaded): n={n:>6} p50={p50:>10?} p95={p95:>10?} max={max:>10?}"
     );
     assert!(n > 0);
+}
+
+/// Regression test for task #147: chunking `perform_actions` (splitting
+/// a large batch of already-parsed actions into pieces, taking
+/// `terminal.lock()` separately per piece via `LocalPane::perform_actions`'s
+/// `perform_actions_chunked`) must both (a) actually bound per-acquisition
+/// hold time to something far below the ~40-60ms baseline measured by
+/// `perform_actions_hold_time_uncontended_baseline` for an unchunked
+/// 128KiB batch, and (b) produce byte-for-byte identical terminal state
+/// (every visible + scrollback row, compared via text content) to
+/// applying the same batch unchunked in one call.
+#[test]
+fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
+    let _mux_guard = super::MUX_TEST_GUARD.lock();
+
+    let mut rng_state: u64 = 0x9E3779B97F4A7C15;
+    let mut parser = termwiz::escape::parser::Parser::new();
+    let bytes = generate_output_batch(&mut rng_state, 128 * 1024);
+    let mut actions = Vec::new();
+    parser.parse(&bytes, |action| actions.push(action));
+    assert!(
+        actions.len() > 1000,
+        "sanity: expected a large batch of actions from a 128KiB payload, got {}",
+        actions.len()
+    );
+
+    // Baseline: apply the whole batch in a single lock acquisition, as
+    // `perform_actions` did before task #147 (this is exactly what
+    // `perform_actions_hold_time_uncontended_baseline` measures, but we
+    // need our own instance here so we can compare final grid/scrollback
+    // state against the chunked run below).
+    let whole_pane = make_pane();
+    let (_waited, whole_hold) = whole_pane.perform_actions_timed(actions.clone());
+    eprintln!("perform_actions_chunking: unchunked hold time = {whole_hold:?}");
+    assert!(
+        whole_hold > Duration::from_millis(5),
+        "expected the unchunked baseline to reproduce task #146's multi-ms hold time \
+         (got {:?}); if this fails, the workload generator or terminal size \
+         changed enough that this test's premise (\"unchunked is slow\") no longer holds",
+        whole_hold,
+    );
+
+    // Chunked: same batch, but through the production chunk size
+    // (config::mux_output_parser_chunk_size's default, 256 actions).
+    const CHUNK_SIZE: usize = 256;
+    let chunked_pane = make_pane();
+    let samples = chunked_pane.perform_actions_chunked_timed(actions.clone(), CHUNK_SIZE);
+    assert!(
+        samples.len() > 1,
+        "expected batch of {} actions with chunk_size={CHUNK_SIZE} to produce more than \
+         one chunk",
+        actions.len()
+    );
+
+    let max_hold = samples
+        .iter()
+        .map(|(_wait, hold)| *hold)
+        .max()
+        .expect("at least one chunk");
+    let total_hold: Duration = samples.iter().map(|(_wait, hold)| *hold).sum();
+    eprintln!(
+        "perform_actions_chunking: n_chunks={} max_hold_per_chunk={max_hold:?} \
+         total_hold={total_hold:?} (unchunked={whole_hold:?})",
+        samples.len()
+    );
+
+    // The core claim of task #147: chunking bounds the *per-acquisition*
+    // hold time to a small fraction of the unchunked baseline. 10ms is a
+    // generous ceiling (the task's own target range was 5-10ms/chunk);
+    // what actually matters is that it is far below the tens-of-ms
+    // baseline, so also assert that relationship directly rather than
+    // relying on the absolute threshold alone.
+    assert!(
+        max_hold < Duration::from_millis(10),
+        "expected chunked application (chunk_size={}) to hold the lock for \
+         well under 10ms per chunk, but max was {:?}",
+        CHUNK_SIZE,
+        max_hold,
+    );
+    assert!(
+        max_hold * 3 < whole_hold,
+        "expected max per-chunk hold time ({:?}) to be at least 3x smaller than \
+         the unchunked hold time ({:?}); chunking should provide a large, not \
+         marginal, reduction",
+        max_hold,
+        whole_hold,
+    );
+
+    // Correctness: chunked and unchunked application of the same batch
+    // must produce identical terminal state. Compare every row (visible
+    // + scrollback) as text.
+    fn dump_all_rows(pane: &Arc<LocalPane>) -> Vec<String> {
+        let dims = pane.get_dimensions();
+        let (_first_row, lines) = pane.get_lines(
+            dims.scrollback_top..dims.physical_top + dims.viewport_rows as wezterm_term::StableRowIndex,
+        );
+        lines.iter().map(|line| line.as_str().to_string()).collect()
+    }
+
+    let whole_rows = dump_all_rows(&whole_pane);
+    let chunked_rows = dump_all_rows(&chunked_pane);
+    assert_eq!(
+        whole_rows.len(),
+        chunked_rows.len(),
+        "chunked and unchunked application produced different numbers of rows"
+    );
+    for (row, (whole_row, chunked_row)) in whole_rows.iter().zip(chunked_rows.iter()).enumerate() {
+        assert_eq!(
+            whole_row, chunked_row,
+            "row {row} differs between chunked and unchunked application of the same batch"
+        );
+    }
 }

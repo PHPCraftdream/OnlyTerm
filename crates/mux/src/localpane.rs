@@ -408,11 +408,7 @@ impl Pane for LocalPane {
     }
 
     fn perform_actions(&self, actions: Vec<termwiz::escape::Action>) {
-        lock_terminal_timed(
-            &self.terminal,
-            "localpane.terminal_lock.wait.perform_actions",
-            |term| term.perform_actions(actions),
-        )
+        self.perform_actions_chunked(actions, configuration().mux_output_parser_chunk_size)
     }
 
     fn mouse_event(&self, event: MouseEvent) -> Result<(), Error> {
@@ -1074,6 +1070,47 @@ impl LocalPane {
         }
     }
 
+    /// Applies a batch of already-parsed actions to `self.terminal` in
+    /// chunks of at most `chunk_size` actions, releasing and
+    /// re-acquiring `terminal.lock()` between chunks.
+    ///
+    /// Task #147: a full `mux_output_parser_buffer_size` (128KiB
+    /// default) batch of actions can be tens of thousands of `Action`s,
+    /// and measurements (see `crates/term/src/test/perf_probe.rs`) show
+    /// that applying all of them under one lock acquisition holds
+    /// `terminal.lock()` for 40-60ms, which starves both keyboard/mouse
+    /// input (`key_down`/`mouse_event`) and rendering (`with_lines_mut`)
+    /// -- both block on the same mutex. Splitting the batch between
+    /// whole `Action`s (never inside one) and taking the lock separately
+    /// per chunk lets those callers interleave between chunks while
+    /// leaving the final terminal state identical to applying the whole
+    /// batch under a single lock acquisition, since each `Action` is
+    /// self-contained and `Terminal::perform_actions` makes no
+    /// assumption that spans a call boundary (each call only bumps the
+    /// sequence number and re-triggers the "unseen output" check, both
+    /// of which are correct to do once per chunk).
+    fn perform_actions_chunked(&self, actions: Vec<Action>, chunk_size: usize) {
+        if actions.len() <= chunk_size.max(1) {
+            // Common case (small batches, e.g. interactive typing): no
+            // benefit to chunking, so avoid the `Vec` chunking overhead
+            // and just take the lock once, as before.
+            lock_terminal_timed(
+                &self.terminal,
+                "localpane.terminal_lock.wait.perform_actions",
+                |term| term.perform_actions(actions),
+            );
+            return;
+        }
+
+        for chunk in actions.chunks(chunk_size.max(1)) {
+            lock_terminal_timed(
+                &self.terminal,
+                "localpane.terminal_lock.wait.perform_actions",
+                |term| term.perform_actions(chunk.to_vec()),
+            );
+        }
+    }
+
     #[cfg(unix)]
     fn get_leader(&self, policy: CachePolicy) -> CachedLeaderInfo {
         let mut leader = self.leader.lock();
@@ -1227,6 +1264,30 @@ impl LocalPane {
         let hold_start = Instant::now();
         term.perform_actions(actions);
         (waited, hold_start.elapsed())
+    }
+
+    /// Like `perform_actions_timed`, but goes through the same chunked
+    /// path as production's `perform_actions` (see
+    /// `perform_actions_chunked`), returning one (wait, hold) sample per
+    /// chunk so `test::terminal_lock_contention` can confirm that
+    /// per-chunk hold time actually stays bounded regardless of total
+    /// batch size.
+    #[cfg(test)]
+    pub(crate) fn perform_actions_chunked_timed(
+        &self,
+        actions: Vec<termwiz::escape::Action>,
+        chunk_size: usize,
+    ) -> Vec<(Duration, Duration)> {
+        let mut samples = Vec::new();
+        for chunk in actions.chunks(chunk_size.max(1)) {
+            let wait_start = Instant::now();
+            let mut term = self.terminal.lock();
+            let waited = wait_start.elapsed();
+            let hold_start = Instant::now();
+            term.perform_actions(chunk.to_vec());
+            samples.push((waited, hold_start.elapsed()));
+        }
+        samples
     }
 
     #[cfg(test)]
