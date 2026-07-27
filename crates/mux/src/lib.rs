@@ -109,13 +109,32 @@ pub struct Mux {
     default_domain: RwLock<Option<Arc<dyn Domain>>>,
     domains: RwLock<HashMap<DomainId, Arc<dyn Domain>>>,
     domains_by_name: RwLock<HashMap<String, Arc<dyn Domain>>>,
-    subscribers: RwLock<HashMap<usize, Box<dyn Fn(MuxNotification) -> bool + Send + Sync>>>,
+    subscribers: RwLock<HashMap<usize, Arc<dyn Fn(MuxNotification) -> bool + Send + Sync>>>,
     banner: RwLock<Option<String>>,
     clients: RwLock<HashMap<ClientId, ClientInfo>>,
     identity: RwLock<Option<Arc<ClientId>>>,
     num_panes_by_workspace: RwLock<HashMap<String, usize>>,
     main_thread_id: std::thread::ThreadId,
     agent: Option<AgentProxy>,
+    /// Coalescing state for `MuxNotification::PaneOutput`: the set of
+    /// pane ids for which a `PaneOutput` notification has already been
+    /// scheduled onto the main thread but not yet delivered to
+    /// subscribers. Without this, `parse_buffered_data`'s per-pane flush
+    /// loop (coalesce delay `mux_output_parser_coalesce_delay_ms`,
+    /// default 3ms) enqueues one `notify_from_any_thread` main-thread
+    /// task *per flush*, each of which fans out through
+    /// `subscribe_to_pane_updates` into a further `spawn_into_main_thread`
+    /// and then `window.notify()` -> `Connection::with_window_inner`,
+    /// i.e. 3 message-pump iterations of work for what is ultimately a
+    /// single `InvalidateRect`. When the GUI thread is momentarily busy
+    /// (rendering, or draining other spawned work) and multiple flushes
+    /// land before the first notification is processed, this lets us
+    /// collapse them down to one pending notification per pane: further
+    /// flushes just see the id is already pending and skip scheduling.
+    /// The GUI still ends up observing the latest output, because
+    /// `mux_pane_output_event` always reads current pane state rather
+    /// than replaying the notification payload.
+    pane_output_notify_pending: Mutex<HashSet<PaneId>>,
 }
 
 const BUFSIZE: usize = 1024 * 1024;
@@ -564,6 +583,7 @@ impl Mux {
             num_panes_by_workspace: RwLock::new(HashMap::new()),
             main_thread_id: std::thread::current().id(),
             agent,
+            pane_output_notify_pending: Mutex::new(HashSet::new()),
         }
     }
 
@@ -815,15 +835,113 @@ impl Mux {
         let sub_id = LAST_SUBSCRIBER_ID.fetch_add(1, Ordering::Relaxed);
         self.subscribers
             .write()
-            .insert(sub_id, Box::new(subscriber));
+            .insert(sub_id, Arc::new(subscriber));
+    }
+
+    /// If `notification` is a `PaneOutput` for a pane that currently has
+    /// one already pending delivery, clear that pending marker (so this
+    /// call is the one that will observe/deliver the latest state) and
+    /// return `true`. Called right before a queued `PaneOutput`
+    /// notification is actually delivered to subscribers, so that any
+    /// flush racing with delivery still finds the marker gone and
+    /// schedules a fresh notification rather than silently being dropped.
+    fn clear_pane_output_pending(&self, notification: &MuxNotification) {
+        if let MuxNotification::PaneOutput(pane_id) = notification {
+            self.pane_output_notify_pending.lock().remove(pane_id);
+        }
     }
 
     pub fn notify(&self, notification: MuxNotification) {
-        let mut subscribers = self.subscribers.write();
-        subscribers.retain(|_, notify| notify(notification.clone()));
+        self.clear_pane_output_pending(&notification);
+
+        // Snapshot the subscriber ids+callbacks under a short-lived read
+        // lock, then release it before invoking any callbacks. Subscriber
+        // callbacks are arbitrary code (eg. GUI code that ends up calling
+        // back into `Mux::get_window`, or even `Mux::subscribe` /
+        // `Mux::notify` again); if we held `subscribers.write()` for the
+        // duration of those calls -- as a naive `retain`-based
+        // implementation would -- any callback that (transitively) touches
+        // `self.subscribers` would deadlock against this non-reentrant
+        // `RwLock`, and every other subscriber would be blocked from
+        // observing the notification until the slowest callback returns.
+        //
+        // Note: cloning the `Arc<Fn>` payload (rather than the raw
+        // `Box<Fn>`) is what makes a cheap snapshot possible without
+        // moving the callbacks out of the map, so a second pass can later
+        // reconcile the live set using the same ids.
+        let snapshot: Vec<(usize, Arc<dyn Fn(MuxNotification) -> bool + Send + Sync>)> = {
+            let subscribers = self.subscribers.read();
+            subscribers
+                .iter()
+                .map(|(id, notify)| (*id, Arc::clone(notify)))
+                .collect()
+        };
+
+        // Invoke the callbacks with no mux lock held at all, recording
+        // which subscriber ids asked to be removed (by returning `false`).
+        let mut dead = Vec::new();
+        for (id, notify) in &snapshot {
+            if !notify(notification.clone()) {
+                dead.push(*id);
+            }
+        }
+
+        // Reconcile: drop only the ids that asked to unsubscribe *and*
+        // are still present (a concurrent `subscribe` could have reused
+        // an id only via `LAST_SUBSCRIBER_ID`, which never repeats, so
+        // this is simply "remove if still there").
+        if !dead.is_empty() {
+            let mut subscribers = self.subscribers.write();
+            for id in dead {
+                subscribers.remove(&id);
+            }
+        }
     }
 
+    /// Schedules `notification` for delivery on the main thread (or
+    /// delivers it synchronously if already there).
+    ///
+    /// `PaneOutput` gets special-cased to coalesce: `parse_buffered_data`
+    /// calls this once per parser flush (coalesce delay
+    /// `mux_output_parser_coalesce_delay_ms`, default 3ms), which under
+    /// sustained pty output can mean hundreds of calls per second per
+    /// pane. Each call that reaches the `spawn_into_main_thread` branch
+    /// below costs a hop through the main-thread spawn queue, then a
+    /// further hop in `subscribe_to_pane_updates`'s callback, then a
+    /// third hop via `window.notify()` / `Connection::with_window_inner`
+    /// -- three message-pump iterations for what ultimately amounts to a
+    /// single `InvalidateRect`. If a `PaneOutput` for a given pane is
+    /// already scheduled and hasn't been delivered yet, we skip
+    /// scheduling another one; `mux_pane_output_event` always inspects
+    /// current pane state (not a snapshot carried by the notification),
+    /// so the single delivery that does go through still reflects
+    /// whatever is the latest state by the time it runs -- coalescing
+    /// only elides redundant wakeups, it never drops data.
     pub fn notify_from_any_thread(notification: MuxNotification) {
+        if let MuxNotification::PaneOutput(pane_id) = &notification {
+            let mux = match Mux::try_get() {
+                Some(mux) => mux,
+                None => {
+                    // No mux around to coalesce against (eg. shutting
+                    // down); fall through to the normal dispatch path,
+                    // which will itself no-op if there's no mux.
+                    return Self::dispatch_notification(notification);
+                }
+            };
+            let already_pending = {
+                let mut pending = mux.pane_output_notify_pending.lock();
+                !pending.insert(*pane_id)
+            };
+            if already_pending {
+                // Already pending delivery; the in-flight notification
+                // will observe the latest state, so drop this one.
+                return;
+            }
+        }
+        Self::dispatch_notification(notification);
+    }
+
+    fn dispatch_notification(notification: MuxNotification) {
         if let Some(mux) = Mux::try_get() {
             if mux.is_main_thread() {
                 mux.notify(notification);
@@ -1246,6 +1364,25 @@ impl Mux {
     pub(crate) fn insert_window_for_test(&self, window_id: WindowId, window: Window) {
         self.windows.write().insert(window_id, window);
         self.recompute_pane_count();
+    }
+
+    /// Test-only probe: returns `true` if `self.subscribers` is currently
+    /// free to acquire for write. Used to prove that `Mux::notify` does
+    /// not hold the subscribers lock while invoking callbacks -- a
+    /// subscriber callback that (transitively) calls back into
+    /// `Mux::subscribe`/`Mux::notify` would deadlock a non-reentrant lock
+    /// otherwise.
+    #[cfg(test)]
+    pub(crate) fn probe_subscribers_try_write(&self) -> bool {
+        self.subscribers.try_write().is_some()
+    }
+
+    /// Test-only accessor for the `PaneOutput` coalescing marker set, so
+    /// regression tests can assert on pending/cleared state directly
+    /// rather than only inferring it from callback invocation counts.
+    #[cfg(test)]
+    pub(crate) fn pane_output_notify_is_pending(&self, pane_id: PaneId) -> bool {
+        self.pane_output_notify_pending.lock().contains(&pane_id)
     }
 
     pub fn set_banner(&self, banner: Option<String>) {
