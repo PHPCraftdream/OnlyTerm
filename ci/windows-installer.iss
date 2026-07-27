@@ -5,11 +5,14 @@
 #define MyAppName "OnlyTerm"
 ;#define MyAppVersion "1.5"
 #define MyAppPublisher "Wez Furlong"
-#define MyAppURL "http://wezterm.org"
+#define MyAppURL "https://github.com/PHPCraftdream/OnlyTerm"
 #define MyAppExeName "onlyterm-gui.exe"
 
 [Setup]
-AppId={{BCF6F0DA-5B9A-408D-8562-F680AE6E1EAF}
+; Own GUID, distinct from upstream wezterm's installer AppId - this fork
+; must never be treated as an "upgrade" of (or collide with) a separately
+; installed, real upstream WezTerm on the same machine.
+AppId={{D248ECF2-5DCC-4F31-8A6B-4A166A6FEFD0}
 ArchitecturesAllowed=x64 arm64
 ArchitecturesInstallIn64BitMode=x64 arm64
 AppName={#MyAppName}
@@ -35,6 +38,13 @@ WizardStyle=modern
 ; Build 1809 is required for pty support
 MinVersion=10.0.17763
 ChangesEnvironment=true
+; Avoid false-positive "close this application" prompts: Inno's Restart
+; Manager integration matches running processes by embedded original
+; filename, not full path, so any unrelated OpenConsole.exe/conpty.dll
+; user (eg. Windows Terminal, VS Code, another wezterm-family app) gets
+; flagged even though it isn't holding a lock on the files we're
+; installing.
+CloseApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
