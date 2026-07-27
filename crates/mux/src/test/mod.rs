@@ -19,6 +19,7 @@ use wezterm_term::color::ColorPalette;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 
 mod domain_detach;
+mod notify_coalescing;
 mod sync_update;
 mod terminal_lock_contention;
 
