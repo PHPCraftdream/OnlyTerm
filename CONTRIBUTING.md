@@ -103,6 +103,12 @@ for writing fixed-iteration micro-benchmarks. It calibrates an iteration count o
 per benchmark, then re-runs that static count on every subsequent `cargo bench`, so
 wall-time becomes a directly comparable speed signal across runs.
 
+All benchmarks in this workspace use this harness — `rangeset` (`crates/rangeset/benches/rangeset.rs`),
+`termwiz`'s `cell` bench (`crates/termwiz/benches/cell.rs`), `wezterm-char-props`'s
+`wcwidth` bench (`crates/wezterm-char-props/benches/wcwidth.rs`), and the
+`mux`/`placeholder` demo (`crates/mux/benches/placeholder.rs`). Criterion is no
+longer used anywhere in the project; it has been fully replaced by `bench-scale-tool`.
+
 See `crates/mux/benches/placeholder.rs` and `crates/mux/Cargo.toml` for a minimal,
 working example of the plumbing (`[dev-dependencies]` entry + `[[bench]] harness = false`
 target + a `main()` built around `bench_scale_tool::Harness`).
@@ -116,7 +122,9 @@ To add your own benchmark to a crate:
 3. Calibrate it once: `cargo bench -p <crate> --bench <bin> -- --calibrate <secs>`.
    This writes/updates `bench-iters.txt` at the workspace root — **commit this file**,
    it stores the calibrated iteration counts so results stay comparable over time.
-4. Afterwards, plain `cargo bench -p <crate> --bench <bin>` reuses the stored counts.
+4. Afterwards, plain `cargo bench -p <crate> --bench <bin>` reuses the stored counts,
+   e.g. `cargo bench -p rangeset --bench rangeset` re-runs the `contig/*` and
+   `sparse/*` cases at their pinned iteration counts.
 
 `bench-run.log`, `bench-history.log`, and `bench-run-baselines.txt` are machine-local
 run artifacts the tool generates and are gitignored — do not commit them.

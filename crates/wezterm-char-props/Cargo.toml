@@ -21,7 +21,9 @@ std = ["serde/std", "ucd-trie/std", "phf/std"]
 use_serde = ["serde"]
 
 [dev-dependencies]
+bench-scale-tool.workspace = true
 k9.workspace = true
+termwiz.workspace = true
 
 [[bench]]
 name = "wcwidth"
