@@ -71,6 +71,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "aligned-vmem"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f149bbfaa5000cd123408c88a9770a0260b0951561c6e34fd968e7dcd55cf779"
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4711,6 +4717,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "sefer-alloc"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe17c281742b7d6e0a37289e784195c7a34996a46d8f06193e1baf3ae115eda4"
+dependencies = [
+ "aligned-vmem",
+ "sefer-region",
+]
+
+[[package]]
+name = "sefer-region"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b017b215913f35e944b248a361221826ccbee6c0655b3dd9fb96bf28ef43f47c"
+dependencies = [
+ "slotmap",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6367,6 +6392,7 @@ dependencies = [
  "mux",
  "portable-pty",
  "promise",
+ "sefer-alloc",
  "serde",
  "serde_json",
  "shell-words",
@@ -6633,6 +6659,7 @@ dependencies = [
  "rayon",
  "regex",
  "rhai",
+ "sefer-alloc",
  "serde",
  "serde_json",
  "shared_library",
@@ -6702,6 +6729,7 @@ dependencies = [
  "mux",
  "portable-pty",
  "promise",
+ "sefer-alloc",
  "umask",
  "wezterm-blob-leases",
  "wezterm-gui-subcommands",
