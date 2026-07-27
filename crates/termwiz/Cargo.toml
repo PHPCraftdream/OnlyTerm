@@ -57,7 +57,7 @@ tmux_cc = ["pest", "pest_derive", "wezterm-escape-parser/tmux_cc"]
 docs = ["widgets", "use_serde", "image", "tmux_cc"]
 
 [dev-dependencies]
-criterion.workspace = true
+bench-scale-tool.workspace = true
 env_logger.workspace = true
 k9.workspace = true
 

@@ -69,7 +69,6 @@ config = { path = "crates/config" }
 core-foundation = "=0.10.0"
 core-graphics = "=0.24.0"
 core-text = "=21.0.0"
-criterion = "0.5"
 crossbeam = "0.8"
 csscolorparser = "0.6"
 deltae = "0.3"

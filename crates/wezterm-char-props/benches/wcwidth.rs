@@ -1,101 +1,88 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use bench_scale_tool::Harness;
+use std::hint::black_box;
+use std::rc::Rc;
 use termwiz::cell::{grapheme_column_width, UnicodeVersion};
 
 include!("../src/widechar_width.rs");
 
-pub fn criterion_benchmark(c: &mut Criterion) {
-    let table = WcLookupTable::new();
+fn main() {
+    let table = Rc::new(WcLookupTable::new());
 
+    let mut h = Harness::new("wcwidth", env!("CARGO_MANIFEST_DIR"));
+
+    h.bench("classify_ascii/wcwidth", || {
+        black_box(WcWidth::from_char(black_box('a')));
+    });
     {
-        let mut group = c.benchmark_group("Classify ASCII");
-        group.bench_function("WcWidth", |b| b.iter(|| WcWidth::from_char(black_box('a'))));
-        group.bench_function("WcLookupTable", |b| {
-            b.iter(|| table.classify(black_box('a')))
+        let table = Rc::clone(&table);
+        h.bench("classify_ascii/lookup_table", move || {
+            black_box(table.classify(black_box('a')));
         });
-        group.finish();
     }
 
+    h.bench("classify_double_width/wcwidth", || {
+        black_box(WcWidth::from_char(black_box('\u{1100}')));
+    });
     {
-        let mut group = c.benchmark_group("Classify DoubleWidth");
-
-        group.bench_function("WcWidth", |b| {
-            b.iter(|| WcWidth::from_char(black_box('\u{1100}')))
+        let table = Rc::clone(&table);
+        h.bench("classify_double_width/lookup_table", move || {
+            black_box(table.classify(black_box('\u{1100}')));
         });
-        group.bench_function("WcLookupTable", |b| {
-            b.iter(|| table.classify(black_box('\u{1100}')))
-        });
-
-        group.finish();
     }
 
+    h.bench("classify_widened_in9/wcwidth", || {
+        black_box(WcWidth::from_char(black_box('\u{231a}')));
+    });
     {
-        let mut group = c.benchmark_group("Classify WidenedIn9");
-
-        group.bench_function("WcWidth", |b| {
-            b.iter(|| WcWidth::from_char(black_box('\u{231a}')))
+        let table = Rc::clone(&table);
+        h.bench("classify_widened_in9/lookup_table", move || {
+            black_box(table.classify(black_box('\u{231a}')));
         });
-        group.bench_function("WcLookupTable", |b| {
-            b.iter(|| table.classify(black_box('\u{231a}')))
-        });
-        group.finish();
     }
 
+    h.bench("classify_unassigned/wcwidth", || {
+        black_box(WcWidth::from_char(black_box('\u{fbc9}')));
+    });
     {
-        let mut group = c.benchmark_group("Classify Unassigned");
-
-        group.bench_function("WcWidth", |b| {
-            b.iter(|| WcWidth::from_char(black_box('\u{fbc9}')))
+        let table = Rc::clone(&table);
+        h.bench("classify_unassigned/lookup_table", move || {
+            black_box(table.classify(black_box('\u{fbc9}')));
         });
-        group.bench_function("WcLookupTable", |b| {
-            b.iter(|| table.classify(black_box('\u{fbc9}')))
-        });
-        group.finish();
     }
 
-    {
-        let mut group = c.benchmark_group("column_width ASCII");
-        group.bench_function("grapheme_column_width", |b| {
-            b.iter(|| grapheme_column_width(black_box("a"), None))
-        });
-        group.finish();
-    }
+    h.bench("column_width_ascii/grapheme_column_width", || {
+        black_box(grapheme_column_width(black_box("a"), None));
+    });
 
-    {
-        let mut group = c.benchmark_group("column_width variation selector");
-        group.bench_function("grapheme_column_width", |b| {
-            b.iter(|| grapheme_column_width(black_box("\u{00a9}\u{FE0F}"), None))
-        });
-        group.finish();
-    }
+    h.bench(
+        "column_width_variation_selector/grapheme_column_width",
+        || {
+            black_box(grapheme_column_width(black_box("\u{00a9}\u{FE0F}"), None));
+        },
+    );
 
-    {
-        let mut group = c.benchmark_group("column_width variation selector unicode 14");
-        let version = UnicodeVersion {
-            version: 14,
-            ambiguous_are_wide: false,
-        };
-        group.bench_function("grapheme_column_width", |b| {
-            b.iter(|| grapheme_column_width(black_box("\u{00a9}\u{FE0F}"), Some(version)))
-        });
-        group.finish();
-    }
+    h.bench(
+        "column_width_variation_selector_unicode14/grapheme_column_width",
+        || {
+            let version = UnicodeVersion {
+                version: 14,
+                ambiguous_are_wide: false,
+                cell_widths: None,
+            };
+            black_box(grapheme_column_width(
+                black_box("\u{00a9}\u{FE0F}"),
+                Some(&version),
+            ));
+        },
+    );
 
-    {
-        let mut group = c.benchmark_group("column_width WidenedIn9");
-        group.bench_function("grapheme_column_width", |b| {
-            b.iter(|| grapheme_column_width(black_box("\u{231a}"), None))
-        });
-        group.finish();
-    }
+    h.bench("column_width_widened_in9/grapheme_column_width", || {
+        black_box(grapheme_column_width(black_box("\u{231a}"), None));
+    });
 
-    {
-        let mut group = c.benchmark_group("column_width Unassigned");
-        group.bench_function("grapheme_column_width", |b| {
-            b.iter(|| grapheme_column_width(black_box("\u{fbc9}"), None))
-        });
-        group.finish();
-    }
+    h.bench("column_width_unassigned/grapheme_column_width", || {
+        black_box(grapheme_column_width(black_box("\u{fbc9}"), None));
+    });
+
+    h.run();
 }
-
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
