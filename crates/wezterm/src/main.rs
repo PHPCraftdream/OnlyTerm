@@ -1,3 +1,6 @@
+#[global_allocator]
+static GLOBAL_ALLOC: sefer_alloc::SeferAlloc = sefer_alloc::SeferAlloc::new();
+
 use anyhow::{anyhow, Context};
 use clap::builder::ValueParser;
 use clap::{Parser, ValueEnum, ValueHint};
