@@ -58,4 +58,9 @@ winapi = { workspace=true, features = [
 ]}
 
 [dev-dependencies]
+bench-scale-tool.workspace = true
 k9.workspace = true
+
+[[bench]]
+name = "placeholder"
+harness = false

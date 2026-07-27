@@ -1,0 +1,8 @@
+# Fixed-iteration bench manifest (bench-scale-tool).
+# Format: <bin>::<id> = <iterations>
+# Recalibrate: cargo bench -p <crate> --bench <bin> -- --calibrate <secs>
+# Counts are STATIC across runs so run wall-time is a comparable speed signal.
+# Hand-edit an N to pin/nudge it; delete a line to force recalibration.
+
+placeholder::placeholder/add = 320845459
+placeholder::placeholder/noop = 328829435
