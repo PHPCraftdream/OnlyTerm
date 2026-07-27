@@ -1,7 +1,7 @@
 # OnlyTerm
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](https://github.com/PHPCraftdream/onlyterm)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](https://github.com/PHPCraftdream/OnlyTerm)
 [![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Fork of WezTerm](https://img.shields.io/badge/fork%20of-WezTerm-brightgreen)](https://github.com/wezterm/wezterm)
 
@@ -27,7 +27,7 @@ This is built on the wezterm/wezterm codebase, with a set of real-world bug and 
 There isn't a separate binary distribution for OnlyTerm yet — build it from source:
 
 ```
-git clone https://github.com/PHPCraftdream/onlyterm.git
+git clone https://github.com/PHPCraftdream/OnlyTerm.git
 cd onlyterm
 cargo build --release
 ```
@@ -36,7 +36,7 @@ For platform-specific build dependencies, see upstream's [Install from Source](h
 
 ## Getting help
 
-Since this is a personal/small fork, the [issue tracker for this repository](https://github.com/PHPCraftdream/onlyterm/issues) is the first place to look. For general questions about the terminal itself (not specific to this fork), the upstream community channels are also available:
+Since this is a personal/small fork, the [issue tracker for this repository](https://github.com/PHPCraftdream/OnlyTerm/issues) is the first place to look. For general questions about the terminal itself (not specific to this fork), the upstream community channels are also available:
 
 * [Upstream GitHub issue tracker](https://github.com/wezterm/wezterm/issues)
 * [Upstream GitHub Discussions](https://github.com/wezterm/wezterm/discussions)
