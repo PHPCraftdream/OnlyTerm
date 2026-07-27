@@ -1,5 +1,10 @@
 # OnlyTerm
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](https://github.com/PHPCraftdream/onlyterm)
+[![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Fork of WezTerm](https://img.shields.io/badge/fork%20of-WezTerm-brightgreen)](https://github.com/wezterm/wezterm)
+
 OnlyTerm is a fork of [wezterm/wezterm](https://github.com/wezterm/wezterm) focused on stability and ease of use on Windows. Other platforms supported by upstream (macOS, Linux/X11, Wayland) are a secondary priority here — support for them will grow as additional maintainers join who are willing to put in the time and have access to modern AI tooling/subscriptions to help accelerate the work.
 
 *A GPU-accelerated cross-platform terminal emulator and multiplexer, forked from the project originally written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>.*
@@ -19,11 +24,19 @@ This is built on the wezterm/wezterm codebase, with a set of real-world bug and 
 
 ## Installation
 
-There isn't a separate binary distribution for OnlyTerm yet — build the fork from source (`cargo build --release`) or refer to upstream's general instructions: https://wezterm.org/installation
+There isn't a separate binary distribution for OnlyTerm yet — build it from source:
+
+```
+git clone https://github.com/PHPCraftdream/onlyterm.git
+cd onlyterm
+cargo build --release
+```
+
+For platform-specific build dependencies, see upstream's [Install from Source](https://wezfurlong.org/wezterm/install/source.html) guide.
 
 ## Getting help
 
-Since this is a personal/small fork, the issue tracker for this repository is the first place to look. For general questions about the terminal itself (not specific to this fork), the upstream community channels are also available:
+Since this is a personal/small fork, the [issue tracker for this repository](https://github.com/PHPCraftdream/onlyterm/issues) is the first place to look. For general questions about the terminal itself (not specific to this fork), the upstream community channels are also available:
 
 * [Upstream GitHub issue tracker](https://github.com/wezterm/wezterm/issues)
 * [Upstream GitHub Discussions](https://github.com/wezterm/wezterm/discussions)
