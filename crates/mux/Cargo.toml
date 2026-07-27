@@ -7,12 +7,21 @@ publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+# Proxies to captrack's own `telemetry` feature (opt-in, off by default).
+# With this feature disabled (the default), captrack's `t*!` macros compile
+# down to bare collection constructors with zero overhead. See
+# CONTRIBUTING.md ("Collection-capacity telemetry with captrack") for
+# details and how to dump captured stats.
+telemetry = ["captrack/telemetry"]
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 bintree.workspace = true
 bitflags.workspace = true
+captrack.workspace = true
 chrono.workspace = true
 config.workspace = true
 crossbeam.workspace = true

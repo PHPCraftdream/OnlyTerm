@@ -121,6 +121,34 @@ To add your own benchmark to a crate:
 `bench-run.log`, `bench-history.log`, and `bench-run-baselines.txt` are machine-local
 run artifacts the tool generates and are gitignored — do not commit them.
 
+### Collection-capacity telemetry with `captrack`
+
+The [`captrack`](https://github.com/PHPCraftdream/captrack) crate is wired up as a
+workspace dependency (`captrack` in `[workspace.dependencies]`, currently `0.1.1`) and
+added as a regular (non-dev) dependency of `crates/mux`. It provides `t*!` macros
+(`tvec!`, `tfxmap!`, `tbtreemap!`, and friends) that are drop-in replacements for the
+usual collection constructors (`Vec::with_capacity`, `HashMap::new`, etc.).
+
+This is integration/setup only (task #151) — **no production call site has been
+migrated to a `t*!` macro yet**. A single demo test,
+`crates/mux/src/lib.rs::captrack_integration::tvec_demo_resolves_and_behaves_like_vec`,
+exists purely to prove the dependency resolves and compiles; it does not touch any
+real code path.
+
+- **Default (no `telemetry` feature):** `t*!` macros compile straight down to the bare
+  constructor (e.g. `tvec!(label, n)` becomes exactly `Vec::with_capacity(n)`) — zero
+  runtime overhead, and the `label` argument is discarded at compile time.
+- **With `telemetry` enabled:** the macros return `Tracked*` wrapper types that record
+  real capacity/len into a lock-free global registry (`scc::HashMap`) on construction.
+  Enable it with `cargo build -p mux --features telemetry` (or
+  `cargo build --workspace --features mux/telemetry`).
+- **Dumping stats:** once telemetry is enabled and the instrumented code has run, call
+  `captrack::dump_capacity_stats("path.json")` to write out what was recorded.
+
+`crates/mux/Cargo.toml` proxies the feature with `telemetry = ["captrack/telemetry"]`,
+following the same pattern as other optional-feature crates in this workspace (e.g.
+`wayland` in `crates/window/Cargo.toml`).
+
 ### Please include tests to cover your changes!
 
 This will help ensure that your contributions keep working as things change.
