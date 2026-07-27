@@ -379,6 +379,24 @@ pub struct Config {
     #[dynamic(default = "default_mux_output_parser_buffer_size")]
     pub mux_output_parser_buffer_size: usize,
 
+    /// Applying a full `mux_output_parser_buffer_size`-sized batch of
+    /// parsed actions to a pane's terminal model happens under a single
+    /// mutex acquisition; for the default 128KiB buffer size that batch
+    /// can be tens of thousands of actions, and applying all of them
+    /// before releasing the lock has been measured to hold it for
+    /// 40ms+, starving keyboard/mouse input and rendering (both of
+    /// which block on the same lock) for that whole span.
+    /// `mux_output_parser_chunk_size` bounds how many parsed actions are
+    /// applied per lock acquisition: the pane splits a large batch into
+    /// chunks of at most this many actions, releasing and re-acquiring
+    /// the terminal lock between chunks so that input handling and
+    /// rendering get a chance to run. Chunking only ever splits between
+    /// whole, already-parsed `Action`s -- it never interrupts a single
+    /// escape sequence -- so the final terminal state is identical to
+    /// applying the whole batch at once.
+    #[dynamic(default = "default_mux_output_parser_chunk_size")]
+    pub mux_output_parser_chunk_size: usize,
+
     #[dynamic(default = "default_true")]
     pub mux_enable_ssh_agent: bool,
 
@@ -1761,6 +1779,17 @@ fn default_mux_synchronized_output_timeout_ms() -> u64 {
 
 fn default_mux_output_parser_buffer_size() -> usize {
     128 * 1024
+}
+
+fn default_mux_output_parser_chunk_size() -> usize {
+    // Measured on a representative mixed print/CSI/control workload
+    // (crates/term's perf_probe tests, task #147): CSI dispatch averages
+    // roughly 12us/action in release builds, so 256 actions bounds a
+    // single chunk's lock hold time to a few milliseconds even for a
+    // CSI-heavy stream, while still being large enough that per-chunk
+    // fixed costs (locking, Vec<Action> chunk allocation) stay
+    // negligible relative to the work done per chunk.
+    256
 }
 
 fn default_ratelimit_line_prefetches_per_second() -> u32 {
