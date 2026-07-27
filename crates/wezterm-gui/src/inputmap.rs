@@ -960,6 +960,29 @@ mod tests {
         );
     }
 
+    /// Regression test for a real bug: the layout-independent physical-key
+    /// synthesis in `CommandDef::permute_keys` used to also register a bare
+    /// CTRL (no SHIFT) alias for every SUPER-bound single-letter command,
+    /// so plain CTRL+C ended up unconditionally bound to "copy to
+    /// clipboard" and could never reach the pty - breaking Ctrl+C as an
+    /// interrupt key entirely. CTRL+C must resolve to CopySelectionOrInterrupt
+    /// (copy-if-selected, otherwise pass a literal Ctrl+C through), never to
+    /// a plain CopyTo/CopyTextTo.
+    #[test]
+    fn ctrl_c_is_copy_or_interrupt_not_unconditional_copy() {
+        let input_map = InputMap::default_input_map();
+
+        let entry = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::C), Modifiers::CTRL, None)
+            .expect("CTRL+C (physical) must have a default binding");
+        assert_eq!(entry.action, KeyAssignment::CopySelectionOrInterrupt);
+
+        let entry = input_map
+            .lookup_key(&KeyCode::Char('c'), Modifiers::CTRL, None)
+            .expect("CTRL+c must have a default binding");
+        assert_eq!(entry.action, KeyAssignment::CopySelectionOrInterrupt);
+    }
+
     /// Regression tests for reliably sending a newline to the pty via
     /// CTRL+Enter, SHIFT+Enter and CTRL+J (see task "Добавить три
     /// сочетания клавиш для перевода строки: Ctrl+Enter, Shift+Enter,
