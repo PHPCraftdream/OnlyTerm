@@ -644,44 +644,50 @@ impl Default for WindowFrameConfig {
     }
 }
 
+// OnlyTerm defaults the window frame (titlebar/tab-bar chrome in
+// integrated-title-bar mode) to a light, GitHub-style palette matching
+// the light `colors` default in config.rs's `default_colors()`, instead
+// of upstream's dark titlebar - this is what was showing as a solid
+// black/near-black stripe above/around the tab bar on an otherwise
+// light theme.
 fn default_inactive_titlebar_bg() -> RgbaColor {
-    RgbColor::new_8bpc(0x33, 0x33, 0x33).into()
+    RgbColor::new_8bpc(0xee, 0xf1, 0xf4).into()
 }
 
 fn default_active_titlebar_bg() -> RgbaColor {
-    RgbColor::new_8bpc(0x33, 0x33, 0x33).into()
+    RgbColor::new_8bpc(0xe8, 0xed, 0xf2).into()
 }
 
 fn default_inactive_titlebar_fg() -> RgbaColor {
-    RgbColor::new_8bpc(0xcc, 0xcc, 0xcc).into()
+    RgbColor::new_8bpc(0x57, 0x60, 0x6a).into()
 }
 
 fn default_active_titlebar_fg() -> RgbaColor {
-    RgbColor::new_8bpc(0xff, 0xff, 0xff).into()
+    RgbColor::new_8bpc(0x1f, 0x23, 0x28).into()
 }
 
 fn default_inactive_titlebar_border_bottom() -> RgbaColor {
-    RgbColor::new_8bpc(0x2b, 0x20, 0x42).into()
+    RgbColor::new_8bpc(0xd0, 0xd7, 0xde).into()
 }
 
 fn default_active_titlebar_border_bottom() -> RgbaColor {
-    RgbColor::new_8bpc(0x2b, 0x20, 0x42).into()
+    RgbColor::new_8bpc(0xd0, 0xd7, 0xde).into()
 }
 
 fn default_button_hover_fg() -> RgbaColor {
-    RgbColor::new_8bpc(0xff, 0xff, 0xff).into()
+    RgbColor::new_8bpc(0x1f, 0x23, 0x28).into()
 }
 
 fn default_button_fg() -> RgbaColor {
-    RgbColor::new_8bpc(0xcc, 0xcc, 0xcc).into()
+    RgbColor::new_8bpc(0x1f, 0x23, 0x28).into()
 }
 
 fn default_button_hover_bg() -> RgbaColor {
-    RgbColor::new_8bpc(0x1f, 0x1f, 0x1f).into()
+    RgbColor::new_8bpc(0xd0, 0xd7, 0xde).into()
 }
 
 fn default_button_bg() -> RgbaColor {
-    RgbColor::new_8bpc(0x33, 0x33, 0x33).into()
+    RgbColor::new_8bpc(0xe8, 0xed, 0xf2).into()
 }
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, FromDynamic, ToDynamic)]
