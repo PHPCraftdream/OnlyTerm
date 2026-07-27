@@ -17,11 +17,13 @@ vendor-nerd-font-symbols-font = ["wezterm-font/vendor-nerd-font-symbols"]
 vendor-jetbrains-font = ["wezterm-font/vendor-jetbrains"]
 vendor-roboto-font = ["wezterm-font/vendor-roboto"]
 vendor-noto-emoji-font = ["wezterm-font/vendor-noto-emoji"]
+vendor-noto-hebrew-font = ["wezterm-font/vendor-noto-hebrew"]
 vendored-fonts = [
   "vendor-nerd-font-symbols-font",
   "vendor-jetbrains-font",
   "vendor-roboto-font",
-  "vendor-noto-emoji-font"
+  "vendor-noto-emoji-font",
+  "vendor-noto-hebrew-font"
 ]
 dhat-heap = ["dhat"]    # if you are doing heap profiling
 dhat-ad-hoc = ["dhat"]  # if you are doing ad hoc profiling
