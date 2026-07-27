@@ -993,7 +993,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         SpawnTab(SpawnTabDomain::CurrentPaneDomain) => CommandDef {
             brief: "New Tab".into(),
             doc: "Create a new tab in the same domain as the current pane".into(),
-            keys: vec![(Modifiers::SUPER, "t".into())],
+            keys: vec![(Modifiers::SUPER, "t".into()), (Modifiers::CTRL, "t".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Shell"],
             icon: Some("md_tab_plus"),
@@ -1053,11 +1053,18 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         ActivateTab(n) => {
             let n = *n;
             let ordinal = english_ordinal(n + 1);
-            let keys = if n >= 0 && n <= 7 {
+            let mut keys = if n >= 0 && n <= 7 {
                 vec![(Modifiers::SUPER, (n + 1).to_string())]
             } else {
                 vec![]
             };
+            // Windows/Linux: Alt+1..Alt+9 activate tabs 1-9 (indices 0-8),
+            // and Alt+0 activates the 10th tab (index 9).
+            if n >= 0 && n <= 8 {
+                keys.push((Modifiers::ALT, (n + 1).to_string()));
+            } else if n == 9 {
+                keys.push((Modifiers::ALT, "0".into()));
+            }
             CommandDef {
                 brief: format!("Activate {ordinal} Tab").into(),
                 doc: format!("Activates the {ordinal} tab").into(),
@@ -1126,7 +1133,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             doc: "Closes the current tab, terminating all the \
             processes that are running in its panes."
                 .into(),
-            keys: vec![],
+            keys: vec![(Modifiers::CTRL, "w".into())],
             args: &[ArgType::ActiveTab],
             menubar: &[],
             icon: Some("md_close_box_outline"),
@@ -2109,6 +2116,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
             ..Default::default()
         }),
         CloseCurrentTab { confirm: true },
+        CloseCurrentTab { confirm: false },
         CloseCurrentPane { confirm: true },
         DetachDomain(SpawnTabDomain::CurrentPaneDomain),
         ResetTerminal,
@@ -2180,6 +2188,8 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ActivateTab(5),
         ActivateTab(6),
         ActivateTab(7),
+        ActivateTab(8),
+        ActivateTab(9),
         ActivateTab(-1),
         ActivateTabRelative(-1),
         ActivateTabRelative(1),
