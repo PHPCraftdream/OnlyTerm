@@ -1,0 +1,35 @@
+# `SetWindowLevel`
+
+{{since('20240127-113634-bbcac864')}}
+
+Set window level specified by the argument value. eg: `AlwaysOnTop` keeps the current window on top of other windows.
+
+Accepted values: 
+
+ * `"AlwaysOnBottom"`
+ * `"Normal"` (this is the default)
+ * `"AlwaysOnTop"`
+
+```rhai
+config.keys = [
+  #{
+    key: "[",
+    mods: "CMD",
+    action: act.SetWindowLevel("AlwaysOnBottom"),
+  },
+  #{
+    key: "0",
+    mods: "CMD|SHIFT",
+    action: act.SetWindowLevel("Normal"),
+  },
+  #{
+    key: "]",
+    mods: "CMD",
+    action: act.SetWindowLevel("AlwaysOnTop"),
+  },
+]
+```
+
+!!! note 
+    This functionality is currently only implemented on macOS. 
+    The assigned values for window level will have no effect on other operating systems.
