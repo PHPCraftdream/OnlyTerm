@@ -15,12 +15,19 @@ use std::{mem, ptr};
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::{HRESULT, S_OK};
 use winapi::um::handleapi::*;
+use winapi::um::jobapi2::{
+    AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+};
 use winapi::um::processthreadsapi::*;
 use winapi::um::winbase::{
-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::wincon::COORD;
-use winapi::um::winnt::HANDLE;
+use winapi::um::winnt::{
+    JobObjectExtendedLimitInformation, HANDLE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
 
 pub type HPCON = HANDLE;
 
@@ -169,7 +176,9 @@ impl PseudoCon {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 0,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                EXTENDED_STARTUPINFO_PRESENT
+                    | CREATE_UNICODE_ENVIRONMENT
+                    | CREATE_NEW_PROCESS_GROUP,
                 cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
                 cwd.as_ref()
                     .map(|c| c.as_slice().as_ptr())
@@ -195,8 +204,72 @@ impl PseudoCon {
         let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
         let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
 
+        // Create a Job Object and assign the freshly spawned process to it,
+        // configured so that closing the job's handle force-kills every
+        // process still assigned to it (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).
+        // This ensures that when we kill the direct child on pane-close, any
+        // grandchild processes it spawned (eg. a shell running a CLI tool
+        // that itself spawned other processes) are also cleaned up, rather
+        // than being orphaned. The job handle is stored on `WinChild` and
+        // closed as part of the kill sequence.
+        //
+        // Failure to set up the job object is non-fatal: we still have a
+        // usable direct-child kill path, so we simply log a warning and
+        // proceed without job-based cleanup in that (unexpected) case.
+        let job = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
+        let job = if job.is_null() {
+            log::warn!(
+                "CreateJobObjectW failed: {}; descendant processes of `{:?}` \
+                 will not be automatically cleaned up on kill",
+                IoError::last_os_error(),
+                cmd_os,
+            );
+            None
+        } else {
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+            let set_res = unsafe {
+                SetInformationJobObject(
+                    job,
+                    JobObjectExtendedLimitInformation,
+                    &mut info as *mut _ as *mut _,
+                    mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            };
+            if set_res == 0 {
+                log::warn!(
+                    "SetInformationJobObject failed: {}; descendant processes of \
+                     `{:?}` will not be automatically cleaned up on kill",
+                    IoError::last_os_error(),
+                    cmd_os,
+                );
+                unsafe {
+                    CloseHandle(job);
+                }
+                None
+            } else {
+                let assign_res = unsafe { AssignProcessToJobObject(job, proc.as_raw_handle() as _) };
+                if assign_res == 0 {
+                    log::warn!(
+                        "AssignProcessToJobObject failed: {}; descendant processes of \
+                         `{:?}` will not be automatically cleaned up on kill",
+                        IoError::last_os_error(),
+                        cmd_os,
+                    );
+                    unsafe {
+                        CloseHandle(job);
+                    }
+                    None
+                } else {
+                    Some(unsafe { OwnedHandle::from_raw_handle(job as _) })
+                }
+            }
+        };
+
         Ok(WinChild {
             proc: Mutex::new(proc),
+            job: std::sync::Arc::new(Mutex::new(job)),
         })
     }
 }
