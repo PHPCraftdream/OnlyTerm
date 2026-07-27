@@ -95,6 +95,32 @@ hidden in an background process started in an earlier test.
 Start OnlyTerm with `onlyterm-gui --config-file ./test-conf.lua ……` to test a custom config file.
 
 
+### Benchmarking with `bench-scale-tool`
+
+The [`bench-scale-tool`](https://github.com/PHPCraftdream/bench-scale-tool) crate is
+wired up as a workspace dependency (`bench-scale-tool` in `[workspace.dependencies]`)
+for writing fixed-iteration micro-benchmarks. It calibrates an iteration count once
+per benchmark, then re-runs that static count on every subsequent `cargo bench`, so
+wall-time becomes a directly comparable speed signal across runs.
+
+See `crates/mux/benches/placeholder.rs` and `crates/mux/Cargo.toml` for a minimal,
+working example of the plumbing (`[dev-dependencies]` entry + `[[bench]] harness = false`
+target + a `main()` built around `bench_scale_tool::Harness`).
+
+To add your own benchmark to a crate:
+1. Add `bench-scale-tool.workspace = true` to that crate's `[dev-dependencies]`.
+2. Add a `[[bench]] name = "<bin>" harness = false` entry and a matching file under
+   `benches/<bin>.rs` that builds a `Harness::new("<bin>", env!("CARGO_MANIFEST_DIR"))`,
+   registers workloads with `.bench("group/case", || { black_box(...) })`, and calls
+   `.run()`.
+3. Calibrate it once: `cargo bench -p <crate> --bench <bin> -- --calibrate <secs>`.
+   This writes/updates `bench-iters.txt` at the workspace root — **commit this file**,
+   it stores the calibrated iteration counts so results stay comparable over time.
+4. Afterwards, plain `cargo bench -p <crate> --bench <bin>` reuses the stored counts.
+
+`bench-run.log`, `bench-history.log`, and `bench-run-baselines.txt` are machine-local
+run artifacts the tool generates and are gitignored — do not commit them.
+
 ### Please include tests to cover your changes!
 
 This will help ensure that your contributions keep working as things change.

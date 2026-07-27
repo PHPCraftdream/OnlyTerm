@@ -457,6 +457,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench-scale-tool"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "745fdc48e5823a7ffee44015c4aa3d17ae13c9f8abe5d88682f9c7459ee0adfa"
+
+[[package]]
 name = "benchmarking"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3187,6 +3193,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "bench-scale-tool",
  "bintree",
  "bitflags 1.3.2",
  "chrono",

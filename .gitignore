@@ -66,3 +66,8 @@ dhat-heap.json
 /__pycache__/
 /nix/result
 *.qcow2
+
+# bench-scale-tool generated artifacts (bench-iters.txt IS committed)
+/bench-run.log
+/bench-history.log
+/bench-run-baselines.txt
