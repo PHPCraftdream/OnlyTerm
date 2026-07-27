@@ -1,3 +1,6 @@
+#[global_allocator]
+static GLOBAL_ALLOC: sefer_alloc::SeferAlloc = sefer_alloc::SeferAlloc::new();
+
 use clap::*;
 use config::configuration;
 use mux::activity::Activity;

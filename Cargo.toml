@@ -177,6 +177,7 @@ reqwest = "0.12"
 resize = "0.5"
 rhai = "1.25"
 rstest = "0.21"
+sefer-alloc = { version = "0.2.1", features = ["production"] }
 serde = {version="1.0", default-features=false, features = ["derive"]}
 serde-funcs = { path = "crates/lua-api-crates/serde-funcs" }
 serde_json = "1.0"
