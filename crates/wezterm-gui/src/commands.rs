@@ -179,7 +179,22 @@ impl CommandDef {
                         Modifiers::CTRL | Modifiers::SHIFT,
                         ukey.clone(),
                     );
-                    push_with_phys_fallback(&mut keys, Modifiers::CTRL, ukey.clone());
+                    // `InputMap::lookup_key` always strips SHIFT from the
+                    // *query* before searching (`key.normalize_shift(...)`),
+                    // so a stored entry that still has SHIFT set (like the
+                    // CTRL|SHIFT ones just above) can never actually be
+                    // found - the only way CTRL+SHIFT+<letter> is ever
+                    // reachable is by storing it as bare CTRL + the
+                    // *shifted/uppercase* character, matching what a
+                    // normalized query collapses down to. Register that
+                    // directly (not via push_with_phys_fallback): its
+                    // automatic physical-key fallback would push
+                    // `(CTRL, Physical(<key>))`, which is ambiguous with -
+                    // and collides with - a plain physical CTRL+<letter>
+                    // press with no shift at all (physical keycodes carry
+                    // no case/shift information), which is exactly what
+                    // broke Ctrl+C previously.
+                    keys.push((Modifiers::CTRL, ukey.clone()));
                 }
             } else if mods.contains(Modifiers::SHIFT) && ukey != key {
                 keys.push((mods, ukey.clone()));
@@ -694,6 +709,20 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                 (Modifiers::SUPER, "c".into()),
                 (Modifiers::NONE, "Copy".into()),
             ],
+            args: &[ArgType::ActivePane],
+            menubar: &["Edit"],
+            icon: Some("md_content_copy"),
+        },
+        CopySelectionOrInterrupt => CommandDef {
+            brief: "Copy selection, or send Ctrl+C to interrupt".into(),
+            doc: "If the active pane has a text selection, copies it to \
+                  the clipboard and clears the selection. Otherwise, sends \
+                  a literal Ctrl+C to the pane so it keeps working as an \
+                  interrupt key. Bound by default to Ctrl+C (physical-key, \
+                  layout-independent) so a plain Ctrl+C never gets \
+                  unconditionally swallowed as \"copy\"."
+                .into(),
+            keys: vec![(Modifiers::CTRL, "c".into())],
             args: &[ArgType::ActivePane],
             menubar: &["Edit"],
             icon: Some("md_content_copy"),
@@ -2127,6 +2156,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         #[cfg(not(target_os = "macos"))]
         CopyTo(ClipboardCopyDestination::PrimarySelection),
         CopyTo(ClipboardCopyDestination::Clipboard),
+        CopySelectionOrInterrupt,
         PasteFrom(ClipboardPasteSource::Clipboard),
         ClearScrollback(ScrollbackEraseMode::ScrollbackOnly),
         ClearScrollback(ScrollbackEraseMode::ScrollbackAndViewport),
