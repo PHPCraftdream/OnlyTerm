@@ -38,18 +38,26 @@ case $OSTYPE in
     cp -r assets/shell-completion $zipdir/WezTerm.app/Contents/Resources
     tic -xe wezterm -o $zipdir/WezTerm.app/Contents/Resources/terminfo crates/termwiz/data/wezterm.terminfo
 
-    for bin in wezterm wezterm-mux-server wezterm-gui strip-ansi-escapes ; do
+    # The built binary names (left) no longer match the app bundle's expected
+    # executable names (right, see Contents/Info.plist's CFBundleExecutable
+    # and this repo's other Linux packaging, which still expect the
+    # upstream wezterm* names) since task #140 renamed the produced
+    # executables to onlyterm/onlyterm-gui/onlyterm-mux-server. Map from the
+    # actual build output name to the name the bundle needs.
+    for bin_pair in "onlyterm:wezterm" "onlyterm-mux-server:wezterm-mux-server" "onlyterm-gui:wezterm-gui" "strip-ansi-escapes:strip-ansi-escapes" ; do
+      bin=${bin_pair%%:*}
+      dest_bin=${bin_pair##*:}
       # If the user ran a simple `cargo build --release`, then we want to allow
       # a single-arch package to be built
       if [[ -f $TARGET_DIR/release/$bin ]] ; then
-        cp $TARGET_DIR/release/$bin $zipdir/WezTerm.app/Contents/MacOS/$bin
+        cp $TARGET_DIR/release/$bin $zipdir/WezTerm.app/Contents/MacOS/$dest_bin
       else
         # The CI runs `cargo build --target XXX --release` which means that
         # the binaries will be deployed in `$TARGET_DIR/XXX/release` instead of
         # the plain path above.
         # In that situation, we have two architectures to assemble into a
         # Universal ("fat") binary, so we use the `lipo` tool for that.
-        lipo $TARGET_DIR/*/release/$bin -output $zipdir/WezTerm.app/Contents/MacOS/$bin -create
+        lipo $TARGET_DIR/*/release/$bin -output $zipdir/WezTerm.app/Contents/MacOS/$dest_bin -create
       fi
     done
 
@@ -241,9 +249,9 @@ set -x
 cd ${HERE}
 mkdir -p %{buildroot}/usr/bin %{buildroot}/etc/profile.d %{buildroot}/usr/share/icons/hicolor/128x128/apps %{buildroot}/usr/share/applications %{buildroot}/usr/share/metainfo %{buildroot}/usr/share/nautilus-python/extensions
 install -Dm755 assets/open-wezterm-here -t %{buildroot}/usr/bin
-install -Dsm755 $TARGET_DIR/release/wezterm -t %{buildroot}/usr/bin
-install -Dsm755 $TARGET_DIR/release/wezterm-gui -t %{buildroot}/usr/bin
-install -Dsm755 $TARGET_DIR/release/wezterm-mux-server -t %{buildroot}/usr/bin
+install -Dsm755 $TARGET_DIR/release/onlyterm %{buildroot}/usr/bin/wezterm
+install -Dsm755 $TARGET_DIR/release/onlyterm-gui %{buildroot}/usr/bin/wezterm-gui
+install -Dsm755 $TARGET_DIR/release/onlyterm-mux-server %{buildroot}/usr/bin/wezterm-mux-server
 install -Dsm755 $TARGET_DIR/release/strip-ansi-escapes -t %{buildroot}/usr/bin
 install -Dm644 assets/shell-integration/* -t %{buildroot}/etc/profile.d
 install -Dm644 assets/shell-completion/zsh %{buildroot}/usr/share/zsh/site-functions/_wezterm
@@ -332,9 +340,9 @@ if [ "\$1" = "remove" ]; then
 fi
 EOF
 
-        install -Dsm755 -t pkg/debian/usr/bin $TARGET_DIR/release/wezterm-mux-server
-        install -Dsm755 -t pkg/debian/usr/bin $TARGET_DIR/release/wezterm-gui
-        install -Dsm755 -t pkg/debian/usr/bin $TARGET_DIR/release/wezterm
+        install -Dsm755 $TARGET_DIR/release/onlyterm-mux-server pkg/debian/usr/bin/wezterm-mux-server
+        install -Dsm755 $TARGET_DIR/release/onlyterm-gui pkg/debian/usr/bin/wezterm-gui
+        install -Dsm755 $TARGET_DIR/release/onlyterm pkg/debian/usr/bin/wezterm
         install -Dm755 -t pkg/debian/usr/bin assets/open-wezterm-here
         install -Dsm755 -t pkg/debian/usr/bin $TARGET_DIR/release/strip-ansi-escapes
 
@@ -401,9 +409,9 @@ options="!check"
 url="https://wezterm.org/"
 makedepends="cmd:tic"
 source="
-  $TARGET_DIR/release/wezterm
-  $TARGET_DIR/release/wezterm-gui
-  $TARGET_DIR/release/wezterm-mux-server
+  wezterm::$TARGET_DIR/release/onlyterm
+  wezterm-gui::$TARGET_DIR/release/onlyterm-gui
+  wezterm-mux-server::$TARGET_DIR/release/onlyterm-mux-server
   assets/open-wezterm-here
   assets/wezterm.desktop
   assets/wezterm.appdata.xml
