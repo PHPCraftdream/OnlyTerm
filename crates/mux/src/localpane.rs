@@ -121,6 +121,29 @@ pub enum LocalPaneConnectionState {
     Connected,
 }
 
+/// Records, via the `metrics` crate, how long the calling thread had to
+/// wait to acquire `LocalPane::terminal` before running `body`.
+///
+/// This is deliberately measuring *wait* time (the interval between
+/// deciding to lock and actually getting the lock), not *hold* time (how
+/// long the critical section itself takes): the two are conflated easily,
+/// but only wait time tells us whether a given caller (input handling,
+/// the pty output parser, or the renderer) is being blocked by contention
+/// from the others. `histogram_name` should be one of the
+/// `localpane.terminal_lock.wait.*` metrics so profiling data collected
+/// on a real machine can distinguish which side of the lock is the
+/// bottleneck.
+fn lock_terminal_timed<R>(
+    terminal: &Mutex<Terminal>,
+    histogram_name: &'static str,
+    body: impl FnOnce(&mut Terminal) -> R,
+) -> R {
+    let wait_start = Instant::now();
+    let mut term = terminal.lock();
+    metrics::histogram!(histogram_name).record(wait_start.elapsed());
+    body(&mut term)
+}
+
 pub struct LocalPane {
     pane_id: PaneId,
     terminal: Mutex<Terminal>,
@@ -204,7 +227,11 @@ impl Pane for LocalPane {
     }
 
     fn with_lines_mut(&self, lines: Range<StableRowIndex>, with_lines: &mut dyn WithPaneLines) {
-        terminal_with_lines_mut(&mut self.terminal.lock(), lines, with_lines)
+        lock_terminal_timed(
+            &self.terminal,
+            "localpane.terminal_lock.wait.with_lines",
+            |term| terminal_with_lines_mut(term, lines, with_lines),
+        )
     }
 
     fn get_lines(&self, lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
@@ -381,12 +408,20 @@ impl Pane for LocalPane {
     }
 
     fn perform_actions(&self, actions: Vec<termwiz::escape::Action>) {
-        self.terminal.lock().perform_actions(actions)
+        lock_terminal_timed(
+            &self.terminal,
+            "localpane.terminal_lock.wait.perform_actions",
+            |term| term.perform_actions(actions),
+        )
     }
 
     fn mouse_event(&self, event: MouseEvent) -> Result<(), Error> {
         Mux::get().record_input_for_current_identity();
-        self.terminal.lock().mouse_event(event)
+        lock_terminal_timed(
+            &self.terminal,
+            "localpane.terminal_lock.wait.key_input",
+            |term| term.mouse_event(event),
+        )
     }
 
     fn key_down(&self, key: KeyCode, mods: KeyModifiers) -> Result<(), Error> {
@@ -394,17 +429,29 @@ impl Pane for LocalPane {
         if self.tmux_domain.lock().is_some() {
             log::trace!("key: {:?}", key);
             if key == KeyCode::Char('q') {
-                self.terminal.lock().send_paste("detach\n")?;
+                lock_terminal_timed(
+                    &self.terminal,
+                    "localpane.terminal_lock.wait.key_input",
+                    |term| term.send_paste("detach\n"),
+                )?;
             }
             return Ok(());
         } else {
-            self.terminal.lock().key_down(key, mods)
+            lock_terminal_timed(
+                &self.terminal,
+                "localpane.terminal_lock.wait.key_input",
+                |term| term.key_down(key, mods),
+            )
         }
     }
 
     fn key_up(&self, key: KeyCode, mods: KeyModifiers) -> Result<(), Error> {
         Mux::get().record_input_for_current_identity();
-        self.terminal.lock().key_up(key, mods)
+        lock_terminal_timed(
+            &self.terminal,
+            "localpane.terminal_lock.wait.key_input",
+            |term| term.key_up(key, mods),
+        )
     }
 
     fn resize(&self, size: TerminalSize) -> Result<(), Error> {
@@ -1139,6 +1186,67 @@ impl LocalPane {
         } else {
             None
         }
+    }
+
+    /// Test-only escape hatch that measures `terminal.lock()` wait time
+    /// with the exact same semantics as the `localpane.terminal_lock.wait.*`
+    /// metrics (time to acquire, not time held), without going through
+    /// the `metrics` crate's global recorder. This exists for
+    /// `test::terminal_lock_contention`, which needs real wait-time
+    /// numbers per call site and has no test-side metrics exporter
+    /// wired up in this crate.
+    ///
+    /// Also returns hold time (how long the critical section itself
+    /// took) as the second element, purely so the load test can
+    /// distinguish "this call waited a long time" from "this call is
+    /// the one that made everyone else wait a long time" -- production
+    /// only needs wait time, but the load test's interpretation of its
+    /// results depends on telling these apart.
+    #[cfg(test)]
+    pub(crate) fn with_lines_mut_timed(
+        &self,
+        lines: Range<StableRowIndex>,
+        with_lines: &mut dyn WithPaneLines,
+    ) -> (Duration, Duration) {
+        let wait_start = Instant::now();
+        let mut term = self.terminal.lock();
+        let waited = wait_start.elapsed();
+        let hold_start = Instant::now();
+        terminal_with_lines_mut(&mut term, lines, with_lines);
+        (waited, hold_start.elapsed())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn perform_actions_timed(
+        &self,
+        actions: Vec<termwiz::escape::Action>,
+    ) -> (Duration, Duration) {
+        let wait_start = Instant::now();
+        let mut term = self.terminal.lock();
+        let waited = wait_start.elapsed();
+        let hold_start = Instant::now();
+        term.perform_actions(actions);
+        (waited, hold_start.elapsed())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn key_down_timed(
+        &self,
+        key: KeyCode,
+        mods: KeyModifiers,
+    ) -> (Duration, Result<(), Error>) {
+        let wait_start = Instant::now();
+        let mut term = self.terminal.lock();
+        let waited = wait_start.elapsed();
+        (waited, term.key_down(key, mods))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mouse_event_timed(&self, event: MouseEvent) -> (Duration, Result<(), Error>) {
+        let wait_start = Instant::now();
+        let mut term = self.terminal.lock();
+        let waited = wait_start.elapsed();
+        (waited, term.mouse_event(event))
     }
 }
 

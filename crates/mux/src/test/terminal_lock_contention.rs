@@ -1,0 +1,462 @@
+//! Load test for task #146: which caller actually dominates the wait to
+//! acquire `LocalPane::terminal` (a `parking_lot::Mutex<Terminal>`) --
+//! the pty output parser (`perform_actions`), simulated user input
+//! (`key_down`/`mouse_event`), or the renderer (`with_lines_mut`)?
+//!
+//! This exists to give task #147 ("stop the renderer from holding
+//! `terminal.lock()` for the whole frame") an evidence-based go/no-go
+//! instead of an architectural guess. It drives a real `LocalPane` (a
+//! real `wezterm_term::Terminal` behind the exact same `Mutex` used in
+//! production) with:
+//!   - one thread that continuously calls `perform_actions` with large
+//!     batches of freshly-parsed output (mirrors `parse_buffered_data`'s
+//!     `mux_output_parser_buffer_size`-sized batches feeding
+//!     `send_actions_to_mux`),
+//!   - one thread that hammers `key_down`/`mouse_event` at a high,
+//!     steady rate (mirrors GUI-thread input dispatch),
+//!   - the main thread repeatedly calling `with_lines_mut` over the
+//!     full visible viewport and doing a small amount of per-line work
+//!     to stand in for shaping/rasterization (mirrors
+//!     `render/pane.rs`'s `LineRender`, which runs the real render work
+//!     *inside* the lock in production).
+//!
+//! Rather than reading histogram values back out of the global
+//! `metrics` recorder (this crate has no test-side exporter wired up,
+//! and adding one would be a bigger, separate change), this test uses
+//! `LocalPane::{perform_actions,with_lines_mut,key_down,mouse_event}_timed`
+//! -- `#[cfg(test)]`-only accessors defined next to the production code
+//! in `localpane.rs` -- which return exactly the wait time (interval
+//! from deciding to lock to actually acquiring it) that the
+//! `localpane.terminal_lock.wait.*` metrics record, without going
+//! through the global recorder. Note that calling `pane.perform_actions(..)`
+//! (the trait method) directly and timing the whole call from the test
+//! would conflate wait time with hold time, since the call only returns
+//! once the critical section has finished; the `_timed` accessors avoid
+//! that by measuring only up to the moment `.lock()` returns.
+use crate::localpane::LocalPane;
+use parking_lot::Mutex;
+use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
+use std::io::{Read, Result as IoResult, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
+use std::time::{Duration, Instant};
+use wezterm_term::color::ColorPalette;
+use wezterm_term::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind, Terminal, TerminalConfiguration, TerminalSize};
+
+/// A `Child` double that never exits on its own; `LocalPane` only needs
+/// something that implements the trait so it can track process state,
+/// it is never polled by this test.
+#[derive(Debug)]
+struct NeverExitChild;
+
+impl Child for NeverExitChild {
+    fn try_wait(&mut self) -> IoResult<Option<ExitStatus>> {
+        Ok(None)
+    }
+    fn wait(&mut self) -> IoResult<ExitStatus> {
+        // Parked forever; the test process exits before this matters,
+        // and `LocalPane` doesn't join this thread.
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+    fn process_id(&self) -> Option<u32> {
+        None
+    }
+    #[cfg(windows)]
+    fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NeverExitKiller;
+impl ChildKiller for NeverExitKiller {
+    fn kill(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(self.clone())
+    }
+}
+impl ChildKiller for NeverExitChild {
+    fn kill(&mut self) -> IoResult<()> {
+        Ok(())
+    }
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(NeverExitKiller)
+    }
+}
+
+/// A `MasterPty` double; `LocalPane` needs one to construct, but this
+/// test drives the terminal model directly via `perform_actions`, so
+/// nothing here needs to actually round-trip bytes to a real pty.
+struct FakeMasterPty {
+    size: Mutex<PtySize>,
+}
+
+impl MasterPty for FakeMasterPty {
+    fn resize(&self, size: PtySize) -> anyhow::Result<()> {
+        *self.size.lock() = size;
+        Ok(())
+    }
+    fn get_size(&self) -> anyhow::Result<PtySize> {
+        Ok(*self.size.lock())
+    }
+    fn try_clone_reader(&self) -> anyhow::Result<Box<dyn Read + Send>> {
+        Ok(Box::new(std::io::empty()))
+    }
+    fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send>> {
+        Ok(Box::new(Vec::new()))
+    }
+    #[cfg(unix)]
+    fn process_group_leader(&self) -> Option<libc::pid_t> {
+        None
+    }
+    #[cfg(unix)]
+    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        None
+    }
+    #[cfg(unix)]
+    fn tty_name(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+}
+
+#[derive(Debug)]
+struct LoadTestConfig;
+impl TerminalConfiguration for LoadTestConfig {
+    fn color_palette(&self) -> ColorPalette {
+        ColorPalette::default()
+    }
+}
+
+const ROWS: usize = 50;
+const COLS: usize = 120;
+
+fn make_pane() -> Arc<LocalPane> {
+    let size = TerminalSize {
+        rows: ROWS,
+        cols: COLS,
+        pixel_width: COLS * 8,
+        pixel_height: ROWS * 16,
+        dpi: 0,
+    };
+    let terminal = Terminal::new(
+        size,
+        Arc::new(LoadTestConfig),
+        "WezTerm",
+        "0.0.0",
+        Box::new(Vec::new()),
+    );
+    let pty = Box::new(FakeMasterPty {
+        size: Mutex::new(PtySize {
+            rows: ROWS as u16,
+            cols: COLS as u16,
+            pixel_width: 0,
+            pixel_height: 0,
+        }),
+    });
+    let writer = Box::new(Vec::new());
+    Arc::new(LocalPane::new(
+        1,
+        terminal,
+        Box::new(NeverExitChild),
+        pty,
+        writer,
+        1,
+        "loadtest".to_string(),
+    ))
+}
+
+/// Generates one ~`mux_output_parser_buffer_size`-shaped batch of
+/// realistic terminal output: printable text interspersed with SGR
+/// color changes and cursor movement, similar to what a chatty CLI /
+/// AI coding tool produces (this scenario is explicitly called out in
+/// the prior architecture research backing this task, task #115/UP-42).
+fn generate_output_batch(rng_state: &mut u64, approx_bytes: usize) -> Vec<u8> {
+    fn next(rng_state: &mut u64) -> u64 {
+        // xorshift64 -- fast, deterministic, no external dependency.
+        let mut x = *rng_state;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *rng_state = x;
+        x
+    }
+
+    let words = [
+        "fn", "let", "struct", "impl", "match", "error:", "warning:", "ok", "todo",
+        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur",
+    ];
+
+    let mut out = Vec::with_capacity(approx_bytes + 64);
+    while out.len() < approx_bytes {
+        let choice = next(rng_state) % 100;
+        if choice < 5 {
+            // SGR color change
+            let color = 30 + (next(rng_state) % 8);
+            out.extend_from_slice(format!("\x1b[{}m", color).as_bytes());
+        } else if choice < 8 {
+            // Cursor movement
+            out.extend_from_slice(b"\x1b[2K\r");
+        } else if choice < 10 {
+            out.extend_from_slice(b"\r\n");
+        } else {
+            let w = words[(next(rng_state) as usize) % words.len()];
+            out.extend_from_slice(w.as_bytes());
+            out.push(b' ');
+        }
+    }
+    out
+}
+
+/// A minimal `WithPaneLines` consumer that stands in for the real
+/// per-line render work (`render/pane.rs`'s `LineRender`): touching
+/// each cell is not full shaping/rasterization, but it holds the lock
+/// for a comparable, non-trivial amount of *work per visible line*,
+/// which is the property that matters for this measurement (how long
+/// the lock is *held* by the renderer, and therefore how long input
+/// and the parser have to *wait* for it).
+struct FauxRenderWork {
+    touched_cells: usize,
+}
+impl crate::pane::WithPaneLines for FauxRenderWork {
+    fn with_lines_mut(
+        &mut self,
+        _first_row: wezterm_term::StableRowIndex,
+        lines: &mut [&mut wezterm_term::Line],
+    ) {
+        for line in lines.iter() {
+            // Touch every cluster, similar in spirit to iterating
+            // cells for shaping.
+            for cluster in line.cluster(None) {
+                self.touched_cells += cluster.text.len();
+            }
+        }
+    }
+}
+
+struct WaitSamples {
+    samples: Mutex<Vec<Duration>>,
+}
+impl WaitSamples {
+    fn new() -> Self {
+        Self {
+            samples: Mutex::new(Vec::new()),
+        }
+    }
+    fn record(&self, d: Duration) {
+        self.samples.lock().push(d);
+    }
+    fn stats(&self) -> (usize, Duration, Duration, Duration) {
+        let mut samples = self.samples.lock().clone();
+        samples.sort();
+        let n = samples.len();
+        if n == 0 {
+            return (0, Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        }
+        let p50 = samples[n / 2];
+        let p95 = samples[((n * 95) / 100).min(n - 1)];
+        let max = samples[n - 1];
+        (n, p50, p95, max)
+    }
+}
+
+/// Runs the three concurrent access patterns against one `LocalPane`
+/// for `duration` and returns per-path wait-time samples.
+///
+/// `render_row_span` controls how many rows `with_lines_mut` asks for
+/// per call (the full viewport, matching production's per-frame
+/// behavior of rendering all visible rows under one lock acquisition).
+fn run_contention_load(
+    duration: Duration,
+    render_row_span: std::ops::Range<wezterm_term::StableRowIndex>,
+) -> (WaitSamples, WaitSamples, WaitSamples, WaitSamples, WaitSamples) {
+    let pane = make_pane();
+    let stop = Arc::new(AtomicBool::new(false));
+    let key_input_samples = Arc::new(WaitSamples::new());
+    let perform_actions_samples = Arc::new(WaitSamples::new());
+    let with_lines_samples = Arc::new(WaitSamples::new());
+    // Hold-time (not wait-time) samples for perform_actions/with_lines_mut,
+    // recorded purely to distinguish "this call waited a long time" from
+    // "this call is the one that made everyone else wait", i.e. to
+    // attribute contention to a specific caller rather than just
+    // observing that contention exists.
+    let perform_actions_hold_samples = Arc::new(WaitSamples::new());
+    let with_lines_hold_samples = Arc::new(WaitSamples::new());
+
+    let start_barrier = Arc::new(Barrier::new(3));
+
+    // Parser thread: feeds large batches of output via perform_actions,
+    // exactly like `send_actions_to_mux` does for real pty output.
+    let parser_handle = {
+        let pane = Arc::clone(&pane);
+        let stop = Arc::clone(&stop);
+        let samples = Arc::clone(&perform_actions_samples);
+        let hold_samples = Arc::clone(&perform_actions_hold_samples);
+        let barrier = Arc::clone(&start_barrier);
+        std::thread::spawn(move || {
+            let mut rng_state: u64 = 0x9E3779B97F4A7C15;
+            let mut parser = termwiz::escape::parser::Parser::new();
+            barrier.wait();
+            while !stop.load(Ordering::Relaxed) {
+                // mux_output_parser_buffer_size defaults to 128KiB; use
+                // the same order of magnitude for a batch.
+                let bytes = generate_output_batch(&mut rng_state, 128 * 1024);
+                let mut actions = Vec::new();
+                parser.parse(&bytes, |action| actions.push(action));
+
+                let (waited, held) = pane.perform_actions_timed(actions);
+                samples.record(waited);
+                hold_samples.record(held);
+            }
+        })
+    };
+
+    // Input thread: hammers key_down/mouse_event at a high, steady
+    // rate, mirroring GUI-thread dispatch during fast typing/scrolling.
+    let input_handle = {
+        let pane = Arc::clone(&pane);
+        let stop = Arc::clone(&stop);
+        let samples = Arc::clone(&key_input_samples);
+        let barrier = Arc::clone(&start_barrier);
+        std::thread::spawn(move || {
+            let mut toggle = false;
+            barrier.wait();
+            while !stop.load(Ordering::Relaxed) {
+                let waited = if toggle {
+                    let (waited, _) = pane.key_down_timed(KeyCode::Char('x'), KeyModifiers::NONE);
+                    waited
+                } else {
+                    let (waited, _) = pane.mouse_event_timed(MouseEvent {
+                        kind: MouseEventKind::Move,
+                        x: 10,
+                        y: 5,
+                        x_pixel_offset: 0,
+                        y_pixel_offset: 0,
+                        button: MouseButton::None,
+                        modifiers: KeyModifiers::NONE,
+                    });
+                    waited
+                };
+                samples.record(waited);
+                toggle = !toggle;
+                // 5-10ms between input events, as specified for this
+                // load test: alternate a fixed 5ms/10ms cadence so the
+                // average lands in the middle of that range.
+                let delay_ms = if toggle { 5 } else { 10 };
+                std::thread::sleep(Duration::from_millis(delay_ms));
+            }
+        })
+    };
+
+    // Render thread (standing in for the GUI paint path): repeatedly
+    // asks for the full visible viewport, doing per-line work while
+    // still holding the lock, exactly like `render/pane.rs` does today.
+    start_barrier.wait();
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline {
+        let mut work = FauxRenderWork { touched_cells: 0 };
+        let (waited, held) = pane.with_lines_mut_timed(render_row_span.clone(), &mut work);
+        with_lines_samples.record(waited);
+        with_lines_hold_samples.record(held);
+        std::hint::black_box(work.touched_cells);
+        // Roughly simulate a 60fps paint cadence between frames spent
+        // outside the lock (shading, GPU submission, etc.).
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    parser_handle.join().unwrap();
+    input_handle.join().unwrap();
+
+    fn unwrap_samples(arc: Arc<WaitSamples>) -> WaitSamples {
+        Arc::try_unwrap(arc).unwrap_or_else(|arc| WaitSamples {
+            samples: Mutex::new(arc.samples.lock().clone()),
+        })
+    }
+
+    (
+        unwrap_samples(key_input_samples),
+        unwrap_samples(perform_actions_samples),
+        unwrap_samples(with_lines_samples),
+        unwrap_samples(perform_actions_hold_samples),
+        unwrap_samples(with_lines_hold_samples),
+    )
+}
+
+#[test]
+fn terminal_lock_wait_time_under_sustained_output_and_input() {
+    let _mux_guard = super::MUX_TEST_GUARD.lock();
+
+    // Note: this test drives `LocalPane` through the `_timed` test-only
+    // accessors (`key_down_timed`, `mouse_event_timed`, etc.) rather
+    // than the `Pane` trait methods directly, so it does not need a
+    // `Mux` singleton installed even though the trait methods normally
+    // call `Mux::get().record_input_for_current_identity()`.
+    let (key_input, perform_actions, with_lines, perform_actions_hold, with_lines_hold) =
+        run_contention_load(Duration::from_secs(5), 0..(ROWS as wezterm_term::StableRowIndex));
+
+    let (n_key, p50_key, p95_key, max_key) = key_input.stats();
+    let (n_parse, p50_parse, p95_parse, max_parse) = perform_actions.stats();
+    let (n_render, p50_render, p95_render, max_render) = with_lines.stats();
+    let (_, p50_parse_hold, p95_parse_hold, max_parse_hold) = perform_actions_hold.stats();
+    let (_, p50_render_hold, p95_render_hold, max_render_hold) = with_lines_hold.stats();
+
+    eprintln!(
+        "terminal.lock() WAIT time -- key_input:      n={n_key:>6} p50={p50_key:>10?} p95={p95_key:>10?} max={max_key:>10?}"
+    );
+    eprintln!(
+        "terminal.lock() WAIT time -- perform_actions: n={n_parse:>6} p50={p50_parse:>10?} p95={p95_parse:>10?} max={max_parse:>10?}"
+    );
+    eprintln!(
+        "terminal.lock() WAIT time -- with_lines_mut:  n={n_render:>6} p50={p50_render:>10?} p95={p95_render:>10?} max={max_render:>10?}"
+    );
+    eprintln!(
+        "terminal.lock() HOLD time -- perform_actions: p50={p50_parse_hold:>10?} p95={p95_parse_hold:>10?} max={max_parse_hold:>10?}"
+    );
+    eprintln!(
+        "terminal.lock() HOLD time -- with_lines_mut:  p50={p50_render_hold:>10?} p95={p95_render_hold:>10?} max={max_render_hold:>10?}"
+    );
+
+    // Sanity: all three paths actually ran and produced samples; a
+    // regression that starved one of the threads (e.g. a real
+    // deadlock) would show up as zero samples here rather than a
+    // silently-empty, falsely-reassuring test.
+    assert!(n_key > 0, "key/mouse input path produced no samples");
+    assert!(n_parse > 0, "perform_actions path produced no samples");
+    assert!(n_render > 0, "with_lines_mut path produced no samples");
+}
+
+/// Single-threaded control for the measurement above: applies the same
+/// 128KiB-batch workload to `perform_actions` with *no* contention from
+/// input or the renderer, so the hold-time numbers in the contended
+/// test can be checked against an uncontended baseline. If this
+/// baseline is already tens of milliseconds, that confirms the
+/// dominant cost is intrinsic to applying a large batch of actions to
+/// the terminal model (screen mutation, dirty-row tracking, etc.), not
+/// an artifact of scheduling/contention with the other two threads.
+#[test]
+fn perform_actions_hold_time_uncontended_baseline() {
+    let _mux_guard = super::MUX_TEST_GUARD.lock();
+
+    let pane = make_pane();
+    let mut rng_state: u64 = 0x9E3779B97F4A7C15;
+    let mut parser = termwiz::escape::parser::Parser::new();
+    let samples = WaitSamples::new();
+
+    for _ in 0..50 {
+        let bytes = generate_output_batch(&mut rng_state, 128 * 1024);
+        let mut actions = Vec::new();
+        parser.parse(&bytes, |action| actions.push(action));
+        let (_waited, held) = pane.perform_actions_timed(actions);
+        samples.record(held);
+    }
+
+    let (n, p50, p95, max) = samples.stats();
+    eprintln!(
+        "terminal.lock() HOLD time -- perform_actions (uncontended, single-threaded): n={n:>6} p50={p50:>10?} p95={p95:>10?} max={max:>10?}"
+    );
+    assert!(n > 0);
+}
