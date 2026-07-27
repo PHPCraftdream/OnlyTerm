@@ -3,7 +3,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](https://github.com/PHPCraftdream/OnlyTerm)
 [![Rust](https://img.shields.io/badge/rust-stable-orange?logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Fork of WezTerm](https://img.shields.io/badge/fork%20of-WezTerm-brightgreen)](https://github.com/wezterm/wezterm)
+[![Last commit](https://img.shields.io/github/last-commit/PHPCraftdream/OnlyTerm)](https://github.com/PHPCraftdream/OnlyTerm/commits/main)
+[![Issues](https://img.shields.io/github/issues/PHPCraftdream/OnlyTerm)](https://github.com/PHPCraftdream/OnlyTerm/issues)
+[![Stars](https://img.shields.io/github/stars/PHPCraftdream/OnlyTerm?style=social)](https://github.com/PHPCraftdream/OnlyTerm/stargazers)
 
 OnlyTerm is a fork of [wezterm/wezterm](https://github.com/wezterm/wezterm) focused on stability and ease of use on Windows. Other platforms supported by upstream (macOS, Linux/X11, Wayland) are a secondary priority here — support for them will grow as additional maintainers join who are willing to put in the time and have access to modern AI tooling/subscriptions to help accelerate the work.
 
