@@ -983,6 +983,33 @@ mod tests {
         assert_eq!(entry.action, KeyAssignment::CopySelectionOrInterrupt);
     }
 
+    /// Regression test for a real bug: `PasteFrom(Clipboard)`'s default
+    /// `keys` only listed SUPER+v (macOS Cmd+V) and the OS-level "Paste"
+    /// gesture, which `permute_keys` only expands into CTRL+SHIFT+v
+    /// alternates (see the SUPER-branch synthesis above) - never plain,
+    /// unmodified-by-shift CTRL+v. So on Windows/Linux, plain CTRL+V did
+    /// nothing at all. Fixed by adding an explicit CTRL+v entry.
+    #[test]
+    fn ctrl_v_pastes_from_clipboard() {
+        let input_map = InputMap::default_input_map();
+
+        let entry = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::V), Modifiers::CTRL, None)
+            .expect("CTRL+V (physical) must have a default binding");
+        assert_eq!(
+            entry.action,
+            KeyAssignment::PasteFrom(ClipboardPasteSource::Clipboard)
+        );
+
+        let entry = input_map
+            .lookup_key(&KeyCode::Char('v'), Modifiers::CTRL, None)
+            .expect("CTRL+v must have a default binding");
+        assert_eq!(
+            entry.action,
+            KeyAssignment::PasteFrom(ClipboardPasteSource::Clipboard)
+        );
+    }
+
     /// Regression tests for reliably sending a newline to the pty via
     /// CTRL+Enter, SHIFT+Enter and CTRL+J (see task "Добавить три
     /// сочетания клавиш для перевода строки: Ctrl+Enter, Shift+Enter,
