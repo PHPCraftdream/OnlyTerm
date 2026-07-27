@@ -1806,3 +1806,25 @@ impl wezterm_term::DownloadHandler for MuxDownloader {
         }
     }
 }
+
+#[cfg(test)]
+mod captrack_integration {
+    //! Proof-of-wiring test for `captrack` (task #151). This does not touch
+    //! any production code path: it only demonstrates that the `captrack`
+    //! dependency resolves and its `t*!` macros compile/run in both the
+    //! default (telemetry disabled, zero-overhead bare constructor) and
+    //! `telemetry`-featured (tracked wrapper) configurations. See
+    //! CONTRIBUTING.md ("Collection-capacity telemetry with captrack") for
+    //! how to enable telemetry and dump stats.
+
+    use captrack::tvec;
+
+    #[test]
+    fn tvec_demo_resolves_and_behaves_like_vec() {
+        let mut v = tvec!("mux/demo/example", 8);
+        v.push(1);
+        v.push(2);
+        v.push(3);
+        assert_eq!(&v[..], &[1, 2, 3]);
+    }
+}
