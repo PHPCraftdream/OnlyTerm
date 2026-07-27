@@ -22,6 +22,22 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* OnlyTerm defaults: a light, GitHub-style color scheme (including the
+  tab-bar/titlebar chrome) instead of upstream's dark defaults;
+  `use_cwd_basename_as_tab_title` is on, so tab and window titles track the
+  active pane's current directory and update live as you `cd`; new windows
+  start maximized (`start_maximized`); `window_close_confirmation` is
+  `NeverPrompt` and the close-confirmation overlays for panes/tabs/windows
+  have been removed from the code entirely, not just defaulted off; on
+  Windows, `default_prog` defaults to `cmd.exe` instead of following
+  whatever `ComSpec` happens to resolve to; and
+  [sefer-alloc](https://github.com/PHPCraftdream/sefer-alloc) is installed
+  as the process's global allocator.
+* `CTRL-C` now copies the pane's selection (and clears it) when there is
+  one, otherwise it's passed straight through as a literal interrupt byte -
+  it always works to interrupt a running program when nothing is selected.
+  Right-clicking a text selection does the same (copy and clear) when
+  there's no hyperlink under the cursor.
 * **Breaking**: the built-in SSH client (`wezterm ssh`, `SshDomain`/`ssh_domains`,
   `ssh_backend`) and the TLS-mux remote-multiplexing feature
   (`TlsDomainClient`/`TlsDomainServer`, `tls_clients`/`tls_servers`,
