@@ -43,6 +43,7 @@ backtrace = "0.3"
 base64 = {version="0.22", default-features=false }
 base91 = { path = "crates/base91" }
 battery = { path = "crates/lua-api-crates/battery" }
+bench-scale-tool = "0.1"
 benchmarking = "0.4"
 bintree = { path = "crates/bintree" }
 bitflags = "1.3"
