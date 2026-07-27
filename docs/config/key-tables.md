@@ -105,15 +105,15 @@ return config
 Each `wezterm` GUI window maintains a stack of activations, which allows you to
 create complex layering of keyboard customization.
 
-The [ActivateKeyTable](lua/keyassignment/ActivateKeyTable.md) action will push
+The [ActivateKeyTable](reference/keyassignment/ActivateKeyTable.md) action will push
 an entry to the stack, and provides `one_shot` and `timeout_milliseconds`
 fields to affect when/how it will pop itself from the stack, and
 `replace_current` to implicitly pop the current entry from the stack.
 
-The [PopKeyTable](lua/keyassignment/PopKeyTable.md) action will explicitly pop
+The [PopKeyTable](reference/keyassignment/PopKeyTable.md) action will explicitly pop
 an entry from the stack.
 
-The [ClearKeyTableStack](lua/keyassignment/ClearKeyTableStack.md) action will
+The [ClearKeyTableStack](reference/keyassignment/ClearKeyTableStack.md) action will
 clear the entire stack.
 
 The stack is also cleared when the configuration is reloaded, so if you're

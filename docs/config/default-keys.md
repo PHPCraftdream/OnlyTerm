@@ -98,9 +98,9 @@ config.disable_default_key_bindings = true
 
 !!! tip
     When using `disable_default_key_bindings`, it is recommended that you
-    assign [ShowDebugOverlay](lua/keyassignment/ShowDebugOverlay.md) to
+    assign [ShowDebugOverlay](reference/keyassignment/ShowDebugOverlay.md) to
     something to aid in potential future troubleshooting.
 
     Likewise, you may wish to assign
-    [ActivateCommandPalette](lua/keyassignment/ActivateCommandPalette.md).
+    [ActivateCommandPalette](reference/keyassignment/ActivateCommandPalette.md).
 

@@ -52,14 +52,14 @@ As features stabilize some brief notes about them will accumulate here.
 * Wayland: currently being reimplemented, it maybe more unstable than usual.
   Please file GH issues for any problems you see.
   Many thanks to @tzx and @tmccombs! #4777 #5781
-* [show_update_window](config/lua/config/show_update_window.md) has been
+* [show_update_window](config/reference/config/show_update_window.md) has been
   deprecated; it no longer has any effect and will be removed in a future
   release.
 * X11: drag and drop is now supported for files, URLs and text. Thanks to
   @ssiegel! #5316 #640
 * Added Unicode Symbols for Legacy Computing to the set of pixel-perfect block
   drawing glyphs. See
-  [custom_block_glyphs](config/lua/config/custom_block_glyphs.md) for more
+  [custom_block_glyphs](config/reference/config/custom_block_glyphs.md) for more
   details. Thanks to @stribor14! #5051 #5169
 * Switched to the [nucleo](https://github.com/helix-editor/nucleo) fuzzy
   matcher which produces matches that more closely match the popular `fzf`
@@ -83,12 +83,12 @@ As features stabilize some brief notes about them will accumulate here.
   @mgpinf! #6320
 * macOS: toast notifications now use UNUserNotificationCenter. This requires
   that WezTerm.app be code-signed, which is the case for official binaries.
-* [ShowLauncherArgs](config/lua/keyassignment/ShowLauncherArgs.md) now allows
+* [ShowLauncherArgs](config/reference/keyassignment/ShowLauncherArgs.md) now allows
   customizing the help text. Thanks to @mgpinf! #6606
 * Preliminary support for ConEmu style progress escape sequences. See
-  [pane:get_progress()](config/lua/pane/get_progress.md) for more information.
+  [pane:get_progress()](config/reference/pane/get_progress.md) for more information.
   #6581
-* [InputSelector](config/lua/keyassignment/InputSelector.md) now allows
+* [InputSelector](config/reference/keyassignment/InputSelector.md) now allows
   setting `input_selector_label_bg` and `input_selector_label_fg` colors in
   the `colors` section of your configuration.  Thanks to @mgpinf! #6682
 * `wezterm imgcat --hold` now avoids local echo and accepts pressing `Escape`,
@@ -99,70 +99,70 @@ As features stabilize some brief notes about them will accumulate here.
   easier to spot the remaining candidates. Thanks to @mr-felixoid and @bew! #7752
 
 #### New
-* [wezterm.serde](config/lua/wezterm.serde/index.md) module for serialization
+* [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
   and deserialization of JSON, TOML and YAML. Thanks to @expnn! #4969
 * `wezterm ssh` now supports agent forwarding. Thanks to @Riatre! #5345
 * SSH multiplexer domains now support agent forwarding, and will automatically
   maintain `SSH_AUTH_SOCK` to an appropriate value on the destination host,
   depending on the value of the new
-  [mux_enable_ssh_agent](config/lua/config/mux_enable_ssh_agent.md) option.
+  [mux_enable_ssh_agent](config/reference/config/mux_enable_ssh_agent.md) option.
   ?988 #1647
-* [default_ssh_auth_sock](config/lua/config/default_ssh_auth_sock.md) option
+* [default_ssh_auth_sock](config/reference/config/default_ssh_auth_sock.md) option
   to manage `SSH_AUTH_SOCK`.
 * Search mode: now supports richer line editing. Thanks to @Mrreadiness and
   @kenchou! #5416 #3087
-* [show_close_tab_button_in_tabs](config/lua/config/show_close_tab_button_in_tabs.md)
+* [show_close_tab_button_in_tabs](config/reference/config/show_close_tab_button_in_tabs.md)
   option for the fancy tab bar. Thanks to @zummenix! #3818
 * wezterm-ssh now supports `ProxyUseFdPass`. Thanks to @loops! #6103 #6093
 * `PromptInputLine` now supports a optional `prompt` and `initial_value`
   parameters. Thanks to @mgpinf and @ekorchmar! #6054 #6007
 * Support Unicode 16 octant characters when `custom_block_glyphs` is enabled.
   Thanks to @eschnett! #6502 #6494
-* [window_content_alignment](config/lua/config/window_content_alignment.md) option
+* [window_content_alignment](config/reference/config/window_content_alignment.md) option
   to control where the excess pixel gap will be placed when the window is not
   a multiple of the cell dimensions. Thanks to @Shiphan! #6629 #1124
 * New `MACOS_FORCE_SQUARE_CORNERS` option for
-  [window_decorations](config/lua/config/window_decorations.md). Thanks to
+  [window_decorations](config/reference/config/window_decorations.md). Thanks to
   @amadeusdotpng!  #6587 #2182
-* [QuickSelectArgs](config/lua/keyassignment/QuickSelectArgs.md) has new
+* [QuickSelectArgs](config/reference/keyassignment/QuickSelectArgs.md) has new
   `skip_action_on_paste` option. Thanks to @nhurlock! #6405
 * Docs for writing [Plugins](config/plugins.md). Thanks to @alecthegeek and
   @MLFlexer! #6188
-* [macos_fullscreen_extend_behind_notch](config/lua/config/macos_fullscreen_extend_behind_notch.md)
+* [macos_fullscreen_extend_behind_notch](config/reference/config/macos_fullscreen_extend_behind_notch.md)
   option. Thanks to @wryanzimmerman! #5759
-* [quick_select_remove_styling](config/lua/config/quick_select_remove_styling.md)
+* [quick_select_remove_styling](config/reference/config/quick_select_remove_styling.md)
   option to make it easier to spot matches on colorful screens. Thanks to
   @mgpinf! #6683 #4022
 * `tmux -CC` support is now very usable. Thanks to @joexue! #6602 #336
-* [Confirmation](config/lua/keyassignment/Confirmation.md) key assignment
+* [Confirmation](config/reference/keyassignment/Confirmation.md) key assignment
   that can be used to show a confirmation prompt. Thanks to @mgpinf! #6707
-* [launcher_alphabet](config/lua/config/launcher_alphabet.md) option for
-  [ShowLauncherArgs](config/lua/keyassignment/ShowLauncherArgs.md).
+* [launcher_alphabet](config/reference/config/launcher_alphabet.md) option for
+  [ShowLauncherArgs](config/reference/keyassignment/ShowLauncherArgs.md).
   Thanks to @mgpinf! #6677
-* [window_decorations](config/lua/config/window_decorations.md) now supports
+* [window_decorations](config/reference/config/window_decorations.md) now supports
   `MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR` to match the macOS window
   titlebar background color to the terminal background color defined by
   your configuration. Thanks to @Jay-Madden! #6558
-* [char_select_font](config/lua/config/char_select_font.md),
-  [command_palette_font](config/lua/config/command_palette_font.md), and
-  [pane_select_font](config/lua/config/pane_select_font.md) options to control
+* [char_select_font](config/reference/config/char_select_font.md),
+  [command_palette_font](config/reference/config/command_palette_font.md), and
+  [pane_select_font](config/reference/config/pane_select_font.md) options to control
   the fonts for those respective overlays/modals.  Thanks to @mgpinf! #6696
 * Git branch and progress bar symbols have been added to
-  [custom_block_glyphs](config/lua/config/custom_block_glyphs.md). Thanks to
+  [custom_block_glyphs](config/reference/config/custom_block_glyphs.md). Thanks to
   @BenBergman! #6328 #6873 #6875
-* [cell_widths](config/lua/config/cell_widths.md) option for explicit
+* [cell_widths](config/reference/config/cell_widths.md) option for explicit
   control over cell widths. Thanks to @hamano! #6289 #6290
-* [wayland_window_background_blur](config/lua/config/wayland_window_background_blur.md) option
+* [wayland_window_background_blur](config/reference/config/wayland_window_background_blur.md) option
   to enable window blur on Wayland compositors supporting the `ext-background-effect-v1` protocol.
   Thanks to @psomani16k, @1Capito1 & @bew! #6905 #7615 #7939
-* [reverse_video_cursor_min_contrast](config/lua/config/reverse_video_cursor_min_contrast.md)
+* [reverse_video_cursor_min_contrast](config/reference/config/reverse_video_cursor_min_contrast.md)
   option. Thanks to @jameshurst! #6584 ?2861
-* [text_min_contrast_ratio](config/lua/config/text_min_contrast_ratio.md) to more generally
+* [text_min_contrast_ratio](config/reference/config/text_min_contrast_ratio.md) to more generally
   improve the contrast ratio for text in the terminal.
 * New `launcher_label_fg` and `launcher_label_bg` options for to customize
   the [Launcher Menu](config/launch.md#the-launcher-menu). Thanks to @mgpinf!
   #6796
-* [TabInformation](config/lua/TabInformation.md) now exposes `is_last_active` as
+* [TabInformation](config/reference/TabInformation.md) now exposes `is_last_active` as
   a boolean property to indicate whether a tab was the prior active tab.
   Thanks to @masriomarm! #6895
 * Indicate support for OSC 52 (clipboard extensions) in Primary DA Response.
@@ -272,7 +272,7 @@ As features stabilize some brief notes about them will accumulate here.
   #6194
 * IBus IME working unreliably. Thanks to @pjm0616! #5125
 * Pixel aliasing issue when using
-  [window_content_alignment](config/lua/config/window_content_alignment.md) =
+  [window_content_alignment](config/reference/config/window_content_alignment.md) =
   `Center`. Thanks to @juster-0! #6929 #6928 #6823
 * Passing a `SpawnCommand` to the `SwitchToWorkspace` assignment would ignore
   `set_environment_variables`. Thanks to @vincentbesanceney! #6850 #6845
@@ -283,12 +283,12 @@ As features stabilize some brief notes about them will accumulate here.
 * Incorrect boundary condition in renderstate. Thanks to @I-Info! #7274
 * MacOS: fix memory leak in macOS MetalLayer management. Thanks to @I-Info!
   #7283
-* [max_fps](config/lua/config/max_fps.md) can now be set to values larger than
+* [max_fps](config/reference/config/max_fps.md) can now be set to values larger than
   `255`. Thanks to @beckend! #7366
 * macOS: Fix toast notifications. Thanks to @nikhilm! #7483
 * termwiz: Fixed parsing of fragmented mouse reporting sequence. Thanks to
   @jgiannuzzi! #7076 #7504
-* docs: add missing `panes` field to [TabInformation](config/lua/TabInformation.md).
+* docs: add missing `panes` field to [TabInformation](config/reference/TabInformation.md).
   Thanks to @KevinSilvester! #7710
 * Windows: Fixed a crash (RefCell borrow conflict) when toggling IME (e.g.
   pressing Hankaku/Zenkaku) after splitting a pane. Thanks to @shiena! #7529
@@ -307,7 +307,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Capability queries (DA1, the kitty keyboard probe, etc.) are now answered
   while a synchronized update is open, and an update held open for too long
   now times out; see
-  [mux_synchronized_output_timeout_ms](config/lua/config/mux_synchronized_output_timeout_ms.md).
+  [mux_synchronized_output_timeout_ms](config/reference/config/mux_synchronized_output_timeout_ms.md).
   Thanks to @luizribeiro! #7918
 * Fix render loop freeze when closing workspaces. Thanks to @JafarAbdi! #7444
 
@@ -362,7 +362,7 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
 * The default for
-  [freetype_load_flags](config/lua/config/freetype_load_flags.md) is now
+  [freetype_load_flags](config/reference/config/freetype_load_flags.md) is now
   `NO_HINTING` when the dpi is >= 100, otherwise `DEFAULT`. #4902
 * `wezterm -e` will now wait for the spawned program to terminate before
   it will itself terminate. Thanks to @vimpostor! #4535 #4523
@@ -372,7 +372,7 @@ As features stabilize some brief notes about them will accumulate here.
 * We now show the Lua version in the debug overlay. Thanks to @bbkane! #4943
 * `wezterm start --new-tab` and `wezterm connect --new-tab` to request a new
   tab rather than a new window when spawning via an existing GUI instance.
-  The new [prefer_to_spawn_tabs](config/lua/config/prefer_to_spawn_tabs.md)
+  The new [prefer_to_spawn_tabs](config/reference/config/prefer_to_spawn_tabs.md)
   option allows you to make this happen by default. ?4854 ?4946
 #### Fixed
 * It was not possible to specify `freetype_load_flags = 'DEFAULT'`. #4902
@@ -398,10 +398,10 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20240128-202157-1e552d76
 
 #### Changed
-* The default for [front_end](config/lua/config/front_end.md) is again
+* The default for [front_end](config/reference/config/front_end.md) is again
   `OpenGL`.
 * The default for
-  [freetype_load_flags](config/lua/config/freetype_load_flags.md) is now
+  [freetype_load_flags](config/reference/config/freetype_load_flags.md) is now
   `NO_HINTING`. #4874
 
 #### Fixed
@@ -414,20 +414,20 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20240127-113634-bbcac864
 
 #### Changed
-* The default for [front_end](config/lua/config/front_end.md) is now `WebGpu`.
+* The default for [front_end](config/reference/config/front_end.md) is now `WebGpu`.
 * The return type of
-  [pane.get_current_working_dir](config/lua/pane/get_current_working_dir.md)
-  and [PaneInformation.current_working_dir](config/lua/PaneInformation.md)
-  has changed to the new [Url](config/lua/wezterm.url/Url.md) object, which
+  [pane.get_current_working_dir](config/reference/pane/get_current_working_dir.md)
+  and [PaneInformation.current_working_dir](config/reference/PaneInformation.md)
+  has changed to the new [Url](config/reference/wezterm.url/Url.md) object, which
   makes it easier to handle things like percent-encoding for paths with spaces
   or non-ASCII characters. Please see the revised example on
-  [set_right_status](config/lua/window/set_right_status.md) for example usage
+  [set_right_status](config/reference/window/set_right_status.md) for example usage
   with backwards compatibility in mind. #4000
 * Added split out github short codes from the various charselect sections into
   their own new Short Codes section.
 * CharSelect now shows emoji variations such as skin tones
 * Improved fuzzy matching performance in CharSelect
-* [PaneSelect](config/lua/keyassignment/PaneSelect.md) new modes `MoveToNewTab`,
+* [PaneSelect](config/reference/keyassignment/PaneSelect.md) new modes `MoveToNewTab`,
   `MoveToNewWindow`, and `SwapWithActiveKeepFocus`, as well as
   `show_pane_ids=true` to show the pane ids.  #4147 #3014
 * Nightly `.deb` packages are now named `wezterm-nightly` rather than `wezterm`,
@@ -509,28 +509,28 @@ As features stabilize some brief notes about them will accumulate here.
 * Preliminary support for rasterizing fonts with COLR v1 glyphs, such as
   more recent versions of Noto Color Emoji. #4148
 * [wezterm cli zoom-pane](cli/cli/zoom-pane.md). Thanks to @quantonganh! #4160
-* [InputSelector](config/lua/keyassignment/InputSelector.md) has been
+* [InputSelector](config/reference/keyassignment/InputSelector.md) has been
   enhanced to allow setting an alphabet for quickly launching items beyond
   the first 10 items, as well as customizing the description/label text.
   Thanks to @Danielkonge! #4226 #4227
-* [notification_handling](config/lua/config/notification_handling.md) to
+* [notification_handling](config/reference/config/notification_handling.md) to
   control whether notifications are suppressed based on focus. #3727
-* [command_palette_rows](config/lua/config/command_palette_rows.md) to
+* [command_palette_rows](config/reference/config/command_palette_rows.md) to
   control how many rows are displayed in the command palette. Thanks to
   @exastone! #4595
-* [ToggleAlwaysOnTop](config/lua/keyassignment/ToggleAlwaysOnTop.md),
-  [ToggleAlwaysOnBottom](config/lua/keyassignment/ToggleAlwaysOnBottom.md) and
-  [SetWindowLevel](config/lua/keyassignment/SetWindowLevel.md) key assignments
+* [ToggleAlwaysOnTop](config/reference/keyassignment/ToggleAlwaysOnTop.md),
+  [ToggleAlwaysOnBottom](config/reference/keyassignment/ToggleAlwaysOnBottom.md) and
+  [SetWindowLevel](config/reference/keyassignment/SetWindowLevel.md) key assignments
   for manipulating the window level. These are currently implemented only
   on macOS. Thanks to @rawnly! #4567
 * Double click on the tab bar to toggle maximize/normal state. Thanks to
   @junnplus! #3698 #3699
-* [freetype_load_target](config/lua/config/freetype_load_target.md) and
-  [freetype_render_target](config/lua/config/freetype_render_target.md) can now
+* [freetype_load_target](config/reference/config/freetype_load_target.md) and
+  [freetype_render_target](config/reference/config/freetype_render_target.md) can now
   be set to `VerticalLcd` for vertically decimated LCD displays. Thanks to
   @xiaopengli89! #4426
 * Pressing `CTRL-[` in the launcher menu will close it. #4722
-* [pane:get_lines_as_escapes()](config/lua/pane/get_lines_as_escapes.md) to
+* [pane:get_lines_as_escapes()](config/reference/pane/get_lines_as_escapes.md) to
   retrieve text + style/formatting. #4780
 
 #### Fixed
@@ -538,7 +538,7 @@ As features stabilize some brief notes about them will accumulate here.
   keyboard shortcuts. #3988
 * Windows: couldn't use shifted keys like `(` in the Debug Overlay. #3999
 * X11: fd leak on each call to
-  [wezterm.gui.enumerate_gpus](config/lua/wezterm.gui/enumerate_gpus.md). #3612
+  [wezterm.gui.enumerate_gpus](config/reference/wezterm.gui/enumerate_gpus.md). #3612
 * Charselect and repl recency/history were not persisted across restarts. #4047 ?4019
 * macOS: system font fallback didn't always find a workable fallback font. #4099 #849
 * F13-F24 keys are now supported. Thanks to @ovidiu-ionescu! #3937
@@ -585,7 +585,7 @@ As features stabilize some brief notes about them will accumulate here.
   or high speed keyboard inputs. #4615 #3840
 * X11: can now paste STRING (latin-1) data from the clipboard, in addition to
   UTF-8 string data. #4402
-* [use_resize_increments](config/lua/config/use_resize_increments.md) now
+* [use_resize_increments](config/reference/config/use_resize_increments.md) now
   accounts for window padding. Thanks to @jknockel! #4824
 * Bar shaped text cursors are now rendered above text. Thanks to
   @ErrorNoInternet! #4850
@@ -605,12 +605,12 @@ As features stabilize some brief notes about them will accumulate here.
 #### Changed
 
 * The default for
-  [adjust_window_size_when_changing_font_size](config/lua/config/adjust_window_size_when_changing_font_size.md)
+  [adjust_window_size_when_changing_font_size](config/reference/config/adjust_window_size_when_changing_font_size.md)
   now depends on the window environment and the contents of
-  [tiling_desktop_environments](config/lua/config/tiling_desktop_environments.md).
+  [tiling_desktop_environments](config/reference/config/tiling_desktop_environments.md).
 * Added eigth block corner glyphs to custom block glyphs. Thanks to @joouha! #3559
 * Don't hide mouse cursor when pressing only modifier keys. #3570
-* [PaneSelect](config/lua/keyassignment/PaneSelect.md) will now un-zoom to show
+* [PaneSelect](config/reference/keyassignment/PaneSelect.md) will now un-zoom to show
   all panes, then re-zoom after performing its action. #3573
 * Images, especially animated images, are now decoded in the background. When
   used as a background layer for the terminal, we now use the normal
@@ -619,27 +619,27 @@ As features stabilize some brief notes about them will accumulate here.
   waiting for the image to decode.
 * You may now use CTRL-J/K to change the selection in the launcher menu,
   in addition to CTRL-N/P which always worked previously. #3909
-* Duplicate entries in [CharSelect](config/lua/keyassignment/CharSelect.md) are
+* Duplicate entries in [CharSelect](config/reference/keyassignment/CharSelect.md) are
   now suppressed, making it less cluttered. Thanks to @vimpostor! #3674
 
 #### New
 
-* [window:keyboard_modifiers](config/lua/window/keyboard_modifiers.md) #3444
-* [win32_system_backdrop](config/lua/config/win32_system_backdrop.md). Thanks to @kingavatar! #3528 #1614
+* [window:keyboard_modifiers](config/reference/window/keyboard_modifiers.md) #3444
+* [win32_system_backdrop](config/reference/config/win32_system_backdrop.md). Thanks to @kingavatar! #3528 #1614
 * [wezterm cli adjust-pane-size](cli/cli/adjust-pane-size.md). Thanks to @mrjones2014! #3471 #3491
-* [augment-command-palette](config/lua/window-events/augment-command-palette.md)
+* [augment-command-palette](config/reference/window-events/augment-command-palette.md)
   event for adding entries to the command palette without assigning keyboard
   shortcuts. #3595
-* [char_select_bg_color](config/lua/config/char_select_bg_color.md) and
-  [char_select_fg_color](config/lua/config/char_select_fg_color.md) options to
+* [char_select_bg_color](config/reference/config/char_select_bg_color.md) and
+  [char_select_fg_color](config/reference/config/char_select_fg_color.md) options to
   customize the appearance of
-  [CharSelect](config/lua/keyassignment/CharSelect.md) mode. Thanks to @junnplus! #3703
+  [CharSelect](config/reference/keyassignment/CharSelect.md) mode. Thanks to @junnplus! #3703
 * Horizontal mouse wheel events are now passed through to the terminal. Thanks to @calops! #3856
-* [exit_behavior_messaging](config/lua/config/exit_behavior_messaging.md)
+* [exit_behavior_messaging](config/reference/config/exit_behavior_messaging.md)
   option to control output when holding a pane open after a process completes.
   #3423
-* [default_mux_server_domain](config/lua/config/default_mux_server_domain.md) for the
-  (almost!) equivalent to [default_domain](config/lua/config/default_domain.md) in
+* [default_mux_server_domain](config/reference/config/default_mux_server_domain.md) for the
+  (almost!) equivalent to [default_domain](config/reference/config/default_domain.md) in
   the context of the mux server.
 
 #### Fixed
@@ -657,7 +657,7 @@ As features stabilize some brief notes about them will accumulate here.
   serial data received at a rate of 1 byte just slightly faster than
   `mux_output_parser_coalesce_delay_ms` (`3ms` by default). Thanks to @pcc!
   #3497 #3466 #837.
-* [`user-var-changed` event](config/lua/window-events/user-var-changed.md)
+* [`user-var-changed` event](config/reference/window-events/user-var-changed.md)
   would incorrectly trigger for every GUI window, rather than just the GUI
   window which contained the pane in which the variable was changed. #3524
 * PNG images without an alpha channel, or that were grayscale, could not be displayed by in the
@@ -885,7 +885,7 @@ As features stabilize some brief notes about them will accumulate here.
 #### Changed
 * macOS: Japanese IME users: CTRL-modified keys are no long routed to the IME
   by default, as it introduced problems with CTRL-key combinations for other users.
-  A new [macos_forward_to_ime_modifier_mask](config/lua/config/macos_forward_to_ime_modifier_mask.md)
+  A new [macos_forward_to_ime_modifier_mask](config/reference/config/macos_forward_to_ime_modifier_mask.md)
   option has been introduced to allow you to control which modifier keys get routed
   to the IME, so that you can opt back in to that behavior. #2630 #2771 #2435
 * Multiplexer client can now send the locally configured color palette to the
@@ -898,48 +898,48 @@ As features stabilize some brief notes about them will accumulate here.
   With a definitive detach, the window will close and wezterm will terminate if
   the only panes were associated with that domain, which is what most users
   expect. #2644
-* [quick_select_patterns](config/lua/config/quick_select_patterns.md) and
-  [hyperlink_rules](config/lua/config/hyperlink_rules.md) now support
+* [quick_select_patterns](config/reference/config/quick_select_patterns.md) and
+  [hyperlink_rules](config/reference/config/hyperlink_rules.md) now support
   backreferences and look around assertions. #3247
 * [wezterm replay](cli/replay.md) new options `--explain-only`, `--cat`. #3446
 
 #### New
-* [PromptInputLine](config/lua/keyassignment/PromptInputLine.md) action for
+* [PromptInputLine](config/reference/keyassignment/PromptInputLine.md) action for
   prompting the user for a line of text and then doing something with it.
   Can be used to prompt for (re)naming new or existing tabs, workspaces and so on.
-* [InputSelector](config/lua/keyassignment/InputSelector.md) action for
+* [InputSelector](config/reference/keyassignment/InputSelector.md) action for
   prompting the user to select an item from a list and then doing something
   with it.
-* [pane:activate()](config/lua/pane/activate.md) and [tab:activate()](config/lua/MuxTab/activate.md). #3217
-* [ulimit_nofile](config/lua/config/ulimit_nofile.md) and [ulimint_nproc](config/lua/config/ulimit_nproc.md) options. ?3353
-* [serial_ports](config/lua/config/serial_ports.md) for more convenient access to serial ports
+* [pane:activate()](config/reference/pane/activate.md) and [tab:activate()](config/reference/MuxTab/activate.md). #3217
+* [ulimit_nofile](config/reference/config/ulimit_nofile.md) and [ulimint_nproc](config/reference/config/ulimit_nproc.md) options. ?3353
+* [serial_ports](config/reference/config/serial_ports.md) for more convenient access to serial ports
 * `ssh_domains` now auto-populate from your `~/.ssh/config` file. You can use
-  [wezterm.default_ssh_domains()](config/lua/wezterm/default_ssh_domains.md) to
+  [wezterm.default_ssh_domains()](config/reference/wezterm/default_ssh_domains.md) to
   obtain that same information and amend/extend it.
-* [display_pixel_geometry](config/lua/config/display_pixel_geometry.md) to specify subpixel antialiasing geometry. ?3422
+* [display_pixel_geometry](config/reference/config/display_pixel_geometry.md) to specify subpixel antialiasing geometry. ?3422
 * Integrated title and tab bar.
-  See also [window_decorations](config/lua/config/window_decorations.md),
-  [integrated_title_button_style](config/lua/config/integrated_title_button_style.md),
-  [integrated_title_buttons](config/lua/config/integrated_title_buttons.md),
-  [integrated_title_button_alignment](config/lua/config/integrated_title_button_alignment.md)
-  [integrated_title_button_color](config/lua/config/integrated_title_button_color.md) and,
-  if you are using the retro tab bar, [tab_bar_style](config/lua/config/tab_bar_style.md).
+  See also [window_decorations](config/reference/config/window_decorations.md),
+  [integrated_title_button_style](config/reference/config/integrated_title_button_style.md),
+  [integrated_title_buttons](config/reference/config/integrated_title_buttons.md),
+  [integrated_title_button_alignment](config/reference/config/integrated_title_button_alignment.md)
+  [integrated_title_button_color](config/reference/config/integrated_title_button_color.md) and,
+  if you are using the retro tab bar, [tab_bar_style](config/reference/config/tab_bar_style.md).
   Thanks to @yuraiz for getting things moving! #2722 #1180
-* Lua: [gui_window:active_tab()](config/lua/window/active_tab.md),
-  [gui_window:active_pane()](config/lua/window/active_pane.md) (surprise! this was already there, just undocumented!),
-  [mux_window:active_tab()](config/lua/mux-window/active_tab.md),
-  [mux_window:active_pane()](config/lua/mux-window/active_pane.md),
-  [tab:active_pane()](config/lua/MuxTab/active_pane.md) methods for conveniently getting at the active tab/pane
+* Lua: [gui_window:active_tab()](config/reference/window/active_tab.md),
+  [gui_window:active_pane()](config/reference/window/active_pane.md) (surprise! this was already there, just undocumented!),
+  [mux_window:active_tab()](config/reference/mux-window/active_tab.md),
+  [mux_window:active_pane()](config/reference/mux-window/active_pane.md),
+  [tab:active_pane()](config/reference/MuxTab/active_pane.md) methods for conveniently getting at the active tab/pane
   from a window/tab.
 * [wezterm cli set-tab-title](cli/cli/set-tab-title.md) and
   [wezterm cli set-window-title](cli/cli/set-window-title.md). #522 #1598
 * [wezterm cli rename-workspace](cli/cli/rename-workspace.md). #2787
-* [wezterm.mux.rename_workspace](config/lua/wezterm.mux/rename_workspace.md). #2787
+* [wezterm.mux.rename_workspace](config/reference/wezterm.mux/rename_workspace.md). #2787
 * [wezterm cli get-pane-direction](cli/cli/get-pane-direction.md)
-* [pane:get_tty_name()](config/lua/pane/get_tty_name.md) and
-  [PaneInformation.tty_name](config/lua/PaneInformation.md) to reason about the
+* [pane:get_tty_name()](config/reference/pane/get_tty_name.md) and
+  [PaneInformation.tty_name](config/reference/PaneInformation.md) to reason about the
   tty name on local unix systems.
-* [wezterm.has_action()](config/lua/wezterm/has_action.md) makes it easier to
+* [wezterm.has_action()](config/reference/wezterm/has_action.md) makes it easier to
   author a wezterm config that works across different wezterm versions. #3454
 * Color schemes: [Ef-Autumn](colorschemes/e/index.md#ef-autumn),
   [Ef-Bio](colorschemes/e/index.md#ef-bio),
@@ -966,14 +966,14 @@ As features stabilize some brief notes about them will accumulate here.
 * mux: server would lock and then unlock the pid/lock file when it re-executed,
   rendering it useless.
 * `tab:panes_with_info()` reported incorrect `is_zoomed` value. #3404
-* [window:perform_action()](config/lua/window/perform_action.md) now awaits the
+* [window:perform_action()](config/reference/window/perform_action.md) now awaits the
   dispatch of the key assignment action, making it less racy to script multiple
   actions in a row. Note that clipboard operations are still asynchronous with
   respect to the dispatch of the assignment. #3405
-* [window:perform_action()](config/lua/window/perform_action.md) now correctly
+* [window:perform_action()](config/reference/window/perform_action.md) now correctly
   resolves overlay panes such as Copy Mode. #3209
 * macOS: CTRL-Q had to be pressed twice to register when `use_ime=true`. #2630
-* mux: [tab:set_title()](config/lua/MuxTab/set_title.md) didn't get passed to
+* mux: [tab:set_title()](config/reference/MuxTab/set_title.md) didn't get passed to
   the remote server, so any tab title changes were lost when reconnecting. #1598
 * `wezterm connect --workspace WS DOM` didn't use the provided workspace when
   starting up the mux server. #2734
@@ -981,15 +981,15 @@ As features stabilize some brief notes about them will accumulate here.
 * ssh: `%r` `%h` and `%p` tokens were implicitly supported by libssh but stopped
   working in `ProxyCommand` when we took over running the proxy command. #3437
 * mux: Improved latency for large window sizes. #1872
-* mux: [pane:has_unseen_output()](config/lua/pane/has_unseen_output.md) and
-  [PaneInformation.has_unseen_output](config/lua/PaneInformation.md) now work
+* mux: [pane:has_unseen_output()](config/reference/pane/has_unseen_output.md) and
+  [PaneInformation.has_unseen_output](config/reference/PaneInformation.md) now work
   with multiplexer panes. #2625
 * mux: attempting to split a remote pane into a different target domain could
   produce a warning about the remote home directory not being readable to
   the local machine or vice versa. #3442
 * `wezterm.config_builder` now works with `table.insert(config.keys, {..})`
 * mux: `wezterm cli activate-pane-direction` inconsistent behavior with remote mux. #3387 #3448
-* [quick_select_patterns](config/lua/config/quick_select_patterns.md) didn't
+* [quick_select_patterns](config/reference/config/quick_select_patterns.md) didn't
   take precedence over built-in rules. #3456
 * Painted pane background color behind the tab bar when there was only one
   pane. Matters when the tab bar is transparent! #3450
@@ -1002,19 +1002,19 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20230326-111934-3666303c
 
 #### New
-* [mouse_wheel_scrolls_tabs](config/lua/config/mouse_wheel_scrolls_tabs.md) option
+* [mouse_wheel_scrolls_tabs](config/reference/config/mouse_wheel_scrolls_tabs.md) option
   to control whether the mouse wheel can be used to activate tabs when hovering
   over the tab bar. Thanks to @eaglgenes101! #3227
 * [wezterm cli kill-pane](cli/cli/kill-pane.md),
   [wezterm cli activate-pane](cli/cli/activate-pane.md) and
   [wezterm cli activate-tab](cli/cli/activate-tab.md) #3352 #886
 * macOS:
-  [macos_window_background_blur](config/lua/config/macos_window_background_blur.md)
+  [macos_window_background_blur](config/reference/config/macos_window_background_blur.md)
   enables a nice translucent window effect. Thanks to @Gkirito! #3344
-* [new-tab-button-click event](config/lua/window-events/new-tab-button-click.md)
+* [new-tab-button-click event](config/reference/window-events/new-tab-button-click.md)
   allows overriding the effect of clicking the New Tab button. #323
-* [pane:move_to_new_window()](config/lua/pane/move_to_new_window.md),
-  [pane:move_to_new_tab()](config/lua/pane/move_to_new_tab.md). #3374
+* [pane:move_to_new_window()](config/reference/pane/move_to_new_window.md),
+  [pane:move_to_new_tab()](config/reference/pane/move_to_new_tab.md). #3374
 
 #### Fixed
 * ssh ProxyCommand didn't parse command lines containing `=` correctly. #3307
@@ -1081,18 +1081,18 @@ As features stabilize some brief notes about them will accumulate here.
   [#2741](https://github.com/wezterm/wezterm/issues/2741)
 * macOS: initial cut at macOS native menu bar
   [#1485](https://github.com/wezterm/wezterm/issues/1485)
-* mux: exposed [MuxDomain](config/lua/MuxDomain/index.md) to lua, along with
-  [wezterm.mux.get_domain()](config/lua/wezterm.mux/get_domain.md),
-  [wezterm.mux.all_domains()](config/lua/wezterm.mux/all_domains.md) and
-  [wezterm.mux.set_default_domain()](config/lua/wezterm.mux/set_default_domain.md).
-* [hide_mouse_cursor_when_typing](config/lua/config/hide_mouse_cursor_when_typing.md)
+* mux: exposed [MuxDomain](config/reference/MuxDomain/index.md) to lua, along with
+  [wezterm.mux.get_domain()](config/reference/wezterm.mux/get_domain.md),
+  [wezterm.mux.all_domains()](config/reference/wezterm.mux/all_domains.md) and
+  [wezterm.mux.set_default_domain()](config/reference/wezterm.mux/set_default_domain.md).
+* [hide_mouse_cursor_when_typing](config/reference/config/hide_mouse_cursor_when_typing.md)
   option to control whether the mouse cursor is hidden when typing. Thanks to
   [@ProspectPyxis](https://github.com/ProspectPyxis)!
   [#2946](https://github.com/wezterm/wezterm/pull/2946)
-* [pane:get_text_from_region()](config/lua/pane/get_text_from_region.md),
-  [pane:get_text_from_semantic_zone()](config/lua/pane/get_text_from_semantic_zone.md),
-  [pane:get_semantic_zones()](config/lua/pane/get_semantic_zones.md),
-  [pane:get_semantic_zone_at()](config/lua/pane/get_semantic_zone_at.md)
+* [pane:get_text_from_region()](config/reference/pane/get_text_from_region.md),
+  [pane:get_text_from_semantic_zone()](config/reference/pane/get_text_from_semantic_zone.md),
+  [pane:get_semantic_zones()](config/reference/pane/get_semantic_zones.md),
+  [pane:get_semantic_zone_at()](config/reference/pane/get_semantic_zone_at.md)
 * Color schemes: [Apple Classic](colorschemes/a/index.md#apple-classic),
   [Breath (Gogh)](colorschemes/b/index.md#breath-gogh),
   [Breath Darker (Gogh)](colorschemes/b/index.md#breath-darker-gogh),
@@ -1112,34 +1112,34 @@ As features stabilize some brief notes about them will accumulate here.
   [rose-pine-moon](colorschemes/r/index.md#rose-pine-moon),
   [Solarized (dark) (terminal.sexy)](colorschemes/s/index.md#solarized-dark-terminalsexy),
   [tokyonight_moon](colorschemes/t/index.md)
-* [window:focus()](config/lua/window/focus.md),
-  [ActivateWindow](config/lua/keyassignment/ActivateWindow.md),
-  [ActivateWindowRelative](config/lua/keyassignment/ActivateWindowRelative.md),
-  [ActivateWindowRelativeNoWrap](config/lua/keyassignment/ActivateWindowRelativeNoWrap.md)
+* [window:focus()](config/reference/window/focus.md),
+  [ActivateWindow](config/reference/keyassignment/ActivateWindow.md),
+  [ActivateWindowRelative](config/reference/keyassignment/ActivateWindowRelative.md),
+  [ActivateWindowRelativeNoWrap](config/reference/keyassignment/ActivateWindowRelativeNoWrap.md)
 * Copy Mode: added
-  [MoveForwardWordEnd](config/lua/keyassignment/CopyMode/MoveForwardWordEnd.md),
+  [MoveForwardWordEnd](config/reference/keyassignment/CopyMode/MoveForwardWordEnd.md),
   thanks to [@GZLiew](https://github.com/GZLiew)!
   [#2908](https://github.com/wezterm/wezterm/pull/2908)
-* [tab:get_size()](config/lua/MuxTab/get_size.md),
-  [tab:rotate_counter_clockwise()](config/lua/MuxTab/rotate_counter_clockwise.md).
-  [tab:rotate_counter_clockwise()](config/lua/MuxTab/rotate_counter_clockwise.md).
-* [wezterm.config_builder()](config/lua/wezterm/config_builder.md)
-* [gui-attached](config/lua/gui-events/gui-attached.md) event provides some
+* [tab:get_size()](config/reference/MuxTab/get_size.md),
+  [tab:rotate_counter_clockwise()](config/reference/MuxTab/rotate_counter_clockwise.md).
+  [tab:rotate_counter_clockwise()](config/reference/MuxTab/rotate_counter_clockwise.md).
+* [wezterm.config_builder()](config/reference/wezterm/config_builder.md)
+* [gui-attached](config/reference/gui-events/gui-attached.md) event provides some
   more flexibility at startup.
 * [wezterm cli get-text](cli/cli/get-text.md) command for capturing the content of a pane.
 * macOS: added a dock menu that allows spawning new windows. Thanks to
   [@dahlia](https://github.com/dahlia)!
   [#3054](https://github.com/wezterm/wezterm/pull/3054)
-* [quit_when_all_windows_are_closed](config/lua/config/quit_when_all_windows_are_closed.md)
+* [quit_when_all_windows_are_closed](config/reference/config/quit_when_all_windows_are_closed.md)
   configuration option.
 * `CTRL-SHIFT-P` now activates the new [command
-  palette](config/lua/keyassignment/ActivateCommandPalette.md)
+  palette](config/reference/keyassignment/ActivateCommandPalette.md)
   [#1485](https://github.com/wezterm/wezterm/issues/1485)
 * `wezterm ssh` now supports `%l` and `%L` tokens in config files.
   [#3176](https://github.com/wezterm/wezterm/issues/3176)
-* [hyperlink_rules](config/lua/config/hyperlink_rules.md) now support
+* [hyperlink_rules](config/reference/config/hyperlink_rules.md) now support
   specifying which capture group should be highlighted.
-* [wezterm.default_hyperlink_rules](config/lua/wezterm/default_hyperlink_rules.md)
+* [wezterm.default_hyperlink_rules](config/reference/wezterm/default_hyperlink_rules.md)
   function makes it easier to extend the default set of hyperlink rules.
 
 #### Fixed
@@ -1162,11 +1162,11 @@ As features stabilize some brief notes about them will accumulate here.
   [#2977](https://github.com/wezterm/wezterm/pull/2977)
 * mux: `default_workspace` was not always respected when spawning
   [#2981](https://github.com/wezterm/wezterm/issues/2981)
-* [window:active_key_table()](config/lua/window/active_key_table.md) now
+* [window:active_key_table()](config/reference/window/active_key_table.md) now
   factors in pane-specific key table stacks for things like `CopyMode`.
   [#2986](https://github.com/wezterm/wezterm/discussions/2986)
 * modal overlays like CharSelect and the [command
-  palette](config/lua/keyassignment/ActivateCommandPalette.md) sometimes
+  palette](config/reference/keyassignment/ActivateCommandPalette.md) sometimes
   wouldn't render when first activated until pressing a key.
 * lag when making heavy use of foreground process information in tab titles.
   [#2991](https://github.com/wezterm/wezterm/issues/2991)
@@ -1178,7 +1178,7 @@ As features stabilize some brief notes about them will accumulate here.
   Thanks to [@mbikovitsky](https://github.com/mbikovitsky)!
   [#3053](https://github.com/wezterm/wezterm/pull/3053)
 * Copy Mode:
-  [MoveForwardWord](config/lua/keyassignment/CopyMode/MoveForwardWord.md) not
+  [MoveForwardWord](config/reference/keyassignment/CopyMode/MoveForwardWord.md) not
   always moving to next line.  thanks to [@GZLiew](https://github.com/GZLiew)!
   [#2955](https://github.com/wezterm/wezterm/pull/2955)
 * Wayland: fixup hidpi scaling when `front_end="WebGpu"`. Thanks to
@@ -1193,7 +1193,7 @@ As features stabilize some brief notes about them will accumulate here.
   [#3250](https://github.com/wezterm/wezterm/issues/3250)
 * Config was not applied to non-zoomed panes when config was reloaded
   [#3259](https://github.com/wezterm/wezterm/issues/3259)
-* Default [hyperlink_rules](config/lua/config/hyperlink_rules.md) now match
+* Default [hyperlink_rules](config/reference/config/hyperlink_rules.md) now match
   URLs with port numbers
   [#928](https://github.com/wezterm/wezterm/issues/928)
 * Incorrect cursor position after processing iTerm2 image escape sequence
@@ -1205,7 +1205,7 @@ As features stabilize some brief notes about them will accumulate here.
   [#3263](https://github.com/wezterm/wezterm/issues/3263)
 * Improved compatibility with the Kitty Image Protocol
   [#2716](https://github.com/wezterm/wezterm/issues/2716)
-* [wezterm.time.call_after](config/lua/wezterm.time/call_after.md) would not
+* [wezterm.time.call_after](config/reference/wezterm.time/call_after.md) would not
   work when used in an event callback.
   [#3026](https://github.com/wezterm/wezterm/issues/3026)
 * Hover state not correctly indicated for retro tab bar when showing at
@@ -1214,7 +1214,7 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
 * `CTRL-SHIFT-P` now activates the new [command
-  palette](config/lua/keyassignment/ActivateCommandPalette.md), instead of
+  palette](config/reference/keyassignment/ActivateCommandPalette.md), instead of
   `PaneSelect` [#1485](https://github.com/wezterm/wezterm/issues/1485)
 * Window title reporting escape sequences are now disabled by default.
   [See here for more details](https://marc.info/?l=bugtraq&m=104612710031920&w=2)
@@ -1222,13 +1222,13 @@ As features stabilize some brief notes about them will accumulate here.
   subscript due to xterm/vim conflict
   [mintty/#1189](https://github.com/mintty/mintty/issues/1189)
 * Removed deprecated `Copy`, `Paste` and `PastePrimarySelection` actions. Use
-  [CopyTo](config/lua/keyassignment/CopyTo.md) and
-  [PasteFrom](config/lua/keyassignment/PasteFrom.md) instead.
+  [CopyTo](config/reference/keyassignment/CopyTo.md) and
+  [PasteFrom](config/reference/keyassignment/PasteFrom.md) instead.
 * `wezterm -e` is now an alias for `wezterm start`. Thanks to
   [@Abdiramen](https://github.com/Abdiramen)!
   [#2889](https://github.com/wezterm/wezterm/pull/2889)
   [#2782](https://github.com/wezterm/wezterm/issues/2782)
-* [bold_brightens_ansi_colors](config/lua/config/bold_brightens_ansi_colors.md)
+* [bold_brightens_ansi_colors](config/reference/config/bold_brightens_ansi_colors.md)
   now supports `"BrightOnly"` to use the bright color without selecting a bold
   font. [#2932](https://github.com/wezterm/wezterm/issues/2932)
 * Color schemes: `Gruvbox Dark` was renamed to `GruvboxDark` and adjusted in
@@ -1247,8 +1247,8 @@ As features stabilize some brief notes about them will accumulate here.
 * Copy Mode: Added <kbd>Home</kbd> and <kbd>End</kbd> default assignments.
   Thanks to [@cunha](https://github.com/cunha)!
   [#2762](https://github.com/wezterm/wezterm/pull/2762)
-* [wezterm.mux.spawn_window](config/lua/wezterm.mux/spawn_window.md) and
-  [SpawnCommandInNewWindow](config/lua/keyassignment/SpawnCommandInNewWindow.md)
+* [wezterm.mux.spawn_window](config/reference/wezterm.mux/spawn_window.md) and
+  [SpawnCommandInNewWindow](config/reference/keyassignment/SpawnCommandInNewWindow.md)
   now accept a position field to control initial gui window position.
   [#2976](https://github.com/wezterm/wezterm/issues/2976)
 * X11/Wayland: Mouse based selection once again copies to both the clipboard
@@ -1257,12 +1257,12 @@ As features stabilize some brief notes about them will accumulate here.
   annoying me ever since. You are welcome to define your own [mouse
   bindings](config/mouse.md) if you want to change that behavior.
 * WSL Domains returned from
-  [wezterm.default_wsl_domains](config/lua/wezterm/default_wsl_domains.md) now
+  [wezterm.default_wsl_domains](config/reference/wezterm/default_wsl_domains.md) now
   set `default_cwd="~"` [#2826](https://github.com/wezterm/wezterm/issues/2826)
 * wezterm now also searches `$XDG_CONFIG_DIRS` as well as `$XDG_CONFIG_HOME`
   when searching for config files. Thanks to [@jmbaur](https://github.com/jmbaur)!
   [#3146](https://github.com/wezterm/wezterm/pull/3146)
-* [wezterm.time.call_after](config/lua/wezterm.time/call_after.md) now accepts
+* [wezterm.time.call_after](config/reference/wezterm.time/call_after.md) now accepts
   fractional numbers of seconds.
   [#3287](https://github.com/wezterm/wezterm/issues/3287)
 
@@ -1277,16 +1277,16 @@ As features stabilize some brief notes about them will accumulate here.
   rendering to the GPU.
 
 #### New
-* [wezterm.gui.default_key_tables](config/lua/wezterm.gui/default_key_tables.md)
-  and [wezterm.gui.default_keys](config/lua/wezterm.gui/default_keys.md) for
+* [wezterm.gui.default_key_tables](config/reference/wezterm.gui/default_key_tables.md)
+  and [wezterm.gui.default_keys](config/reference/wezterm.gui/default_keys.md) for
   more conveniently copying and extending the default configuration.
-* [normalize_output_to_unicode_nfc](config/lua/config/normalize_output_to_unicode_nfc.md)
+* [normalize_output_to_unicode_nfc](config/reference/config/normalize_output_to_unicode_nfc.md)
   option to normalize terminal output to Unicode NFC prior to applying it to
   the terminal model.  [#2482](https://github.com/wezterm/wezterm/issues/2482)
-* [cursor_thickness](config/lua/config/cursor_thickness.md),
-  [underline_thickness](config/lua/config/underline_thickness.md),
-  [underline_position](config/lua/config/underline_position.md) and
-  [strikethrough_position](config/lua/config/strikethrough_position.md) options
+* [cursor_thickness](config/reference/config/cursor_thickness.md),
+  [underline_thickness](config/reference/config/underline_thickness.md),
+  [underline_position](config/reference/config/underline_position.md) and
+  [strikethrough_position](config/reference/config/strikethrough_position.md) options
   to fine tune appearance. [#2505](https://github.com/wezterm/wezterm/issues/2505)
   [#2326](https://github.com/wezterm/wezterm/issues/2326)
 * Support for `modifyOtherKeys` keyboard encoding
@@ -1295,23 +1295,23 @@ As features stabilize some brief notes about them will accumulate here.
 * [wezterm cli activate-pane-direction](cli/cli/activate-pane-direction.md)
   command. Thanks to [@abusch](https://github.com/abusch)!
   [#2526](https://github.com/wezterm/wezterm/pull/2526)
-* [window:is_focused()](config/lua/window/is_focused.md) method for testing
+* [window:is_focused()](config/reference/window/is_focused.md) method for testing
   whether a GUI window has focus.
   [#2537](https://github.com/wezterm/wezterm/discussions/2537)
-* [window-focus-changed](config/lua/window-events/window-focus-changed.md)
+* [window-focus-changed](config/reference/window-events/window-focus-changed.md)
   event.
-* [pane:inject_output](config/lua/pane/inject_output.md) method
-* [ResetTerminal](config/lua/keyassignment/ResetTerminal.md) key assignment
+* [pane:inject_output](config/reference/pane/inject_output.md) method
+* [ResetTerminal](config/reference/keyassignment/ResetTerminal.md) key assignment
 * Support for Utf8 mouse reporting (DECSET 1005).
   [#2613](https://github.com/wezterm/wezterm/issues/2613)
-* [ActivateKeyTable](config/lua/keyassignment/ActivateKeyTable.md) now also
+* [ActivateKeyTable](config/reference/keyassignment/ActivateKeyTable.md) now also
   supports `prevent_fallback = true` as a parameter.
   [#2702](https://github.com/wezterm/wezterm/issues/2702)
-* [show_tabs_in_tab_bar](config/lua/config/show_tabs_in_tab_bar.md) and
-  [show_new_tab_button_in_tab_bar](config/lua/config/show_new_tab_button_in_tab_bar.md)
+* [show_tabs_in_tab_bar](config/reference/config/show_tabs_in_tab_bar.md) and
+  [show_new_tab_button_in_tab_bar](config/reference/config/show_new_tab_button_in_tab_bar.md)
   config options to customize the tab bar appearance.
   [#2082](https://github.com/wezterm/wezterm/issues/2082)
-* [front_end = "WebGpu"](config/lua/config/front_end.md) enables Metal, Vulkan and DX 12 drivers.
+* [front_end = "WebGpu"](config/reference/config/front_end.md) enables Metal, Vulkan and DX 12 drivers.
 
 #### Fixed
 * Wayland: key repeat gets stuck after pressing two keys in quick succession.
@@ -1407,7 +1407,7 @@ As features stabilize some brief notes about them will accumulate here.
 * multiplexer: The lag indicator that gets overlaid on the pane content
   when waiting a long time for a response now defaults to disabled.  It is
   recommended that you [put it into your status
-  bar](config/lua/pane/get_metadata.md), but you may re-enable the old way
+  bar](config/reference/pane/get_metadata.md), but you may re-enable the old way
   using `overlay_lag_indicator = true` in the appropriate domain
   configuration.
 * Added dummy `-e` command line option to support programs that assume that all
@@ -1429,7 +1429,7 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20220905-102802-7d4b8249
 
 #### New
-* [switch_to_last_active_tab_when_closing_tab](config/lua/config/switch_to_last_active_tab_when_closing_tab.md)
+* [switch_to_last_active_tab_when_closing_tab](config/reference/config/switch_to_last_active_tab_when_closing_tab.md)
   option to control behavior when closing the active tab.
   [#2487](https://github.com/wezterm/wezterm/issues/2487)
 #### Changed
@@ -1454,20 +1454,20 @@ As features stabilize some brief notes about them will accumulate here.
 #### New
 
 * Color schemes: [carbonfox](colorschemes/c/index.md#carbonfox), [DanQing Light (base16)](colorschemes/d/index.md#danqing-light-base16), [Dracula (Official)](colorschemes/d/index.md#dracula-official), [Poimandres](colorschemes/p/index.md#poimandres), [Poimandres Storm](colorschemes/p/index.md#poimandres-storm), [Sequoia Monochrome](colorschemes/s/index.md#sequoia-monochrome), [Sequoia Moonlight](colorschemes/s/index.md#sequoia-moonlight), [SynthwaveAlpha](colorschemes/s/index.md#synthwavealpha), [SynthwaveAlpha (Gogh)](colorschemes/s/index.md#synthwave-alpha-gogh)
-* [window_frame](config/lua/config/window_frame.md) now supports setting border size and color [#2417](https://github.com/wezterm/wezterm/issues/2417)
+* [window_frame](config/reference/config/window_frame.md) now supports setting border size and color [#2417](https://github.com/wezterm/wezterm/issues/2417)
 * [CopyMode](copymode.md) now supports selecting and move by semantic zones. [#2346](https://github.com/wezterm/wezterm/issues/2346)
-* [max_fps](config/lua/config/max_fps.md) option to limit maximum frame rate [#2419](https://github.com/wezterm/wezterm/discussions/2419)
-* [`user-var-changed` event](config/lua/window-events/user-var-changed.md) allows triggering lua code in response to user vars being changed
-* `CTRL-SHIFT-U` activates a new Emoij/Unicodes/NerdFont character picker modal overlay. Fuzzy search by name or hex unicode codepoint value, or browse with keys. `CTRL-r` to cycle the browser between categories. `Enter` to select an item, copy it to the clipboard and send it to the active pane as input. `Esc` to cancel. [CharSelect](config/lua/keyassignment/CharSelect.md).
-* `CTRL-SHIFT-P` is now a default assignment for [PaneSelect](config/lua/keyassignment/PaneSelect.md)
+* [max_fps](config/reference/config/max_fps.md) option to limit maximum frame rate [#2419](https://github.com/wezterm/wezterm/discussions/2419)
+* [`user-var-changed` event](config/reference/window-events/user-var-changed.md) allows triggering lua code in response to user vars being changed
+* `CTRL-SHIFT-U` activates a new Emoij/Unicodes/NerdFont character picker modal overlay. Fuzzy search by name or hex unicode codepoint value, or browse with keys. `CTRL-r` to cycle the browser between categories. `Enter` to select an item, copy it to the clipboard and send it to the active pane as input. `Esc` to cancel. [CharSelect](config/reference/keyassignment/CharSelect.md).
+* `CTRL-SHIFT-P` is now a default assignment for [PaneSelect](config/reference/keyassignment/PaneSelect.md)
 * Cursor now changes to a lock glyph to indicate when local echo is disabled for password entry. Detection is limited to local unix processes and cannot work with tmux. Use `detect_password_input=false` to disable this. [#2460](https://github.com/wezterm/wezterm/issues/2460)
 
 #### Changed
 
 * `colors` now override colors from your selected `color_scheme`. Previously, `color_scheme` was mutually exclusive with `colors` and always took precedence. The new behavior is more in line with what most people expect.
 * Reduced CPU utilization for busy/large screen updates, blinking cursor and other easing animations
-* [ActivatePaneDirection](config/lua/keyassignment/ActivatePaneDirection.md) now uses recency to resolve ambiguous moves [#2374](https://github.com/wezterm/wezterm/issues/2374)
-* [update-status](config/lua/window-events/update-status.md) is a more general event for updating left or right status. `update-right-status` is considered to be deprecated in favor of `update-status`.
+* [ActivatePaneDirection](config/reference/keyassignment/ActivatePaneDirection.md) now uses recency to resolve ambiguous moves [#2374](https://github.com/wezterm/wezterm/issues/2374)
+* [update-status](config/reference/window-events/update-status.md) is a more general event for updating left or right status. `update-right-status` is considered to be deprecated in favor of `update-status`.
 * Cache XDG Portal Appearance values. Thanks to [@vimposter](https://github.com/vimpostor)! [#2402](https://github.com/wezterm/wezterm/pull/2402)
 * Compensate for TUI programs that flicker due to unsynchronized output by adding up to 3ms additional latency after each read to coalesce their screen outputs into a single frame. You can set this delay via a new `mux_output_parser_coalesce_delay_ms` option. [#2443](https://github.com/wezterm/wezterm/issues/2443)
 * win32: Updated openconsole/conpty to v1.14.2281.0
@@ -1480,7 +1480,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Entering IME-composed text would have no effect in `wezterm ssh` [#2434](https://github.com/wezterm/wezterm/issues/2434)
 * `gui-startup` event now also works with `wezterm ssh`
 * `x` and `+` buttons in the fancy tab bar are now always square [#2399](https://github.com/wezterm/wezterm/issues/2399)
-* middle clicking a tab to close it will now confirm closing using the same rules as [CloseCurrentTab](config/lua/keyassignment/CloseCurrentTab.md) [#2350](https://github.com/wezterm/wezterm/issues/2350)
+* middle clicking a tab to close it will now confirm closing using the same rules as [CloseCurrentTab](config/reference/keyassignment/CloseCurrentTab.md) [#2350](https://github.com/wezterm/wezterm/issues/2350)
 * Emitting the tmux-style `ESC k TITLE ST` sequence via ConPTY breaks output for the pane [#2442](https://github.com/wezterm/wezterm/issues/2442)
 * Avoid using full path canonicalization for `--cwd` options [#2449](https://github.com/wezterm/wezterm/issues/2449)
 * Scroll to the bottom on mouse input when mouse reporting is enabled [#2447](https://github.com/wezterm/wezterm/issues/2447)
@@ -1491,35 +1491,35 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20220807-113146-c2fee766
 
 #### New
-* [ActivateKeyTable](config/lua/keyassignment/ActivateKeyTable.md) now supports `until_unknown=true` to implicitly pop the table when a key not defined by that table is pressed. [#2178](https://github.com/wezterm/wezterm/issues/2178)
-* [window:copy_to_clipboard](config/lua/window/copy_to_clipboard.md) method for putting arbitrary text into the clipboard/selection.
-* [window:set_inner_size](config/lua/window/set_inner_size.md) method for controlling window size.
-* [window:set_position](config/lua/window/set_position.md) method for controlling window position.
-* [window:maximize](config/lua/window/maximize.md) and [window:restore](config/lua/window/restore.md) methods for controlling window maximization state.
-* [window:get_selection_escapes_for_pane](config/lua/window/get_selection_escapes_for_pane.md) method for getting the current selection including escape sequences. [#2223](https://github.com/wezterm/wezterm/issues/2223)
-* [window:current_event](config/lua/window/current_event.md) method for getting the current event. [#2296](https://github.com/wezterm/wezterm/pull/2296)
-* [wezterm.color](config/lua/wezterm.color/index.md) module for working with colors and importing color schemes.
-* [wezterm.gui](config/lua/wezterm.gui/index.md) module and [mux_window:gui_window](config/lua/mux-window/gui_window.md) method.
-* [wezterm.gui.screens()](config/lua/wezterm.gui/screens.md) function for getting information about the available screens/monitors/displays
-* [wezterm.gui.get_appearance()](config/lua/wezterm.gui/get_appearance.md) function for a simpler way to get system dark mode state
-* [wezterm.procinfo](config/lua/wezterm.procinfo/index.md) module for querying local process information.
-* [wezterm.time](config/lua/wezterm.time/index.md) module for working with time, including methods for determining sun rise/set.
-* You may now use [wezterm.format](config/lua/wezterm/format.md) (or otherwise use strings with escape sequences) in the labels of the [Launcher Menu](config/launch.md#the-launcher-menu).
-* You may now specify `assume_emoji_presentation = true` (or `false`) in [wezterm.font()](config/lua/wezterm/font.md) and [wezterm.font_with_fallback()](config/lua/wezterm/font_with_fallback.md)
+* [ActivateKeyTable](config/reference/keyassignment/ActivateKeyTable.md) now supports `until_unknown=true` to implicitly pop the table when a key not defined by that table is pressed. [#2178](https://github.com/wezterm/wezterm/issues/2178)
+* [window:copy_to_clipboard](config/reference/window/copy_to_clipboard.md) method for putting arbitrary text into the clipboard/selection.
+* [window:set_inner_size](config/reference/window/set_inner_size.md) method for controlling window size.
+* [window:set_position](config/reference/window/set_position.md) method for controlling window position.
+* [window:maximize](config/reference/window/maximize.md) and [window:restore](config/reference/window/restore.md) methods for controlling window maximization state.
+* [window:get_selection_escapes_for_pane](config/reference/window/get_selection_escapes_for_pane.md) method for getting the current selection including escape sequences. [#2223](https://github.com/wezterm/wezterm/issues/2223)
+* [window:current_event](config/reference/window/current_event.md) method for getting the current event. [#2296](https://github.com/wezterm/wezterm/pull/2296)
+* [wezterm.color](config/reference/wezterm.color/index.md) module for working with colors and importing color schemes.
+* [wezterm.gui](config/reference/wezterm.gui/index.md) module and [mux_window:gui_window](config/reference/mux-window/gui_window.md) method.
+* [wezterm.gui.screens()](config/reference/wezterm.gui/screens.md) function for getting information about the available screens/monitors/displays
+* [wezterm.gui.get_appearance()](config/reference/wezterm.gui/get_appearance.md) function for a simpler way to get system dark mode state
+* [wezterm.procinfo](config/reference/wezterm.procinfo/index.md) module for querying local process information.
+* [wezterm.time](config/reference/wezterm.time/index.md) module for working with time, including methods for determining sun rise/set.
+* You may now use [wezterm.format](config/reference/wezterm/format.md) (or otherwise use strings with escape sequences) in the labels of the [Launcher Menu](config/launch.md#the-launcher-menu).
+* You may now specify `assume_emoji_presentation = true` (or `false`) in [wezterm.font()](config/reference/wezterm/font.md) and [wezterm.font_with_fallback()](config/reference/wezterm/font_with_fallback.md)
 * Wayland: `zwp_text_input_v3` is now supported, which enables IME to work in wezterm if your compositor also implements this protocol.
-* [wezterm.json_parse()](config/lua/wezterm/json_parse.md) and [wezterm.json_encode()](config/lua/wezterm/json_encode.md) functions for working with JSON.
+* [wezterm.json_parse()](config/reference/wezterm/json_parse.md) and [wezterm.json_encode()](config/reference/wezterm/json_encode.md) functions for working with JSON.
 * Hundreds of new color schemes have been imported from [base16](https://github.com/chriskempson/base16-schemes-source), [Gogh](https://gogh-co.github.io/Gogh/) and [terminal.sexy](https://terminal.sexy/). [Browse the schemes](colorschemes/index.md) and look for themes with `(base16)`, `(Gogh)` and `(terminal.sexy)` in the name to discover them!
-* [pane:is_alt_screen_active()](config/lua/pane/is_alt_screen_active.md) for testing whether the alt screen is active. Thanks to [@Funami580](https://github.com/Funami580)! [#2234](https://github.com/wezterm/wezterm/issues/2234)
+* [pane:is_alt_screen_active()](config/reference/pane/is_alt_screen_active.md) for testing whether the alt screen is active. Thanks to [@Funami580](https://github.com/Funami580)! [#2234](https://github.com/wezterm/wezterm/issues/2234)
 * X11/Wayland: [XDG desktop portal](https://flatpak.github.io/xdg-desktop-portal/) is now used to determine whether dark mode is in use [#2258](https://github.com/wezterm/wezterm/issues/2258)
-* [SetPaneZoomState](config/lua/keyassignment/SetPaneZoomState.md) key assignment and [MuxTab:set_zoomed()](config/lua/MuxTab/set_zoomed.md) for explicitly setting the zoom state of a pane. [#2284](https://github.com/wezterm/wezterm/discussions/2284)
+* [SetPaneZoomState](config/reference/keyassignment/SetPaneZoomState.md) key assignment and [MuxTab:set_zoomed()](config/reference/MuxTab/set_zoomed.md) for explicitly setting the zoom state of a pane. [#2284](https://github.com/wezterm/wezterm/discussions/2284)
 * [mouse_bindings](config/mouse.md) can now handle scroll events. Thanks to [@Funami580](https://github.com/Funami580)! [#2173](https://github.com/wezterm/wezterm/issues/2173) [#2296](https://github.com/wezterm/wezterm/pull/2296)
 * [mouse_bindings](config/mouse.md) may now also be defined based on whether the alt-screen is active and/or whether the application in the pane has enabled mouse reporting. [#581](https://github.com/wezterm/wezterm/issues/581)
 * `wezterm.action.CopyMode('ClearSelectionMode')` allows clearing the selection mode without leaving [Copy Mode](copymode.md). Thanks to [@aznhe21](https://github.com/aznhe21)! [#2352](https://github.com/wezterm/wezterm/pull/2352)
-* [window:set_left_status](config/lua/window/set_left_status.md) for setting status to the left of the tabs in the tab bar [#1561](https://github.com/wezterm/wezterm/issues/1561)
+* [window:set_left_status](config/reference/window/set_left_status.md) for setting status to the left of the tabs in the tab bar [#1561](https://github.com/wezterm/wezterm/issues/1561)
 
 #### Changed
 * If `timeout_milliseconds` is specified in
-  [ActivateKeyTable](config/lua/keyassignment/ActivateKeyTable.md), then the
+  [ActivateKeyTable](config/reference/keyassignment/ActivateKeyTable.md), then the
   timeout duration is now reset each time a key press matches that key table
   activation. [#1129](https://github.com/wezterm/wezterm/issues/1129)
 * The lua examples in the docs are now syntax checked and formatted via
@@ -1530,19 +1530,19 @@ As features stabilize some brief notes about them will accumulate here.
   [#2253](https://github.com/wezterm/wezterm/issues/2253)
 * Internal scrollback datastructure improvements reduce per-cell overhead by up to ~40x depending on the composition of the line (lines with lots of varied attributes or image attachments will have more overhead).
 * Improved search performance
-* Quickselect: now defaults to searching 1000 lines above and below the current viewport, making it faster and the labels shorter for users with a larger scrollback. A new `scope_lines` parameter to [QuickSelectArgs](config/lua/keyassignment/QuickSelectArgs.md) allows controlling the search region explicitly. Thanks to [@yyogo](https://github.com/yyogo) for the initial PR! [#1317](https://github.com/wezterm/wezterm/pull/1317)
+* Quickselect: now defaults to searching 1000 lines above and below the current viewport, making it faster and the labels shorter for users with a larger scrollback. A new `scope_lines` parameter to [QuickSelectArgs](config/reference/keyassignment/QuickSelectArgs.md) allows controlling the search region explicitly. Thanks to [@yyogo](https://github.com/yyogo) for the initial PR! [#1317](https://github.com/wezterm/wezterm/pull/1317)
 * OSC 10, 11 and 12 (Set Default Text Background, Default Text Foreground Color, and Text Cursor Color) now support setting the alpha component [#2313](https://github.com/wezterm/wezterm/issues/2313), and added [CSI 38:6](escape-sequences.md#csi-386-foreground-color-rgba), `CSI 48:6` and `CSI 58:6` extensions to allow setting full color RGB with Alpha channel for spans of text.
 * Copy Mode: setting the same selection mode a second time will now toggle off that mode and clear the selection, preserving the current position [#2246](https://github.com/wezterm/wezterm/discussions/2246)
 * Copy Mode: new default vim-style `y` "yank" key assignment will copy the selection and close copy mode
 
 #### Fixed
-* [ActivateKeyTable](config/lua/keyassignment/ActivateKeyTable.md)'s `replace_current` field was not actually optional. Made it optional. [#2179](https://github.com/wezterm/wezterm/issues/2179)
+* [ActivateKeyTable](config/reference/keyassignment/ActivateKeyTable.md)'s `replace_current` field was not actually optional. Made it optional. [#2179](https://github.com/wezterm/wezterm/issues/2179)
 * `winget` causes toast notification spam [#2185](https://github.com/wezterm/wezterm/issues/2185)
 * `wezterm connect sshdomain` could hang on startup if password authentication was required [#2194](https://github.com/wezterm/wezterm/issues/2194)
 * `colors.indexed` would error out with `Cannot convert String to u8`. [#2197](https://github.com/wezterm/wezterm/issues/2197)
 * X11: closing a window when multiple were open could result in an X protocol error that closed all windows [#2198](https://github.com/wezterm/wezterm/issues/2198)
-* Config will now automatically reload after error. Previously, you would need to manually reload the config using [ReloadConfiguration](config/lua/keyassignment/ReloadConfiguration.md). [#1174](https://github.com/wezterm/wezterm/issues/1174)
-* Config will now automatically reload for changes made to `require`d lua files. Previously, only the main config file and any files that you explicitly passed to [add_to_config_reload_watch_list](config/lua/wezterm/add_to_config_reload_watch_list.md) would trigger a reload.
+* Config will now automatically reload after error. Previously, you would need to manually reload the config using [ReloadConfiguration](config/reference/keyassignment/ReloadConfiguration.md). [#1174](https://github.com/wezterm/wezterm/issues/1174)
+* Config will now automatically reload for changes made to `require`d lua files. Previously, only the main config file and any files that you explicitly passed to [add_to_config_reload_watch_list](config/reference/wezterm/add_to_config_reload_watch_list.md) would trigger a reload.
 * macOS: numeric keypad enter generated CTRL-C instead of enter. Regression of [#739](https://github.com/wezterm/wezterm/issues/739). [#2204](https://github.com/wezterm/wezterm/issues/2204)
 * Wayland: inconsistent pasting. Thanks to [@Funami580](https://github.com/Funami580)! [#2225](https://github.com/wezterm/wezterm/issues/2225) [#2226](https://github.com/wezterm/wezterm/pulls/2226)
 * win32 input mode: fixed encoding of backspace and delete keys. Thanks to [@kreudom](https://github.com/kreudom)! [#2233](https://github.com/wezterm/wezterm/pull/2233)
@@ -1557,7 +1557,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Overlays such as debug and launcher menu now handle resize better
 * Shift-F1 through F4 generated different encoding than xterm [#2263](https://github.com/wezterm/wezterm/issues/2263)
 * X11/Wayland: apps that extract the `Exec` field from wezterm.desktop (such as thunar, Dolphin and others) can now simply concatenate the command line they want to invoke, and it will spawn in the their current working directory. Thanks to [@Anomalocaridid](https://github.com/Anomalocaridid)! [#2271](https://github.com/wezterm/wezterm/pull/2271) [#2103](https://github.com/wezterm/wezterm/issues/2103)
-* [gui-startup](config/lua/gui-events/gui-startup.md) now passes a [SpawnCommand](config/lua/SpawnCommand.md) parameter representing the `wezterm start` command arguments.
+* [gui-startup](config/reference/gui-events/gui-startup.md) now passes a [SpawnCommand](config/reference/SpawnCommand.md) parameter representing the `wezterm start` command arguments.
 * Tab `x` button is no longer obscured by tab title text for long tab titles [#2269](https://github.com/wezterm/wezterm/issues/2269)
 * Cursor position could end up in the wrong place when rewrapping lines and the cursor was on the rewrap boundary [#2162](https://github.com/wezterm/wezterm/issues/2162)
 * Two or more panes closing at the same time could result in their containing tab hanging and being stuck with "no pane" for a title [#2304](https://github.com/wezterm/wezterm/issues/2304)
@@ -1569,44 +1569,44 @@ As features stabilize some brief notes about them will accumulate here.
 ### 20220624-141144-bd1b7c5d
 
 #### New
-* [background](config/lua/config/background.md) option for rich background compositing and parallax scrolling effects.
+* [background](config/reference/config/background.md) option for rich background compositing and parallax scrolling effects.
 * Added [docs for the cli](cli/general.md)
-* Support for the [Kitty Keyboard Protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol). Use [enable_kitty_keyboard](config/lua/config/enable_kitty_keyboard.md)`=true` to enable it.
-* New [wezterm.mux](config/lua/wezterm.mux/index.md) module, [gui-startup](config/lua/gui-events/gui-startup.md) and [mux-startup](config/lua/mux-events/mux-startup.md) events for spawning programs into your preferred arrangement when wezterm starts. [#674](https://github.com/wezterm/wezterm/issues/674)
+* Support for the [Kitty Keyboard Protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol). Use [enable_kitty_keyboard](config/reference/config/enable_kitty_keyboard.md)`=true` to enable it.
+* New [wezterm.mux](config/reference/wezterm.mux/index.md) module, [gui-startup](config/reference/gui-events/gui-startup.md) and [mux-startup](config/reference/mux-events/mux-startup.md) events for spawning programs into your preferred arrangement when wezterm starts. [#674](https://github.com/wezterm/wezterm/issues/674)
 * ssh client now supports `BindAddress`. Thanks to [@gpanders](https://github.com/gpanders)! [#1875](https://github.com/wezterm/wezterm/pull/1875)
-* [PaneInformation.domain_name](config/lua/PaneInformation.md) and [pane:get_domain_name()](config/lua/pane/get_domain_name.md) which return the name of the domain with which a pane is associated. [#1881](https://github.com/wezterm/wezterm/issues/1881)
+* [PaneInformation.domain_name](config/reference/PaneInformation.md) and [pane:get_domain_name()](config/reference/pane/get_domain_name.md) which return the name of the domain with which a pane is associated. [#1881](https://github.com/wezterm/wezterm/issues/1881)
 * You may now use `CTRL-n` and `CTRL-p` (in addition to the up/down arrow and vi motion keys) to change the selected row in the Launcher.  Thanks to [@Junnplus](https://github.com/Junnplus)! [#1880](https://github.com/wezterm/wezterm/pull/1880)
 * Attaching multiplexer domains now attaches the first window as a tab in the active window, rather than opening a new window. [#1874](https://github.com/wezterm/wezterm/issues/1874)
-* [AttachDomain](config/lua/keyassignment/AttachDomain.md) and [DetachDomain](config/lua/keyassignment/DetachDomain.md) key assignments
-* Specifying a domain name in a [SpawnCommand](config/lua/SpawnCommand.md) will cause that domain to be attached if it is in the detached state. This is useful when combined with [SwitchToWorkspace](config/lua/keyassignment/SwitchToWorkspace.md).
+* [AttachDomain](config/reference/keyassignment/AttachDomain.md) and [DetachDomain](config/reference/keyassignment/DetachDomain.md) key assignments
+* Specifying a domain name in a [SpawnCommand](config/reference/SpawnCommand.md) will cause that domain to be attached if it is in the detached state. This is useful when combined with [SwitchToWorkspace](config/reference/keyassignment/SwitchToWorkspace.md).
 * X11: wezterm now sets `_NET_WM_NAME` in addition to `WM_NAME` for clients that don't know how to fallback
-* [treat_east_asian_ambiguous_width_as_wide](config/lua/config/treat_east_asian_ambiguous_width_as_wide.md) for control over how ambiguous width characters are resolved. [#1888](https://github.com/wezterm/wezterm/issues/1888)
-* [clean_exit_codes](config/lua/config/clean_exit_codes.md) config to fine tune [exit_behavior](config/lua/config/exit_behavior.md) [#1889](https://github.com/wezterm/wezterm/issues/1889)
-* [ClearSelection](config/lua/keyassignment/ClearSelection.md) key assignment [#1900](https://github.com/wezterm/wezterm/issues/1900)
+* [treat_east_asian_ambiguous_width_as_wide](config/reference/config/treat_east_asian_ambiguous_width_as_wide.md) for control over how ambiguous width characters are resolved. [#1888](https://github.com/wezterm/wezterm/issues/1888)
+* [clean_exit_codes](config/reference/config/clean_exit_codes.md) config to fine tune [exit_behavior](config/reference/config/exit_behavior.md) [#1889](https://github.com/wezterm/wezterm/issues/1889)
+* [ClearSelection](config/reference/keyassignment/ClearSelection.md) key assignment [#1900](https://github.com/wezterm/wezterm/issues/1900)
 * `wezterm cli list --format json` and `wezterm cli list-clients --format json` allow retrieving data in json format. Thanks to [@ratmice](https://github.com/ratmice)! [#1911](https://github.com/wezterm/wezterm/pull/1911)
-* macOS, Windows, Wayland: you may now drag and drop files from other programs and have their paths paste into the terminal. The new [quote_dropped_files](config/lua/config/quote_dropped_files.md) option controls how the file names are quoted. Thanks to [@junnplus](https://github.com/junnplus), [@datasone](https://github.com/datasone) and [@Funami580](https://github.com/Funami580)! [#1868](https://github.com/wezterm/wezterm/pull/1868) [#1953](https://github.com/wezterm/wezterm/pull/1953) [#2148](https://github.com/wezterm/wezterm/pull/2148)
+* macOS, Windows, Wayland: you may now drag and drop files from other programs and have their paths paste into the terminal. The new [quote_dropped_files](config/reference/config/quote_dropped_files.md) option controls how the file names are quoted. Thanks to [@junnplus](https://github.com/junnplus), [@datasone](https://github.com/datasone) and [@Funami580](https://github.com/Funami580)! [#1868](https://github.com/wezterm/wezterm/pull/1868) [#1953](https://github.com/wezterm/wezterm/pull/1953) [#2148](https://github.com/wezterm/wezterm/pull/2148)
 * The mouse scroll wheel now cycles between tabs when hovering over the tab. Thanks to [@junnplus](https://github.com/junnplus)! [#1726](https://github.com/wezterm/wezterm/issues/1726)
-* Holding down `ALT` while dragging the left button will select a rectangular block. It is also possible to use `ALT+SHIFT` to select a rectangular block. [ExtendSelectionToMouseCursor](config/lua/keyassignment/ExtendSelectionToMouseCursor.md) and [SelectTextAtMouseCursor](config/lua/keyassignment/SelectTextAtMouseCursor.md) now accept `"Block"` as a selection mode. Thanks to [@Funami580](https://github.com/Funami580) for helping! [#1361](https://github.com/wezterm/wezterm/issues/1361)
+* Holding down `ALT` while dragging the left button will select a rectangular block. It is also possible to use `ALT+SHIFT` to select a rectangular block. [ExtendSelectionToMouseCursor](config/reference/keyassignment/ExtendSelectionToMouseCursor.md) and [SelectTextAtMouseCursor](config/reference/keyassignment/SelectTextAtMouseCursor.md) now accept `"Block"` as a selection mode. Thanks to [@Funami580](https://github.com/Funami580) for helping! [#1361](https://github.com/wezterm/wezterm/issues/1361)
 * In Copy Mode, `CTRL-v` will enable rectangular block selection mode. [#1656](https://github.com/wezterm/wezterm/issues/1656)
 * In Copy Mode, `SHIFT-v` will enable line selection mode. Thanks to [@bew](https://github.com/bew)! [#2086](https://github.com/wezterm/wezterm/pull/2086)
 * In Copy Mode, `o` and `O` can be used to move the cursor to the other end of the selection, as in vim. Thanks to [@bew](https://github.com/bew)! [#2150](https://github.com/wezterm/wezterm/pull/2150)
 * Copy Mode: key assignments are [now configurable](copymode.md#configurable-key-assignments) [#993](https://github.com/wezterm/wezterm/issues/993)
 * Search Mode: key assignments are [now configurable](scrollback.md#configurable-search-mode-key-assignments) [#993](https://github.com/wezterm/wezterm/issues/993)
-* Search Mode: the default `CTRL-SHIFT-F` key assignment now defaults to the new `CurrentSelectionOrEmptyString` mode to search for the current selection text, if any.  See [Search](config/lua/keyassignment/Search.md) for more info.
+* Search Mode: the default `CTRL-SHIFT-F` key assignment now defaults to the new `CurrentSelectionOrEmptyString` mode to search for the current selection text, if any.  See [Search](config/reference/keyassignment/Search.md) for more info.
 * Copy Mode and Search Mode can be toggled and remember search results and cursor positioning, making it easier to locate and select text without using the mouse [#1592](https://github.com/wezterm/wezterm/issues/1592)
 * In the Launcher Menu, you may now use `CTRL-G` to cancel/exit the launcher [#1977](https://github.com/wezterm/wezterm/issues/1977)
-* [cell_width](config/lua/config/cell_width.md) option to adjust the horizontal spacing when the available font stretches are insufficient. [#1979](https://github.com/wezterm/wezterm/issues/1979)
-* [min_scroll_bar_height](config/lua/config/min_scroll_bar_height.md) to control the minimum size of the scroll bar thumb [#1936](https://github.com/wezterm/wezterm/issues/1936)
-* [RotatePanes](config/lua/keyassignment/RotatePanes.md) key assignment for re-arranging the panes in a tab
-* [SplitPane](config/lua/keyassignment/SplitPane.md) key assignment that allows specifying the size and location of the split, as well as top-level (full width/height) splits. `wezterm cli split-pane --help` shows equivalent options you can use from the cli. [#578](https://github.com/wezterm/wezterm/issues/578)
-* [ime_preedit_rendering](config/lua/config/ime_preedit_rendering.md) option to choose whether to use the builtin or the system IME preedit rendering mode. Thanks to [@kumattau](https://github.com/kumattau)! [#2006](https://github.com/wezterm/wezterm/pull/2006)
-* [wezterm.strftime_utc](config/lua/wezterm/strftime_utc.md) for manipulating times in UTC rather than the local timezone
+* [cell_width](config/reference/config/cell_width.md) option to adjust the horizontal spacing when the available font stretches are insufficient. [#1979](https://github.com/wezterm/wezterm/issues/1979)
+* [min_scroll_bar_height](config/reference/config/min_scroll_bar_height.md) to control the minimum size of the scroll bar thumb [#1936](https://github.com/wezterm/wezterm/issues/1936)
+* [RotatePanes](config/reference/keyassignment/RotatePanes.md) key assignment for re-arranging the panes in a tab
+* [SplitPane](config/reference/keyassignment/SplitPane.md) key assignment that allows specifying the size and location of the split, as well as top-level (full width/height) splits. `wezterm cli split-pane --help` shows equivalent options you can use from the cli. [#578](https://github.com/wezterm/wezterm/issues/578)
+* [ime_preedit_rendering](config/reference/config/ime_preedit_rendering.md) option to choose whether to use the builtin or the system IME preedit rendering mode. Thanks to [@kumattau](https://github.com/kumattau)! [#2006](https://github.com/wezterm/wezterm/pull/2006)
+* [wezterm.strftime_utc](config/reference/wezterm/strftime_utc.md) for manipulating times in UTC rather than the local timezone
 * `wezterm cli send-text --no-paste` option to send text to a pain without wrapping it as a bracketed paste
-* [PaneSelect](config/lua/keyassignment/PaneSelect.md) key assignment to activate the pane selection UI to activate or swap the selected pane. [#1842](https://github.com/wezterm/wezterm/issues/1842) [#1975](https://github.com/wezterm/wezterm/issues/1975)
-* [window_background_gradient](config/lua/config/window_background_gradient.md) now also supports `Linear` gradients with an angle of your choice. Thanks to [@erf](https://github.com/erf)! [#2038](https://github.com/wezterm/wezterm/pull/2038)
+* [PaneSelect](config/reference/keyassignment/PaneSelect.md) key assignment to activate the pane selection UI to activate or swap the selected pane. [#1842](https://github.com/wezterm/wezterm/issues/1842) [#1975](https://github.com/wezterm/wezterm/issues/1975)
+* [window_background_gradient](config/reference/config/window_background_gradient.md) now also supports `Linear` gradients with an angle of your choice. Thanks to [@erf](https://github.com/erf)! [#2038](https://github.com/wezterm/wezterm/pull/2038)
 * RPM and DEB packages now install zsh and bash `wezterm` CLI completions
 * Color schemes: [arcoiris](colorschemes/a/index.md#arcoiris), [duckbones](colorschemes/d/index.md#duckbones), [Grey-green](colorschemes/g/index.md#grey-green), [kanagawabones](colorschemes/k/index.md#kanagawabones), [Neon](colorschemes/n/index.md#neon), [neobones_dark](colorschemes/n/index.md#neobones_dark), [neobones_light](colorschemes/n/index.md#neobones_light), [seoulbones_dark](colorschemes/s/index.md#seoulbones_dark), [seoulbones_light](colorschemes/s/index.md#seoulbones_light), [tokyonight-day](colorschemes/t/index.md#tokyonight-day), [tokyonight-storm](colorschemes/t/index.md#tokyonight-storm), [tokyonight](colorschemes/t/index.md#tokyonight), [vimbones](colorschemes/v/index.md#vimbones), [zenbones](colorschemes/z/index.md#zenbones), [zenbones_dark](colorschemes/z/index.md#zenbones_dark), [zenbones_light](colorschemes/z/index.md), [zenburned](colorschemes/z/index.md#zenburned), [zenwritten_dark](colorschemes/z/index.md#zenwritten_dark), [zenwritten_light](colorschemes/z/index.md#zenwritten_light)
-* [wezterm.GLOBAL](config/lua/wezterm/GLOBAL.md) for persisting lua data across config reloads
+* [wezterm.GLOBAL](config/reference/wezterm/GLOBAL.md) for persisting lua data across config reloads
 * `wezterm show-keys` command to show key and mouse binding assignments [#2134](https://github.com/wezterm/wezterm/issues/2134)
 
 #### Updated
@@ -1620,10 +1620,10 @@ As features stabilize some brief notes about them will accumulate here.
 * Quickselect no longer jumps to the bottom of the viewport when activated, allowing you to quickselect within the current viewport region
 * Quickselect now supports multi-line anchors such as `^` and `$`.  [#2008](https://github.com/wezterm/wezterm/issues/2008)
 * Overriding config using the cli `--config` option will now error out and prevent starting up if unknown config options are specified, or if the value evaluates to `nil`. Unknown options continue to generate warnings (rather than errors) when observed in the config file so that you're not "locked out" of wezterm if you make a typo in the config file.
-* Windows: [allow_win32_input_mode](config/lua/config/allow_win32_input_mode.md) now defaults to `true` and enables using [win32-input-mode](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md) to send high-fidelity keyboard input to ConPTY. This means that win32 console applications, such as [FAR Manager](https://github.com/FarGroup/FarManager) that use the low level `INPUT_RECORD` API will now receive key-up events as well as events for modifier-only key presses. [#1509](https://github.com/wezterm/wezterm/issues/1509) [#2009](https://github.com/wezterm/wezterm/issues/2009) [#2098](https://github.com/wezterm/wezterm/issues/2098) [#1904](https://github.com/wezterm/wezterm/issues/1904)
-* Wayland: [enable_wayland](config/lua/config/enable_wayland.md) now defaults to `true`. [#2104](https://github.com/wezterm/wezterm/issues/2104)
-* [exit_behavior](config/lua/config/exit_behavior.md) now defaults to `"Close"`. [#2105](https://github.com/wezterm/wezterm/issues/2105)
-* Improved [wezterm.action](config/lua/wezterm/action.md) syntax for slightly more ergnomic and understandable key assignments. [#1150](https://github.com/wezterm/wezterm/issues/1150)
+* Windows: [allow_win32_input_mode](config/reference/config/allow_win32_input_mode.md) now defaults to `true` and enables using [win32-input-mode](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md) to send high-fidelity keyboard input to ConPTY. This means that win32 console applications, such as [FAR Manager](https://github.com/FarGroup/FarManager) that use the low level `INPUT_RECORD` API will now receive key-up events as well as events for modifier-only key presses. [#1509](https://github.com/wezterm/wezterm/issues/1509) [#2009](https://github.com/wezterm/wezterm/issues/2009) [#2098](https://github.com/wezterm/wezterm/issues/2098) [#1904](https://github.com/wezterm/wezterm/issues/1904)
+* Wayland: [enable_wayland](config/reference/config/enable_wayland.md) now defaults to `true`. [#2104](https://github.com/wezterm/wezterm/issues/2104)
+* [exit_behavior](config/reference/config/exit_behavior.md) now defaults to `"Close"`. [#2105](https://github.com/wezterm/wezterm/issues/2105)
+* Improved [wezterm.action](config/reference/wezterm/action.md) syntax for slightly more ergnomic and understandable key assignments. [#1150](https://github.com/wezterm/wezterm/issues/1150)
 
 #### Fixed
 * Flush after replying to `XTGETTCAP`, `DECRQM`, `XTVERSION`, `DA2`, `DA3` [#2060](https://github.com/wezterm/wezterm/issues/2060) [#1850](https://github.com/wezterm/wezterm/issues/1850) [#1950](https://github.com/wezterm/wezterm/issues/1950)
@@ -1645,7 +1645,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Wayland: panic when display scaling is enabled. [#1727](https://github.com/wezterm/wezterm/issues/1727)
 * `Dark+` color scheme background color [#2013](https://github.com/wezterm/wezterm/pull/2013)
 * Synthesized bold didn't kick in for automatically computed `font_rules`. [#2074](https://github.com/wezterm/wezterm/issues/2074)
-* Added [freetype_pcf_long_family_names](config/lua/config/freetype_pcf_long_family_names.md) option to workaround PCF font naming issues on certain Linux distributions. [#2100](https://github.com/wezterm/wezterm/issues/2100)
+* Added [freetype_pcf_long_family_names](config/reference/config/freetype_pcf_long_family_names.md) option to workaround PCF font naming issues on certain Linux distributions. [#2100](https://github.com/wezterm/wezterm/issues/2100)
 * X11/Wayland: wezterm.desktop now specifies `StartupWMClass`. Thanks to [@uncomfyhalomacro](https://github.com/uncomfyhalomacro)! [#2052](https://github.com/wezterm/wezterm/issues/2052) [#2125](https://github.com/wezterm/wezterm/pull/2125)
 * `sudo -i` in a pane would cause subsequent pane/tab creation to fail until the cwd was changed to an accessible directory [#2120](https://github.com/wezterm/wezterm/issues/2120)
 * X11: Fixed an issue where some events could get lost around resize events, especially prevalent when using the NVIDIA proprietary drivers. Thanks to [@pjones123](https://github.com/pjones123) and [@yuttie](https://githug.com/yuttie) for working through this! [#1992](https://github.com/wezterm/wezterm/issues/1992) [#2063](https://github.com/wezterm/wezterm/issues/2063) [#2111](https://github.com/wezterm/wezterm/pull/2111) [#1628](https://github.com/wezterm/wezterm/issues/1628)
@@ -1660,14 +1660,14 @@ As features stabilize some brief notes about them will accumulate here.
 * [Key Tables](config/key-tables.md) feature for powerful modal key assignments
 * `wezterm start --position x,y`, `wezterm start --position displayname:30%,30%` option to control starting window position on all systems except for Wayland. See `wezterm start --help` for more info. [#1794](https://github.com/wezterm/wezterm/issues/1794)
 #### Changed
-* Default key assignments are `mapped:` again. A new [key_map_preference](config/lua/config/key_map_preference.md) option allows the defaults to use `"Mapped"` or `"Physical"`.
+* Default key assignments are `mapped:` again. A new [key_map_preference](config/reference/config/key_map_preference.md) option allows the defaults to use `"Mapped"` or `"Physical"`.
 * Disabled ligatures for `"Monaco"` and `"Menlo"` fonts, as those have `"fi"` ligatures that match even for words such as `find`. [#1786](https://github.com/wezterm/wezterm/issues/1786) [#1736](https://github.com/wezterm/wezterm/issues/1736)
 * Removed the `send_composed_key_when_alt_is_pressed` option. When processing generic `ALT` (eg: that has neither left nor right), if either `send_composed_key_when_left_alt_is_pressed` or `send_composed_key_when_right_alt_is_pressed` is true, then the composed form of the key event will be generated.
 #### Updated and Improved
 * Bundled harfbuzz to 4.2.0
 * On macOS, non-native fullscreen mode now attempts to avoid the notch on systems that have one. [#1737](https://github.com/wezterm/wezterm/issues/1737)
 * Sixel parsing performance has been improved
-* You may now [specify a scaling factor per fallback font](config/lua/wezterm/font_with_fallback.md#manual-fallback-scaling), which is useful when your preferred CJK font renders smaller than your Roman primary font, for example.
+* You may now [specify a scaling factor per fallback font](config/reference/wezterm/font_with_fallback.md#manual-fallback-scaling), which is useful when your preferred CJK font renders smaller than your Roman primary font, for example.
 * Color schemes: [Retro](colorschemes/r/index.md#retro), [GitHub Dark](colorschemes/g/index.md#github-dark), [Blazer](colorschemes/b/index.md#blazer)
 * Wayland: touchpad scroll is now more responsive/precise. Thanks to [@davidrios](https://github.com/davidrios)! [#1800](https://github.com/wezterm/wezterm/pull/1800) [#1840](https://github.com/wezterm/wezterm/pull/1840)
 * Kitty image protocol: now also supports shared memory data transmission. Thanks to [@tantei3](https://github.com/tantei3)! [#1810](https://github.com/wezterm/wezterm/pull/1810)
@@ -1702,24 +1702,24 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### New
 
-* [window:composition_status()](config/lua/window/composition_status.md) and [window:leader_is_active()](config/lua/window/leader_is_active.md) methods that can help populate [window:set_right_status()](config/lua/window/set_right_status.md) [#686](https://github.com/wezterm/wezterm/issues/686)
+* [window:composition_status()](config/reference/window/composition_status.md) and [window:leader_is_active()](config/reference/window/leader_is_active.md) methods that can help populate [window:set_right_status()](config/reference/window/set_right_status.md) [#686](https://github.com/wezterm/wezterm/issues/686)
 * You may now use `colors = { compose_cursor = "orange" }` to change the cursor color when IME, dead key or leader key composition states are active.
 * Support for SGR-Pixels mouse reporting. Thanks to [Autumn Lamonte](https://gitlab.com/autumnmeowmeow)! [#1457](https://github.com/wezterm/wezterm/issues/1457)
-* [ActivatePaneByIndex](config/lua/keyassignment/ActivatePaneByIndex.md) key assignment action. [#1517](https://github.com/wezterm/wezterm/issues/1517)
+* [ActivatePaneByIndex](config/reference/keyassignment/ActivatePaneByIndex.md) key assignment action. [#1517](https://github.com/wezterm/wezterm/issues/1517)
 * Windows: wezterm may now use [win32-input-mode](https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md) to send high-fidelity keyboard input to ConPTY. This means that win32 console applications, such as [FAR Manager](https://github.com/FarGroup/FarManager) that use the low level `INPUT_RECORD` API will now receive key-up events as well as events for modifier-only key presses. Use `allow_win32_input_mode=true` to enable this. [#318](https://github.com/wezterm/wezterm/issues/318) [#1509](https://github.com/wezterm/wezterm/issues/1509) [#1510](https://github.com/wezterm/wezterm/issues/1510)
-* Windows: [default_domain](config/lua/config/default_domain.md), [wsl_domains](config/lua/config/wsl_domains.md) options and [wezterm.default_wsl_domains()](config/lua/wezterm/default_wsl_domains.md) provide more flexibility for WSL users. The effect of `add_wsl_distributions_to_launch_menu=false` was replaced by `wsl_domains={}`.
+* Windows: [default_domain](config/reference/config/default_domain.md), [wsl_domains](config/reference/config/wsl_domains.md) options and [wezterm.default_wsl_domains()](config/reference/wezterm/default_wsl_domains.md) provide more flexibility for WSL users. The effect of `add_wsl_distributions_to_launch_menu=false` was replaced by `wsl_domains={}`.
 * `Symbols Nerd Font Mono` is now bundled with WezTerm and is included as a default fallback font. This means that you may use any of the glyphs available in the [Nerd Fonts](https://github.com/ryanoasis/nerd-fonts) collection with any font without patching fonts and without explicitly adding that font to your fallback list. Pomicons have an unclear license for distribution and are excluded from this bundled font, however, you may manually install the font with those icons from the Nerd Font site itself and it will take precedence over the bundled font.  This font replaces the older `PowerlineExtraSymbols` font.  [#1521](https://github.com/wezterm/wezterm/issues/1521).
-* [wezterm.nerdfonts](config/lua/wezterm/nerdfonts.md) as a convenient way to resolve Nerd Fonts glyphs by name in your config file
-* [ShowLauncherArgs](config/lua/keyassignment/ShowLauncherArgs.md) key assignment to show the launcher scoped to certain items, or to launch it directly in fuzzy matching mode
-* Workspaces. Follow work in progress on [#1531](https://github.com/wezterm/wezterm/issues/1531) and [#1322](https://github.com/wezterm/wezterm/discussions/1322)! [window:active_workspace()](config/lua/window/active_workspace.md), [default_workspace](config/lua/config/default_workspace.md), [SwitchWorkspaceRelative](config/lua/keyassignment/SwitchWorkspaceRelative.md), [SwitchToWorkspace](config/lua/keyassignment/SwitchToWorkspace.md)
+* [wezterm.nerdfonts](config/reference/wezterm/nerdfonts.md) as a convenient way to resolve Nerd Fonts glyphs by name in your config file
+* [ShowLauncherArgs](config/reference/keyassignment/ShowLauncherArgs.md) key assignment to show the launcher scoped to certain items, or to launch it directly in fuzzy matching mode
+* Workspaces. Follow work in progress on [#1531](https://github.com/wezterm/wezterm/issues/1531) and [#1322](https://github.com/wezterm/wezterm/discussions/1322)! [window:active_workspace()](config/reference/window/active_workspace.md), [default_workspace](config/reference/config/default_workspace.md), [SwitchWorkspaceRelative](config/reference/keyassignment/SwitchWorkspaceRelative.md), [SwitchToWorkspace](config/reference/keyassignment/SwitchToWorkspace.md)
 * `wezterm cli send-text "hello"` allows sending text, as though pasted, to a pane. See `wezterm cli send-text --help` for more information. [#888](https://github.com/wezterm/wezterm/issues/888)
-* `local_echo_threshold_ms` option to adjust the predictive local echo timing for [SshDomain](config/lua/SshDomain.md), [TlsDomainClient](config/lua/TlsDomainClient.md) and [unix domains](multiplexing.md). Thanks to [@qperret](https://github.com/qperret)! [#1518](https://github.com/wezterm/wezterm/pull/1518)
+* `local_echo_threshold_ms` option to adjust the predictive local echo timing for [SshDomain](config/reference/SshDomain.md), [TlsDomainClient](config/reference/TlsDomainClient.md) and [unix domains](multiplexing.md). Thanks to [@qperret](https://github.com/qperret)! [#1518](https://github.com/wezterm/wezterm/pull/1518)
 * It is now possible to set `selection_fg` and `selection_bg` to be fully or partially transparent. [Read more](config/appearance.md). [#1615](https://github.com/wezterm/wezterm/issues/1615)
 * Experimental (and incomplete!) support for Bidi/RTL can be enabled through the config. [Follow along in the tracking issue](https://github.com/wezterm/wezterm/issues/784)
 * Primary selection is now supported on Wayland systems that implement [primary-selection-unstable-v1](https://wayland.app/protocols/primary-selection-unstable-v1) or the older Gtk primary selection protocol. Thanks to [@lunaryorn](https://github.com/lunaryorn)! [#1423](https://github.com/wezterm/wezterm/issues/1423)
-* [pane:has_unseen_output()](config/lua/pane/has_unseen_output.md) and [PaneInformation.has_unseen_output](config/lua/PaneInformation.md) allow coloring or marking up tabs based on unseen output. [#796](https://github.com/wezterm/wezterm/discussions/796)
+* [pane:has_unseen_output()](config/reference/pane/has_unseen_output.md) and [PaneInformation.has_unseen_output](config/reference/PaneInformation.md) allow coloring or marking up tabs based on unseen output. [#796](https://github.com/wezterm/wezterm/discussions/796)
 * Context menu extension for Nautilus. Thanks to [@lunaryorn](https://github.com/lunaryorn)! [#1092](https://github.com/wezterm/wezterm/issues/1092)
-* [wezterm.enumerate_ssh_hosts()](config/lua/wezterm/enumerate_ssh_hosts.md) function that can be used to auto-generate ssh domain configuration
+* [wezterm.enumerate_ssh_hosts()](config/reference/wezterm/enumerate_ssh_hosts.md) function that can be used to auto-generate ssh domain configuration
 
 #### Changed
 
@@ -1727,11 +1727,11 @@ As features stabilize some brief notes about them will accumulate here.
 * Key assignments now match prior to any dead-key or IME composition [#877](https://github.com/wezterm/wezterm/issues/877)
 * Removed the `ALT-[NUMBER]` default key assignments as they are not good for non-US layouts. [#1542](https://github.com/wezterm/wezterm/issues/1542)
 * `wezterm cli`, when run outside of a wezterm pane, now prefers to connect to the main GUI instance rather than background mux server. Use `wezterm cli --prefer-mux` to ignore the GUI instance and talk only to the mux server. See `wezterm cli --help` for additional information.
-* [ScrollByPage](config/lua/keyassignment/ScrollByPage.md) now accepts fractional numbers like `0.5` to scroll by half a page at time. Thanks to [@hahuang65](https://github.com/hahuang65)! [#1534](https://github.com/wezterm/wezterm/pull/1534)
-* [use_ime](config/lua/config/use_ime.md) now defaults to `true` on all platforms; previously it was not enabled by default on macOS.
-* [canonicalize_pasted_newlines](config/lua/config/canonicalize_pasted_newlines.md) default has changed to be more compatible for `nano` users, and now provides more control over the text format that is pasted. [#1575](https://github.com/wezterm/wezterm/issues/1575)
-* Blinking text is now eased rather than binary-blinked. See [text_blink_ease_in](config/lua/config/text_blink_ease_in.md) and [text_blink_ease_out](config/lua/config/text_blink_ease_out.md), [text_blink_rapid_ease_in](config/lua/config/text_blink_rapid_ease_in.md) and [text_blink_rapid_ease_out](config/lua/config/text_blink_rapid_ease_out.md) for more information.
-* Blinking text cursor is now eased rather than binary-blinked. See [cursor_blink_ease_in](config/lua/config/cursor_blink_ease_in.md) and [cursor_blink_ease_out](config/lua/config/cursor_blink_ease_out.md).
+* [ScrollByPage](config/reference/keyassignment/ScrollByPage.md) now accepts fractional numbers like `0.5` to scroll by half a page at time. Thanks to [@hahuang65](https://github.com/hahuang65)! [#1534](https://github.com/wezterm/wezterm/pull/1534)
+* [use_ime](config/reference/config/use_ime.md) now defaults to `true` on all platforms; previously it was not enabled by default on macOS.
+* [canonicalize_pasted_newlines](config/reference/config/canonicalize_pasted_newlines.md) default has changed to be more compatible for `nano` users, and now provides more control over the text format that is pasted. [#1575](https://github.com/wezterm/wezterm/issues/1575)
+* Blinking text is now eased rather than binary-blinked. See [text_blink_ease_in](config/reference/config/text_blink_ease_in.md) and [text_blink_ease_out](config/reference/config/text_blink_ease_out.md), [text_blink_rapid_ease_in](config/reference/config/text_blink_rapid_ease_in.md) and [text_blink_rapid_ease_out](config/reference/config/text_blink_rapid_ease_out.md) for more information.
+* Blinking text cursor is now eased rather than binary-blinked. See [cursor_blink_ease_in](config/reference/config/cursor_blink_ease_in.md) and [cursor_blink_ease_out](config/reference/config/cursor_blink_ease_out.md).
 
 #### Updated and Improved
 
@@ -1752,7 +1752,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Windows: latency issue with AltSnap and other window-managery things [#1013](https://github.com/wezterm/wezterm/issues/1013) [#1398](https://github.com/wezterm/wezterm/issues/1398) [#1075](https://github.com/wezterm/wezterm/issues/1075) [#1099](https://github.com/wezterm/wezterm/issues/1099)
 * Multiplexer sessions now propagate user vars [#1528](https://github.com/wezterm/wezterm/issues/1528)
 * Config reloads on the multiplexer server didn't cause the palette to update on the client [#1526](https://github.com/wezterm/wezterm/issues/1528)
-* [ScrollToPrompt](config/lua/keyassignment/ScrollToPrompt.md) could get confused when there were multiple prompts on the same line [#1121](https://github.com/wezterm/wezterm/issues/1121)
+* [ScrollToPrompt](config/reference/keyassignment/ScrollToPrompt.md) could get confused when there were multiple prompts on the same line [#1121](https://github.com/wezterm/wezterm/issues/1121)
 * Hangul text in NFD was not always correctly composed when shaping fonts. [#1573](https://github.com/wezterm/wezterm/issues/1573)
 * Avoid OOM when processing sixels with huge repeat counts [#1610](https://github.com/wezterm/wezterm/issues/1610)
 * Set the sticky bit on socket and pid files created in `XDG_RUNTIME_DIR` to avoid removal by tmpwatch [#1601](https://github.com/wezterm/wezterm/issues/1601)
@@ -1772,21 +1772,21 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### New
 
-* Fancy Tab Bars are now the default. The default tab bar colors have changed to accommodate the new more native look.  You can turn them off by setting [use_fancy_tab_bar = false](config/lua/config/use_fancy_tab_bar.md).
+* Fancy Tab Bars are now the default. The default tab bar colors have changed to accommodate the new more native look.  You can turn them off by setting [use_fancy_tab_bar = false](config/reference/config/use_fancy_tab_bar.md).
 * Support for the [Kitty Image Protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) is now enabled by default.  Most of the protocol is supported; animation support is not yet implemented. Try the amazing [notcurses](https://notcurses.com/) if you want to see what modern terminal graphics can do! [#986](https://github.com/wezterm/wezterm/issues/986)
 * unix domains now support an optional `proxy_command` to use in place of a direct unix socket connection. [Read more about multiplexing unix domains](multiplexing.md#unix-domains)
-* [ScrollToTop](config/lua/keyassignment/ScrollToTop.md) and [ScrollToBottom](config/lua/keyassignment/ScrollToBottom.md) key assignments [#1360](https://github.com/wezterm/wezterm/issues/1360)
-* [SSH Domains](config/lua/SshDomain.md) now support specifying `ssh_config` overrides. [#1149](https://github.com/wezterm/wezterm/issues/1149)
-* [default_gui_startup_args](config/lua/config/default_gui_startup_args.md) allows defaulting to starting the ssh client (for example). [#1030](https://github.com/wezterm/wezterm/issues/1030)
-* [mux-is-process-stateful](config/lua/mux-events/mux-is-process-stateful.md) event for finer control over prompting when closing panes. [#1412](https://github.com/wezterm/wezterm/issues/1412)
-* [harfbuzz_features](config/font-shaping.md), [freetype_load_target](config/lua/config/freetype_load_target.md), [freetype_render_target](config/lua/config/freetype_render_target.md) and [freetype_load_flags](config/lua/config/freetype_load_flags.md) can now be overridden on a per-font basis as described in [wezterm.font](config/lua/wezterm/font.md) and [wezterm.font_with_fallback](config/lua/wezterm/font_with_fallback.md).
-* [ActivateTabRelativeNoWrap](config/lua/keyassignment/ActivateTabRelativeNoWrap.md) key assignment [#1414](https://github.com/wezterm/wezterm/issues/1414)
-* [QuickSelectArgs](config/lua/keyassignment/QuickSelectArgs.md) key assignment [#846](https://github.com/wezterm/wezterm/issues/846) [#1362](https://github.com/wezterm/wezterm/issues/1362)
-* [wezterm.open_with](config/lua/wezterm/open_with.md) function for opening URLs/documents with the default or a specific application [#1362](https://github.com/wezterm/wezterm/issues/1362)
-* [pane:get_foreground_process_name()](config/lua/pane/get_foreground_process_name.md) method, [PaneInformation](config/lua/PaneInformation.md) now has `foreground_process_name` and `current_working_dir` fields, and [pane:get_current_working_dir](config/lua/pane/get_current_working_dir.md) is now supported on Windows for local processes, even without using OSC 7. [#1421](https://github.com/wezterm/wezterm/discussions/1421) [#915](https://github.com/wezterm/wezterm/issues/915) [#876](https://github.com/wezterm/wezterm/issues/876)
-* [ActivatePaneDirection](config/lua/keyassignment/ActivatePaneDirection.md) now also supports `"Next"` and `"Prev"` to cycle through panes [#976](https://github.com/wezterm/wezterm/issues/976)
-* [pane:get_logical_lines_as_text](config/lua/pane/get_logical_lines_as_text.md) to retrieve unwrapped logical lines from a pane [#1468](https://github.com/wezterm/wezterm/issues/1468)
-* [wezterm.get_builtin_color_schemes()](config/lua/wezterm/get_builtin_color_schemes.md) function to eg: pick a random scheme per window, or otherwise reason about schemes. See [the docs](config/lua/wezterm/get_builtin_color_schemes.md) for examples!
+* [ScrollToTop](config/reference/keyassignment/ScrollToTop.md) and [ScrollToBottom](config/reference/keyassignment/ScrollToBottom.md) key assignments [#1360](https://github.com/wezterm/wezterm/issues/1360)
+* [SSH Domains](config/reference/SshDomain.md) now support specifying `ssh_config` overrides. [#1149](https://github.com/wezterm/wezterm/issues/1149)
+* [default_gui_startup_args](config/reference/config/default_gui_startup_args.md) allows defaulting to starting the ssh client (for example). [#1030](https://github.com/wezterm/wezterm/issues/1030)
+* [mux-is-process-stateful](config/reference/mux-events/mux-is-process-stateful.md) event for finer control over prompting when closing panes. [#1412](https://github.com/wezterm/wezterm/issues/1412)
+* [harfbuzz_features](config/font-shaping.md), [freetype_load_target](config/reference/config/freetype_load_target.md), [freetype_render_target](config/reference/config/freetype_render_target.md) and [freetype_load_flags](config/reference/config/freetype_load_flags.md) can now be overridden on a per-font basis as described in [wezterm.font](config/reference/wezterm/font.md) and [wezterm.font_with_fallback](config/reference/wezterm/font_with_fallback.md).
+* [ActivateTabRelativeNoWrap](config/reference/keyassignment/ActivateTabRelativeNoWrap.md) key assignment [#1414](https://github.com/wezterm/wezterm/issues/1414)
+* [QuickSelectArgs](config/reference/keyassignment/QuickSelectArgs.md) key assignment [#846](https://github.com/wezterm/wezterm/issues/846) [#1362](https://github.com/wezterm/wezterm/issues/1362)
+* [wezterm.open_with](config/reference/wezterm/open_with.md) function for opening URLs/documents with the default or a specific application [#1362](https://github.com/wezterm/wezterm/issues/1362)
+* [pane:get_foreground_process_name()](config/reference/pane/get_foreground_process_name.md) method, [PaneInformation](config/reference/PaneInformation.md) now has `foreground_process_name` and `current_working_dir` fields, and [pane:get_current_working_dir](config/reference/pane/get_current_working_dir.md) is now supported on Windows for local processes, even without using OSC 7. [#1421](https://github.com/wezterm/wezterm/discussions/1421) [#915](https://github.com/wezterm/wezterm/issues/915) [#876](https://github.com/wezterm/wezterm/issues/876)
+* [ActivatePaneDirection](config/reference/keyassignment/ActivatePaneDirection.md) now also supports `"Next"` and `"Prev"` to cycle through panes [#976](https://github.com/wezterm/wezterm/issues/976)
+* [pane:get_logical_lines_as_text](config/reference/pane/get_logical_lines_as_text.md) to retrieve unwrapped logical lines from a pane [#1468](https://github.com/wezterm/wezterm/issues/1468)
+* [wezterm.get_builtin_color_schemes()](config/reference/wezterm/get_builtin_color_schemes.md) function to eg: pick a random scheme per window, or otherwise reason about schemes. See [the docs](config/reference/wezterm/get_builtin_color_schemes.md) for examples!
 * Added color schemes: [Alabaster](colorschemes/a/index.md#alabaster), [CGA](colorschemes/c/index.md#cga), [MaterialDesignColors](colorschemes/m/index.md#materialdesigncolors), [darkermatrix](colorschemes/d/index.md#darkermatrix), [nord-light](colorschemes/n/index.md#nord-light)
 
 #### Changed
@@ -1794,7 +1794,7 @@ As features stabilize some brief notes about them will accumulate here.
 * quickselect: we now de-duplicate labels for results with the same textual content. [#1271](https://github.com/wezterm/wezterm/issues/1271)
 * The default `CompleteSelectionOrOpenLinkAtMouseCursor` left button release assignment now also accepts SHIFT being held in order to make SHIFT-click `ExtendSelectionToMouseCursor` feel more ergonomic if the mouse button is released before the SHIFT key. [#1204](https://github.com/wezterm/wezterm/issues/1204)
 * Unicode BIDI and other zero-width graphemes are now filtered out from the terminal model. It's not ideal in the sense that that information is essentially lost when copying to the clipboard, but it makes the presentation correct. [#1422](https://github.com/wezterm/wezterm/issues/1422)
-* [use_ime](config/lua/config/use_ime.md) now defaults to `true` on X11 systems
+* [use_ime](config/reference/config/use_ime.md) now defaults to `true` on X11 systems
 
 #### Updated and Improved
 
@@ -1803,9 +1803,9 @@ As features stabilize some brief notes about them will accumulate here.
 * Bundled NotoColorEmoji to 2.034 (with Unicode 14 support) Thanks to [@4cm4k1](https://github.com/4cm4k1)! [#1440](https://github.com/wezterm/wezterm/pull/1440)
 * macos: removing the titlebar from `window_decorations` now preserves rounded window corners [#1034](https://github.com/wezterm/wezterm/issues/1034)
 * Colors can now be specified in the HSL colorspace using syntax like `"hsl:235 100 50"` [#1436](https://github.com/wezterm/wezterm/issues/1436)
-* Line/Bar cursors in [force_reverse_video_cursor](config/lua/config/force_reverse_video_cursor.md) mode now use the text foreground color rather than the cursor border color. [#1076](https://github.com/wezterm/wezterm/issues/1076)
+* Line/Bar cursors in [force_reverse_video_cursor](config/reference/config/force_reverse_video_cursor.md) mode now use the text foreground color rather than the cursor border color. [#1076](https://github.com/wezterm/wezterm/issues/1076)
 * Improved logo appearance. Thanks to [@ghifarit53](https://github.com/ghifarit53)! [#1454](https://github.com/wezterm/wezterm/pull/1454)
-* You can now pass [SendKey](config/lua/keyassignment/SendKey.md) to [wezterm.action](config/lua/wezterm/action.md) and make your `keys` config look more consistent
+* You can now pass [SendKey](config/reference/keyassignment/SendKey.md) to [wezterm.action](config/reference/wezterm/action.md) and make your `keys` config look more consistent
 * Mouse wheel events are now routed to the hovered pane, rather than sent to the focused pane [#798](https://github.com/wezterm/wezterm/issues/798)
 
 #### Fixed
@@ -1846,20 +1846,20 @@ As features stabilize some brief notes about them will accumulate here.
 
 * X11 now supports IME. It currently defaults to disabled, but you can set `use_ime = true` in your config to enable it (you need to restart wezterm for this to take effect). Many thanks to [@H-M-H](https://github.com/H-M-H) for bringing xcb-imdkit to Rust and implementing this in wezterm! [#250](https://github.com/wezterm/wezterm/issues/250) [#1043](https://github.com/wezterm/wezterm/pull/1043)
 * it is now possible to define colors in the range 16-255 in `colors` and color scheme definitions. Thanks to [@potamides](https://github.com/potamides)! [#841](https://github.com/wezterm/wezterm/issues/841) [#1056](https://github.com/wezterm/wezterm/pull/1056)
-* Added [SendKey](config/lua/keyassignment/SendKey.md) key assignment action that makes it more convenient to rebind the key input that is sent to a pane.
-* Added [Multiple](config/lua/keyassignment/Multiple.md) key assignment action for combining multuple actions in a single press.
-* Added [use_resize_increments](config/lua/config/use_resize_increments.md) option to tell X11, Wayland, macOS window resizing to prefers to step in increments of the cell size
-* [visual_bell](config/lua/config/visual_bell.md) and [audible_bell](config/lua/config/audible_bell.md) configuration options, as well as a [bell](config/lua/window-events/bell.md) event allows you to trigger lua code when the bell is rung. [#3](https://github.com/wezterm/wezterm/issues/3)
-* [wezterm.action_callback](config/lua/wezterm/action_callback.md) function to make it easier to use custom events. Thanks to [@bew](https://github.com/bew)! [#1151](https://github.com/wezterm/wezterm/pull/1151)
+* Added [SendKey](config/reference/keyassignment/SendKey.md) key assignment action that makes it more convenient to rebind the key input that is sent to a pane.
+* Added [Multiple](config/reference/keyassignment/Multiple.md) key assignment action for combining multuple actions in a single press.
+* Added [use_resize_increments](config/reference/config/use_resize_increments.md) option to tell X11, Wayland, macOS window resizing to prefers to step in increments of the cell size
+* [visual_bell](config/reference/config/visual_bell.md) and [audible_bell](config/reference/config/audible_bell.md) configuration options, as well as a [bell](config/reference/window-events/bell.md) event allows you to trigger lua code when the bell is rung. [#3](https://github.com/wezterm/wezterm/issues/3)
+* [wezterm.action_callback](config/reference/wezterm/action_callback.md) function to make it easier to use custom events. Thanks to [@bew](https://github.com/bew)! [#1151](https://github.com/wezterm/wezterm/pull/1151)
 * `wezterm connect` now also supports the `--class` parameter to override the window class
-* [window_padding](config/lua/config/window_padding.md) now accepts values such as `"1cell"` or `"30%"` to compute values based on font or window metrics.
+* [window_padding](config/reference/config/window_padding.md) now accepts values such as `"1cell"` or `"30%"` to compute values based on font or window metrics.
 * BSDish systems now support [toast notifications](https://github.com/wezterm/wezterm/issues/489)
-* [wezterm.background_child_process](config/lua/wezterm/background_child_process.md) function to spawn a process without waiting.
-* [mux_env_remove](config/lua/config/mux_env_remove.md) setting to control which environment variables should be cleared prior to spawning processes in the multiplexer server [#1225](https://github.com/wezterm/wezterm/issues/1225)
-* [canonicalize_pasted_newlines](config/lua/config/canonicalize_pasted_newlines.md) option to help Windows users manage newlines in pastes [#1213](https://github.com/wezterm/wezterm/issues/1213)
-* SSH client now uses `libssh` by default. [ssh_backend](config/lua/config/ssh_backend.md) can be used to change this.
-* [unzoom_on_switch_pane](config/lua/config/unzoom_on_switch_pane.md) option. Thanks to [@yyogo](https://github.com/yyogo) [#1301](https://github.com/wezterm/wezterm/issues/1301)
-* [unicode_version](config/lua/config/unicode_version.md) option and corresponding OSC escape sequences that affects how the width of certain unicode sequences are interpreted.
+* [wezterm.background_child_process](config/reference/wezterm/background_child_process.md) function to spawn a process without waiting.
+* [mux_env_remove](config/reference/config/mux_env_remove.md) setting to control which environment variables should be cleared prior to spawning processes in the multiplexer server [#1225](https://github.com/wezterm/wezterm/issues/1225)
+* [canonicalize_pasted_newlines](config/reference/config/canonicalize_pasted_newlines.md) option to help Windows users manage newlines in pastes [#1213](https://github.com/wezterm/wezterm/issues/1213)
+* SSH client now uses `libssh` by default. [ssh_backend](config/reference/config/ssh_backend.md) can be used to change this.
+* [unzoom_on_switch_pane](config/reference/config/unzoom_on_switch_pane.md) option. Thanks to [@yyogo](https://github.com/yyogo) [#1301](https://github.com/wezterm/wezterm/issues/1301)
+* [unicode_version](config/reference/config/unicode_version.md) option and corresponding OSC escape sequences that affects how the width of certain unicode sequences are interpreted.
 * macOS: binaries produced by wezterm's CI are now codesigned, which resolves some spurious permission dialogs that affected some users [#482](https://github.com/wezterm/wezterm/issues/482)
 
 #### Changed
@@ -1876,7 +1876,7 @@ As features stabilize some brief notes about them will accumulate here.
 * window close confirmations now accept both uppercase and lowercase Y/N key presses. Thanks to [@SpyrosRoum](https://github.com/SpyrosRoum)! [#1119](https://github.com/wezterm/wezterm/pull/1119)
 * multi-click-streaks are now interrupted by the cursor moving to a different cell. Thanks to [@valpackett](https://github.com/valpackett)! [#1126](https://github.com/wezterm/wezterm/issues/1126)
 * `.deb` packages now `Provides: x-terminal-emulator`. [#1139](https://github.com/wezterm/wezterm/issues/1139)
-* [use_cap_height_to_scale_fallback_fonts](config/lua/config/use_cap_height_to_scale_fallback_fonts.md) now computes *cap-height* based on the rasterized glyph bitmap which means that the data is accurate in more cases, including for bitmap fonts.  Scaling is now also applied across varying text styles; previously it only applied to a font within an `wezterm.font_with_fallback` font list.
+* [use_cap_height_to_scale_fallback_fonts](config/reference/config/use_cap_height_to_scale_fallback_fonts.md) now computes *cap-height* based on the rasterized glyph bitmap which means that the data is accurate in more cases, including for bitmap fonts.  Scaling is now also applied across varying text styles; previously it only applied to a font within an `wezterm.font_with_fallback` font list.
 * Can now match fontconfig aliases, such as `monospace`, on systems that use fontconfig. Thanks to [@valpackett](https://github.com/valpackett)! [#1149](https://github.com/wezterm/wezterm/issues/1149)
 * Powerline semicircle glyphs now look much better. Thanks to [@bew](https://github.com/bew) and [@sdrik](https://github.com/sdrik)! [#1311](https://github.com/wezterm/wezterm/issues/1311)
 * Splits now look better, especially when using escape sequences to change the default background color [#1256](https://github.com/wezterm/wezterm/issues/1256)
@@ -1892,7 +1892,7 @@ As features stabilize some brief notes about them will accumulate here.
 * X11: laggy input after selecting text. [#1027](https://github.com/wezterm/wezterm/issues/1027)
 * macOS: `send_composed_key_when_left_alt_is_pressed` and `send_composed_key_when_right_alt_is_pressed` are now respected when `use_ime=true`. Thanks to [@jakelinnzy](https://github.com/jakelinnzy)! [#1096](https://github.com/wezterm/wezterm/pull/1096)
 * X11: jittery resize with some window managers [#1051](https://github.com/wezterm/wezterm/issues/1051)
-* X11: [window:get_appearance](config/lua/window/get_appearance.md) now actually returns Dark when the theme is dark. [#1098](https://github.com/wezterm/wezterm/issues/1098)
+* X11: [window:get_appearance](config/reference/window/get_appearance.md) now actually returns Dark when the theme is dark. [#1098](https://github.com/wezterm/wezterm/issues/1098)
 * ALT + Arrow, PageUp/PageDown, Ins, Del, Home, End incorrectly sent ESC prefixed key sequences. [#892](https://github.com/wezterm/wezterm/issues/892)
 * Crash due to Out of Memory condition when the iTerm2 protocol was used to send excessively large PNG files [#1031](https://github.com/wezterm/wezterm/issues/1031)
 * `DCH` (delete char) sequence would remove cells and replace them with default-blank cells instead of blank-cells-with-current-bg-color. [#789](https://github.com/wezterm/wezterm/issues/789)
@@ -1935,7 +1935,7 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed: incorrect Sixel HLS hue handling [#775](https://github.com/wezterm/wezterm/issues/775)
 * Fixed: we now recognize the `CSI 48:2:0:214:255m` form of specifying true color text attributes [#785](https://github.com/wezterm/wezterm/issues/785)
 * Fixed: split separators didn't respect `tab_bar_at_bottom=true` and were rendered in the wrong place [#797](https://github.com/wezterm/wezterm/issues/797)
-* Improved: messaging around [exit_behavior](https://wezterm.org/config/lua/config/exit_behavior.md)
+* Improved: messaging around [exit_behavior](https://wezterm.org/config/reference/config/exit_behavior.md)
 * Fixed: errors loading custom color schemes are now logged to the error log [#794](https://github.com/wezterm/wezterm/issues/794)
 * Fixed: OSC 7 (current working directory) now works with paths that contain spaces and other special characters. Thanks to [@Arvedui](https://github.com/Arvedui)! [#799](https://github.com/wezterm/wezterm/pull/799)
 * Changed: the homebrew tap is now a Cask that installs to the /Applications directory on macOS. Thanks to [@laggardkernel](https://github.com/laggardkernel)!
@@ -1948,10 +1948,10 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed: splitting panes in multiplexer could fail after a network reconnect [#781](https://github.com/wezterm/wezterm/issues/781)
 * Fixed: multiplexer now propagates toast notifications and color palette to client [#489](https://github.com/wezterm/wezterm/issues/489) [#748](https://github.com/wezterm/wezterm/issues/748)
 * Fixed: neovim interprets drags as double clicks [#823](https://github.com/wezterm/wezterm/discussions/823)
-* New: `CTRL+SHIFT+L` is assigned to [ShowDebugOverlay](config/lua/keyassignment/ShowDebugOverlay.md) [#641](https://github.com/wezterm/wezterm/issues/641)
+* New: `CTRL+SHIFT+L` is assigned to [ShowDebugOverlay](config/reference/keyassignment/ShowDebugOverlay.md) [#641](https://github.com/wezterm/wezterm/issues/641)
 * Improved: antialiasing for undercurl. Thanks to [@ModProg](https://github.com/ModProg)! [#838](https://github.com/wezterm/wezterm/pull/838)
 * Fixed: `wezterm start --cwd c:/` didn't run `default_prog`. Thanks to [@exactly-one-kas](https://github.com/exactly-one-kas)! [#851](https://github.com/wezterm/wezterm/pull/851)
-* Improved: [skip_close_confirmation_for_processes_named](config/lua/config/skip_close_confirmation_for_processes_named.md) now includes common windows shell processes `cmd.exe`, `pwsh.exe` and `powershell.exe`. [#843](https://github.com/wezterm/wezterm/issues/843)
+* Improved: [skip_close_confirmation_for_processes_named](config/reference/config/skip_close_confirmation_for_processes_named.md) now includes common windows shell processes `cmd.exe`, `pwsh.exe` and `powershell.exe`. [#843](https://github.com/wezterm/wezterm/issues/843)
 * Fixed: don't keep the window alive after running `something & disown ; exit` [#839](https://github.com/wezterm/wezterm/issues/839)
 * Improved: we now draw sextant glyphs from the Unicode Symbols for Legacy Computing block (1FB00) when `custom_block_glyphs` is enabled.
 * Changed: `COLORTERM=truecolor` is now set in the environment. [#875](https://github.com/wezterm/wezterm/issues/875)
@@ -1968,31 +1968,31 @@ As features stabilize some brief notes about them will accumulate here.
 * Improved: implement braille characters as custom glyphs, to have perfect rendering when `custom_block_glyphs` is enabled. Thanks to [@bew](http://github.com/bew)!
 * Fixed: Mod3 is no longer treater as SUPER on X11 and Wayland [#933](https://github.com/wezterm/wezterm/issues/933)
 * Fixed: paste now respects `scroll_to_bottom_on_input`. [#931](https://github.com/wezterm/wezterm/issues/931)
-* New: [bypass_mouse_reporting_modifiers](config/lua/config/bypass_mouse_reporting_modifiers.md) to specify which modifier(s) override application mouse reporting mode.
+* New: [bypass_mouse_reporting_modifiers](config/reference/config/bypass_mouse_reporting_modifiers.md) to specify which modifier(s) override application mouse reporting mode.
 * Fixed: focus tracking events are now also generated when switching between panes [#941](https://github.com/wezterm/wezterm/issues/941)
-* New: [window_frame](config/lua/config/window_frame.md) option to configure Wayland window decorations [#761](https://github.com/wezterm/wezterm/issues/761)
-* New: [window:get_appearance()](config/lua/window/get_appearance.md) to determine if the window has a dark mode appearance, and adjust color scheme to match [#806](https://github.com/wezterm/wezterm/issues/806)
-* Improved: [improve the new-tab button formatting](config/lua/config/tab_bar_style.md). Thanks to [@sdrik](https://github.com/sdrik)! [#950](https://github.com/wezterm/wezterm/pull/950)
+* New: [window_frame](config/reference/config/window_frame.md) option to configure Wayland window decorations [#761](https://github.com/wezterm/wezterm/issues/761)
+* New: [window:get_appearance()](config/reference/window/get_appearance.md) to determine if the window has a dark mode appearance, and adjust color scheme to match [#806](https://github.com/wezterm/wezterm/issues/806)
+* Improved: [improve the new-tab button formatting](config/reference/config/tab_bar_style.md). Thanks to [@sdrik](https://github.com/sdrik)! [#950](https://github.com/wezterm/wezterm/pull/950)
 * Fixed: if a line of text was exactly the width of the terminal it would get marked as wrappable even when followed by a newline, causing text to reflow incorrectly on resize. [#971](https://github.com/wezterm/wezterm/issues/971)
 * Fixed: `wezterm ssh` could loop forever in the background if the connection drops and the window is closed. [#857](https://github.com/wezterm/wezterm/issues/857)
 * Improved: VT102 conformance. Many thanks to [Autumn Lamonte](https://gitlab.com/autumnmeowmeow)! [#904](https://github.com/wezterm/wezterm/pull/904)
-* New: [text_blink_rate](config/lua/config/text_blink_rate.md) and [text_blink_rate_rapid](config/lua/config/text_blink_rate_rapid.md) options to control blinking text. Thanks to [Autumn Lamonte](https://gitlab.com/autumnmeowmeow)! [#904](https://github.com/wezterm/wezterm/pull/904)
+* New: [text_blink_rate](config/reference/config/text_blink_rate.md) and [text_blink_rate_rapid](config/reference/config/text_blink_rate_rapid.md) options to control blinking text. Thanks to [Autumn Lamonte](https://gitlab.com/autumnmeowmeow)! [#904](https://github.com/wezterm/wezterm/pull/904)
 * New: Added support for [Synchronized Rendering](https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036) [#882](https://github.com/wezterm/wezterm/issues/882)
-* New: wezterm now draws its own pixel-perfect versions of more block drawing glyphs.  See [custom_block_glyphs](config/lua/config/custom_block_glyphs.md) for more details. [#584](https://github.com/wezterm/wezterm/issues/584)
+* New: wezterm now draws its own pixel-perfect versions of more block drawing glyphs.  See [custom_block_glyphs](config/reference/config/custom_block_glyphs.md) for more details. [#584](https://github.com/wezterm/wezterm/issues/584)
 * Fixed: wayland: CursorNotFound error with the whiteglass theme. [#532](https://github.com/wezterm/wezterm/issues/532)
 * Improved: Can now recover from exhausting available texture space by clearing the screen. [#879](https://github.com/wezterm/wezterm/issues/879)
 * Updated bundled `Noto Color Emoji` font to version 2.028 featuring a [design update](https://blog.google/products/android/emoji-day-redesign-easier-sharing/). Thanks to [@4cm4k1](https://github.com/4cm4k1)! [#1003](https://github.com/wezterm/wezterm/pull/1003)
 * Fixed: wayland: putting a window in the Sway scratchpad no longer blocks the wezterm process [#884](https://github.com/wezterm/wezterm/issues/884)
 * Fixed: mouse reporting now correctly reports release events when multiple buttons are pressed and released at the same time. [#973](https://github.com/wezterm/wezterm/issues/973)
 * Fixed: incorrect initial window/pty size when running with some tiling window managers. [#695](https://github.com/wezterm/wezterm/issues/695)
-* New: CTRL-SHIFT-L shows the [debug overlay](config/lua/keyassignment/ShowDebugOverlay.md), which shows the error log and a lua repl. [#641](https://github.com/wezterm/wezterm/issues/641)
+* New: CTRL-SHIFT-L shows the [debug overlay](config/reference/keyassignment/ShowDebugOverlay.md), which shows the error log and a lua repl. [#641](https://github.com/wezterm/wezterm/issues/641)
 * Fixed: macOS: bright window padding on Intel-based macs [#653](https://github.com/wezterm/wezterm/issues/653), [#716](https://github.com/wezterm/wezterm/issues/716) and [#1000](https://github.com/wezterm/wezterm/issues/1000)
 * Improved: wezterm now uses the Dual Source Blending feature of OpenGL to manage subpixel anti-aliasing alpha blending, resulting in improved appearance particularly when using a transparent window over the top of something with a light background. [#932](https://github.com/wezterm/wezterm/issues/932)
 * Fixed: copying really long lines could falsely introduce line breaks on line wrap boundaries [#874](https://github.com/wezterm/wezterm/issues/874)
-* New: [wezterm.add_to_config_reload_watch_list](config/lua/wezterm/add_to_config_reload_watch_list.md) function to aid with automatically reloading the config when you've split your config across multiple files. Thanks to [@AusCyberman](https://github.com/AusCyberman)! [#989](https://github.com/wezterm/wezterm/pull/989)
+* New: [wezterm.add_to_config_reload_watch_list](config/reference/wezterm/add_to_config_reload_watch_list.md) function to aid with automatically reloading the config when you've split your config across multiple files. Thanks to [@AusCyberman](https://github.com/AusCyberman)! [#989](https://github.com/wezterm/wezterm/pull/989)
 * Improved: wezterm now respects default emoji presentation and explicit emoji variation selectors (VS15 and VS16) so that glyphs that have both textual (usually monochrome, single cell width) and emoji (color, double width) presentations can be more faithfully rendered. [#997](https://github.com/wezterm/wezterm/issues/997)
-* New: [window_background_gradient](config/lua/config/window_background_gradient.md) option to configure color gradients for your window background
-* New: [wezterm.gradient_colors](config/lua/wezterm/gradient_colors.md) function to compute RGB values for gradients for use in your config.
+* New: [window_background_gradient](config/reference/config/window_background_gradient.md) option to configure color gradients for your window background
+* New: [wezterm.gradient_colors](config/reference/wezterm/gradient_colors.md) function to compute RGB values for gradients for use in your config.
 * New: color schemes: [Abernathy](colorschemes/a/index.md#abernathy), [Ayu Mirage](colorschemes/a/index.md#ayu-mirage), [darkmatrix](colorschemes/d/index.md#darkmatrix), [Fairyfloss](colorschemes/f/index.md#fairyfloss), [GitHub Dark](colorschemes/g/index.md#github-dark), [HaX0R_BLUE](colorschemes/h/index.md#hax0r_blue), [HaX0R_GR33N](colorschemes/h/index.md#hax0r_gr33n), [HaX0R_R3D](colorschemes/h/index.md#hax0r_r3d), [Mariana](colorschemes/m/index.md#mariana), [matrix](colorschemes/m/index.md#matrix), [Peppermint](colorschemes/p/index.md#peppermint) and [UltraDark](colorschemes/u/index.md#ultradark)
 
 ### 20210502-154244-3f7122cb
@@ -2001,38 +2001,38 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed: the selection wouldn't always clear when the intersecting lines change [#644](https://github.com/wezterm/wezterm/issues/644)
 * Fixed: vertical alignment issue with Iosevka on Windows [#661](https://github.com/wezterm/wezterm/issues/661)
 * Fixed: support for "Variable" fonts such as Cascadia Code and Inconsolata on all platforms [#655](https://github.com/wezterm/wezterm/issues/655)
-* New: [wezterm.font](config/lua/wezterm/font.md) and [wezterm.font_with_fallback](config/lua/wezterm/font_with_fallback.md) *attributes* parameter now allows matching more granular font weights and font stretch. e.g.: `wezterm.font('Iosevka Term', {stretch="Expanded", weight="Regular"})`, as fallback can specify weight/stretch/style for each individual font in the fallback.
-* New: [freetype_render_target](config/lua/config/freetype_render_target.md) option for additional control over glyph rasterization.
+* New: [wezterm.font](config/reference/wezterm/font.md) and [wezterm.font_with_fallback](config/reference/wezterm/font_with_fallback.md) *attributes* parameter now allows matching more granular font weights and font stretch. e.g.: `wezterm.font('Iosevka Term', {stretch="Expanded", weight="Regular"})`, as fallback can specify weight/stretch/style for each individual font in the fallback.
+* New: [freetype_render_target](config/reference/config/freetype_render_target.md) option for additional control over glyph rasterization.
 * Fixed: `wezterm ssh HOST` no longer overrides the `User` config specified by `~/.ssh/config`
 * Fixed: X11: detect when gnome DPI scaling changes [#667](https://github.com/wezterm/wezterm/issues/667)
 * Fixed: potential panic when pasting large amounts of multi-byte text [#668](https://github.com/wezterm/wezterm/issues/668)
 * Fixed: X11: non-ascii text could appear mangled in titlebars [#673](https://github.com/wezterm/wezterm/issues/673)
 * Improved font IO performance and memory usage on all platforms
-* New [window:toast_notification](config/lua/window/toast_notification.md) method for showing desktop notifications. [#619](https://github.com/wezterm/wezterm/issues/619)
+* New [window:toast_notification](config/reference/window/toast_notification.md) method for showing desktop notifications. [#619](https://github.com/wezterm/wezterm/issues/619)
 * Fixed: half-pixel gaps in ligatured/double-wide glyphs depending on the font size [#614](https://github.com/wezterm/wezterm/issues/614)
 * Fixed: Window could vanish if a tab closed while the rightmost tab was active(!) [#690](https://github.com/wezterm/wezterm/issues/690)
 * Fixed: macOS: mouse cursor could get stuck in the hidden state. [#618](https://github.com/wezterm/wezterm/issues/618)
-* Improved: [font_rules](config/lua/config/font_rules.md) behavior to always append reasonable default `font_rules` to those that you may have specified in your config.  `font_rules` now also include defaults for half-bright text styles.
-* Improved: added [use_cap_height_to_scale_fallback_fonts](config/lua/config/use_cap_height_to_scale_fallback_fonts.md) option to scale secondary fonts according to relative their *cap-height* metric to improve size consistency.  This partially applies to some symbol/emoji fonts, but is dependent upon the font having reliable metrics.
+* Improved: [font_rules](config/reference/config/font_rules.md) behavior to always append reasonable default `font_rules` to those that you may have specified in your config.  `font_rules` now also include defaults for half-bright text styles.
+* Improved: added [use_cap_height_to_scale_fallback_fonts](config/reference/config/use_cap_height_to_scale_fallback_fonts.md) option to scale secondary fonts according to relative their *cap-height* metric to improve size consistency.  This partially applies to some symbol/emoji fonts, but is dependent upon the font having reliable metrics.
 * Improved: font-config queries now run much faster, resulting in snappier startup on unix systems
-* Fixed: [Hide](config/lua/keyassignment/Hide.md) had no effect on macOS when the titlebar was disabled [#679](https://github.com/wezterm/wezterm/issues/679)
-* Fixed: key and mouse assignments set via [window:set_config_overrides](config/lua/window/set_config_overrides.md) were not respected. [#656](https://github.com/wezterm/wezterm/issues/656)
+* Fixed: [Hide](config/reference/keyassignment/Hide.md) had no effect on macOS when the titlebar was disabled [#679](https://github.com/wezterm/wezterm/issues/679)
+* Fixed: key and mouse assignments set via [window:set_config_overrides](config/reference/window/set_config_overrides.md) were not respected. [#656](https://github.com/wezterm/wezterm/issues/656)
 * Fixed: potential panic when word selecting off top of viewport [#713](https://github.com/wezterm/wezterm/issues/713)
 * Fixed: really long busy wait when displaying single logical json line of 1.5MB in length [#714](https://github.com/wezterm/wezterm/issues/714)
-* New: [swallow_mouse_click_on_pane_focus](config/lua/config/swallow_mouse_click_on_pane_focus.md) option [#724](https://github.com/wezterm/wezterm/issues/724)
-* New: [pane_focus_follows_mouse](config/lua/config/pane_focus_follows_mouse.md) option [#600](https://github.com/wezterm/wezterm/issues/600)
+* New: [swallow_mouse_click_on_pane_focus](config/reference/config/swallow_mouse_click_on_pane_focus.md) option [#724](https://github.com/wezterm/wezterm/issues/724)
+* New: [pane_focus_follows_mouse](config/reference/config/pane_focus_follows_mouse.md) option [#600](https://github.com/wezterm/wezterm/issues/600)
 * Fixed: splitting a pane while a pane is in the zoomed state would swallow the new pane [#723](https://github.com/wezterm/wezterm/issues/723)
 * Fixed: multi-cell glyphs weren't displayed in tab titles [#711](https://github.com/wezterm/wezterm/issues/711)
-* New: [format-window-title](config/lua/window-events/format-window-title.md) hook for customizing the text in the window titlebar
-* New: [format-tab-title](config/lua/window-events/format-tab-title.md) hook for customizing the text in tab titles. [#647](https://github.com/wezterm/wezterm/issues/647)
-* Removed: active and inactive [tab_bar_style](config/lua/config/tab_bar_style.md) config values; use the new [format-tab-title](config/lua/window-events/format-tab-title.md) event instead
-* New: [force_reverse_video_cursor](config/lua/config/force_reverse_video_cursor.md) setting to override the cursor color scheme settings. [#706](https://github.com/wezterm/wezterm/issues/706)
+* New: [format-window-title](config/reference/window-events/format-window-title.md) hook for customizing the text in the window titlebar
+* New: [format-tab-title](config/reference/window-events/format-tab-title.md) hook for customizing the text in tab titles. [#647](https://github.com/wezterm/wezterm/issues/647)
+* Removed: active and inactive [tab_bar_style](config/reference/config/tab_bar_style.md) config values; use the new [format-tab-title](config/reference/window-events/format-tab-title.md) event instead
+* New: [force_reverse_video_cursor](config/reference/config/force_reverse_video_cursor.md) setting to override the cursor color scheme settings. [#706](https://github.com/wezterm/wezterm/issues/706)
 * Fixed: ssh config parsing now expands `~` to your home directory for appropriate options; previously only `%d` and `${HOME}` were substituted. [#729](https://github.com/wezterm/wezterm/issues/729)
 * New: [Quick Select Mode](quickselect.md) for a tmux-fingers/tmux-thumbs style mouse-less select and copy flow [#732](https://github.com/wezterm/wezterm/issues/732)
 * Fixed: tabs would remain hovered after moving the mouse down into the main terminal area [#591](https://github.com/wezterm/wezterm/issues/591)
-* New: [tab_bar_at_bottom](config/lua/config/tab_bar_at_bottom.md) setting to put the tab bar at the bottom of the window [#278](https://github.com/wezterm/wezterm/issues/278)
-* New: [wezterm.column_width](config/lua/wezterm/column_width.md) function for measuring the displayed width of a string
-* New: [wezterm.pad_left](config/lua/wezterm/pad_left.md), [wwezterm.pad_right](config/lua/wezterm/pad_right.md), [wezterm.truncate_left](config/lua/wezterm/truncate_left.md) and [wezterm.truncate_right](config/lua/wezterm/truncate_right.md) function for truncating/padding a string based on its displayed width
+* New: [tab_bar_at_bottom](config/reference/config/tab_bar_at_bottom.md) setting to put the tab bar at the bottom of the window [#278](https://github.com/wezterm/wezterm/issues/278)
+* New: [wezterm.column_width](config/reference/wezterm/column_width.md) function for measuring the displayed width of a string
+* New: [wezterm.pad_left](config/reference/wezterm/pad_left.md), [wwezterm.pad_right](config/reference/wezterm/pad_right.md), [wezterm.truncate_left](config/reference/wezterm/truncate_left.md) and [wezterm.truncate_right](config/reference/wezterm/truncate_right.md) function for truncating/padding a string based on its displayed width
 * Updated bundled `Noto Color Emoji` font to version 2.020 with unicode 13.1 support. Thanks to [@4cm4k1](https://github.com/4cm4k1)! [#742](https://github.com/wezterm/wezterm/pull/742)
 * Fixed: Numpad Enter reported as CTRL-C on macOS [#739](https://github.com/wezterm/wezterm/issues/739)
 * Fixed: mouse reporting button state not cleared when focus is lost, eg: from clicking a link [#744](https://github.com/wezterm/wezterm/issues/744)
@@ -2058,13 +2058,13 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed: panic when dismissing the tab navigator [#542](https://github.com/wezterm/wezterm/issues/542)
 * Fixed: font fallback on macOS returns unresolvable `.AppleSymbolsFB` rather than `Apple Symbols`, leading to slowdowns when rendering symbols [#506](https://github.com/wezterm/wezterm/issues/506)
 * Fixed: laggy repaints for large windows particularly on Windows, but applicable to all systems.  Tuned and triple-buffered vertex buffer updates. [#546](https://github.com/wezterm/wezterm/issues/546)
-* Changed: [allow_square_glyphs_to_overflow_width](config/lua/config/allow_square_glyphs_to_overflow_width.md) now defaults to `WhenFollowedBySpace` and applies to more symbol glyphs. [#565](https://github.com/wezterm/wezterm/issues/565)
-* Changed: macOS: `CMD-Q` is now bound by default to [QuitApplication](config/lua/keyassignment/QuitApplication.md)
-* New: added [skip_close_confirmation_for_processes_named](config/lua/config/skip_close_confirmation_for_processes_named.md) option which specifies a list of processes for which it is considered safe to allow closing a pane/tab/window without a prompt. [#562](https://github.com/wezterm/wezterm/issues/562)
+* Changed: [allow_square_glyphs_to_overflow_width](config/reference/config/allow_square_glyphs_to_overflow_width.md) now defaults to `WhenFollowedBySpace` and applies to more symbol glyphs. [#565](https://github.com/wezterm/wezterm/issues/565)
+* Changed: macOS: `CMD-Q` is now bound by default to [QuitApplication](config/reference/keyassignment/QuitApplication.md)
+* New: added [skip_close_confirmation_for_processes_named](config/reference/config/skip_close_confirmation_for_processes_named.md) option which specifies a list of processes for which it is considered safe to allow closing a pane/tab/window without a prompt. [#562](https://github.com/wezterm/wezterm/issues/562)
 * Fixed: triggering the search overlay again while the search overlay is active no longer closes the underlying pane [#572](https://github.com/wezterm/wezterm/issues/572)
 * Fixed: X10 mouse coordinate reporting encoding could produce invalid outputs for large windows. Capped coordinate values to the maximum value that is representable in UTF-8 encoding
 * Fixed: font fallback now happens asynchronously from painting [#508](https://github.com/wezterm/wezterm/issues/508)
-* New: added [window:get_selection_text_for_pane](config/lua/window/get_selection_text_for_pane.md) method [#575](https://github.com/wezterm/wezterm/issues/575)
+* New: added [window:get_selection_text_for_pane](config/reference/window/get_selection_text_for_pane.md) method [#575](https://github.com/wezterm/wezterm/issues/575)
 * Fixed: implicit hyperlink rules, word and line selection now operate on logical lines which means that they deal with wrapped lines outside of the viewport. [#408](https://github.com/wezterm/wezterm/issues/408)
 * New: `wezterm ssh` now supports reading `~/.ssh/config` and overriding options via the command line.  `IdentityFile` and `ProxyCommand` are the two main new supported options.  Read more about it in [ssh](ssh.md).
 * Fixed: ssh support will now try all available identities from the SSH agent rather than just the first.
@@ -2073,41 +2073,41 @@ As features stabilize some brief notes about them will accumulate here.
 * Fixed: Windows: we now compile libssh2 against openssl on all platforms to improve overall key and crypto algorithm support
 * Fixed: spawning a new tab via the launcher menu failed because it used the pretty printed multiplexer domain label rather than the multiplexer domain name.
 * Fixed: macOS: middle mouse button wasn't recognized. Thanks to [@guswynn](https://github.com/guswynn)! [#599](https://github.com/wezterm/wezterm/pull/599)
-* New: added [ActivateLastTab](config/lua/keyassignment/ActivateLastTab.md) key assignment for jumping back to a previously active tab. Thanks to [@alexgartrell](https://github.com/alexgartrell) [#610](https://github.com/wezterm/wezterm/pull/610)
+* New: added [ActivateLastTab](config/reference/keyassignment/ActivateLastTab.md) key assignment for jumping back to a previously active tab. Thanks to [@alexgartrell](https://github.com/alexgartrell) [#610](https://github.com/wezterm/wezterm/pull/610)
 * Fixed: added missing XTSMGRAPHICS query/response for sixel support [#609](https://github.com/wezterm/wezterm/issues/609)
 * Fixed: avoid showing an error dialog for synthesized `font_rules` when the configuration specifies a font that doesn't have bold/italic variants. [#617](https://github.com/wezterm/wezterm/issues/617)
 * New: mouse cursor hides when keyboard input is sent to a pane, and shows again when the mouse is moved. [#618](https://github.com/wezterm/wezterm/issues/618)
 * Fixed: macOS: CTRL-Tab key combination was not recognized. [#630](https://github.com/wezterm/wezterm/issues/630)
 * Fixed: wezterm-mux-server will now continue running even after all tabs/panes have been closed. [#631](https://github.com/wezterm/wezterm/issues/631)
 * Fixed: macOS: wezterm-gui could linger in the background until the mouse moves after all tabs/panes have closed
-* Fixed: when using [line_height](config/lua/config/line_height.md), wezterm now vertically centers the cell rather than padding only the top [#582](https://github.com/wezterm/wezterm/issues/582)
+* Fixed: when using [line_height](config/reference/config/line_height.md), wezterm now vertically centers the cell rather than padding only the top [#582](https://github.com/wezterm/wezterm/issues/582)
 * Fixed: macOS: in US layouts, `SUPER+SHIFT+[` was incorrectly recognized as `SUPER+SHIFT+{` instead of `SUPER+{` [#601](https://github.com/wezterm/wezterm/issues/601)
-* Fixed: [wezterm.config_dir](config/lua/wezterm/config_dir.md) was returning the config file path instead of the directory!
-* New: [wezterm.config_file](config/lua/wezterm/config_file.md) which returns the config file path
+* Fixed: [wezterm.config_dir](config/reference/wezterm/config_dir.md) was returning the config file path instead of the directory!
+* New: [wezterm.config_file](config/reference/wezterm/config_file.md) which returns the config file path
 
 ### 20210314-114017-04b7cedd
 
-* New: [tab_bar_style](config/lua/config/tab_bar_style.md) allows customizing the appearance of the rest of the tab bar.
+* New: [tab_bar_style](config/reference/config/tab_bar_style.md) allows customizing the appearance of the rest of the tab bar.
 * New: animated gif and png images displayed via `wezterm imgcat` (the iTerm2 image protocol), or attached to the window background via [window_background_image](config/appearance.md#window-background-image) will now animate while the window has focus.
-* New: added [foreground_text_hsb](config/lua/config/foreground_text_hsb.md) setting to adjust hue, saturation and brightness when text is rendered.
-* New: added [ResetFontAndWindowSize](config/lua/keyassignment/ResetFontAndWindowSize.md) key assignment.
-* New: added [ScrollByLine](config/lua/keyassignment/ScrollByLine.md) key assignment.
+* New: added [foreground_text_hsb](config/reference/config/foreground_text_hsb.md) setting to adjust hue, saturation and brightness when text is rendered.
+* New: added [ResetFontAndWindowSize](config/reference/keyassignment/ResetFontAndWindowSize.md) key assignment.
+* New: added [ScrollByLine](config/reference/keyassignment/ScrollByLine.md) key assignment.
 * New: OSC 777 and OSC 9 escapes now generate Toast Notifications. `printf "\e]777;notify;%s;%s\e\\" "title" "body"` and `printf "\e]9;%s\e\\" "hello there"`.  These don't currently pass through multiplexer connections. [#489](https://github.com/wezterm/wezterm/issues/489).
-* New: [exit_behavior](config/lua/config/exit_behavior.md) config option to keep panes open after the program has completed. [#499](https://github.com/wezterm/wezterm/issues/499)
+* New: [exit_behavior](config/reference/config/exit_behavior.md) config option to keep panes open after the program has completed. [#499](https://github.com/wezterm/wezterm/issues/499)
 * New: added `--config name=value` options to `wezterm`, `wezterm-gui` and `wezterm-mux-server`.  The `--front-end`, `--font-locator`, `--font-rasterizer` and `--font-shaper` CLI options have been removed in favor of this new mechanism.
-* New: [window:set_config_overrides](config/lua/window/set_config_overrides.md) method that can be used to override GUI related configuration options on a per-window basis. Click through to see examples of dynamically toggling ligatures and window opacity. [#469](https://github.com/wezterm/wezterm/issues/469) [#329](https://github.com/wezterm/wezterm/issues/329)
-* New: introduced [custom_block_glyphs](config/lua/config/custom_block_glyphs.md) option to ensure that block glyphs don't have gaps. [#433](https://github.com/wezterm/wezterm/issues/433)
+* New: [window:set_config_overrides](config/reference/window/set_config_overrides.md) method that can be used to override GUI related configuration options on a per-window basis. Click through to see examples of dynamically toggling ligatures and window opacity. [#469](https://github.com/wezterm/wezterm/issues/469) [#329](https://github.com/wezterm/wezterm/issues/329)
+* New: introduced [custom_block_glyphs](config/reference/config/custom_block_glyphs.md) option to ensure that block glyphs don't have gaps. [#433](https://github.com/wezterm/wezterm/issues/433)
 * New: you can now drag the wezterm window via the tab bar
-* New: holding SUPER+Drag (or CTRL+SHIFT+Drag) will drag the wezterm window.  Use [StartWindowDrag](config/lua/keyassignment/StartWindowDrag.md) to configure your own binding.
-* New: configure [window_decorations](config/lua/config/window_decorations.md) to remove the title bar and/or window border
+* New: holding SUPER+Drag (or CTRL+SHIFT+Drag) will drag the wezterm window.  Use [StartWindowDrag](config/reference/keyassignment/StartWindowDrag.md) to configure your own binding.
+* New: configure [window_decorations](config/reference/config/window_decorations.md) to remove the title bar and/or window border
 * New: we now bundle [PowerlineExtraSymbols](https://github.com/ryanoasis/powerline-extra-symbols) as a built-in fallback font, so that you can use powerline glyphs with any font without patching the font.
-* New: [window:set_right_status](config/lua/window/set_right_status.md) allows setting additional status information in the tab bar. [#500](https://github.com/wezterm/wezterm/issues/500)
+* New: [window:set_right_status](config/reference/window/set_right_status.md) allows setting additional status information in the tab bar. [#500](https://github.com/wezterm/wezterm/issues/500)
 * New: Search Mode: Added `CTRL-u` key assignment to clear the current search pattern. Thanks to [@bew](https://github.com/bew)! [#465](https://github.com/wezterm/wezterm/pull/465)
-* Fonts: `font_antialias` and `font_hinting` are now deprecated in favor of the new [freetype_load_target](config/lua/config/freetype_load_target.md) and [freetype_load_flags](config/lua/config/freetype_load_flags.md) options.  The deprecated options have no effect and will be removed in a future release.  The new options provide more direct control over how freetype rasterizes text.
+* Fonts: `font_antialias` and `font_hinting` are now deprecated in favor of the new [freetype_load_target](config/reference/config/freetype_load_target.md) and [freetype_load_flags](config/reference/config/freetype_load_flags.md) options.  The deprecated options have no effect and will be removed in a future release.  The new options provide more direct control over how freetype rasterizes text.
 * Fonts: when computing default `font_rules` for bold and italic fonts, strip italic and bold components from the family name. eg: if you set `font = wezterm.font("Source Code Pro Medium")` then the `Medium` text will be stripped from the font name used to locate bold and italic variants so that we don't report an error loading a non-sensical `Source Code Pro Medium Bold`. [#456](https://github.com/wezterm/wezterm/issues/456)
 * Fonts: fix a regression where bright windows behind wezterm could "shine through" on the alpha channel, and adjust the tinting operation to avoid anti-aliased dark fringes [#470](https://github.com/wezterm/wezterm/issues/470) [#491](https://github.com/wezterm/wezterm/issues/491)
 * Fonts: macOS: fix an issue where wezterm could hang when loading a font located via Core Text [#475](https://github.com/wezterm/wezterm/issues/475)
-* Fonts: Changed the default [font_size](config/lua/config/font_size.md) to 12 points. [#517](https://github.com/wezterm/wezterm/discussions/517)
+* Fonts: Changed the default [font_size](config/reference/config/font_size.md) to 12 points. [#517](https://github.com/wezterm/wezterm/discussions/517)
 * Fonts: Updated bundled JetBrainsMono font to version 2.225
 * Added `--config-file` CLI option to specify an alternate config file location. [Read more about config file resolution](config/files.md). Thanks to [@bew](https://github.com/bew)! [#459](https://github.com/wezterm/wezterm/pull/459)
 * OSC 52 (Clipboard manipulation) now respects the difference between PRIMARY and CLIPBOARD on X11 systems.
@@ -2122,8 +2122,8 @@ As features stabilize some brief notes about them will accumulate here.
 * Wayland: fixed window decoration and full screen handling [#224](https://github.com/wezterm/wezterm/issues/224)
 * Wayland: fixed an issue where key repeat processing could "run away" and hang the application
 * Windows: the portable .zip file download now includes ANGLE EGL, just like the setup.exe installer has done since version 20201031-154415-9614e117
-* Windows: Fixed [ToggleFullScreen](config/lua/keyassignment/ToggleFullScreen.md) so that it once again toggles between full screen and normal placement. [#177](https://github.com/wezterm/wezterm/issues/177)
-* Windows: fix the unexpected default behavior of Ctrl-Alt being converted to AltGr for layouts supporting this key, the previous behavior is still possible by enabling the option [`treat_left_ctrlalt_as_altgr`](config/lua/config/treat_left_ctrlalt_as_altgr.md) (to solve [#392](https://github.com/wezterm/wezterm/issues/392)). Thanks to [@bew](https://github.com/bew)! [#512](https://github.com/wezterm/wezterm/pull/512)
+* Windows: Fixed [ToggleFullScreen](config/reference/keyassignment/ToggleFullScreen.md) so that it once again toggles between full screen and normal placement. [#177](https://github.com/wezterm/wezterm/issues/177)
+* Windows: fix the unexpected default behavior of Ctrl-Alt being converted to AltGr for layouts supporting this key, the previous behavior is still possible by enabling the option [`treat_left_ctrlalt_as_altgr`](config/reference/config/treat_left_ctrlalt_as_altgr.md) (to solve [#392](https://github.com/wezterm/wezterm/issues/392)). Thanks to [@bew](https://github.com/bew)! [#512](https://github.com/wezterm/wezterm/pull/512)
 * Windows: fixed "Open WezTerm Here" context menu in explorer when used on the root of a drive (eg: `C:\`).  Thanks to [@flyxyz123](https://github.com/flyxyz123)! [#526](https://github.com/wezterm/wezterm/issues/526) [#451](https://github.com/wezterm/wezterm/issues/451)
 * X11: fix an issue where SHIFT-Enter was not recognized [#516](https://github.com/wezterm/wezterm/issues/516)
 * X11: improved DPI detection for high-DPI displays. [#515](https://github.com/wezterm/wezterm/issues/515)
@@ -2135,11 +2135,11 @@ As features stabilize some brief notes about them will accumulate here.
 * Fix cursor position after using iTerm2 image protocol [#317](https://github.com/wezterm/wezterm/issues/317)
 * Fix pixel dimensions after changing the pane size; this was mostly invisible but impacted image scaling when using sixel or iTerm2 image protocols. [#312](https://github.com/wezterm/wezterm/issues/312)
 * Add support for OSC 133 which allows annotating output as `Output`, `Input` (that you typed) and `Prompt` (shell "chrome"). [Learn more about Semantic prompt and OSC 133](https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md)
-* Add [`ScrollToPrompt`](config/lua/keyassignment/ScrollToPrompt.md) key assignment that scrolls the viewport to the prior/next shell prompt emitted using OSC 133 Semantic Prompt escapes.  This assignment is not bound by default.
+* Add [`ScrollToPrompt`](config/reference/keyassignment/ScrollToPrompt.md) key assignment that scrolls the viewport to the prior/next shell prompt emitted using OSC 133 Semantic Prompt escapes.  This assignment is not bound by default.
 * Fixed an issue where `SpawnWindow` didn't use the current working directory from the current pane to spawn the new window
 * Added `wezterm start --class CLASSNAME` option to specify the window class name under X11 and Windows, or the `app_id` under Wayland.  See `wezterm start --help` for more information.
 * Added shell integration for setting OSC 7 (working directory) and OSC 133 (semantic zones) for Zsh and Bash. [See Shell Integration docs](shell-integration.md).
-* Added `SemanticZone` as a possible parameter for [SelectTextAtMouseCursor](config/lua/keyassignment/SelectTextAtMouseCursor.md), making it possible to conveniently select complete input or output regions.
+* Added `SemanticZone` as a possible parameter for [SelectTextAtMouseCursor](config/reference/keyassignment/SelectTextAtMouseCursor.md), making it possible to conveniently select complete input or output regions.
 * Improved font rendering [#320](https://github.com/wezterm/wezterm/issues/320) [#331](https://github.com/wezterm/wezterm/issues/331) [#413](https://github.com/wezterm/wezterm/issues/413) and changed `font_antialias = "Greyscale"` by default.
 * Updated internal harfbuzz shaper to 2.7.2
 * Fixed ALT-Escape not sending ESC-ESC [#338](https://github.com/wezterm/wezterm/issues/338)
@@ -2169,15 +2169,15 @@ As features stabilize some brief notes about them will accumulate here.
 * New: `adjust_window_size_when_changing_font_size` option to control whether changing the font size adjusts the dimensions of the window (true) or adjusts the number of terminal rows/columns (false).  The default is `true`. [#431](https://github.com/wezterm/wezterm/issues/431)
 * macOS: we no longer use MetalANGLE to render the gui; it was short lived as macOS Big Sur now uses Metal in its CGL implementation.  Support for using MetalANGLE is still present if the dylib is found on startup, but we no longer ship the dylib.
 * Windows: when pasting text, ensure that the text has CRLF line endings unless bracketed paste is enabled. This imperfect heuristic helps to keep multi-line pastes on multiple lines when using Windows console applications and to avoid interleaved blank lines when using unix applications. [#411](https://github.com/wezterm/wezterm/issues/411)
-* New: [ClearScrollback](config/lua/keyassignment/ClearScrollback.md) now accepts a parameter to control whether the viewport is cleared along with the scrollback. Thanks to [@dfrankland](https://github.com/dfrankland)!
-* New: [default_cwd](config/lua/config/default_cwd.md) to specify an alternative current working directory. Thanks to [@dfrankland](https://github.com/dfrankland)!
-* New: [CopyTo](config/lua/keyassignment/CopyTo.md) and [PasteFrom](config/lua/keyassignment/PasteFrom.md) actions. [Copy](config/lua/keyassignment/Copy.md), [Paste](config/lua/keyassignment/Paste.md) and [PastePrimarySelection](config/lua/keyassignment/PastePrimarySelection.md) are now deprecated in favor of these new options.
-* X11: Mouse-based selection now copies-to and pastes-from the `PrimarySelection` by default. The [CompleteSelection](config/lua/keyassignment/CompleteSelection.md) and [CompleteSelectionOrOpenLinkAtMouseCursor](config/lua/keyassignment/CompleteSelectionOrOpenLinkAtMouseCursor.md) actions now require a parameter to specify the clipboard.
+* New: [ClearScrollback](config/reference/keyassignment/ClearScrollback.md) now accepts a parameter to control whether the viewport is cleared along with the scrollback. Thanks to [@dfrankland](https://github.com/dfrankland)!
+* New: [default_cwd](config/reference/config/default_cwd.md) to specify an alternative current working directory. Thanks to [@dfrankland](https://github.com/dfrankland)!
+* New: [CopyTo](config/reference/keyassignment/CopyTo.md) and [PasteFrom](config/reference/keyassignment/PasteFrom.md) actions. [Copy](config/reference/keyassignment/Copy.md), [Paste](config/reference/keyassignment/Paste.md) and [PastePrimarySelection](config/reference/keyassignment/PastePrimarySelection.md) are now deprecated in favor of these new options.
+* X11: Mouse-based selection now copies-to and pastes-from the `PrimarySelection` by default. The [CompleteSelection](config/reference/keyassignment/CompleteSelection.md) and [CompleteSelectionOrOpenLinkAtMouseCursor](config/reference/keyassignment/CompleteSelectionOrOpenLinkAtMouseCursor.md) actions now require a parameter to specify the clipboard.
 * X11: `SHIFT-CTRL-C` and `SHIFT-CTRL-V` now copy-to and paste from the `Clipboard` by default.  `SHIFT-Insert` pastes from the `PrimarySelection` by default.
 * New: Added a new default `CTRL-Insert` key assignment bound to `CopyTo(PrimarySelection)`
 * macOS: Windows now have drop-shadows when they are opaque. These were disabled due transparency support was added. Thanks to [Rice](https://github.com/fanzeyi)! [#445](https://github.com/wezterm/wezterm/pull/445)
 * Unix: adjust font-config patterns to also match "dual spacing" fonts such as [Iosevka Term](https://typeof.net/Iosevka/). Thanks to [Leiser](https://github.com/leiserfg)! [#446](https://github.com/wezterm/wezterm/pull/446)
-* New: Added [alternate_buffer_wheel_scroll_speed](config/lua/config/alternate_buffer_wheel_scroll_speed.md) option to control how many cursor key presses are generated by the mouse wheel when the alternate screen is active. The new default for this is a faster-than-previous-releases 3 lines per wheel tick. [#432](https://github.com/wezterm/wezterm/issues/432)
+* New: Added [alternate_buffer_wheel_scroll_speed](config/reference/config/alternate_buffer_wheel_scroll_speed.md) option to control how many cursor key presses are generated by the mouse wheel when the alternate screen is active. The new default for this is a faster-than-previous-releases 3 lines per wheel tick. [#432](https://github.com/wezterm/wezterm/issues/432)
 * macOS: Dead Keys are now processed even when `use_ime=false`.  [More details in the docs](config/keyboard-concepts.md#macos-left-and-right-option-key). [#410](https://github.com/wezterm/wezterm/issues/410).
 * X11: attempt to load cursors from the XCursor.theme resource specified on the root window [#524](https://github.com/wezterm/wezterm/issues/524)
 * Added `file://` URL matching to the default list of implicit hyperlink rules [#525](https://github.com/wezterm/wezterm/issues/525)
@@ -2188,8 +2188,8 @@ As features stabilize some brief notes about them will accumulate here.
 
 ### 20201031-154415-9614e117
 
-* New: split/pane support! `CTRL+SHIFT+ALT+"` to [SplitVertical](config/lua/keyassignment/SplitVertical.md),
-  and `CTRL+SHIFT+ALT+%` to [SplitHorizontal](config/lua/keyassignment/SplitHorizontal.md).
+* New: split/pane support! `CTRL+SHIFT+ALT+"` to [SplitVertical](config/reference/keyassignment/SplitVertical.md),
+  and `CTRL+SHIFT+ALT+%` to [SplitHorizontal](config/reference/keyassignment/SplitHorizontal.md).
 * New: [LEADER](config/keys.md#leader-key) modifier key support
 * New: `window_background_opacity` and `window_background_image`
   options to control using background images, transparent windows.
@@ -2198,7 +2198,7 @@ As features stabilize some brief notes about them will accumulate here.
   `Overnight Slumber`, `Popping and Locking`, `Rapture`,
   `jubi`, `nord`.
 * New: expanded lua API allows handling URI clicks and keyboard events
-  with lua callbacks.  See [wezterm.on](config/lua/wezterm/on.md) docs.
+  with lua callbacks.  See [wezterm.on](config/reference/wezterm/on.md) docs.
 * The GUI layer now normalizes SHIFT state for keyboard processing.
   If a keypress is ASCII uppercase and SHIFT is held then the
   SHIFT modifier is removed from the set of active modifiers.  This
@@ -2221,7 +2221,7 @@ As features stabilize some brief notes about them will accumulate here.
   automatic config reloading.  When set to false, you will need
   to manually trigger a config reload (default: `SUPER+R` or
   `CTRL+SHIFT+R`)
-* [`CloseCurrentTab`](config/lua/keyassignment/CloseCurrentTab.md)
+* [`CloseCurrentTab`](config/reference/keyassignment/CloseCurrentTab.md)
   now requires a `confirm` parameter.
 * Halved the memory usage requirements per Cell in the common
   case (saving 32 bytes per cell), which gives more headroom for

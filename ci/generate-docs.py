@@ -293,8 +293,10 @@ title: Color Schemes with first letter "{scheme_prefix}"
                     idx.write("\nTo use this scheme, add this to your config:\n")
                     idx.write(
                         f"""
-```lua
-config.color_scheme = '{title}'
+```rhai
+#{{
+    color_scheme: "{title}",
+}}
 ```
 
 """
@@ -371,90 +373,90 @@ TOC = [
         ],
     ),
     Page(
-        "Full Config & Lua Reference",
-        "config/lua/general.md",
+        "Full Config Reference",
+        "config/reference/general.md",
         children=[
             Gen(
                 "Config Options",
-                "config/lua/config",
+                "config/reference/config",
             ),
             Gen(
                 "module: wezterm",
-                "config/lua/wezterm",
+                "config/reference/wezterm",
             ),
             Gen(
                 "module: wezterm.color",
-                "config/lua/wezterm.color",
+                "config/reference/wezterm.color",
             ),
             Gen(
                 "module: wezterm.gui",
-                "config/lua/wezterm.gui",
+                "config/reference/wezterm.gui",
             ),
             Gen(
                 "module: wezterm.mux",
-                "config/lua/wezterm.mux",
+                "config/reference/wezterm.mux",
             ),
             Gen(
                 "module: wezterm.plugin",
-                "config/lua/wezterm.plugin",
+                "config/reference/wezterm.plugin",
             ),
             Gen(
                 "module: wezterm.procinfo",
-                "config/lua/wezterm.procinfo",
+                "config/reference/wezterm.procinfo",
             ),
             Gen(
                 "module: wezterm.serde",
-                "config/lua/wezterm.serde",
+                "config/reference/wezterm.serde",
             ),
             Gen(
                 "module: wezterm.time",
-                "config/lua/wezterm.time",
+                "config/reference/wezterm.time",
             ),
             Gen(
                 "module: wezterm.url",
-                "config/lua/wezterm.url",
+                "config/reference/wezterm.url",
             ),
             Gen(
                 "enum: KeyAssignment",
-                "config/lua/keyassignment",
+                "config/reference/keyassignment",
             ),
             Gen(
                 "enum: CopyModeAssignment",
-                "config/lua/keyassignment/CopyMode",
+                "config/reference/keyassignment/CopyMode",
             ),
-            Gen("object: Color", "config/lua/color"),
-            Page("object: ExecDomain", "config/lua/ExecDomain.md"),
-            Page("object: LocalProcessInfo", "config/lua/LocalProcessInfo.md"),
-            Gen("object: MuxDomain", "config/lua/MuxDomain"),
-            Gen("object: MuxWindow", "config/lua/mux-window"),
-            Gen("object: MuxTab", "config/lua/MuxTab"),
-            Page("object: PaneInformation", "config/lua/PaneInformation.md"),
-            Page("object: TabInformation", "config/lua/TabInformation.md"),
-            Page("object: SshDomain", "config/lua/SshDomain.md"),
-            Page("object: SpawnCommand", "config/lua/SpawnCommand.md"),
-            Gen("object: Time", "config/lua/wezterm.time/Time"),
-            Page("object: TlsDomainClient", "config/lua/TlsDomainClient.md"),
-            Page("object: TlsDomainServer", "config/lua/TlsDomainServer.md"),
+            Gen("object: Color", "config/reference/color"),
+            Page("object: ExecDomain", "config/reference/ExecDomain.md"),
+            Page("object: LocalProcessInfo", "config/reference/LocalProcessInfo.md"),
+            Gen("object: MuxDomain", "config/reference/MuxDomain"),
+            Gen("object: MuxWindow", "config/reference/mux-window"),
+            Gen("object: MuxTab", "config/reference/MuxTab"),
+            Page("object: PaneInformation", "config/reference/PaneInformation.md"),
+            Page("object: TabInformation", "config/reference/TabInformation.md"),
+            Page("object: SshDomain", "config/reference/SshDomain.md"),
+            Page("object: SpawnCommand", "config/reference/SpawnCommand.md"),
+            Gen("object: Time", "config/reference/wezterm.time/Time"),
+            Page("object: TlsDomainClient", "config/reference/TlsDomainClient.md"),
+            Page("object: TlsDomainServer", "config/reference/TlsDomainServer.md"),
             Gen(
                 "object: Pane",
-                "config/lua/pane",
+                "config/reference/pane",
             ),
             Gen(
                 "object: Window",
-                "config/lua/window",
+                "config/reference/window",
             ),
-            Page("object: WslDomain", "config/lua/WslDomain.md"),
+            Page("object: WslDomain", "config/reference/WslDomain.md"),
             Gen(
                 "events: Gui",
-                "config/lua/gui-events",
+                "config/reference/gui-events",
             ),
             Gen(
                 "events: Multiplexer",
-                "config/lua/mux-events",
+                "config/reference/mux-events",
             ),
             Gen(
                 "events: Window",
-                "config/lua/window-events",
+                "config/reference/window-events",
             ),
         ],
     ),

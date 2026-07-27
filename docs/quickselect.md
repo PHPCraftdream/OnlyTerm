@@ -9,12 +9,12 @@ bound to `CTRL-SHIFT-SPACE` by default.
 
 When quick select mode is activated, the terminal is searched for items that
 match the patterns defined by the
-[quick_select_patterns](config/lua/config/quick_select_patterns.md)
+[quick_select_patterns](config/reference/config/quick_select_patterns.md)
 configuration combined with a default set of patterns that match things such as
 URL and path fragments, git hashes, ip addresses and numbers.
 
 Matches are highlighted and shown with a one or two character prefix derived
-from the [quick_select_alphabet](config/lua/config/quick_select_alphabet.md)
+from the [quick_select_alphabet](config/reference/config/quick_select_alphabet.md)
 configuration. The [colors](config/appearance.md#defining-your-own-colors)
 of the highlighted text can be configured.
 
@@ -29,7 +29,7 @@ Pressing `ESCAPE` will cancel quick select mode.
 
 {{since('nightly')}}
 
-A configuration option [quick_select_remove_styling](config/lua/config/quick_select_remove_styling.md)
+A configuration option [quick_select_remove_styling](config/reference/config/quick_select_remove_styling.md)
 has been added which when set to `true`, results in all color and styling
 being removed from the pane prior to performing matching and highlighting
 any matching text in quick select mode.

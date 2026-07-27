@@ -11,7 +11,7 @@ By default, pressing <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> will acti
 the debug overlay and allow you to review the most recently logged issues.
 It also gives you access to a Lua REPL for evaluating built-in lua functions.
 
-See [ShowDebugOverlay](config/lua/keyassignment/ShowDebugOverlay.md) for more
+See [ShowDebugOverlay](config/reference/keyassignment/ShowDebugOverlay.md) for more
 information on this key assignment.
 
 ### Log Files
@@ -97,13 +97,13 @@ for more details on the syntax/possibilities.
 
 ## Debugging Keyboard Related issues
 
-Turn on [debug_key_events](config/lua/config/debug_key_events.md) to log
+Turn on [debug_key_events](config/reference/config/debug_key_events.md) to log
 information about key presses.
 
 Use [onlyterm show-keys](cli/show-keys.md) or `onlyterm show-keys --lua` to show
 the effective set of key and mouse assignments defined by your config.
 
-Consider changing [use_ime](config/lua/config/use_ime.md) to see that is
+Consider changing [use_ime](config/reference/config/use_ime.md) to see that is
 influencing your keyboard usage.
 
 Double check to see if you have some system level utility/software that might

@@ -90,17 +90,15 @@ the worst cases spaces where a glyph should be, then you have an issue with
 font fallback.
 
 You can resolve this by explicitly adding fallback font(s) the have the glyphs
-that you need in your `.wezterm.lua`:
+that you need in your `.wezterm.rhai`:
 
-```lua
-local wezterm = require 'wezterm'
-
-return {
-  font = wezterm.font_with_fallback {
-    'My Preferred Font',
-    -- This font has a broader selection of Chinese glyphs than my preferred font
-    'DengXian',
-  },
+```rhai
+#{
+  font: font_with_fallback([
+    "My Preferred Font",
+    // This font has a broader selection of Chinese glyphs than my preferred font
+    "DengXian",
+  ]),
 }
 ```
 
@@ -395,10 +393,10 @@ $ sudo launchctl config user path <my path setting>
 
 See also:
 
- * [set_environment_variables](config/lua/config/set_environment_variables.md)
- * [SpawnCommand](config/lua/SpawnCommand.md)
- * [wezterm.config_file](config/lua/wezterm/config_file.md)
- * [wezterm.shell_quote_arg](config/lua/wezterm/shell_quote_arg.md)
+ * [set_environment_variables](config/reference/config/set_environment_variables.md)
+ * [SpawnCommand](config/reference/SpawnCommand.md)
+ * [wezterm.config_file](config/reference/wezterm/config_file.md)
+ * [wezterm.shell_quote_arg](config/reference/wezterm/shell_quote_arg.md)
  * [how to set the PATH for Finder-launched applications](https://apple.stackexchange.com/q/51677/166425)
  * [what does launchctl config user path do?](https://stackoverflow.com/q/51636338/149111)
 
