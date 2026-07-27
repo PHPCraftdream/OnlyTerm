@@ -594,6 +594,14 @@ pub enum KeyAssignment {
     OpenLinkAtMouseCursor,
     CopyLinkAtMouseCursor(ClipboardCopyDestination),
     ClearSelection,
+    /// If the active pane has a selection, copies it to the clipboard and
+    /// clears the selection (matching CopyTo(Clipboard) + ClearSelection).
+    /// Otherwise, sends a literal Ctrl+C (0x03) to the pane, exactly as if
+    /// Ctrl+C had no other binding at all. This is the default binding for
+    /// Ctrl+C: it lets Ctrl+C serve double duty as "copy" when there's a
+    /// selection to copy, without ever preventing a plain Ctrl+C from
+    /// reaching the running program to interrupt it when there isn't.
+    CopySelectionOrInterrupt,
     CompleteSelection(ClipboardCopyDestination),
     CompleteSelectionOrOpenLinkAtMouseCursor(ClipboardCopyDestination),
     StartWindowDrag,

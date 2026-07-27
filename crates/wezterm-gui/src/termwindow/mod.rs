@@ -2824,6 +2824,15 @@ impl TermWindow {
                 let text = self.selection_text(pane);
                 self.copy_to_clipboard(*dest, text);
             }
+            CopySelectionOrInterrupt => {
+                let text = self.selection_text(pane);
+                if !text.is_empty() {
+                    self.copy_to_clipboard(ClipboardCopyDestination::Clipboard, text);
+                    self.clear_selection(pane);
+                } else {
+                    pane.writer().write_all(b"\x03").ok();
+                }
+            }
             CopyTextTo { text, destination } => {
                 self.copy_to_clipboard(*destination, text.clone());
             }
@@ -2928,7 +2937,25 @@ impl TermWindow {
                 self.do_open_link_at_mouse_cursor(pane);
             }
             CopyLinkAtMouseCursor(destination) => {
-                self.do_copy_link_at_mouse_cursor(*destination);
+                // Right-click's default binding. If there's a hyperlink
+                // under the cursor, copy its URL (existing behavior).
+                // Otherwise, if there's a text selection, copy it to the
+                // clipboard and clear the selection - matching the same
+                // copy-then-clear pattern as CTRL+C's
+                // CopySelectionOrInterrupt and left-click's
+                // CompleteSelectionOrOpenLinkAtMouseCursor.
+                if self.current_highlight.is_some() {
+                    self.do_copy_link_at_mouse_cursor(*destination);
+                } else {
+                    let text = self.selection_text(pane);
+                    if !text.is_empty() {
+                        self.copy_to_clipboard(*destination, text);
+                        self.clear_selection(pane);
+                        if let Some(window) = self.window.as_ref() {
+                            window.invalidate();
+                        }
+                    }
+                }
             }
             EmitEvent(name) => {
                 self.emit_window_event(name, None);
@@ -2937,6 +2964,7 @@ impl TermWindow {
                 let text = self.selection_text(pane);
                 if !text.is_empty() {
                     self.copy_to_clipboard(*dest, text);
+                    self.clear_selection(pane);
                     let window = self.window.as_ref().unwrap();
                     window.invalidate();
                 } else {
