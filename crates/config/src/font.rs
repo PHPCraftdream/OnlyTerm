@@ -595,6 +595,11 @@ impl TextStyle {
         // We bundle this emoji font as an in-memory fallback
         font.push(FontAttributes::new_fallback("Noto Color Emoji"));
 
+        // We bundle this Hebrew font (full niqqud/cantillation coverage)
+        // as an in-memory fallback so Hebrew text renders correctly even
+        // without a Hebrew font installed on the system.
+        font.push(FontAttributes::new_fallback("Noto Sans Hebrew"));
+
         // Add symbols that many people end up using via patched fonts
         font.push(FontAttributes::new_fallback("Symbols Nerd Font Mono"));
 

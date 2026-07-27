@@ -567,7 +567,8 @@ impl super::TermWindow {
 /// size unless they've specified differently.
 pub fn effective_right_padding(config: &ConfigHandle, context: DimensionContext) -> usize {
     if config.enable_scroll_bar && config.window_padding.right.is_zero() {
-        context.pixel_cell as usize
+        // Wider than a single cell so the thumb is easy to see and grab.
+        (context.pixel_cell * 1.75) as usize
     } else {
         config.window_padding.right.evaluate_as_pixels(context) as usize
     }

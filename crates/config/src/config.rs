@@ -7,8 +7,9 @@ use crate::color::{
 use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
 use crate::font::{
-    AllowSquareGlyphOverflow, DisplayPixelGeometry, FontLocatorSelection, FontRasterizerSelection,
-    FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
+    AllowSquareGlyphOverflow, DisplayPixelGeometry, FontAttributes, FontLocatorSelection,
+    FontRasterizerSelection, FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget,
+    StyleRule, TextStyle,
 };
 use crate::frontend::FrontEndSelection;
 use crate::keyassignment::{
@@ -110,7 +111,7 @@ pub struct Config {
     pub dpi_by_screen: HashMap<String, f64>,
 
     /// The baseline font to use
-    #[dynamic(default)]
+    #[dynamic(default = "default_font_style")]
     pub font: TextStyle,
 
     /// An optional set of style rules to select the font based
@@ -559,10 +560,13 @@ pub struct Config {
     #[dynamic(default)]
     pub hide_tab_bar_if_only_one_tab: bool,
 
-    #[dynamic(default)]
+    #[dynamic(default = "default_true")]
     pub enable_scroll_bar: bool,
 
-    #[dynamic(try_from = "crate::units::PixelUnit", default = "default_half_cell")]
+    #[dynamic(
+        try_from = "crate::units::PixelUnit",
+        default = "default_min_scroll_bar_height"
+    )]
     pub min_scroll_bar_height: Dimension,
 
     /// If false, do not try to use a Wayland protocol connection
@@ -840,10 +844,13 @@ pub struct Config {
     #[dynamic(default)]
     pub ignore_svg_fonts: bool,
 
-    #[dynamic(default)]
+    /// OnlyTerm bundles Hebrew fonts/niqqud support out of the box, so
+    /// bidi (Unicode Bidirectional Algorithm, UAX #9) is on by default
+    /// rather than requiring users to opt in.
+    #[dynamic(default = "default_true")]
     pub bidi_enabled: bool,
 
-    #[dynamic(default)]
+    #[dynamic(default = "default_bidi_direction")]
     pub bidi_direction: ParagraphDirectionHint,
 
     #[dynamic(default = "default_stateless_process_list")]
@@ -2015,6 +2022,28 @@ fn windows_default_prog() -> Option<Vec<String>> {
     None
 }
 
+/// OnlyTerm is Windows-focused: default to Lucida Console, a system font
+/// that ships with every Windows install, rather than the bundled
+/// JetBrains Mono. JetBrains Mono stays wired in as the automatic fallback
+/// (see `TextStyle::font_with_fallback`), so it's still used for glyphs
+/// Lucida Console doesn't cover.
+#[cfg(windows)]
+fn default_font_style() -> TextStyle {
+    TextStyle {
+        foreground: None,
+        font: vec![FontAttributes::new("Lucida Console")],
+    }
+}
+
+fn default_bidi_direction() -> ParagraphDirectionHint {
+    ParagraphDirectionHint::AutoLeftToRight
+}
+
+#[cfg(not(windows))]
+fn default_font_style() -> TextStyle {
+    TextStyle::default()
+}
+
 fn default_bypass_mouse_reporting_modifiers() -> Modifiers {
     Modifiers::SHIFT
 }
@@ -2163,6 +2192,12 @@ const fn default_one_cell() -> Dimension {
 
 const fn default_half_cell() -> Dimension {
     Dimension::Cells(0.5)
+}
+
+/// The scrollbar thumb should never shrink to the point of being hard to
+/// grab or see, even on very long scrollback buffers.
+const fn default_min_scroll_bar_height() -> Dimension {
+    Dimension::Cells(2.0)
 }
 
 const fn default_reverse_video_cursor_min_contrast() -> f32 {
