@@ -248,13 +248,25 @@ pub struct Config {
 
     #[dynamic(default = "default_true")]
     pub enable_kitty_graphics: bool,
-    /// OnlyTerm defaults this to true (upstream wezterm defaults to false)
-    /// so that apps which request the kitty keyboard protocol at runtime
-    /// (eg: to disambiguate Ctrl+Enter/Shift+Enter from a plain Enter) get
-    /// it without the user needing to flip a config flag first. This is
-    /// purely opt-in from the app's side - nothing changes for apps that
-    /// never request it.
-    #[dynamic(default = "default_true")]
+    /// REVERTED to upstream's default (false) again. OnlyTerm twice tried
+    /// defaulting this to true so that apps requesting the kitty keyboard
+    /// protocol at runtime get Ctrl+Enter/Shift+Enter disambiguation
+    /// without a config change. The first attempt broke Ctrl+C entirely
+    /// (every Ctrl+<letter> got CSI-u encoded once an app enabled
+    /// DISAMBIGUATE_ESCAPE_CODES). A targeted fix in
+    /// `KeyEvent::encode_kitty` (wezterm-input-types) kept Ctrl+C/etc as
+    /// their legacy byte while still escape-encoding genuinely colliding
+    /// combos (Ctrl+H/I/M/[) - this DID fix Ctrl+Enter/Shift+Enter, but
+    /// Ctrl+C still didn't work afterward. Root cause not yet confirmed:
+    /// likely the app enters raw terminal mode to use the enhanced
+    /// keyboard protocol at all, which (independent of what byte we send)
+    /// disables the OS/tty layer's automatic SIGINT-on-Ctrl+C, and the
+    /// app's own manual Ctrl+C handling in that mode may only recognize
+    /// the CSI-u form rather than the legacy byte we now send - needs live
+    /// byte-level tracing to confirm, not guessed at further. Since
+    /// Ctrl+C must always work, back to false until this is properly
+    /// root-caused.
+    #[dynamic(default)]
     pub enable_kitty_keyboard: bool,
 
     /// Whether the terminal should respond to requests to read the
@@ -523,9 +535,20 @@ pub struct Config {
     /// is registered) is derived from the last path component (basename)
     /// of the active pane's current working directory, rather than from
     /// the pane's title (which is usually the running program's name).
-    /// The default is false, which preserves the pre-existing behavior.
-    #[dynamic(default)]
+    /// The same applies to the default window title (`format-window-title`
+    /// fallback). OnlyTerm defaults this to true (upstream wezterm
+    /// defaults to false) so the tab/window title tracks `cd` out of the
+    /// box - it updates whenever the shell reports a new working directory
+    /// (OSC 7), without needing a config-side event handler.
+    #[dynamic(default = "default_true")]
     pub use_cwd_basename_as_tab_title: bool,
+
+    /// If true, new GUI windows are maximized immediately after being
+    /// shown. Upstream wezterm has no built-in option for this - users
+    /// would normally add a `gui-startup` event handler calling
+    /// `window:gui_window():maximize()`. OnlyTerm defaults this to true.
+    #[dynamic(default = "default_true")]
+    pub start_maximized: bool,
 
     /// Specifies the maximum width that a tab can have in the
     /// tab bar.  Defaults to 16 glyphs in width.
