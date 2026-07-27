@@ -1,7 +1,8 @@
 use crate::background::{BackgroundLayer, Gradient};
 use crate::bell::{AudibleBell, EasingFunction, VisualBell};
 use crate::color::{
-    ColorSchemeFile, HsbTransform, Palette, SrgbaTuple, TabBarStyle, WindowFrameConfig,
+    ColorSchemeFile, HsbTransform, Palette, SrgbaTuple, TabBarColor, TabBarColors, TabBarStyle,
+    WindowFrameConfig,
 };
 use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
@@ -124,6 +125,7 @@ pub struct Config {
     pub bold_brightens_ansi_colors: BoldBrightening,
 
     /// The color palette
+    #[dynamic(default = "default_colors")]
     pub colors: Option<Palette>,
 
     #[dynamic(default)]
@@ -246,7 +248,13 @@ pub struct Config {
 
     #[dynamic(default = "default_true")]
     pub enable_kitty_graphics: bool,
-    #[dynamic(default)]
+    /// OnlyTerm defaults this to true (upstream wezterm defaults to false)
+    /// so that apps which request the kitty keyboard protocol at runtime
+    /// (eg: to disambiguate Ctrl+Enter/Shift+Enter from a plain Enter) get
+    /// it without the user needing to flip a config flag first. This is
+    /// purely opt-in from the app's side - nothing changes for apps that
+    /// never request it.
+    #[dynamic(default = "default_true")]
     pub enable_kitty_keyboard: bool,
 
     /// Whether the terminal should respond to requests to read the
@@ -1914,6 +1922,61 @@ pub fn default_local_echo_threshold_ms() -> Option<u64> {
     Some(100)
 }
 
+fn rgba(hex: &str) -> RgbaColor {
+    <RgbaColor as std::convert::TryFrom<String>>::try_from(hex.to_string())
+        .expect("built-in default color literal must be valid")
+}
+
+/// OnlyTerm defaults to a light, GitHub-style palette rather than
+/// upstream wezterm's unset (effectively dark) palette.
+fn default_colors() -> Option<Palette> {
+    let tab_bar_color = |bg: &str, fg: &str| TabBarColor {
+        bg_color: rgba(bg),
+        fg_color: rgba(fg),
+        ..Default::default()
+    };
+
+    Some(Palette {
+        foreground: Some(rgba("#1f2328")),
+        background: Some(rgba("#ffffff")),
+        cursor_fg: Some(rgba("#ffffff")),
+        cursor_bg: Some(rgba("#1f2328")),
+        cursor_border: Some(rgba("#1f2328")),
+        selection_fg: Some(rgba("#1f2328")),
+        selection_bg: Some(rgba("#d0d7de")),
+        ansi: Some([
+            rgba("#f6f8fa"),
+            rgba("#cf222e"),
+            rgba("#116329"),
+            rgba("#4d2d00"),
+            rgba("#0969da"),
+            rgba("#8250df"),
+            rgba("#1b7c83"),
+            rgba("#f6f8fa"),
+        ]),
+        brights: Some([
+            rgba("#24292f"),
+            rgba("#a40e26"),
+            rgba("#1a7f37"),
+            rgba("#633c01"),
+            rgba("#0550ae"),
+            rgba("#6f42c1"),
+            rgba("#3192aa"),
+            rgba("#ffffff"),
+        ]),
+        scrollbar_thumb: Some(rgba("#b6b6b6")),
+        tab_bar: Some(TabBarColors {
+            background: Some(rgba("#e8edf2")),
+            active_tab: Some(tab_bar_color("#ffffff", "#1f2328")),
+            inactive_tab: Some(tab_bar_color("#d0d7de", "#57606a")),
+            inactive_tab_hover: Some(tab_bar_color("#c8d1da", "#24292f")),
+            new_tab: Some(tab_bar_color("#e8edf2", "#57606a")),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
 /// OnlyTerm is Windows-focused: default new panes/tabs to `cmd.exe` rather
 /// than whatever the ambient `ComSpec` environment variable happens to hold
 /// (which is sometimes PowerShell, depending on how the shell was launched).
@@ -2139,8 +2202,10 @@ pub enum NewlineCanon {
 
 #[derive(FromDynamic, ToDynamic, Clone, Copy, Debug, Default)]
 pub enum WindowCloseConfirmation {
-    #[default]
     AlwaysPrompt,
+    // OnlyTerm defaults to never prompting on close (upstream wezterm
+    // defaults to AlwaysPrompt).
+    #[default]
     NeverPrompt,
     // TODO: something smart where we see whether the
     // running programs are stateful

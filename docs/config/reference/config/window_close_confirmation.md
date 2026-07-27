@@ -8,11 +8,12 @@ Whether to display a confirmation prompt when the window is closed by the
 windowing environment, either because the user closed it with the window
 decorations, or instructed their window manager to close it.
 
-Set this to `"NeverPrompt"` if you don't like confirming closing
-windows every time.
+OnlyTerm defaults this to `"NeverPrompt"` (upstream wezterm defaults to
+`"AlwaysPrompt"`). Set it to `"AlwaysPrompt"` if you'd like the
+confirmation prompt back.
 
 ```rhai
-config.window_close_confirmation = "AlwaysPrompt"
+config.window_close_confirmation = "NeverPrompt"
 ```
 
 See also
