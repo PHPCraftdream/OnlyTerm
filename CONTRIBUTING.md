@@ -92,7 +92,7 @@ $ bt
 Starting OnlyTerm with `onlyterm-gui start --always-new-process` is useful to ensure Mux logs are not
 hidden in an background process started in an earlier test.
 
-Start OnlyTerm with `onlyterm-gui --config-file ./test-conf.lua ……` to test a custom config file.
+Start OnlyTerm with `onlyterm-gui --config-file ./test-conf.rhai ……` to test a custom config file.
 
 
 ### Benchmarking with `bench-scale-tool`

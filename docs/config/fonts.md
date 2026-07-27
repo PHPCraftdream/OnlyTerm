@@ -6,7 +6,7 @@ WezTerm bundles [JetBrains Mono](https://www.jetbrains.com/lp/mono/),
 and uses those for the default font configuration.
 
 If you wish to use a different font face, then you can use
-the [wezterm.font](lua/wezterm/font.md) function to specify it:
+the [wezterm.font](reference/wezterm/font.md) function to specify it:
 
 ```lua
 config.font = wezterm.font 'Fira Code'
@@ -52,20 +52,20 @@ systems.
 
 Additional options for configuring fonts can be found elsewhere in the docs:
 
-* [bold_brightens_ansi_colors](lua/config/bold_brightens_ansi_colors.md) - whether bold text uses the bright ansi palette
-* [dpi](lua/config/dpi.md) - override the DPI; potentially useful for X11 users with high-density displays if experiencing tiny or blurry fonts
-* [font_dirs](lua/config/font_dirs.md) - look for fonts in a set of directories
-* [font_locator](lua/config/font_locator.md) - override the system font resolver
-* [font_rules](lua/config/font_rules.md) - advanced control over which fonts are used for italic, bold and other textual styles
-* [font_shaper](lua/config/font_shaper.md) - affects kerning and ligatures
-* [font_size](lua/config/font_size.md) - change the size of the text
-* [freetype_load_flags](lua/config/freetype_load_flags.md) - advanced hinting configuration
-* [freetype_load_target](lua/config/freetype_load_target.md) - configure hinting and anti-aliasing
-* [freetype_render_target](lua/config/freetype_render_target.md) - configure anti-aliasing
-* [cell_width](lua/config/cell_width.md) - scale the font-specified cell width
-* [line_height](lua/config/line_height.md) - scale the font-specified line height
-* [wezterm.font](lua/wezterm/font.md) - select a font based on family and style attributes
-* [wezterm.font_with_fallback](lua/wezterm/font_with_fallback.md) - select a font from a list of candidates
+* [bold_brightens_ansi_colors](reference/config/bold_brightens_ansi_colors.md) - whether bold text uses the bright ansi palette
+* [dpi](reference/config/dpi.md) - override the DPI; potentially useful for X11 users with high-density displays if experiencing tiny or blurry fonts
+* [font_dirs](reference/config/font_dirs.md) - look for fonts in a set of directories
+* [font_locator](reference/config/font_locator.md) - override the system font resolver
+* [font_rules](reference/config/font_rules.md) - advanced control over which fonts are used for italic, bold and other textual styles
+* [font_shaper](reference/config/font_shaper.md) - affects kerning and ligatures
+* [font_size](reference/config/font_size.md) - change the size of the text
+* [freetype_load_flags](reference/config/freetype_load_flags.md) - advanced hinting configuration
+* [freetype_load_target](reference/config/freetype_load_target.md) - configure hinting and anti-aliasing
+* [freetype_render_target](reference/config/freetype_render_target.md) - configure anti-aliasing
+* [cell_width](reference/config/cell_width.md) - scale the font-specified cell width
+* [line_height](reference/config/line_height.md) - scale the font-specified line height
+* [wezterm.font](reference/wezterm/font.md) - select a font based on family and style attributes
+* [wezterm.font_with_fallback](reference/wezterm/font_with_fallback.md) - select a font from a list of candidates
 
 ## Troubleshooting Fonts
 

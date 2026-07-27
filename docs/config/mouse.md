@@ -18,7 +18,7 @@ You can bypass the mouse reporting capture by holding down the `SHIFT` key;
 that will prevent the event from being passed to the application and allow matching
 it against your assignments as though the `SHIFT` key were not pressed.
 
-The [bypass_mouse_reporting_modifiers](lua/config/bypass_mouse_reporting_modifiers.md)
+The [bypass_mouse_reporting_modifiers](reference/config/bypass_mouse_reporting_modifiers.md)
 option allows you to specify an alternative set of modifiers to use for
 bypassing mouse reporting capture.
 
@@ -124,7 +124,7 @@ Each entry in the mouse binding table can have the following fields:
    pane from receiving that mouse event.  You can, of course, define these and
    still send your mouse event to the pane by holding down the configured
    [mouse reporting bypass modifier
-   key](lua/config/bypass_mouse_reporting_modifiers.md). {{since('20220807-113146-c2fee766', inline=True)}}
+   key](reference/config/bypass_mouse_reporting_modifiers.md). {{since('20220807-113146-c2fee766', inline=True)}}
 * `alt_screen` - an optional field that defaults to `'Any'`, but that can also
   be set to either `true` or `false`. This mouse binding entry will only be
   considered if the current pane's alt screen state matches this field.  Most
@@ -163,7 +163,7 @@ you wanted quadruple-click bindings you can specify `streak=4`.
 You can handle vertical wheel scroll events using the example shown below. The
 `streak` and amount associated with either `WheelUp` or `WheelDown` are set to
 `1` for the sake of simplicity of matching the event; you may use
-[`window:current_event`](lua/window/current_event.md), if to access the actual
+[`window:current_event`](reference/window/current_event.md), if to access the actual
 delta scroll value while handling the event.
 
 ```lua
@@ -226,5 +226,5 @@ return config
 
 # Available Actions
 
-See the [`KeyAssignment` reference](lua/keyassignment/index.md) for information
+See the [`KeyAssignment` reference](reference/keyassignment/index.md) for information
 on available actions.

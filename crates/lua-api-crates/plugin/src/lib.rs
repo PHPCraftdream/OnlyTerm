@@ -44,13 +44,12 @@ fn compute_repo_dir(url: &str) -> String {
     dir
 }
 
-/// `wezterm.plugin.require(path)`: opens a local plugin directory and
-/// `require`s it via Lua's own module resolver. Git-URL installation
-/// (`https://...`, `file://...` treated as a git remote, etc.) is no longer
-/// supported; see `GIT_PLUGIN_REMOVED_MESSAGE`.
-/// Heuristic used only to give a better error message: does `path` look like
-/// something that used to be accepted as a git remote (a URL scheme, or a
-/// scp-like `host:path` git spec) rather than a plain local filesystem path?
+/// Heuristic used only to give a better error message when `plugin::require`
+/// (or its older `wezterm.plugin.require` form) is called: does `path` look
+/// like something that used to be accepted as a git remote (a URL scheme, or
+/// a scp-like `host:path` git spec) rather than a plain local filesystem
+/// path? Git-URL installation (`https://...`, `file://...` treated as a git
+/// remote, etc.) is no longer supported; see `GIT_PLUGIN_REMOVED_MESSAGE`.
 fn looks_like_git_url(path: &str) -> bool {
     let schemes = ["https://", "http://", "ssh://", "git://", "file://"];
     if schemes.iter().any(|s| path.starts_with(s)) {

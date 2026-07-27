@@ -17,7 +17,7 @@ OnlyTerm is a terminal emulator and multiplexer with GPU-accelerated rendering. 
 
 * Cross-platform architecture (Windows/macOS/Linux, X11/Wayland) — with maintenance focus on Windows in this fork.
 * Multiplexing of panes/tabs/windows, including across remote unix-domain mux domains.
-* Flexible configuration via Lua/Rhai: color schemes, fonts, key bindings, custom events.
+* Flexible configuration via rhai: color schemes, fonts, key bindings, custom events.
 * Support for modern terminal protocols (Kitty graphics/keyboard, OSC 52 clipboard, synchronized output, and more).
 
 ## What this fork focuses on

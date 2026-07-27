@@ -142,7 +142,7 @@ This setup sends the text of the commands directly into the active pane which ha
 
 If you're using [tmux](https://github.com/tmux/tmux), you'll need to enable the
 hyperlinks terminal feature and, depending in your configuration
-(see [bypass mouse reporting modifiers](../config/lua/config/bypass_mouse_reporting_modifiers.md)), add `Shift` when clicking an hyperlink.
+(see [bypass mouse reporting modifiers](../config/reference/config/bypass_mouse_reporting_modifiers.md)), add `Shift` when clicking an hyperlink.
 
 ```tmux
 set -sa terminal-features ",*:hyperlinks"

@@ -28,7 +28,7 @@ By default, `CTRL-SHIFT-K` and `CMD-K` will trigger the `ClearScrollback`
 action and discard the contents of the scrollback buffer.  There is no way
 to undo discarding the scrollback.
 
-See the [ClearScrollback](config/lua/keyassignment/ClearScrollback.md) docs for information
+See the [ClearScrollback](config/reference/keyassignment/ClearScrollback.md) docs for information
 on rebinding this key.
 
 ### Enable/Disable scrollbar
@@ -51,7 +51,7 @@ You may [change the color of the scrollbar](config/appearance.md#defining-your-o
 By default, `SHIFT-PageUp` and `SHIFT-PageDown` will adjust the viewport scrollback position
 by one full screen for each press.
 
-See the [ScrollByPage](config/lua/keyassignment/ScrollByPage.md) docs for more information
+See the [ScrollByPage](config/reference/keyassignment/ScrollByPage.md) docs for more information
 on this key binding assignment.
 
 ### Searching the scrollback
@@ -86,7 +86,7 @@ When the search overlay is active the behavior of OnlyTerm changes:
 The key assignments for search mode are specified by the `search_mode` [Key Table](config/key-tables.md).
 
 You may use
-[wezterm.gui.default_key_tables](config/lua/wezterm.gui/default_key_tables.md)
+[wezterm.gui.default_key_tables](config/reference/wezterm.gui/default_key_tables.md)
 to obtain the defaults and extend them. In earlier versions of WezTerm there
 wasn't a way to override portions of the key table, only to replace the entire
 table.
@@ -134,5 +134,5 @@ With that in your config you can now:
 
 without needing to reach for your mouse.
 
-See [the Search action docs](config/lua/keyassignment/Search.md) for more information on
+See [the Search action docs](config/reference/keyassignment/Search.md) for more information on
 using the `Search` action.

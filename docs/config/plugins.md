@@ -30,7 +30,7 @@ functionality not in the core product.
 1. Obtain the plugin's files yourself (for example, `git clone` it manually
    from the command line, or download and extract a release archive) into a
    directory on your local disk.
-2. Pass that local directory's path to [`plugin::require()`](lua/wezterm.plugin/require.md):
+2. Pass that local directory's path to [`plugin::require()`](reference/wezterm.plugin/require.md):
 
 ```rhai
 let a_plugin = plugin::require("/home/user/projects/myPlugin");

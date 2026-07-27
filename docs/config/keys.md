@@ -24,7 +24,7 @@ disable a default assignment like this:
     the full translation.
 
 The `action` value can be one of the [available key
-assignments](lua/keyassignment/index.md).  Every action has an example that shows
+assignments](reference/keyassignment/index.md).  Every action has an example that shows
 how to use it.
 
 Possible Modifier labels are:
@@ -116,7 +116,7 @@ Similar in concept to the `phys:` mapping described above, the `raw:` mapping
 is independent of the OS keyboard layout.  Raw codes are hardware and windowing system dependent, so there is no portable way to list which key does what.
 
 To discover these values, you can set [debug_key_events =
-true](lua/config/debug_key_events.md) and press the keys of
+true](reference/config/debug_key_events.md) and press the keys of
 interest.
 
 You can specify a raw key value of 123 by using `key="raw:123"` in your config
@@ -192,6 +192,6 @@ config.keys = {
 
 # Available Actions
 
-See the [`KeyAssignment` reference](lua/keyassignment/index.md) for information
+See the [`KeyAssignment` reference](reference/keyassignment/index.md) for information
 on available actions.
 

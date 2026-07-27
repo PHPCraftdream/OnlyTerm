@@ -288,7 +288,7 @@ prefix: some helpers are **top-level functions** and the rest live in
 | `wezterm.plugin.require(path)` | `plugin::require(path)` |
 
 The available modules are `color::`, `serde::`, `procinfo::`, `plugin::` and
-`mux::` (the per-function reference pages under [config/lua](lua/config/index.md)
+`mux::` (the per-function reference pages under [config/reference](reference/config/index.md)
 still document the available operations; only the *call syntax* changed).
 
 ## Registering event handlers (`wezterm.on` / `wezterm.emit`)
@@ -387,7 +387,7 @@ config.keys = {
 ```
 
 The complete list of available actions and their argument shapes is unchanged —
-see the [key assignments reference](lua/keyassignment/index.md). To check
+see the [key assignments reference](reference/keyassignment/index.md). To check
 whether a name is a valid action from a script, use `has_action("Name")`.
 
 ## What happens to an old `.wezterm.lua`

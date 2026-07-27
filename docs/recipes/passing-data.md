@@ -32,16 +32,16 @@ Note that the value must be base64 encoded.
 Setting a user var will generate events in the window that contains
 the corresponding pane:
 
-* [user-var-changed](../config/lua/window-events/user-var-changed.md), which
+* [user-var-changed](../config/reference/window-events/user-var-changed.md), which
   allows you to directly take action when a var is set/changed.
-* [update-status](../config/lua/window-events/update-status.md) which allows you to update left/right status items
+* [update-status](../config/reference/window-events/update-status.md) which allows you to update left/right status items
 * the title and tab bar area will then update and trigger any associated events as part of that update
 
 The user var change event will propagate to all connected multiplexer clients.
 
 You can access the complete set of user vars in a given pane by calling
-[pane:get_user_vars()](../config/lua/pane/get_user_vars.md), or by accessing
-the `user_vars` field in a [PaneInformation](../config/lua/PaneInformation.md)
+[pane:get_user_vars()](../config/reference/pane/get_user_vars.md), or by accessing
+the `user_vars` field in a [PaneInformation](../config/reference/PaneInformation.md)
 struct.
 
 In this example, an alias is used to set a user var named PROG to something
@@ -121,8 +121,8 @@ wezterm, like many other terminals, will interpret Operating System Command
 |1  |Set Icon Name | Sets Icon Name, which is used as the Tab title when it is non-empty | `\x1b]1;tab-title\x1b\\` |
 |2  |Set Window Title | Set Window Title | `\x1b]2;window-title\x1b\\` |
 
-[pane:get_title()](../config/lua/pane/get_title.md) and/or the
-[PaneInformation](../config/lua/PaneInformation.md) `title` field can be used
+[pane:get_title()](../config/reference/pane/get_title.md) and/or the
+[PaneInformation](../config/reference/PaneInformation.md) `title` field can be used
 to retrieve the effective title that has been set for a pane.
 
 It is common practice for shells in many distributions to arrange to set OSC 2
@@ -144,8 +144,8 @@ You may also use `wezterm set-working-directory` for this if you have `wezterm`
 available.
 
 The value you set via OSC 7 is available
-[pane:get_current_working_dir()](../config/lua/pane/get_current_working_dir.md)
-and/or the [PaneInformation](../config/lua/PaneInformation.md)
+[pane:get_current_working_dir()](../config/reference/pane/get_current_working_dir.md)
+and/or the [PaneInformation](../config/reference/PaneInformation.md)
 `current_working_dir` field can be used to retrieve the working directory that
 has been set for a pane.  If OSC 7 has never been used in a pane, and that pane
 is a local pane, wezterm can attempt to determine the working directory of the
@@ -160,14 +160,14 @@ wezterm provides some functions that can attempt to extract information about
 processes that are running on the local machine; these will not work with
 multiplexer connections of any kind (even unix multiplexers):
 
-* [pane:get_foreground_process_info()](../config/lua/pane/get_foreground_process_info.md) -
+* [pane:get_foreground_process_info()](../config/reference/pane/get_foreground_process_info.md) -
   returns information about the process hierarchy in a pane
-* [wezterm.procinfo.get_info_for_pid()](../config/lua/wezterm.procinfo/get_info_for_pid.md) -
+* [wezterm.procinfo.get_info_for_pid()](../config/reference/wezterm.procinfo/get_info_for_pid.md) -
   returns information about the process hierarchy for a given process id
 
 There are a couple of other similar/related methods available to the
-[Pane](../config/lua/pane/index.md) object and in the
-[wezterm.procinfo](../config/lua/wezterm.procinfo/index.md) module.
+[Pane](../config/reference/pane/index.md) object and in the
+[wezterm.procinfo](../config/reference/wezterm.procinfo/index.md) module.
 
 Because these local process functions don't require changing your shell
 configuration to get them working, they may be the most convenient to use in

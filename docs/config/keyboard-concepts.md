@@ -98,7 +98,7 @@ The left `Alt` will be treated as a modifier with no composition effects.
 
 If you are using VNC and a keyboard layout with dead keys, then you may wish to
 enable
-[treat_left_ctrlalt_as_altgr](lua/config/treat_left_ctrlalt_as_altgr.md).
+[treat_left_ctrlalt_as_altgr](reference/config/treat_left_ctrlalt_as_altgr.md).
 
 ### macOS Left and Right Option Key
 
@@ -133,7 +133,7 @@ the example above, `Right-Opt n` will then immediately produce `~`.
 WezTerm has support for using the operating system Input Method Editor (IME) on
 some operating systems.
 
-[The `use_ime` docs have more information](lua/config/use_ime.md).
+[The `use_ime` docs have more information](reference/config/use_ime.md).
 
 ### Dead Keys
 

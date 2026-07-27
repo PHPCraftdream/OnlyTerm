@@ -83,7 +83,7 @@ You may provide your own definition of this key table if you wish to customize
 it.
 
 You may use
-[wezterm.gui.default_key_tables](config/lua/wezterm.gui/default_key_tables.md)
+[wezterm.gui.default_key_tables](config/reference/wezterm.gui/default_key_tables.md)
 to obtain the defaults and extend them. In earlier versions of WezTerm there
 wasn't a way to override portions of the key table, only to replace the entire
 table.

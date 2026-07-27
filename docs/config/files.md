@@ -29,10 +29,10 @@ contents:
 
 For more details, see:
 
-- [initial_cols](lua/config/initial_cols.md)
-- [initial_rows](lua/config/initial_rows.md)
-- [font_size](lua/config/font_size.md)
-- [color_scheme](lua/config/color_schemes.md)
+- [initial_cols](reference/config/initial_cols.md)
+- [initial_rows](reference/config/initial_rows.md)
+- [font_size](reference/config/font_size.md)
+- [color_scheme](reference/config/color_schemes.md)
 
 ## Configuration Files
 
@@ -45,8 +45,8 @@ the [migration guide](../migration-lua-to-rhai.md) to translate one.)
     (`%USERPROFILE%/.wezterm.rhai` on Windows) to get started.
 
 More complex configurations can be placed in
-`$XDG_CONFIG_HOME/wezterm/wezterm.rhai` (for X11/Wayland) or
-`$HOME/.config/wezterm/wezterm.rhai` (for all other systems).
+`$XDG_CONFIG_HOME/onlyterm/wezterm.rhai` (for X11/Wayland) or
+`$HOME/.onlyterm/wezterm.rhai` (for all other systems).
 
 {% raw %}
 ```mermaid
@@ -59,10 +59,10 @@ graph TD
   E -->|Yes| B
   E -->|No| F{{"Running on Windows and<br/>wezterm.rhai exists in same<br/>dir as wezterm.exe?<br/>(Thumb drive mode)"}}
   F -->|Yes| B
-  F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>wezterm/wezterm.rhai<br/>exists inside it?}}
+  F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>onlyterm/wezterm.rhai<br/>exists inside it?}}
   H -->|Yes| B
   J --> B
-  H -->|No| K{{Does $HOME/.config/wezterm/wezterm.rhai exist?}}
+  H -->|No| K{{Does $HOME/.onlyterm/wezterm.rhai exist?}}
   K -->|Yes| B
   K -->|No| J[Use $HOME/.wezterm.rhai]
 ```
@@ -111,7 +111,7 @@ provided by the configuration file, even if the configuration file is reloaded.
 Each window can have an additional set of window-specific overrides applied to
 it by code in your configuration file.  That's useful for eg: setting
 transparency or any other arbitrary option on a per-window basis.  Read the
-[window:set_config_overrides](lua/window/set_config_overrides.md) documentation
+[window:set_config_overrides](reference/window/set_config_overrides.md) documentation
 for more information and examples of how to use that functionality.
 
 ## Configuration File Structure
@@ -171,7 +171,7 @@ color_scheme: "Batman",
 ## Configuration Reference
 
 Continue browsing this section of the docs for an overview of the commonly
-adjusted settings, or visit the [config reference](lua/config/index.md) for a
+adjusted settings, or visit the [config reference](reference/config/index.md) for a
 more detailed list of possibilities (the per-option reference pages still show
 Lua examples; use the [migration guide](../migration-lua-to-rhai.md) to read
 them as rhai).
