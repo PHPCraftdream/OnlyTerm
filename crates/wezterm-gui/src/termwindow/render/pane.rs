@@ -373,6 +373,7 @@ impl crate::TermWindow {
                     stable_top: StableRowIndex,
                     line_idx: usize,
                     line: &&mut Line,
+                    is_wrap_continuation: bool,
                 ) -> anyhow::Result<()> {
                     let stable_row = stable_top + line_idx as StableRowIndex;
                     let selrange = self
@@ -440,6 +441,7 @@ impl crate::TermWindow {
                         left_pixel_x: NotNan::new(self.left_pixel_x).unwrap(),
                         phys_line_idx: line_idx,
                         reverse_video: self.dims.reverse_video,
+                        is_wrap_continuation,
                     };
 
                     if let Some(cached_quad) =
@@ -484,6 +486,7 @@ impl crate::TermWindow {
                         } else {
                             None
                         },
+                        is_wrap_continuation,
                     };
 
                     let render_result = self
@@ -523,6 +526,7 @@ impl crate::TermWindow {
                                 render_metrics: self.term_window.render_metrics,
                                 shape_key: Some(shape_key),
                                 password_input,
+                                is_wrap_continuation,
                             },
                             &mut TripleLayerQuadAllocator::Heap(&mut buf),
                         )
@@ -556,8 +560,20 @@ impl crate::TermWindow {
 
             impl<'a, 'b> WithPaneLines for LineRender<'a, 'b> {
                 fn with_lines_mut(&mut self, stable_top: StableRowIndex, lines: &mut [&mut Line]) {
-                    for (line_idx, line) in lines.iter().enumerate() {
-                        if let Err(err) = self.render_line(stable_top, line_idx, line) {
+                    for line_idx in 0..lines.len() {
+                        // A physical row only ever sees its own cells, so
+                        // it can't tell on its own whether a Hebrew phrase
+                        // touching its first cell is really a fresh
+                        // phrase or the tail of one that wrapped down from
+                        // the row above -- check the previous *visible*
+                        // physical row directly (if any is currently on
+                        // screen) rather than guessing.
+                        let is_wrap_continuation = line_idx > 0
+                            && lines[line_idx - 1].last_cell_was_wrapped();
+                        let line = &lines[line_idx];
+                        if let Err(err) =
+                            self.render_line(stable_top, line_idx, line, is_wrap_continuation)
+                        {
                             self.error.replace(err);
                             return;
                         }

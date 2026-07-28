@@ -2836,7 +2836,85 @@ impl TermWindow {
                     self.copy_to_clipboard(ClipboardCopyDestination::Clipboard, text);
                     self.clear_selection(pane);
                 } else {
-                    pane.writer().write_all(b"\x03").ok();
+                    // Route through whatever keyboard protocol the app in
+                    // the pane has negotiated (win32-input-mode or kitty),
+                    // rather than always writing the legacy `\x03` byte: an
+                    // app that asked for eg. win32-input-mode (confirmed via
+                    // live escape-sequence capture to be what Codex CLI
+                    // negotiates) expects Ctrl+C in that app's requested
+                    // form and may not treat a bare `\x03` as an interrupt
+                    // while that mode is active.
+                    let event = KeyEvent {
+                        key: KeyCode::Char('c'),
+                        modifiers: Modifiers::CTRL,
+                        leds: KeyboardLedStatus::empty(),
+                        repeat_count: 1,
+                        key_is_down: true,
+                        raw: Some(RawKeyEvent {
+                            key: KeyCode::Char('c'),
+                            modifiers: Modifiers::CTRL,
+                            leds: KeyboardLedStatus::empty(),
+                            phys_code: Some(PhysKeyCode::C),
+                            raw_code: 0x43, // VK_C
+                            #[cfg(windows)]
+                            scan_code: 0x2e,
+                            repeat_count: 1,
+                            key_is_down: true,
+                            handled: Handled::new(),
+                        }),
+                        #[cfg(windows)]
+                        win32_uni_char: None,
+                    };
+                    match self.encode_via_negotiated_protocol(pane, &event) {
+                        Some(encoded) => {
+                            pane.writer().write_all(encoded.as_bytes()).ok();
+                        }
+                        None => {
+                            pane.writer().write_all(b"\x03").ok();
+                        }
+                    }
+                }
+            }
+            SendEnterOrNewline(mods) => {
+                // See `CopySelectionOrInterrupt` above: route through
+                // whatever keyboard protocol the app has negotiated so
+                // eg. Codex CLI (which negotiates win32-input-mode via
+                // DECSET, confirmed via live escape-sequence capture --
+                // it never attempts kitty keyboard protocol) gets the
+                // modified-Enter form it expects, instead of a hardcoded
+                // '\n' unconditionally masking the chord from ever
+                // reaching that negotiation. Only apps that haven't
+                // negotiated such a protocol get the '\n' fallback, since
+                // that's the best a plain/legacy app can do with this
+                // chord.
+                let event = KeyEvent {
+                    key: KeyCode::Char('\r'),
+                    modifiers: *mods,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: Some(RawKeyEvent {
+                        key: KeyCode::Char('\r'),
+                        modifiers: *mods,
+                        leds: KeyboardLedStatus::empty(),
+                        phys_code: Some(PhysKeyCode::Return),
+                        raw_code: 0x0d, // VK_RETURN
+                        #[cfg(windows)]
+                        scan_code: 0x1c,
+                        repeat_count: 1,
+                        key_is_down: true,
+                        handled: Handled::new(),
+                    }),
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                };
+                match self.encode_via_negotiated_protocol(pane, &event) {
+                    Some(encoded) => {
+                        pane.writer().write_all(encoded.as_bytes()).ok();
+                    }
+                    None => {
+                        pane.writer().write_all(b"\n").ok();
+                    }
                 }
             }
             CopyTextTo { text, destination } => {

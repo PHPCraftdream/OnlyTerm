@@ -99,6 +99,7 @@ impl crate::TermWindow {
                 render_metrics: self.render_metrics,
                 shape_key: None,
                 password_input: false,
+                is_wrap_continuation: false,
             },
             layers,
         )?;

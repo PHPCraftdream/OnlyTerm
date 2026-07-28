@@ -196,6 +196,7 @@ impl Screen {
         cursor: CursorPosition,
         seqno: SequenceNo,
         is_conpty: bool,
+        bidi_mode: BidiMode,
     ) -> CursorPosition {
         let physical_rows = size.rows.max(1);
         let physical_cols = size.cols.max(1);
@@ -258,8 +259,9 @@ impl Screen {
         // lines than the viewport size, or we resized taller,
         // pad us back out to the viewport size
         while self.lines.len() < physical_rows {
-            // FIXME: borrow bidi mode from line
-            self.lines.push_back(Line::new(seqno));
+            let mut line = Line::new(seqno);
+            bidi_mode.apply_to_line(&mut line, seqno);
+            self.lines.push_back(line);
         }
 
         let new_cursor_y;
@@ -302,8 +304,9 @@ impl Screen {
                 physical_rows.saturating_sub(new_cursor_y as usize);
             let actual_num_rows_after_cursor = self.lines.len().saturating_sub(cursor_y);
             for _ in actual_num_rows_after_cursor..required_num_rows_after_cursor {
-                // FIXME: borrow bidi mode from line
-                self.lines.push_back(Line::new(seqno));
+                let mut line = Line::new(seqno);
+                bidi_mode.apply_to_line(&mut line, seqno);
+                self.lines.push_back(line);
             }
         } else {
             // Compute the new cursor location; this is logically the inverse

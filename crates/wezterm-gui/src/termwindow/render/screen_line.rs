@@ -148,6 +148,7 @@ impl crate::TermWindow {
                 window_is_transparent: params.window_is_transparent,
                 reverse_video: params.dims.reverse_video,
                 shape_key: &params.shape_key,
+                is_wrap_continuation: params.is_wrap_continuation,
             };
 
             let (shaped, invalidate_on_hover) = self.build_line_element_shape(params)?;
@@ -232,7 +233,7 @@ impl crate::TermWindow {
                     + if params.use_pixel_positioning {
                         item.x_pos
                     } else {
-                        phys(cluster.first_cell_idx, num_cols, direction) as f32 * cell_width
+                        phys(item.first_visual_cell_idx, num_cols, direction) as f32 * cell_width
                     };
 
                 let mut width = if params.use_pixel_positioning {
@@ -268,7 +269,7 @@ impl crate::TermWindow {
                         + if params.use_pixel_positioning {
                             item.x_pos
                         } else {
-                            phys(cluster.first_cell_idx + i, num_cols, direction) as f32
+                            phys(item.first_visual_cell_idx + i, num_cols, direction) as f32
                                 * cell_width
                         };
 
@@ -737,15 +738,18 @@ impl crate::TermWindow {
             let mut line = params.line.clone();
             let seqno = line.current_seqno();
             line.overlay_text_with_attribute(*cursor_x, &composing, CellAttributes::blank(), seqno);
-            line.cluster(bidi_hint)
+            line.cluster_with_wrap_context(bidi_hint, params.is_wrap_continuation)
         } else {
-            params.line.cluster(bidi_hint)
+            params
+                .line
+                .cluster_with_wrap_context(bidi_hint, params.is_wrap_continuation)
         };
 
         let gl_state = self.render_state.as_ref().unwrap();
         let mut shaped = vec![];
         let mut last_style = None;
         let mut x_pos = 0.;
+        let mut visual_cell_idx = 0usize;
         let mut expires = None;
         let mut invalidate_on_hover_change = false;
 
@@ -879,9 +883,11 @@ impl crate::TermWindow {
                 cluster: cluster.clone(),
                 glyph_info,
                 x_pos,
+                first_visual_cell_idx: visual_cell_idx,
             });
 
             x_pos += pixel_width;
+            visual_cell_idx += cluster.width;
         }
 
         let shaped = Rc::new(shaped);

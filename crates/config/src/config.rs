@@ -248,25 +248,20 @@ pub struct Config {
 
     #[dynamic(default = "default_true")]
     pub enable_kitty_graphics: bool,
-    /// REVERTED to upstream's default (false) again. OnlyTerm twice tried
-    /// defaulting this to true so that apps requesting the kitty keyboard
-    /// protocol at runtime get Ctrl+Enter/Shift+Enter disambiguation
-    /// without a config change. The first attempt broke Ctrl+C entirely
-    /// (every Ctrl+<letter> got CSI-u encoded once an app enabled
-    /// DISAMBIGUATE_ESCAPE_CODES). A targeted fix in
-    /// `KeyEvent::encode_kitty` (wezterm-input-types) kept Ctrl+C/etc as
-    /// their legacy byte while still escape-encoding genuinely colliding
-    /// combos (Ctrl+H/I/M/[) - this DID fix Ctrl+Enter/Shift+Enter, but
-    /// Ctrl+C still didn't work afterward. Root cause not yet confirmed:
-    /// likely the app enters raw terminal mode to use the enhanced
-    /// keyboard protocol at all, which (independent of what byte we send)
-    /// disables the OS/tty layer's automatic SIGINT-on-Ctrl+C, and the
-    /// app's own manual Ctrl+C handling in that mode may only recognize
-    /// the CSI-u form rather than the legacy byte we now send - needs live
-    /// byte-level tracing to confirm, not guessed at further. Since
-    /// Ctrl+C must always work, back to false until this is properly
-    /// root-caused.
-    #[dynamic(default)]
+    /// Third attempt at defaulting this to true, so that apps requesting
+    /// the kitty keyboard protocol at runtime (eg. Codex CLI, which needs
+    /// it to disambiguate Ctrl+Enter/Shift+Enter from a plain Enter) get
+    /// it without a config change. The first two attempts broke Ctrl+C:
+    /// once an app enabled DISAMBIGUATE_ESCAPE_CODES, the terminal-side
+    /// `CopySelectionOrInterrupt` binding (the default Ctrl+C action) kept
+    /// writing the legacy `\x03` byte directly instead of the CSI-u form
+    /// the app had asked for and was now expecting, so its own Ctrl+C
+    /// handling in that mode never saw a recognized interrupt sequence.
+    /// That binding now encodes through the pane's actual negotiated
+    /// keyboard protocol (see `CopySelectionOrInterrupt` in
+    /// `termwindow/mod.rs`) instead of hardcoding the legacy byte, which
+    /// was the real root cause both previous attempts never pinned down.
+    #[dynamic(default = "default_true")]
     pub enable_kitty_keyboard: bool,
 
     /// Whether the terminal should respond to requests to read the

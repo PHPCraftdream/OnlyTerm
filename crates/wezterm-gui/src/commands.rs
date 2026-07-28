@@ -1797,18 +1797,44 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                 icon: Some("oct_browser"),
             },
         },
-        SendString(text) if text == "\n" => CommandDef {
-            brief: "Send newline".into(),
-            doc: "Sends a line feed (LF, 0x0A) to the active pane, \
-                  as though you typed it. Bound by default to CTRL+Enter \
-                  and SHIFT+Enter so that a newline can be inserted \
-                  reliably regardless of what plain Enter is otherwise \
-                  configured to do (eg: in a multi-line prompt)."
+        SendEnterOrNewline(mods) if *mods == Modifiers::CTRL => CommandDef {
+            brief: "Send CTRL+Enter, or a newline".into(),
+            doc: "Sends Enter with CTRL held through whatever keyboard \
+                  protocol the active pane's app has negotiated (eg. an \
+                  app using the kitty keyboard protocol gets a properly \
+                  disambiguated modified-Enter). If the app hasn't \
+                  negotiated such a protocol, sends a line feed (LF, \
+                  0x0A) instead, so a newline can still be inserted \
+                  reliably (eg: in a multi-line prompt)."
                 .into(),
-            keys: vec![
-                (Modifiers::CTRL, "Enter".into()),
-                (Modifiers::SHIFT, "Enter".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "Enter".into())],
+            args: &[ArgType::ActivePane],
+            menubar: &[],
+            icon: Some("md_keyboard_return"),
+        },
+        SendEnterOrNewline(mods) if *mods == Modifiers::SHIFT => CommandDef {
+            brief: "Send SHIFT+Enter, or a newline".into(),
+            doc: "Sends Enter with SHIFT held through whatever keyboard \
+                  protocol the active pane's app has negotiated (eg. an \
+                  app using the kitty keyboard protocol gets a properly \
+                  disambiguated modified-Enter). If the app hasn't \
+                  negotiated such a protocol, sends a line feed (LF, \
+                  0x0A) instead, so a newline can still be inserted \
+                  reliably (eg: in a multi-line prompt)."
+                .into(),
+            keys: vec![(Modifiers::SHIFT, "Enter".into())],
+            args: &[ArgType::ActivePane],
+            menubar: &[],
+            icon: Some("md_keyboard_return"),
+        },
+        SendEnterOrNewline(_) => CommandDef {
+            brief: "Send modified Enter, or a newline".into(),
+            doc: "Sends Enter with the given modifier held through \
+                  whatever keyboard protocol the active pane's app has \
+                  negotiated, falling back to a line feed (LF, 0x0A) if \
+                  it hasn't negotiated one."
+                .into(),
+            keys: vec![],
             args: &[ArgType::ActivePane],
             menubar: &[],
             icon: Some("md_keyboard_return"),
@@ -2151,7 +2177,8 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         DetachDomain(SpawnTabDomain::CurrentPaneDomain),
         ResetTerminal,
         // ----------------- Edit
-        SendString("\n".to_string()),
+        SendEnterOrNewline(Modifiers::CTRL),
+        SendEnterOrNewline(Modifiers::SHIFT),
         #[cfg(not(target_os = "macos"))]
         PasteFrom(ClipboardPasteSource::PrimarySelection),
         #[cfg(not(target_os = "macos"))]

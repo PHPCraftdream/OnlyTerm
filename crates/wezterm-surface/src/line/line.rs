@@ -212,6 +212,11 @@ impl Line {
     /// Wrap the line so that it fits within the provided width.
     /// Returns the list of resultant line(s)
     pub fn wrap(self, width: usize, seqno: SequenceNo) -> Vec<Self> {
+        // Every piece is still the same line, so each must keep its bidi
+        // settings: a fresh `Line` defaults to bidi *disabled*, which
+        // would silently switch right-to-left reordering off for anything
+        // rewrapped by a window resize.
+        let (bidi_enabled, bidi_direction) = self.bidi_info();
         let mut cells: Vec<CellRef> = self.visible_cells().collect();
         if let Some(end_idx) = cells.iter().rposition(|c| c.str() != " ") {
             cells.truncate(end_idx + 1);
@@ -227,7 +232,9 @@ impl Line {
                     lines
                         .last_mut()
                         .map(|line| line.set_last_cell_was_wrapped(true, seqno));
-                    lines.push(Line::new(seqno));
+                    let mut line = Line::new(seqno);
+                    line.set_bidi_info(bidi_enabled, bidi_direction, seqno);
+                    lines.push(line);
                     delta = cell.cell_index();
                 }
                 let line = lines.last_mut().unwrap();
@@ -1070,7 +1077,36 @@ impl Line {
     }
 
     pub fn cluster(&self, bidi_hint: Option<ParagraphDirectionHint>) -> Vec<CellCluster> {
-        CellCluster::make_cluster(self.len(), self.visible_cells(), bidi_hint)
+        self.cluster_with_wrap_context(bidi_hint, false)
+    }
+
+    /// Same as `cluster`, but `is_wrap_continuation` tells the bidi-aware
+    /// Hebrew-phrase reordering (see `CellCluster::make_cluster`) whether
+    /// this line is itself the tail half of a previous line that wrapped
+    /// (ie: the prior physical row's last cell had the `wrapped` attribute
+    /// set). A physical row only ever sees its own cells -- it has no way
+    /// to know whether a Hebrew phrase touching its first cell actually
+    /// continues a phrase that started on the row before it, or whether a
+    /// phrase touching its last cell (`self.last_cell_was_wrapped()`)
+    /// continues onto the next row. Reversing a phrase we can't confirm is
+    /// complete produces worse results (eg: a bracket ending up on the
+    /// wrong side) than just leaving that boundary-touching span
+    /// unreversed, so callers that know the wrap topology (the pane
+    /// renderer, which sees all on-screen physical rows at once) should
+    /// use this instead of `cluster` whenever wrapping is possible.
+    pub fn cluster_with_wrap_context(
+        &self,
+        bidi_hint: Option<ParagraphDirectionHint>,
+        is_wrap_continuation: bool,
+    ) -> Vec<CellCluster> {
+        let continues_next = self.last_cell_was_wrapped();
+        CellCluster::make_cluster(
+            self.len(),
+            self.visible_cells(),
+            bidi_hint,
+            is_wrap_continuation,
+            continues_next,
+        )
     }
 
     fn make_cells(&mut self) {
