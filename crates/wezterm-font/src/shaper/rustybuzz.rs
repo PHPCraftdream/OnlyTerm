@@ -207,6 +207,36 @@ pub struct RustybuzzShaper {
     lang: rustybuzz::Language,
 }
 
+/// Defensively clamp a byte range to `s`'s actual char boundaries before
+/// slicing it. `range` is expected to already land on char boundaries (its
+/// endpoints are meant to be real rustybuzz cluster starts, which are
+/// themselves always valid boundaries) - but if some combination of cluster
+/// merging/dedup logic ever computes a range that doesn't quite line up
+/// (rather than tracking down every possible cause up front), rounding the
+/// endpoints outward to the nearest real char boundary avoids a hard panic
+/// from indexing into the middle of a multi-byte character. Widening (never
+/// narrowing) means we may include a byte or two of extra, adjacent text in
+/// the shaped substring in that edge case, which is a far better outcome
+/// than crashing the whole renderer.
+fn clamp_to_char_boundaries(s: &str, range: Range<usize>) -> Range<usize> {
+    let len = s.len();
+    let mut start = range.start.min(len);
+    while start > 0 && !s.is_char_boundary(start) {
+        start -= 1;
+    }
+    let mut end = range.end.min(len);
+    while end < len && !s.is_char_boundary(end) {
+        end += 1;
+    }
+    if end < start {
+        end = start;
+    }
+    if start != range.start.min(len) || end != range.end.min(len) {
+        log::warn!("clamp_to_char_boundaries adjusted {:?} -> {:?} in {:?}", range, start..end, s);
+    }
+    start..end
+}
+
 /// Make a string holding a set of unicode replacement
 /// characters equal to the number of graphemes in the
 /// original string.  That isn't perfect, but it should
@@ -597,7 +627,8 @@ impl RustybuzzShaper {
             let cluster_info = cluster_resolver
                 .get(infos[0].cluster)
                 .expect("assigned above");
-            let sub_range = cluster_info.start..cluster_info.start + cluster_info.byte_len;
+            let sub_range =
+                clamp_to_char_boundaries(s, cluster_info.start..cluster_info.start + cluster_info.byte_len);
             let substr = &s[sub_range.clone()];
 
             if cluster_info.incomplete {
@@ -900,6 +931,187 @@ mod test {
     use crate::locator::{FontDataHandle, FontDataSource};
     use crate::FontDatabase;
     use config::FontAttributes;
+
+    fn noto_hebrew_handle() -> ParsedFont {
+        let db = FontDatabase::with_built_in().unwrap();
+        db.resolve(
+            &FontAttributes {
+                family: "Noto Sans Hebrew".into(),
+                stretch: Default::default(),
+                weight: Default::default(),
+                is_fallback: false,
+                is_synthetic: false,
+                style: Default::default(),
+                freetype_load_flags: None,
+                freetype_load_target: None,
+                freetype_render_target: None,
+                harfbuzz_features: None,
+                scale: None,
+                assume_emoji_presentation: None,
+            },
+            14,
+        )
+        .unwrap()
+        .clone()
+    }
+
+    /// Mirrors the real default font stack's shape: a primary font with no
+    /// Hebrew coverage (Lucida Console isn't available in this Linux/CI
+    /// build environment, so JetBrains Mono stands in for "primary font
+    /// without Hebrew glyphs") followed by the bundled Hebrew fallback, so
+    /// Hebrew codepoints only resolve after at least one no-glyphs/
+    /// "incomplete" pass through a font that can't shape them.
+    fn primary_then_hebrew_fallback_handles() -> Vec<ParsedFont> {
+        vec![jetbrains_handle(), noto_hebrew_handle()]
+    }
+
+    /// Same idea, but using the actual default primary font
+    /// (`default_font_style` on Windows), which -- unlike JetBrains Mono --
+    /// may have partial native Hebrew coverage (eg: base consonants but not
+    /// niqqud combining marks), producing a different pattern of
+    /// direct-vs-"incomplete" glyphs within the same rustybuzz cluster than
+    /// a font with zero Hebrew coverage at all.
+    #[cfg(windows)]
+    fn lucida_then_hebrew_fallback_handles() -> Vec<ParsedFont> {
+        let lucida = ParsedFont::from_locator(&FontDataHandle {
+            source: FontDataSource::OnDisk(std::path::PathBuf::from(
+                "C:\\Windows\\Fonts\\lucon.ttf",
+            )),
+            index: 0,
+            variation: 0,
+            origin: crate::locator::FontOrigin::FontDirs,
+            coverage: None,
+        })
+        .expect("C:\\Windows\\Fonts\\lucon.ttf (Lucida Console) must be present on Windows CI");
+
+        fn built_in(family: &str) -> ParsedFont {
+            let db = FontDatabase::with_built_in().unwrap();
+            db.resolve(
+                &FontAttributes {
+                    family: family.into(),
+                    stretch: Default::default(),
+                    weight: Default::default(),
+                    is_fallback: true,
+                    is_synthetic: false,
+                    style: Default::default(),
+                    freetype_load_flags: None,
+                    freetype_load_target: None,
+                    freetype_render_target: None,
+                    harfbuzz_features: None,
+                    scale: None,
+                    assume_emoji_presentation: None,
+                },
+                14,
+            )
+            .unwrap()
+            .clone()
+        }
+
+        // Exact real default order: primary, JetBrains fallback, Noto Color
+        // Emoji, Noto Sans Hebrew, Symbols Nerd Font Mono (see
+        // `TextStyle::font_with_fallback`).
+        vec![
+            lucida,
+            jetbrains_handle(),
+            built_in("Noto Color Emoji"),
+            noto_hebrew_handle(),
+            built_in("Symbols Nerd Font Mono"),
+        ]
+    }
+
+    /// Regression reproduction for a real crash: rendering Hebrew text with
+    /// niqqud (vowel points, which combine into the same terminal cell as
+    /// their base letter) through the real `Line` -> `CellCluster` -> shaper
+    /// pipeline, with bidi enabled (as it now is by default), panicked with
+    /// "byte index N is not a char boundary" inside `ClusterResolver`
+    /// (`do_shape`, around the `let substr = &s[sub_range.clone()];` line).
+    #[test]
+    fn shapes_hebrew_text_with_niqqud_under_bidi() {
+        let _ = env_logger::Builder::new()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Debug)
+            .try_init();
+
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        // "shalom" with niqqud: each vowel point combines into the same
+        // grapheme cluster (and thus the same terminal cell) as the
+        // preceding consonant.
+        let combined = Line::from_text("שָׁלוֹם", &CellAttributes::default(), 0, None);
+
+        // Same text, but with every niqqud mark placed in its OWN cell
+        // instead of being grouped into the preceding consonant's grapheme
+        // cluster -- simulating what happens if the base letter and its
+        // combining mark get printed via separate `print()`/flush cycles
+        // (eg: an SGR/color escape between them, as a chatty program like
+        // Claude Code emits per-character/per-word highlighting) instead of
+        // arriving as one already-composed string handed to
+        // `Line::from_text`.
+        let mut split = Line::new(0);
+        for (idx, c) in "שָׁלוֹם".chars().enumerate() {
+            split.set_cell(idx, termwiz::cell::Cell::new(c, CellAttributes::default()), 0);
+        }
+
+        // Neither JetBrains Mono nor Lucida Console has ANY Hebrew coverage
+        // (confirmed separately), so a Latin prefix ahead of the Hebrew word
+        // forces the Hebrew span to resolve via recursive fallback
+        // (`do_shape(font_idx + 1, ...)`) starting at a NON-ZERO byte offset
+        // -- exercising the "incomplete cluster" recursion path with
+        // `range.start != 0`, which combined/split (pure Hebrew, always
+        // starting at byte 0) never did.
+        let prefixed = Line::from_text("echo שָׁלוֹם", &CellAttributes::default(), 0, None);
+
+        for (label, line) in [("combined", &combined), ("split", &split), ("prefixed", &prefixed)] {
+            let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+
+            let config = config::configuration();
+            let shaper =
+                RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+
+            for cluster in &clusters {
+                let presentation_width = PresentationWidth::with_cluster(cluster);
+                let mut no_glyphs = vec![];
+                shaper
+                    .shape(
+                        &cluster.text,
+                        14.,
+                        72,
+                        &mut no_glyphs,
+                        Some(cluster.presentation),
+                        cluster.direction,
+                        None,
+                        Some(&presentation_width),
+                    )
+                    .unwrap_or_else(|e| panic!("label={label:?} cluster={cluster:?}: {e:?}"));
+            }
+
+            #[cfg(windows)]
+            {
+                let shaper =
+                    RustybuzzShaper::new(&config, &lucida_then_hebrew_fallback_handles()).unwrap();
+                for cluster in &clusters {
+                    let presentation_width = PresentationWidth::with_cluster(cluster);
+                    let mut no_glyphs = vec![];
+                    shaper
+                        .shape(
+                            &cluster.text,
+                            14.,
+                            72,
+                            &mut no_glyphs,
+                            Some(cluster.presentation),
+                            cluster.direction,
+                            None,
+                            Some(&presentation_width),
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!("[lucida] label={label:?} cluster={cluster:?}: {e:?}")
+                        });
+                }
+            }
+        }
+    }
 
     fn jetbrains_handle() -> ParsedFont {
         let db = FontDatabase::with_built_in().unwrap();
