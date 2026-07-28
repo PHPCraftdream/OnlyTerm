@@ -6,7 +6,6 @@ use wezterm_char_props::emoji::Presentation;
 
 extern crate alloc;
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
 
 /// A `CellCluster` is another representation of a Line.
@@ -51,6 +50,16 @@ impl CellCluster {
         hint: usize,
         iter: impl Iterator<Item = CellRef<'a>>,
         bidi_hint: Option<ParagraphDirectionHint>,
+    ) -> Vec<CellCluster> {
+        match bidi_hint {
+            Some(dir_hint) => Self::make_cluster_with_bidi(hint, dir_hint, iter),
+            None => Self::make_cluster_no_bidi(hint, iter),
+        }
+    }
+
+    fn make_cluster_no_bidi<'a>(
+        hint: usize,
+        iter: impl Iterator<Item = CellRef<'a>>,
     ) -> Vec<CellCluster> {
         let mut last_cluster = None;
         let mut clusters = Vec::new();
@@ -102,16 +111,14 @@ impl CellCluster {
                         // Add to current cluster.
 
                         // Force cluster to break when we get a run of 2 whitespace
-                        // characters following non-whitespace.
+                        // characters following non-whitespace, or immediately after
+                        // any whitespace-to-non-whitespace transition (bidi is off
+                        // here, so there's no reordering concern to preserve
+                        // contiguous runs for).
                         // This reduces the amount of shaping work for scenarios where
                         // the terminal is wide and a long series of short lines are printed;
                         // the shaper can cache the few variations of trailing whitespace
                         // and focus on shaping the shorter cluster sequences.
-                        // Or:
-                        // when bidi is disabled, force break on whitespace boundaries.
-                        // This reduces shaping load in the case where is a line is
-                        // updated continually, but only a portion of it changes
-                        // (eg: progress counter).
                         let was_whitespace = whitespace_run > 0;
                         if cell_str == " " {
                             whitespace_run += 1;
@@ -120,8 +127,7 @@ impl CellCluster {
                             only_whitespace = false;
                         }
 
-                        let force_break = (!only_whitespace && whitespace_run > 2)
-                            || (!only_whitespace && bidi_hint.is_none() && was_whitespace);
+                        let force_break = !only_whitespace && (whitespace_run > 2 || was_whitespace);
 
                         if force_break {
                             clusters.push(last);
@@ -152,83 +158,172 @@ impl CellCluster {
             clusters.push(cluster);
         }
 
-        if let Some(hint) = bidi_hint {
-            let mut resolved_clusters = vec![];
-
-            let mut context = BidiContext::new();
-            for cluster in clusters {
-                Self::resolve_bidi(&mut context, hint, cluster, &mut resolved_clusters);
-            }
-
-            resolved_clusters
-        } else {
-            clusters
-        }
+        clusters
     }
 
-    fn resolve_bidi(
-        context: &mut BidiContext,
-        hint: ParagraphDirectionHint,
-        cluster: CellCluster,
-        resolved: &mut Vec<Self>,
-    ) {
-        let mut paragraph = Vec::with_capacity(cluster.text.len());
-        let mut codepoint_index_to_byte_idx = Vec::with_capacity(cluster.text.len());
-        for (byte_idx, c) in cluster.text.char_indices() {
-            codepoint_index_to_byte_idx.push(byte_idx);
-            paragraph.push(c);
+    /// Same idea as `make_cluster_no_bidi`, but bidi-aware: resolves the
+    /// Unicode Bidirectional Algorithm across the *entire* line as a single
+    /// paragraph FIRST, then splits the resulting (already visually
+    /// reordered) runs by cell attributes/presentation.
+    ///
+    /// This ordering matters: if we instead split by attributes first (as
+    /// `make_cluster_no_bidi` does) and resolved bidi independently within
+    /// each attribute-uniform span, then any program that emits different
+    /// attributes per character or per short span -- eg: a chatty
+    /// program applying per-token/per-color styling to streamed output --
+    /// would fragment a single RTL word into several single-character bidi
+    /// "paragraphs", each auto-detecting its own direction with no
+    /// knowledge of its neighbors. That breaks RTL layout entirely (each
+    /// letter ends up positioned independently, with visible gaps) even
+    /// though each character's own resolved direction looks individually
+    /// "correct" in isolation.
+    fn make_cluster_with_bidi<'a>(
+        capacity_hint: usize,
+        dir_hint: ParagraphDirectionHint,
+        iter: impl Iterator<Item = CellRef<'a>>,
+    ) -> Vec<CellCluster> {
+        let cells: Vec<CellRef<'a>> = iter.collect();
+        if cells.is_empty() {
+            return Vec::new();
         }
 
-        context.resolve_paragraph(&paragraph, hint);
+        // Build one full-line paragraph (ignoring attribute boundaries)
+        // so that bidi resolution always sees complete context, and
+        // remember which source cell each codepoint came from.
+        let mut paragraph: Vec<char> = Vec::new();
+        let mut cp_cell_ref_idx: Vec<usize> = Vec::new();
+        for (cell_ref_idx, c) in cells.iter().enumerate() {
+            for cp in c.str().chars() {
+                paragraph.push(cp);
+                cp_cell_ref_idx.push(cell_ref_idx);
+            }
+        }
+
+        let mut context = BidiContext::new();
+        context.resolve_paragraph(&paragraph, dir_hint);
+
+        let mut resolved = Vec::new();
+
         for run in context.reordered_runs(0..paragraph.len()) {
-            let mut text = String::with_capacity(run.range.end - run.range.start);
-            let mut byte_to_cell_idx = vec![];
-            let mut byte_to_cell_width = vec![];
-            let mut width = 0usize;
-            let mut first_cell_idx = None;
+            // `run.range` is a `min..max+1` envelope over this run's
+            // (visually contiguous) codepoint indices -- it is NOT
+            // guaranteed to be exactly the set of codepoints belonging to
+            // this run when other runs are nested/interleaved with it (eg:
+            // multiple Hebrew words and Latin/punctuation runs on the same
+            // line). Iterating `run.range` directly can therefore visit a
+            // codepoint that actually belongs to a *different* run,
+            // duplicating characters (a stray repeated comma/quote) or
+            // pulling in the wrong glyph. `run.indices` is the exact,
+            // deduplicated set of logical codepoint indices assigned to
+            // this run; sort it ascending to recover logical order (needed
+            // for feeding text to harfbuzz, which expects logical order,
+            // not the visually-reordered order).
+            let mut cp_idxs: Vec<usize> = run.indices.clone();
+            cp_idxs.sort_unstable();
 
-            // Note: if we wanted the actual bidi-re-ordered
-            // text we should iterate over run.indices here,
-            // however, cluster.text will be fed into harfbuzz
-            // and that requires the original logical order
-            // for the text, so we look at run.range instead.
-            for cp_idx in run.range.clone() {
-                let cp = paragraph[cp_idx];
-                text.push(cp);
-
-                let original_byte = codepoint_index_to_byte_idx[cp_idx];
-                let cell_width = cluster.byte_to_cell_width(original_byte);
-                width += cell_width as usize;
-
-                let cell_idx = cluster.byte_to_cell_idx(original_byte);
-                if first_cell_idx.is_none() {
-                    first_cell_idx.replace(cell_idx);
-                }
-
-                if !cluster.byte_to_cell_width.is_empty() {
-                    for _ in 0..cp.len_utf8() {
-                        byte_to_cell_width.push(cell_width);
-                    }
-                }
-
-                if !cluster.byte_to_cell_idx.is_empty() {
-                    for _ in 0..cp.len_utf8() {
-                        byte_to_cell_idx.push(cell_idx);
-                    }
+            // The distinct, logically-ordered sequence of source cells
+            // covered by this run.
+            let mut run_cell_indices: Vec<usize> = Vec::new();
+            for cp_idx in cp_idxs {
+                let cell_ref_idx = cp_cell_ref_idx[cp_idx];
+                if run_cell_indices.last() != Some(&cell_ref_idx) {
+                    run_cell_indices.push(cell_ref_idx);
                 }
             }
 
-            resolved.push(CellCluster {
-                attrs: cluster.attrs.clone(),
-                text,
-                width,
-                direction: run.direction,
-                presentation: cluster.presentation,
-                byte_to_cell_width,
-                byte_to_cell_idx,
-                first_cell_idx: first_cell_idx.unwrap(),
-            });
+            let mut last_cluster: Option<CellCluster> = None;
+            let mut whitespace_run = 0usize;
+            let mut only_whitespace = false;
+
+            for cell_ref_idx in run_cell_indices {
+                let c = &cells[cell_ref_idx];
+                let cell_idx = c.cell_index();
+                let presentation = c.presentation();
+                let cell_str = c.str();
+                let normalized_attr = if c.attrs().wrapped() {
+                    let mut attr_storage = c.attrs().clone();
+                    attr_storage.set_wrapped(false);
+                    Cow::Owned(attr_storage)
+                } else {
+                    Cow::Borrowed(c.attrs())
+                };
+
+                last_cluster = match last_cluster.take() {
+                    None => {
+                        only_whitespace = cell_str == " ";
+                        whitespace_run = if only_whitespace { 1 } else { 0 };
+                        let mut cluster = CellCluster::new(
+                            capacity_hint,
+                            presentation,
+                            normalized_attr.into_owned(),
+                            cell_str,
+                            cell_idx,
+                            c.width(),
+                        );
+                        cluster.direction = run.direction;
+                        Some(cluster)
+                    }
+                    Some(mut last) => {
+                        if last.attrs != *normalized_attr || last.presentation != presentation {
+                            resolved.push(last);
+                            only_whitespace = cell_str == " ";
+                            whitespace_run = if only_whitespace { 1 } else { 0 };
+                            let mut cluster = CellCluster::new(
+                                capacity_hint,
+                                presentation,
+                                normalized_attr.into_owned(),
+                                cell_str,
+                                cell_idx,
+                                c.width(),
+                            );
+                            cluster.direction = run.direction;
+                            Some(cluster)
+                        } else {
+                            // Cache-locality heuristic only: bidi is
+                            // active, so (unlike make_cluster_no_bidi) we
+                            // don't force-break on every whitespace
+                            // transition, only on long whitespace runs,
+                            // since reordering needs runs to stay
+                            // contiguous where possible.
+                            if cell_str == " " {
+                                whitespace_run += 1;
+                            } else {
+                                whitespace_run = 0;
+                                only_whitespace = false;
+                            }
+                            let force_break = !only_whitespace && whitespace_run > 2;
+
+                            if force_break {
+                                resolved.push(last);
+                                only_whitespace = cell_str == " ";
+                                if whitespace_run > 0 {
+                                    whitespace_run = 1;
+                                }
+                                let mut cluster = CellCluster::new(
+                                    capacity_hint,
+                                    presentation,
+                                    normalized_attr.into_owned(),
+                                    cell_str,
+                                    cell_idx,
+                                    c.width(),
+                                );
+                                cluster.direction = run.direction;
+                                Some(cluster)
+                            } else {
+                                last.add(cell_str, cell_idx, c.width());
+                                Some(last)
+                            }
+                        }
+                    }
+                };
+            }
+
+            if let Some(cluster) = last_cluster {
+                resolved.push(cluster);
+            }
         }
+
+        resolved
     }
 
     /// Start off a new cluster with some initial data

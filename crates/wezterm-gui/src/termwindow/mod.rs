@@ -1115,6 +1115,12 @@ impl TermWindow {
 
         if gl.is_context_lost() {
             log::error!("opengl context was lost; should reinit");
+            // Mirror close_requested's teardown: kill this window's panes
+            // (and their child processes) before destroying the OS window,
+            // otherwise the shells/programs running in them are orphaned
+            // with no controlling terminal left.
+            let mux = Mux::get();
+            mux.kill_window(self.mux_window_id);
             window.close();
             front_end().forget_known_window(window);
             return false;
