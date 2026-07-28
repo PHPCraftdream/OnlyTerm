@@ -22,6 +22,25 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* Hebrew/RTL support: bundled [Noto Sans Hebrew](https://fonts.google.com/noto/specimen/Noto+Sans+Hebrew)
+  (SIL OFL 1.1, full niqqud/cantillation coverage) as an automatic fallback
+  font, and `bidi_enabled`/`bidi_direction` now default to `true`/
+  `AutoLeftToRight` so right-to-left text renders correctly out of the box
+  instead of requiring manual configuration. The baseline font stays
+  JetBrains Mono.
+* `enable_scroll_bar` now defaults to `true`; the scrollbar's auto-sized
+  width goes from 1 cell to 1.75 cells and its minimum thumb height from
+  0.5 cell to 2 cells, so it stays visible and easy to grab.
+* Fixed a regression where releasing the mouse button after dragging out a
+  text selection immediately cleared it; the selection now stays visible
+  until you click elsewhere, right-click it, or press `CTRL-C`.
+* `CTRL-V` now has a default paste-from-clipboard binding on Windows (it
+  previously only worked via `SHIFT-Insert` or the OS-level paste gesture).
+* Hardened the text shaper against a crash ("byte index is not a char
+  boundary") that could occur while rendering certain Hebrew text; the
+  affected code path now clamps to the nearest valid character boundary
+  and logs a warning instead of panicking.
+* The application icon's arrow is now a darker, higher-contrast green.
 * OnlyTerm defaults: a light, GitHub-style color scheme (including the
   tab-bar/titlebar chrome) instead of upstream's dark defaults;
   `use_cwd_basename_as_tab_title` is on, so tab and window titles track the
