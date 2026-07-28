@@ -22,6 +22,38 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* Hebrew/RTL rendering no longer runs the full Unicode Bidirectional
+  Algorithm: a line is always laid out left-to-right from column 0, and
+  only the cell order *within* a maximal run of Hebrew letters (glued
+  together by spaces, geresh/gershayim, maqaf, or any other neutral
+  punctuation that Hebrew resumes after) is reversed. Digits, brackets,
+  quotes, dashes and Latin/Cyrillic text are never moved or mirrored, so
+  the terminal cursor and selection always track the typed column
+  regardless of script direction. A Hebrew run that touches a physical
+  line-wrap boundary is left unreversed, since a single wrapped row can't
+  tell whether it's a fragment of a longer phrase.
+* Fixed backgrounds/underlines being drawn under the wrong glyphs on lines
+  containing a reversed Hebrew phrase: per-cluster decorations now use the
+  cluster's actual on-screen column instead of its pre-reversal logical
+  cell index, which stopped being monotonic once Hebrew phrases started
+  reordering cells in place.
+* `ALT` and `CTRL` key combinations (eg. `ALT-V`, `CTRL-V`) now resolve to
+  the physical, layout-independent key rather than whatever character the
+  active Windows keyboard layout maps that physical key to (eg. physical
+  `V` no longer resolves to Cyrillic `м` under a Russian layout), both for
+  wezterm's own keybinding lookup and for the `win32-input-mode` byte
+  sent to the child process.
+* `CTRL-C`'s default binding (copy-selection-or-interrupt) and the new
+  `CTRL-Enter`/`SHIFT-Enter` newline bindings now encode through whatever
+  keyboard protocol the pane's app has actually negotiated
+  (`win32-input-mode` or the kitty keyboard protocol), instead of always
+  writing a hardcoded legacy byte; apps that haven't negotiated either
+  still get the same legacy byte as before.
+* `enable_kitty_keyboard` defaults to `true` again after two earlier
+  reverts; the actual root cause of the previous Ctrl+C breakage (the
+  hardcoded legacy byte above) is now fixed.
+* The application icon is now cropped to a circle with a transparent
+  background outside it, instead of a solid square.
 * Hebrew/RTL support: bundled [Cascadia Mono](https://github.com/microsoft/cascadia-code)
   (SIL OFL 1.1, genuinely monospaced Hebrew consonants) as an automatic
   fallback font, and `bidi_enabled`/`bidi_direction` now default to `true`/

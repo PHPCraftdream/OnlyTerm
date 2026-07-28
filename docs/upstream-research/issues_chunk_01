@@ -1,0 +1,476 @@
+5446	2	panic at startup on wayland
+5443	2	window_padding + window_decorations issues
+5419	2	WezTerm nightly does not display default TITLE | RESIZE on Wayland
+5339	2	Tabs moved with MoveTabRelative don't persist.
+5319	2	`\` input on modifyier key
+5318	2	set_config_overrides overrides active key_table
+5235	2	Shell Integration not working
+5233	2	Double Width Double Height Pixelated
+5213	2	bad captures of key combinations
+5179	2	No keyboard events coming through on Wayland when front_end is "WebGpu"
+5165	2	Pane resizing not working correctly when using multiplexer
+5164	2	format-tab-title with use_fancy_tab_bar results in invalid hover detection
+5141	2	Jump to semantic regions not working through non-local domains
+5140	2	Windows unix domains don't support separate sockets
+5137	2	tput cols reports wrong number of columns at first
+5136	2	very large icons, iconsize doesn't match with text size
+5107	2	portable-pty: clone_killer gives an invalid handle on windows
+5043	2	Weird bold font rendering
+5005	2	Window has no shadow when unfocused after minimizing on macOS
+4820	2	`wezterm ssh` new window only get focused when UI is first opened, but focus does not work on subsequent runs
+4713	2	Doesn't work with/ignores Twemoji?
+4693	2	Switching panes too quickly on SSH domain causes rapid SetFocusedPane and then OOM
+4686	2	Top level split break terminal size
+4683	2	Wezterm does not preserve tab characters
+4644	2	Slow (first) startup (not the next ones) ~ 4s
+4531	2	Kitty Image Protocol on tmux
+4525	2	Transparency not working on full-screen in windows 11
+4417	2	gui-sock-$PID socket handling errors
+4408	2	mux.spawn_window creates multiple tabs if domain is passed
+4287	2	`current_working_dir` and `foreground_process_name` doesn't work with xargs (?)
+4240	2	[Windows] Incorrect cursor position after printing images
+4200	2	SwapWithActive doesn't work with unix domains
+4035	2	Links terminate at emoji
+3976	2	Inconsistent positioning of combining diacritical marks
+3956	2	Wezterm goes crazy when entering 125% scale screen
+3917	2	Wayland + WebGpu
+3867	2	Problem with MacBook text-to-speech interaction with Wezterm
+3827	2	Wezterm becomes slow, when other wezterm window is minimized
+3673	2	alt + space to open menu don't work on full screen mode on windows
+3662	2	Split{Vertical,Horizontal} not take over current directory of active pane in WSL2
+3616	2	Font rendering issue on macos
+3508	2	macOS menubar key shortcuts for shifted keys are tricky to override
+3459	2	URLs not recognized across lines in TLS multiplexer sessions
+3368	2	Laggy trailing effect when resizing window
+3223	2	Wezterm panic for `tmux -CC a` command via ssh
+3172	2	default_gui_startup_args is not used when starting with program menu/desktop-file
+3151	2	Emoji in window title is rendered much larger than surrounding text
+3114	2	TERM_PROGRAM is not set to 'WezTerm' in root shells
+2918	2	meta.password_input does not detect password input mode in remote machine
+2880	2	ScrollToPrompt working inconsistently or not at all with multiplexer
+2807	2	`libEGL` crash on forwarded X session when starting `wezterm`
+2659	2	lines disappear when resizing
+2651	2	Scrolling down in Vim scrolls up significant portion of the time
+2595	2	Mouse pointer size GNOME setting is ignored by wezterm windows
+2456	2	[wezterm-ssh] `libssh` backend hangs and `ssh2` backend fails with success = false for `cmd.exe /C echo %OS%`
+1839	2	mux server silently fails when no space is left on device
+1378	2	Horizontal Split vim Ctrl-F Scroll display incorrect blanks/chars
+1265	2	Re-draw issue on resize
+7906	1	Large clipboard paste fails under XWayland on KDE Wayland, works in Konsole and native Wayland WezTerm
+7887	1	inconsistent translucency with config.window_frame.*_titlebar_bg
+7852	1	Gap on top of maximized window when window decorations are set to none.
+7813	1	Color Scheme 'Modus-Operandi' seems not compatible with modus-themes in Emacs on macOS
+7798	1	Inconsistent keyboard protocol handling macOS / Windows
+7788	1	Background image issue
+7744	1	Tab bar padding is incorrect for many tabs
+7731	1	Regex issue: quick select does not work with Windows path \\ separator
+7725	1	WezTerm crashes on Wayland (Hyprland) when running large curl command — wl_display error “message length exceeds 4096”
+7693	1	Failed to decode webp
+7689	1	WezTerm crashing on macOS with EGL errors
+7657	1	transparent window on launch
+7551	1	[Bug] Fancy tab bar: left_status obscured by macOS traffic light buttons and has excessive gap before tabs
+7537	1	cpu hog
+7521	1	wezterm.lua doesn,t excist
+7461	1	Openconsole 1.22.2502 is bugged.
+7425	1	Build fails on Fedora 43
+7423	1	`AttachDomain` or `wezterm cli spawn --domain-name` requires passphrase for the identityfile
+7413	1	default workspace name a bit too aggressive
+7409	1	links are highlighted when the mouse pointer is in a different pane
+7365	1	edit in Windows wezterm, the character "555" will be automatically inserted at the beginning of the file.
+7355	1	Unable to Render Hindi Font
+7315	1	glow markdown rendering got broken when you scroll up/down in Wezterm
+7281	1	Scaling issue when moving windows between monitors with different DPI on Windows with GlazeWM
+7265	1	segfault w/macos Sequoia
+7263	1	ghost chars when using OpenSSH-Win64 from Windows 10 to Linux and then tmux
+7244	1	macOS: Ctrl-R and Ctrl-A not working in terminal despite configuration attempts (same exact config on linux works OK)
+7241	1	Warning when opening serial port while default_prog is set
+7237	1	Wezterm search blinks when used with tmux
+7173	1	PromptInputLine cannot use InputMethod
+7172	1	error retrieving stderr ttyname
+7167	1	ResetAttributes not working as expected in fancy tab bar
+7078	1	Win+V` paste adds unwanted characters (null + newline)
+7058	1	Broken render pipe on fraction scaling in wayland
+7055	1	Mouse scroll wheel switches tabs after clicking GNOME top bar instead of scrolling scrollback buffer
+7050	1	Crash/Unresponsive when interacting with Albert
+7026	1	The UTF-8 "small" character variants (see enclosed table) are rendering with an extra monospace after them unnecessarily
+6976	1	`ClearSelection` not working
+6967	1	Cursor flickering in Neovim embedded terminal on Windows
+6947	1	entering unix domain on startup is not working
+6900	1	(win11) kitty keyboard inputs invalid shift+keys
+6888	1	Erros on Fedora 41
+6846	1	Neovim cannot receive "Ctrl Alt h" keybinding in zellij when using Wezterm
+6818	1	15% CPU usage on Wezterm vs 1% CPU usage on Windows Terminal when holding down a key
+6733	1	Double-click the mouse to select the text. When the last character is Chinese, only half of it will be selected.
+6732	1	WezTerm fails to launch on Windows after `OpenConsole.exe` update in commit `4accc376`
+6720	1	Paste selection stopped working after update to plasma 6.3
+6716	1	WSL Ubuntu inteprets caps as ^@
+6674	1	maximize on gui-startup doesn't work when using unix domain
+6669	1	Cursor position incorrect after DECSC, resize with reflow, then DECRC
+6635	1	Terminal blinks sometimes during command exeuction
+6561	1	Doesn't support kitty images with trailing comma in control data
+6560	1	OSC Shell Integration not working on Windows11 + Oh-my-posh OSC 133 actions
+6547	1	[AppImage] Error on startup - `mux::ssh_agent` failed to create symlink
+6531	1	Windows 11 Wezterm crashes on start
+6522	1	Can't use 'Next' and 'Prev' with ActivatePaneDirection
+6480	1	wezterm crashes when unplugging external monitor
+6458	1	Invalid email handling when it contains period
+6453	1	Split pane divider overlaps top-positioned normal (non-fancy) tab bar
+6452	1	Can't connect to remote multiplexer
+6446	1	PageUp and PageDown, not sent to terminal editors 
+6434	1	Kitty Keyboard input with flags set to 0 has unexpected encodings. 
+6431	1	Pop Shell tiling with Wayland doesn't tile Wezterm nightly
+6381	1	Wezterm not picking up config in linked config folder on Windows
+6353	1	Wezterm window jumps out
+6321	1	Trailing equal sign '=' not detected as part of URL
+6305	1	wezterm connect fails with timeout
+6282	1	Setting initial_rows > 24 maxes window
+6277	1	Artemis!09882C3703B1 trojan in Windows Setup (20240203-110809-5046fc22)
+6261	1	GPOS-modified glyphs May be being cached inappropriately 
+6254	1	Wezterm slow startup time and noticeable resize after window was spawned
+6237	1	Failure to start Wezterm after install
+6198	1	close confirmation does not work for single tab pane running tmux
+6197	1	Long startup times, weird messages in log
+6160	1	Kitty keyboard: ctrl+space release produce wrong sequence
+6144	1	Newly created workspaces don't appear in GUI workspace selection list on macOS
+6123	1	Search deselects when following logs if a new match occurs
+6105	1	`--config window_decorations=\"RESIZE\"` do not make effect
+6089	1	Vertical pane separator bleeds into the tab bar
+6088	1	FZF Image preview with imgcat
+6056	1	Splitting pane or creating tab for 'currentDomain' inside WSL defaults to / instead of current directory, unless inside the windows filesystem inside WSL
+6047	1	Configuring font_size causes new windows to spawn with large number of rows and columns.
+6024	1	Tab title not refreshed at toggling debug overlay
+6019	1	Changing argument to `wezterm.action.Search` has no effect when argument is an empty string
+6001	1	On windows10, using SHIFT in modifiers behaves unexpected, different from macOS.
+5939	1	Rendering complex status on 'update-status' causing wezterm to feel slow and appear choppy
+5934	1	ssh does not work when Hostname is an ipv6
+5906	1	run_child_process doesn't respect current shell environment variables
+5852	1	Sometimes invisible since start
+5823	1	Keyboard layout switches made before wezterm is opened isn't registered, sometimes
+5797	1	keypad activation is inverted, and takes double "NumLock" input to get back num"
+5770	1	Emacsclient fails with errormessage
+5764	1	Opening new terminal with no currently open windows
+5749	1	higher order function keys (F13-F24) don't work
+5525	1	On Windows 11 History not working
+5508	1	wrong up arrow icon alignment
+5485	1	Extreme lag and/or forever buffered input. split panes Xorg
+5471	1	Changing font size while app outputs to terminal causes wezterm to misinterpret new lines
+5420	1	window config override for `harfbuzz_features` doesn't work if font already specifies them
+5402	1	Keep aspect ratio when renderring images by kitty protocol
+5309	1	The first left-click of the mouse after FocusChanged(true) will trigger redundant MouseEvent { kind: Move ...}, causing the contents of the tmux clipboard to be lost.
+5219	1	tab_bar_style not applied
+5210	1	unexpected and unstable rendering of bg w/ tiled gradients
+5201	1	bug: CTRL+SHIFT+h does not get correctly encoded
+5181	1	input delay after installing nvidia Vulkan Driver 
+5178	1	Permission denied when calling docker
+5148	1	Can't build on FreeBSD-14-RELEASE
+5147	1	Kitty keyboard: keys not reported as escape keys
+5126	1	Unable to Interact with Background Windows in Fullscreen Mode
+5019	1	Inconsistent window movement across different operating systems with integrated tab bar enabled
+4984	1	SplitPane using `top_level = true` leaves behind ghost space
+4972	1	Select to copy broken on nightly
+4922	1	posiible bug: mouse scroll in alternate mode not working under multiplexing
+4901	1	Multiplexing "connect_automatically" open two windows
+4783	1	Undercurl not working - differnt behavior in shell and tmux/neovim
+4756	1	Wezterm connect failed with "Match tagged" ssh config
+4664	1	Flicker on M1 Mac
+4556	1	UI teleports to (x/2, y/2) upon dragging tab bar/with SUPER on MACOS
+4536	1	CTRL-click does not work for opening links when bypass_mouse_reporting_modifiers is also CTRL
+4522	1	Selecting topmost line drags the window instead.
+4440	1	wezterm cli set-tab-title is not working correctly within tmux session
+4405	1	Unable to bind cmd+shift+/ on macOS
+4264	1	Maximizing on Windows with duplicated monitor projection: constantly swapping font size / redrawing
+4261	1	cannot paste what copied from remote server (remmina with rdp )
+4255	1	Mangled text in Helix when unicode is involved
+4229	1	pane:get_semantic_zones is empty in wezterm connect sessions
+4199	1	Closing pane/window always asks for confirmation with unix domains
+4076	1	In Windows, there are two sets of buttons when System Backdrop and Tab at Bottom are turned on at the same time
+3994	1	Quickly switching tabs in a wezterm-mux-server causes an uncontrolled tab switching frenzy
+3894	1	output from repl is broken when iterating over big table. Lua not in charge
+3763	1	Toggling window decorations off expands beyond initial window size.
+3671	1	Wrong split pane dimentions after window:gui_window:maximize()
+3625	1	Color and font rendering differences between WebGpu and OpenGL front_end
+3494	1	Triple click doesn't select long lines
+3477	1	Minor issue in wezterm's borders with Wayland and RESIZE (or the new Integrated one)
+3302	1	Clipboard operations are asynchronous, wrt. key assignment action dispatch
+3224	1	Unhelpful scrolling behavior on resize
+3171	1	bash PROMPT_COMMAND syntax error
+3149	1	force_reverse_video_cursor doesn't work with cursor_border (unfocused cursor)
+3097	1	Invalid cursor_thickness for SteadyBar cursor
+3033	1	Resizing window while ping is running causes content to be written over itself
+2693	1	Can't Quick Select the very last line
+2543	1	termwiz layouts 
+2446	1	Titlebar focus colors won't change
+922	1	Resizing makes rendered contents jitter
+858	1	Idle mux connections never recover
+7974	0	Crate spin 0.9.8 is yanked
+7969	0	loop error during event_g.dispatch... Protocool error (os error 71)
+7963	0	Windows: panic in wezterm-font load_fallback when a fallback font resolves to a WindowsApps-packaged (ACL-protected) font file
+7959	0	Unix-domain `proxy_command` via `wsl.exe` hangs at "Checking server version" when spawned by the GUI
+7952	0	Copr nightly opensuse builds failing
+7949	0	crash when maximizing/minimizing window on latest Windows
+7921	0	~ is pasted as control character 0x1E in WezTerm on Windows with WSL
+7902	0	start --cwd no longer works
+7895	0	SpawnCommandInNewTab drops pending data
+7873	0	send-text fail for psmux
+7862	0	Wezterm launch issues Ubuntu 26.04
+7860	0	Command palette DPI issue on wayland
+7835	0	Hyperlink hover underline can be incorrect for identical hyperlinks
+7830	0	use_fancy_tab_bar with three-finger-drag some error
+7819	0	WebGpu backend panics in Surface::configure
+7765	0	mux::tab::adjust_y_size dead loop on macOS
+7742	0	portable-pty aborts on exec failure instead of returning a spawn error
+7729	0	Regex issue: A-f ≠ A-Fa-f  (quick_select_patterns)
+7724	0	Slow windows rendering on startup - Windows 11 25H2 with AMD Radeon RX7600
+7702	0	Retro tab bar does not span the whole width
+7695	0	OSC 12 cursor color changes ignored after IME mode switch on macOS (`use_ime = true`)
+7665	0	Horizontal scroll wheel (buttons 6/7) not recognized as WheelLeft/WheelRight on X11
+7660	0	Windows: Cannot spawn new admin instance when non-admin instance is running
+7659	0	WezTerm SSH can't handle long passpharses
+7645	0	Scrolling inside TUIs (tmux, vim, emacs) is sluggish with precision pointing devices (trackpad, Magic Mouse)
+7631	0	Sending Kitty images via shared memory does not work on macOS
+7630	0	Prompt scrolls down to the bottom whenever the window is resized on hyprland
+7611	0	WezTerm engages adaptive sync
+7600	0	`window_decoration` to `NONE` displays native title bar on COSMIC desktop
+7582	0	Flag --attach ignored when delegating to existing GUI instance
+7573	0	toast_notification has no reliable  timeout support
+7570	0	Wrongly rendering ghost character when two or more wide characters are followed by a Unicode Variation Selector
+7560	0	Wezterm doesn't enter fullscreen when opened from another fullscreen app on macOS
+7549	0	Release new `termwiz`
+7538	0	input method selection menu is hidden after full screen
+7531	0	Claude text entry freezes / no scrollbar
+7528	0	front_end, OpenGL and Software doesn't render anything after upgrading to AMD driver, 26.1.1
+7523	0	emoji don't render correctly (size issues, presentation flickering, width encroaching)
+7519	0	Windows sleep/resume causes wezterm-gui.exe crash in d3d11.dll (APPCRASH)
+7511	0	On Windows, it's impossible to set startup postition with `start --position <monitor name>:<x>,<y>` command line option, because all resolved monitor names are guaranteed to have a colon in it
+7507	0	Segfault on macOS Sequoia 15.7.3 (24G419)
+7498	0	Copy to clipboard problem from inside distrobox
+7495	0	Non numpad - and / key not bindable
+7489	0	Ubuntu 22.04 build - X11 only - fails if "libxkbcommon-x11-dev" not installed
+7486	0	The CFBundleShortVersionString in Info.plist is incorrect.
+7477	0	failed to run custom build command for `freetype v0.1.0 (E:\1\wezterm-main\wezterm-main\deps\freetype)`
+7473	0	Gureum Korean input method works weirdly with arrow keys.
+7465	0	Flicker when using CSI 2026 synchronization
+7462	0	custom "Medium shade" block glyphs very dark
+7460	0	DECANM vt52 default state - backwards for a reason?
+7456	0	[macOS] Window dragging stutters on tab bar empty area when format-tab-title callback is registered
+7416	0	`VTParser::action` has a lot of self cycles and dominates on kitten __benchmark__
+7415	0	Unable to load a font specified by your font=wezterm.font('SauceCodePro', {weight="Regular", stretch='Normal', style=Normal}) configuration.
+7406	0	Consistent crash when dragging image from firefox over terminal
+7401	0	AdjustPaneSize does not work on the 1st vertical slit after the 1st and 2nd panes are further vertically splitted.
+7400	0	Memory leak when using kitty + gif
+7368	0	cli is not properly executing commands in order
+7344	0	SIXEL: omitted color parameters between semicolons are not treated as 0 but as 100
+7331	0	Resizing of remote (mux-server) sessions very sluggish
+7316	0	promptline generated prompt oddly displayed
+7313	0	Wezterm flatpak fails to run using XWayland
+7311	0	Symlinks should not be resolved (multiple places)
+7309	0	Bug:  OSX Taohoe, claude code loop/lockup/stuttering for nightly build
+7301	0	Unable to input Japanese with Mozc on Ubuntu 22.04 (apt version of WezTerm)
+7300	0	`skip_close_confirmation_for_processes_named` does not work in overrides
+7289	0	Status bars do not respect any of the "Attribute" of a wezterm.format({})
+7261	0	Privilege escalation - send-text --no-paste
+7253	0	[Windows BUG] scaling the terminal causes the long white block at the bottom to flicker
+7235	0	Pasting issues (in nightly build but not 20240203) over 1024 text, interacting with Claude Code poorly
+7234	0	macOS: Ctrl+H deletes confirmed characters instead of pre-edit text when using Japanese IME
+7229	0	WezTerm SSH: sporadic failure - libssh ‘ssh_connect()’ seems never called after host resolution
+7222	0	kitty image not blending with text
+7220	0	Inaccuracies in the hovering state of the tabs wrt the mouse pointer position.
+7198	0	Underline and Italic attributes are not rendered on status bar
+7168	0	OSC 133 move to previous/next prompt not working inside tmux using Shell Integration
+7166	0	Helix editor not loading ESC \u(1b) unicode character
+7130	0	Slash with German layout not working with kitty input in non fish
+7109	0	No antialiasing when rendering images
+7099	0	macOS: version number/about item disappears from application menu after config reload
+7096	0	wezterm gui add tab, add **18** new tabs with **18** kdialog
+7089	0	Divide by zero when Minimizing in search mode
+7085	0	Tmux control mode doesn't seem to realise that ssh pipe is broken
+7082	0	Excessively greedy unwrapped url regex
+7077	0	Text looks bad (white outlines?) if the transparent window has a light background
+7072	0	ReloadConfiguration doesn't add a new [ssh] domain to existing windows (again)
+7062	0	Blur not working
+7056	0	Support for undercurl in WINDOWS
+7052	0	SpawnCommandInNewTab from a client sends environment to server
+7041	0	OSC 7 shell integration not working with SSH to WSL
+7037	0	Cursor style changes from bar to block when window loses focus, affecting text editors
+7025	0	Portably pty fails to launch commands on windows
+7023	0	Hovering cursor over inactive panes highlights URLs in the active one
+7012	0	Hover is inconsistently detected on Windows
+7006	0	Crash on Asahi Linux
+6991	0	bug: rendering is offset vertically
+6990	0	When attempting to resize the window horizontally using `window:set_inner_size` and explicitly passing the *current* `dimensions.pixel_height`, the window's vertical height still changes on Windows.
+6987	0	Cannot disable CTRL+C/CTRL+V bindings on Windows
+6986	0	Tabs do not use the full width of the tab bar
+6974	0	Shell integration fails to parse hostname on windows
+6971	0	SendKey /w key = "Escape" Does not work
+6969	0	wezterm serial slaggish
+6965	0	Update Flatpak to org.freedesktop.Platform/x86_64/24.08
+6958	0	Launching a new WezTerm window triggers a window demanding attention
+6954	0	SpawnTab fail by ShowLauncherArgs when current tab is wsl ubuntu.
+6950	0	Enter wsl window will lost input focus
+6931	0	Gaps between cells with ligatures using small font size, related to antialiasing
+6907	0	Korean input method Gureum (for macOS) doesn't write the character with arrows
+6884	0	Mux Panes Should Resize When Window Size Changes
+6844	0	Multiple AdjustPaneSize not consistent on ssh mux
+6840	0	Working directory expanded to realpath when ~ is symlink in SSHMUX
+6839	0	'mux.spawn_window' doesnt launch wezterm in mac
+6826	0	New window created by wezterm connect do not respect initial_cols, initial_rows
+6793	0	Alt+n or ~ : weird behaviour
+6752	0	Keep symlink path when using --cwd
+6719	0	No focus events when connected to mux server
+6623	0	Resize bug - with replication
+6607	0	`gui.get_appearance()` returns 'Light' on auto-reload, regardless of the system appearance
+6603	0	TUI layout misalignment when encountering combining diacritical marks (grapheme clusters)
+6586	0	App menu on Mac is not displaying the correct key binding for New Tab
+6575	0	Password is displayed when copy/pasted due to predictive output in multiplexer client
+6563	0	Terminfo not working properly for ubuntu
+6555	0	Window in wrong place after screen lock with multi-resolution displays
+6515	0	{} and [] won't input on Croatian (HR) layout
+6513	0	New Windows Stop Opening After Awhile
+6503	0	Intial window not working properly on Mac OS
+6501	0	BlinkingBar erases pixels under the cursor
+6465	0	Lower-case fallback font not found by wezterm
+6455	0	Control-[ not working from VNC
+6444	0	Issue when create new pane with script
+6437	0	text will jump up and down when focus/unfocus in full-screen mode
+6433	0	Deleting all character while compositing with IME leaves last character on terminal
+6409	0	wezterm fails to start after using KVM ?
+6361	0	Crash in wezterm.strftime
+6346	0	Confirmation window is not centred
+6314	0	Windows and Linux Remote Neovim Rendering Bug
+6312	0	wezterm tab and window title don't update after exiting from interactive docker container
+6306	0	highlighting text -> copy buffer is inconsistent
+6299	0	Hitting <tab> for autocomplete leaves characters in the prompt
+6295	0	delete graphene counting wrong 👩‍🚒
+6279	0	Calendar Permissions not propagating in WezTerm vs other terminal clients
+6264	0	tried to install nix Darwin through flakes it shows this error error: file '/Users/xiao/.local/share/wezterm/gui-sock-4100' has an unsupported type
+6234	0	Color fills second line when using a multi-line prompt with colored background segments
+6222	0	Only last character of multi-character compose sequence is emitted
+6215	0	enable_kitty_keyboard does not work together with multiplexing
+6210	0	`wezterm cli move-pane-to-new-tab` does not work for multiplexed panes
+6205	0	Segmentation Fault on AMD Graphics driver 24.8.1
+6196	0	logname(1) returns root on macOS, instead of current user
+6178	0	KConfigIni: In file /usr/bin/wezterm-gui, line 30583:" Invalid entry (missing '=')
+6170	0	The display and behavior of Bengali in Vim and Neovim are quite strange
+6166	0	Single line scrolling fails in mux-server, if application uses alternate screen mode
+6157	0	Panic after failing to load fallback font that was uninstalled after wezterm was launched
+6153	0	modifying "New Window" action breaks it for empty Spaces
+6141	0	Mouse click on padding area registers on first row of text being displayed
+6139	0	Wezterm resize when covered by window after changing settings
+6124	0	OSC 4 responses are limited to 31
+6080	0	Keycap digit 1️⃣ (and 2-9) sequence emoji not rendering properly in appearance and cursor / column position
+6071	0	Can't delete Zenkaku character in first.
+6040	0	Weird issue with font sizes
+6010	0	Capital cyrrillic letters are not displayed when using TMUX with `ModifyOtherKeys` option
+5992	0	[windows] crash: wezterm_gui::termwindow > opengl context was lost; should reinit
+5982	0	get_appearance does not converge to system dark mode in various situations
+5955	0	add_to_config_reload_watch_list not working for Windows WSL paths
+5954	0	start with `--class` and `--attach`  cannot attach to same instance with different class names
+5945	0	add support for chimera linux
+5944	0	Wezterm crash on launching in mac, tmux default program
+5943	0	bug: pane:get_cursor_position() doesn't respect Copy Mode
+5927	0	[Windows] app becomes unresponsive while typing in commands
+5909	0	Duplicate semicolon between system and user paths
+5908	0	Cannot create local domain splits on a mux tab
+5888	0	The `copy_mode_active_highlight_*` color attribute is overriden by `selection_*` until the WezTerm window is clicked
+5887	0	Opening the search overlay prevents mouse scrolling in some application content
+5858	0	Emoji display issues with Apple Color Emoji font
+5847	0	`Time:sun_times(lat, lon)` returns incorrect progression > 1.0
+5846	0	Cannot execute `wezterm serial` with `config.default_prog = { "pwsh.exe" }`
+5837	0	Panic on ChromeOS using Wayland
+5825	0	`wezterm serial` output differs from `stty`+`cat` (something with LF without CR maybe?)
+5787	0	multiple links to the same destination on the screen are underlined incorrectly on hover
+5584	0	wezterm cannot handle symlink, makes duplicate icons when pinned on taskbar
+5556	0	Unable to use ScrollToPrompt to scroll to the very first prompt on Arch Linux with Bash
+5548	0	`wezterm cli` commands are very slow, for example when switching panes
+5536	0	activate-pane Fail
+5520	0	unexpected behavior of PaneSelect with wezterm server
+5499	0	format-tab-title does not get relevant panes passed in for the tab
+5492	0	Some special characters are not centered vertically
+5487	0	No keyboard shortcut for modal dialog
+5486	0	Wezterm can't send `s-<mouse-1>` event when I press `cmd+leftclick`.
+5484	0	Can not install in Debian 12
+5465	0	CMD+. to macOS via VNC does not act as expected
+5451	0	Updating `config.colors` property only hot-reloads non-focussed windows
+5392	0	Stuck on a blank white window if PowerToys FancyZones is enabled with a specific setting
+5389	0	[Bug on 20240505-175915-8fa4ba9a] Alt + Tab for switch app in Wayland, cause the maximum window layout into left panel.
+5336	0	Fancy tab bar doesn't apply transparency consistently
+5315	0	Cursor is changed from filled box to empty box after regaining focus in macOS native fullscreen mode
+5314	0	MACOS_FORCE_ENABLE_SHADOW causes the window to not maximize when double-clicking the tab bar.
+5262	0	selection_word_boundary error with helix editor
+5249	0	Running specific command maybe cause spawn many pwsh.exe processes
+5239	0	macOS: fancy tab bar transparency not working properly
+5238	0	periodic lag when moving cursor or long output
+5225	0	`wezterm connect` called from freedesktop file hangs
+5224	0	Can't insert a single Chinese character in *Fcitx5* with `enable_kitty_keyboard`
+5220	0	Hyphen-minus character (-) doesn't render using monofur font at 10pt
+5199	0	Incorrectly render when using Thai language
+5190	0	use ~or $HOME to set backgound is not work, and how to set backgound scale , center or full
+5162	0	Doesn't work after upgrading to Plasma 6 on openSUSE
+5139	0	Kitty keyboard: key repeat is not reported.
+5128	0	`wezterm imgcat` does not deallocate image memory after closing instance
+5123	0	Side arrow divider isn't sharp compared to other terminals
+5108	0	Wezterm SSH doesn't present login prompt when using tailscale
+5106	0	Cannot render `𝝺` - mathematical sans-serif bold small lambda
+5100	0	Bad cursor position when terminal is resized while in alternate mode
+5093	0	Crashes 
+5088	0	get-pane-direction --pane-id x doesn't return expected result
+5060	0	wezterm selecting different sizes of fonts across different files.
+5054	0	Retro bar performance issue and CPU usage
+5037	0	Support common MacOS Window options (Minimise etc)
+5022	0	Dragging Wezterm between a 3840x2160 screen and a 1920x1200 on Windows causes it to get stuck for some time
+5014	0	Windows fancy tab bar covering window management buttons
+5011	0	Relative sizing of panes within a tab do not persist on GUI resize
+4935	0	wezterm record unusable when invoked from wsl
+4871	0	Clickable area issue
+4838	0	GUI is effectively disabled if quit while part of a mux session and config error window is present
+4723	0	Resize issue with wezterm connect domain
+4641	0	SelectTextAtMouseCursor(Block) not working
+4634	0	Open here does not work with windows network mappings
+4621	0	Modifiers keys not picked up by selection and mouse reporting when wezterm is unfocused
+4618	0	 Avoid full path canonicalization when resolving cwd
+4587	0	Monaspace underline rendering
+4579	0	'mapped:' keybindings are not acutally mapped when key_map_preference="Physical"
+4450	0	Unicode version can not be set as a decimal, e.g. 15.1
+4439	0	wezterm cli is not working entirely in tmux once application is quit.
+4437	0	window_frame: `titlebar_fg` does not update along with the background counterparts
+4434	0	Wezterm render duplicate characters in Thai language
+4433	0	Titlebar on macOS is incorrectly semi-translucent
+4424	0	Search action has some error
+4284	0	ssh domains aren't updated when reloading the config file
+4283	0	Wezterm is "unresponsive" when trying to attach to an unreachable remote domain
+4265	0	Prompt reprint problem after window resize 
+4249	0	hide_mouse_cursor_when_typing doesn't work on Windows
+4156	0	Cannot drag from the very top of the tabbar when maximized
+4152	0	connecting a different monitor while in fullscreen does not resize.
+4115	0	Emoji in explicit hyperlinks are unclickable
+4081	0	Mouse event passed to the terminal even when mouse bypass key is pressed
+4048	0	When I set the "default_gui_startup_args", the position is random.
+4003	0	Kitty keyboard: flag 8 (report all keys as escapes) ignored
+3997	0	Meta is handled as Alt in kitty mode
+3984	0	Kitty Keyboard protocol: Sending incorrect "associated text" on certain keypresses
+3896	0	Wide character at rightmost column overflows the window bounds
+3885	0	Mouse up event swallowed on window focus
+3883	0	Stops taking keyboard events when maximized and restored in quick successions
+3881	0	`wezterm.font_with_fallback` breaks terminal with invalid arguments
+3858	0	window_decorations='RESIZE' results in no border for floating windows on Sway
+3784	0	wezterm_ssh: sftp.set_metadata fails with "generic failure"
+3759	0	Inconsistent sizes of one-eighth box-drawing characters
+3694	0	Resizing performance issue and sometimes incorrect dimension calculation when using MUX server
+3633	0	Mux behavior with multiple windows
+3620	0	The selection is not put to clipboard if the mouse cursor hovers on the pane's border
+3594	0	backspace key behavior differs from kitty in enhanced keyboard mode
+3501	0	SSH `UserKnownHostsFile /dev/null` not understood
+3483	0	JumpForward in copy-mode doesn't move to uppercase letters or symbols
+3229	0	Silent crash with WebGPU backend + Windows RDP
+3115	0	Semantic right-side prompt NOT separated from next-line left-side prompt
+3107	0	wezterm crashes when OS runs out of files
+2905	0	wezterm record - paste clipboard inserts additional chars at random positions
+2837	0	Round border glitch when not using title bars
+2800	0	Hiding title bar and launching wezterm with maximized, opens it in fullscreen
+2579	0	Split created with top_level=true cannot be split any further if started from "non top-level split"
+2317	0	drag & drop does not focus window as it should
+2217	0	unproperly blinking when drag through screens on Windows 10
+2033	0	In `Copy Mode`, `H` and `L` (moving to top/bottom of viewport) doesn't go to correct location.
+1316	0	unknown / unspecified CSI from XTSHIFTESCAPE
+1141	0	support kitty keyboard protocol
+285	0	Double mouse click for selection extension moves the starting point of the selection

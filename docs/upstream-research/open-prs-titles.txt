@@ -1,0 +1,280 @@
+7976	cargo: revert edition to 2021
+7975	chore(deps): update spin to version 0.9.9
+7973	chore(deps): upgrade thiserror to 2.0
+7971	Add directional pane swapping
+7968	Add pane_padding: a configurable gutter between split panes
+7967	Fix: Window still dragging with hidden window decorations
+7966	wayland: honor compositor size for tiled windows (eg: sway)
+7964	Add a Command background source: run any command as a live window background
+7962	Fix window_frame border color missing at rounded macOS corners
+7958	fix: macOS crash (SIGABRT) from RefCell re-entrancy panic in WindowView::draw_rect
+7956	Install desktop entry and icons in Linuxbrew formula
+7955	Fix duplicate blob storage on Windows
+7954	wayland: DPI calculation fixes for different desktop scale factors
+7948	macOS: compute non-native fullscreen notch inset from the window's own screen, not mainScreen
+7946	macos: bounce dock icon on bell to request user attention
+7944	Fix: Kitty keyboard protocol drops single-char Composed key events
+7941	macos: re-apply non-native fullscreen frame on display/resolution changes
+7938	build(deps): bump serde_with from 2.3.3 to 3.21.0
+7936	macos: fix CMD chords losing modifiers (IME forwarding + command-layer chars)
+7933	Add win32_system_backdrop_keep_inactive: keep the active backdrop material on unfocused windows
+7931	ALT Linux build initial support
+7930	Fix selection landing in the middle of wide characters (#6733)
+7929	mux: answer capability queries and bound the hold while a synchronized update is open
+7926	fix: repaint tab bar during drag reorder + floating drag preview (builds on #6527)
+7925	feat(search): defer search updates to navigation and preserve viewport
+7924	feat(term): support kitty graphics protocol unicode placeholders
+7923	docs: document escape sequences that are handled but were undocumented
+7915	fix: encode Composed keys properly in Kitty keyboard protocol
+7903	feat(lua): expose link/mouse position under cursor; OpenLinkAtMouseCursor fallback
+7896	windows: publish absolute gui sock path so `wezterm cli` connects from any cwd
+7883	Windows: Fix drag lock and resize loop when dragging across DPI boundary
+7879	fix: allow navigation to non-admin symlinks on Windows
+7878	feat: add `ReconnectDomain` key assignment for reconnecting remote domains
+7877	fix(kitty): emit SS3 cursor keys when DECCKM is active
+7874	fix(codec): bound PDU data allocation to avoid OOM crash (#7527)
+7871	Fix PaneFocused notification feedback loop - take 3 
+7859	fix(term): loop defang_paste until no embedded bracketed markers remain
+7855	feat: add actions to change font size by specified unit
+7853	clear-screen persistence on resize
+7850	build(deps): bump `harfbuzz` to 14.2.1
+7849	don't move the pane to a new window if it's already the only pane in the window
+7848	windows: add win32_keep_system_backdrop_when_inactive option
+7839	build(deps): bump actions/checkout from 3 to 6.0.2
+7838	build(deps): bump stefanzweifel/git-auto-commit-action from 5 to 7
+7837	build(deps): bump actions/upload-pages-artifact from 3 to 5
+7836	build(deps): bump actions/cache from 4 to 5
+7834	build(deps): bump openssl from 0.10.75 to 0.10.80
+7828	Fix hyperlink hover underline for identical text with different links
+7826	x11: handle horizontal scroll wheel (buttons 6 and 7)
+7823	Add opt-in forwarding for macOS marked text
+7821	webgpu: clamp surface dimensions to max_texture_dimension_2d
+7820	Add Wine build instructions for wezterm-gui
+7816	Fix stale mouse move restoring hidden cursor and URL hover
+7812	fix(wezterm-ssh): support tilde expansion and multiple files for include directive
+7809	tab bar: add tab_bar_width config to stretch tabs across the bar
+7804	Fix Shift-AltGr dead key probing
+7799	Fix SIGABRT on window close caused by OpenGL teardown ordering (MacOS)
+7792	Fix the titlebar on macos after exiting fullscreen
+7789	filedescriptor: Add `into_stdio` conversion
+7786	launcher: select the active workspace/tab by default
+7781	refactor: Update unicode constants and tables
+7778	feat(ssh): support Match exec, GlobalKnownHostsFile, and two-phase parsing
+7775	Update bundled Windows ConPTY to 1.24.260402001
+7771	Fix mux client-server deadlock when connecting with many panes
+7767	flatpak: bump runtime to 24.08
+7766	docs: example for adjusting window opacity incrementally
+7764	docs: clarify chocolatey install requires admin shell
+7763	Fix PaneFocused notification storm on pane destruction and mux reconciliation
+7762	fix: update Se terminfo entry to reset cursor to configured default
+7760	build(deps): bump rustls-webpki from 0.103.8 to 0.103.13
+7757	build(deps): bump rand from 0.8.5 to 0.8.6
+7754	Add NocturnalZone color scheme
+7749	Fix tab:set_title flashing in unix domain mode
+7745	ssh: IdentitiesOnly=yes should filter agent keys, not skip agent auth
+7743	pty: mark inherited fds CLOEXEC instead of closing them
+7741	feat: ranking for InputSelector items
+7739	fix: IdentitiesOnly and IdentityFile ssh_config(5) / openssh compliance
+7737	feat: add opt-in cursor trail and smear effects (closes #7387)
+7736	Fix builds on MSVC aarch64 environments by removing GNU assembly NEON stub
+7735	Fix wgpu/Vulkan rendering on Wayland compositors (like Niri)
+7734	Upgrade wgpu 25.0.2 to 27.0.1 for FreeBSD support
+7730	Fix IPv6 rule in quick select parsing
+7723	feat: implement mode CSI 2031 (color appearance reporting)
+7722	fix: Use current attrs for cells inserted with ICH command
+7714	ci: update nightly winget manifest after each nightly build
+7712	Improve braille test data 😉
+7704	fix: preserve LruCache capacity in make_all_stale to prevent unbounded memory growth
+7699	feat: allow matching windows paths in Quick Select Mode
+7698	windows: resolve gui socket path from runtime dir
+7694	Fix error when decode webp images
+7690	feat(termwiz): add dynamic color probing
+7687	clear-screen persistence on resize; add broadcast input to tab panes
+7683	fonts: add configurable font thickening
+7682	Vim-like cursor navigations
+7679	Add vertical tab bar with drag-to-resize and left/right positioning
+7674	Fix text_min_contrast_ratio
+7673	feat: add per-pane title bars
+7669	feat: add AVIF image support via dav1d decoder
+7658	Fix transparent window flash on Windows during initial rendering
+7654	fix: restore tab size after top-level split
+7649	Add WebGPU post-processing shader pipeline
+7643	Focus the originating pane/tab when a toast notification is clicked
+7637	Add window-tab-switched event for Lua config
+7633	build(deps): bump getrandom from 0.3 to 0.4
+7626	fix: suppress duplicate DA responses for tmux control mode panes
+7624	Add clipboard image paste support with Ctrl+V smart paste for all platforms
+7622	Use NSVisualEffectView for Window background blur on macOS
+7618	Implement tab:move_to_window method to allow moving tabs between windows using Lua
+7617	Fix X11 EGL surface use-after-free during window destruction
+7610	fix: sync user_vars on mux reconnect (Issue #5832)
+7609	POC: dirty-region tracking and idle skip for PureCpu renderer
+7608	POC: PureCpu software renderer (no GPU required)
+7607	POC: pure-Rust font stack (replace FreeType, HarfBuzz, Cairo, fontconfig)
+7606	feat: add `Child::main_thread_handle`
+7605	feat: add option to disable usage of `PSUEDOCONSOLE_INHERIT_CURSOR`
+7604	feat: add `CommandBuilder::creation_flags`
+7601	fix(wayland): prevent title bar with window_decorations = "NONE"
+7596	generate 256 palette
+7592	windows: add native ARM64 build, packaging, and runtime support
+7591	feat: stretch fancy tab bar tabs to fill available width
+7590	Fix: flickering across multiple mux clients
+7585	docs: typo on 8-bit escape sequence recognition
+7583	FIX: propagate --attach flag when delegating to existing GUI
+7580	chore: use `LazyLock` instead of `lazy_static`
+7574	Add vertical tab bar support (Left/Right positioning)
+7566	fancy tab bar: fix layout issues with macOS native traffic light buttons
+7563	build(deps): bump time from 0.3.44 to 0.3.47
+7559	build(deps): bump git2 from 0.20.2 to 0.20.4
+7558	kitty: improve animated image handling
+7557	fix(mux): ensure runtime directory exists before creating ssh agent symlink
+7556	fix(gui): handle IME committed text in prompt overlays
+7555	fix: set DBus notification priority to normal
+7554	build(deps): bump bytes from 1.10.1 to 1.11.1
+7548	Treat SCTKWindowState::TILED as a maximized state
+7542	fix kitty keyboard protocol not work in mux mode
+7539	Change display order of `key` and `mode` in `show-keys --lua`
+7526	fix(wezterm-gui): max tab title length
+7510	termwindow: emit pane-focus-changed window event
+7500	Add new window_close_mux_behavior config option
+7494	fix(macos): improve IME preedit handling
+7493	feat(macos): add services for opening folders
+7491	Fix open hyperlink bindings with mouse reporting
+7487	wayland: terminate key repetition after window is closed
+7472	feat: add custom post-processing shader support for WebGPU backend
+7464	Add Quic transport to mux
+7453	fix macOS dictation support with new color options to customize the preview text
+7449	Add config option for debounce when searching
+7440	docs(config/launch): use vswhere for Visual Studio launch_menu example (works with VS 2026 / 18.x layout)
+7435	Fix keyboard event duplication on Wayland with OpenGL renderer
+7434	Detect mouse over the wrong panel during URL highlighting
+7432	Update linux brew install instructions to use formula rather than cask
+7420	Cursor trail
+7398	fix(procinfo): return argv0 when handling priviledged programs with `can_close_without_prompting`
+7397	Linux install guide: Better place to save APT key
+7390	Alpine: Add static libraries for OpenSSL and zlib
+7385	feat: smart case search
+7381	docs: replace literal `\n` with `<br/>` in flowchart labels
+7379	wezterm ssh: add `--assume-shell` argument
+7378	RemoteSshDomain: Use `sh -c`, not `$SHELL -c`
+7360	wayland: Show client-side decorations when compositor doesn't provide server-side
+7357	Implement hide window operation for x11 windows
+7352	Support background image blurring
+7349	Add bell_urgency_hint config option and window:request_attention() API
+7345	fix omitted color params in sixel parser
+7338	Removed "start --cwd ." from Exec=wezterm in wezterm/assets/wezterm.desktop
+7312	Abandon kitty's legacy key event encoding
+7296	Add PowerShell integration script
+7292	tmux-CC: suppress capability handshakes in control mode
+7284	docs: Improve get_progress example circle rendering
+7282	Added lua function get_logical_lines_as_escapes
+7226	Fix: Prevent GUI freezing when closing tabs/panes after long sessions
+7216	Implement get_semantic_zones() for ClientPane
+7202	fix(units): allow GuiPosition to parse pt and cell units
+7200	feat(terminal): Implement dynamic DECRQSS and DECRQM cursor queries
+7199	Fix: left status bar overlaps with window buttons (#7197)
+7195	Fix mermaid newlines in what-is-a-terminal.md
+7193	feat(macos): new MACOS_DISABLE_TITLEBAR_DRAG window decoration and refactor macOS window decoration logic
+7191	Improve scroll handling: add gesture fan-out and precise scroll scale
+7186	build(deps): bump actions/upload-pages-artifact from 3 to 4
+7185	build(deps): bump actions/checkout from 3 to 5
+7184	build(deps): bump actions/download-artifact from 4 to 5
+7181	Replace socket with channel for internal pane communication
+7179	added configurable glow effect
+7178	pty!: Fix typo: psuedo => pseudo
+7177	Align with_phys_lines()'s implementation with with_phys_lines_mut()
+7170	build(deps): bump xcb from 1.5.0 to 1.6.0
+7161	Add CopyMode overlay to TermwizTerminalPane overlays
+7160	wezterm-ssh: support ProxyJump in ssh config
+7151	build(deps): bump slab from 0.4.10 to 0.4.11
+7148	fix: tmux -CC "Unrecognized tmux cc line error for %unlinked-window-r…
+7146	FEATURE: Add metadata for cargo-deb build
+7145	fix: key-repeat detection for kitty input protocol
+7140	copy_mode: implement `MoveToBlankLine`
+7131	Add function to percent encode string
+7124	docs: fixed some of the Lua documentation
+7095	adopt sctk-adwaita as our frame on wayland
+7093	Open in new tab setting in Nautilus integration
+7091	Prevent shell integration from interfering with other terminal programs
+7066	fix: hang when receiving WM_INPUTLANGCHANGEREQUEST message
+7065	build(deps): bump stefanzweifel/git-auto-commit-action from 5 to 6
+7059	Disable '*_continuous' workflows for forks
+7053	Fix: Don't use client environment to execute command on server
+7035	Add copy mode cursor configuration options
+7032	chore: correct mermaid mistakes in "what is a terminal"
+7030	Fix: Added logic to correct seams in repeating backgrounds. (Issue #6335)
+7020	termwiz: add links on types in main doc page
+7005	Add JumpToMatchingBracket CopyMode KeyAssignment
+6999	Add SearchForwardRelativeToCursor, SearchBackwardRelativeToCursor keyassignments to CopyMode
+6973	Proposal: alternative minimum contrast algorithm
+6957	fix: disable shell integration inside a Neovim terminal
+6937	WIP: Makefile `servedocs` target with live reload; reorder subsections in "Config" and "Colors & Appearance"
+6913	fix: wezterm cli set-window-title #4899
+6881	Fix build fails when the target dir doesn't exist
+6878	feat: support left/right mods for keybindings
+6876	Introduce `win32_window_appearance` to override Windows setting
+6856	Support SGR DECRQSS
+6849	Remove `mode` from `PushKittyState` CSI representation
+6821	lua-api-crates/mux: expose swap_active_with_index
+6782	fix: tmux -CC mouse reporting issue
+6756	WezTerm Shell Context Menu for Windows 11
+6657	Improve dragging and double-clicking for maximize on the tab bar
+6610	wezterm-ssh: make SshPty fields public
+6533	Improve Wayland scroll behavior
+6527	feat: reorder tabs via left mouse drag
+6511	Fixed cursor blinking on transparent backgrounds
+6445	adds movement for start of word, regardless of stop characters
+6349	Introduce sequencing for 'pane focus' related events
+6324	add support to align tabs to the right
+6292	Add support for OSC 22 control sequence to change mouse cursor shape
+6239	feat: implement opt-in OSC52 clipboard querying
+6229	Fixed mail-to regex allowing email addresses to have dots & hyphen as part of the user segment
+6185	adds HideOtherApplications (for macOS)
+6062	don't resize pane with delta
+5997	Enhanced vi-like word motions in copy mode
+5995	Attempt to implement AccessKit inside the window crate
+5977	fix(windows): closing panes sometimes freezes wezterm
+5972	Add command to check config values
+5969	Fix ghost space left by SplitPane with top_level=true
+5941	WIP: add logging to help investigate incorrect terminal size on macOS
+5894	Support custom cargo build dirs on MacOS.
+5850	feat: Identify modifiers on Wayland/X11 (new)
+5820	Add plugin aliases
+5780	Simplify wayland configure event
+5779	wezterm-ssh: add support for comments in `Match` statements
+5573	replace all 'psuedo' by 'pseudo'
+5567	Hotfix/search overlay move to end of line
+5452	doc: Use more stable format when first describing SGR sequence
+5390	Decorations rework
+5373	Remove nix bits from repo and CI
+5229	equivalent tab bar styling example with current api
+5184	feat(ssh/config): handle absolute path includes in ssh config
+5104	Add Wayland Scroll Factor
+5096	Line wrapping
+5035	[feature] tab min width
+5013	[Feature] Resurrection: saving and restoring terminal layout/contents/commands
+5009	Fix interaction between pane swapping / rotating and client domains.
+5002	fix(flatpak): Remove cwd from desktop entry
+4995	Fix kitty image leaving behind images after removing image placements
+4991	Fix Emits of Additional ANSI Characters
+4951	termwiz:  Kitty keyboard enhancements support
+4875	WIP fix for i3 terminals sending mouse press before focus event
+4767	Expose as_command API on CommandBuilder
+4727	Improve integrated titlebar buttons on macos
+4635	Windows rs
+4493	Path and MetaData objects + `wezterm.<functions>`
+4413	Fix Gnome window buttons DPI scaling
+4393	Start line selection at 0th cell
+4336	Adding some functions to work with Lua tables.
+4334	Scroll viewport to bottom after erase scrollback
+4277	Added spawn_command_as_user to allow user impersonation when spawning processes into the Pty
+4248	Plugin package path
+4221	Add move_pane_id parameter to pane:split lua api
+4093	Add force_reverse_video_selection config
+4043	Fixes #4035: Make hyperlink rule match links that contain emojis
+3737	packaging: Add Snap build
+3579	Add config option for mouse cursor when grabbing
+3006	Add get_position lua method for window
+2724	termwiz: revert to using semicolon when encoding 8 bit SGR colors
+2608	Add a State parameter to Ui that's passed to all widget calls
+2056	IME Selected String
