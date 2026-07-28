@@ -571,7 +571,13 @@ impl RustybuzzShaper {
 
         let info_iter = rb_infos.iter().zip(positions.iter()).peekable();
         for (info, pos) in info_iter {
-            let cluster_info = match cluster_resolver.get_mut(info.cluster as usize) {
+            // rustybuzz reports `cluster` as a byte offset into whatever
+            // was actually pushed into its buffer (`&s[range]`), i.e.
+            // 0-based *relative to `range.start`* -- not an absolute
+            // offset into the full `s`. `ClusterResolver` stores/looks up
+            // absolute offsets (matching how it slices `s` directly), so
+            // this must be converted before use.
+            let cluster_info = match cluster_resolver.get_mut(info.cluster as usize + range.start) {
                 Some(i) => i,
                 None => panic!(
                     "expected cluster info.cluster {} to be in cluster_resolver",
@@ -631,8 +637,18 @@ impl RustybuzzShaper {
                 clamp_to_char_boundaries(s, cluster_info.start..cluster_info.start + cluster_info.byte_len);
             let substr = &s[sub_range.clone()];
 
-            if cluster_info.incomplete {
-                let first_info = &infos[0];
+            if cluster_info.incomplete && font_idx + 1 < self.handles.len() {
+                // `infos` may hold several sub-entries whose individual
+                // `cluster`/`len` came out of the merge dance above with
+                // inconsistent, overlapping values (this happens when
+                // several adjacent multi-codepoint graphemes -- eg: a run
+                // of consonant+niqqud pairs -- are ALL unresolved in this
+                // font and get folded into one group). Using just
+                // `infos[0]`'s own range understated the true extent and
+                // silently dropped whichever graphemes weren't covered by
+                // it, so span min/max across every sub-entry instead.
+                let recurse_start = infos.iter().map(|i| i.cluster).min().unwrap();
+                let recurse_end = infos.iter().map(|i| i.cluster + i.len).max().unwrap();
 
                 let mut shape = match self.do_shape(
                     font_idx + 1,
@@ -642,7 +658,7 @@ impl RustybuzzShaper {
                     no_glyphs,
                     presentation,
                     direction,
-                    first_info.cluster..first_info.cluster + first_info.len,
+                    recurse_start..recurse_end,
                     presentation_width,
                 ) {
                     Ok(shape) => Ok(shape),
@@ -666,10 +682,42 @@ impl RustybuzzShaper {
                 continue;
             }
 
-            let total_width: f64 = infos.iter().map(|info| info.x_advance).sum();
+            // Either this grapheme fully resolved in `font_idx`, or it
+            // didn't and there's no further fallback font to try. In the
+            // latter case `infos` can still contain a mix of resolved and
+            // unresolved glyphs -- eg: a base consonant that shaped fine
+            // in this font alongside a combining mark attached to the
+            // same grapheme that didn't (this font has no glyph for it).
+            // Give unresolved glyphs zero advance/width instead of
+            // whatever default .notdef advance the font/shaper assigned
+            // them, so a missing diacritic just silently disappears
+            // instead of injecting an extra blank cell next to (and
+            // discarding the shaping of) the base letter it belongs to.
+            let total_width: f64 = infos
+                .iter()
+                .map(|info| if info.codepoint == 0 { 0. } else { info.x_advance })
+                .sum();
             let mut remaining_cells = cluster_info.cell_width;
 
             for info in infos.iter() {
+                if info.codepoint == 0 {
+                    // `substr` spans the whole grapheme (eg: base letter +
+                    // combining mark), not just this specific unresolved
+                    // glyph -- our cluster resolution only tracks
+                    // grapheme-level byte ranges, so this may also report
+                    // chars that resolved fine elsewhere in `infos`. Still
+                    // better than the previous behavior of dumping the
+                    // entire remaining string on fallback exhaustion.
+                    no_glyphs.extend(substr.chars());
+                    let mut zeroed = info.clone();
+                    zeroed.x_advance = 0.;
+                    zeroed.y_advance = 0.;
+                    let glyph = make_glyphinfo(substr, 0, font_idx, &zeroed);
+                    cluster.push(glyph);
+                    direct_clusters += 1;
+                    continue;
+                }
+
                 let weighted_cell_width = if total_width == 0. {
                     1
                 } else {
@@ -859,7 +907,14 @@ impl<'a> ClusterResolver<'a> {
         let mut map = HashMap::new();
 
         for info in rb_infos.iter() {
-            let start = info.cluster as usize;
+            // See the comment at the `get_mut` call site in `do_shape`:
+            // rustybuzz's `cluster` is relative to `range.start` (the
+            // start of whatever substring was actually shaped), so it
+            // must be converted to an absolute offset into `s` before
+            // it's used to slice `s` or to look up `PresentationWidth`
+            // (which indexes by absolute byte offset into the full
+            // cluster text).
+            let start = info.cluster as usize + range.start;
 
             let cell_idx = match self.presentation_width {
                 Some(pw) => {
@@ -932,11 +987,11 @@ mod test {
     use crate::FontDatabase;
     use config::FontAttributes;
 
-    fn noto_hebrew_handle() -> ParsedFont {
+    fn hebrew_fallback_handle() -> ParsedFont {
         let db = FontDatabase::with_built_in().unwrap();
         db.resolve(
             &FontAttributes {
-                family: "Noto Sans Hebrew".into(),
+                family: "Cascadia Mono".into(),
                 stretch: Default::default(),
                 weight: Default::default(),
                 is_fallback: false,
@@ -962,7 +1017,7 @@ mod test {
     /// Hebrew codepoints only resolve after at least one no-glyphs/
     /// "incomplete" pass through a font that can't shape them.
     fn primary_then_hebrew_fallback_handles() -> Vec<ParsedFont> {
-        vec![jetbrains_handle(), noto_hebrew_handle()]
+        vec![jetbrains_handle(), hebrew_fallback_handle()]
     }
 
     /// Same idea, but using the actual default primary font
@@ -1008,15 +1063,102 @@ mod test {
         }
 
         // Exact real default order: primary, JetBrains fallback, Noto Color
-        // Emoji, Noto Sans Hebrew, Symbols Nerd Font Mono (see
+        // Emoji, Cascadia Mono (Hebrew), Symbols Nerd Font Mono (see
         // `TextStyle::font_with_fallback`).
         vec![
             lucida,
             jetbrains_handle(),
             built_in("Noto Color Emoji"),
-            noto_hebrew_handle(),
+            hebrew_fallback_handle(),
             built_in("Symbols Nerd Font Mono"),
         ]
+    }
+
+    /// Regression test for a real bug: mixed Hebrew/Latin/punctuation text
+    /// on one line (eg: "shalom, world" style output with an embedded
+    /// dash/quote) rendered with duplicated punctuation and cells drawn in
+    /// the wrong place. Root cause: `CellCluster::make_cluster_with_bidi`
+    /// used `ReorderedRun::range` (a `min..max+1` numeric envelope) to walk
+    /// a run's codepoints, but that envelope isn't guaranteed to contain
+    /// *only* this run's codepoints when multiple runs are interleaved on
+    /// the same line -- it can overlap with a neighboring run, visiting
+    /// (and rendering) the same character twice. Fixed by using
+    /// `ReorderedRun::indices` (the exact, deduplicated set of codepoints
+    /// for this run) instead, sorted ascending to recover logical order.
+    ///
+    /// This asserts the fundamental invariant that must hold no matter how
+    /// bidi resolution splits a line into clusters: every original cell is
+    /// covered by exactly one resolved cluster, never zero and never two.
+    /// Exact reproduction captured from a live warning log: the defensive
+    /// `clamp_to_char_boundaries` guard fired for real, with
+    /// `text=",םלועל "` (a `CellCluster::text`, part of a longer Hebrew
+    /// phrase), reporting "adjusted 0..2 -> 0..3" -- meaning
+    /// `ClusterResolver` computed a byte range that cut the Hebrew letter
+    /// 'ם' (a 2-byte UTF-8 character occupying bytes 1..3) in half. This
+    /// pins down the *exact* input/font-stack combination that triggers
+    /// the underlying byte-range miscalculation, for use as a base to find
+    /// the true root cause (this only proves the clamp saves us from a
+    /// crash, not that the resulting glyphs/positions are actually
+    /// correct).
+    #[test]
+    fn reproduces_the_captured_clamp_warning_input() {
+        let _ = env_logger::Builder::new()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Debug)
+            .try_init();
+
+        let config = config::configuration();
+        let shaper =
+            RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+
+        let mut no_glyphs = vec![];
+        shaper
+            .shape(
+                ",םלועל ",
+                14.,
+                72,
+                &mut no_glyphs,
+                None,
+                Direction::RightToLeft,
+                None,
+                None,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn bidi_clusters_do_not_duplicate_or_drop_cells() {
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        for text in [
+            "שלום, עולם! Hello, world",
+            "ברוך ה' — Благословен вовеки",
+            "На иврите: אמן ואמן, לעולם — Благословен",
+            "י ואת נ ודבלמ",
+        ] {
+            let line = Line::from_text(text, &CellAttributes::default(), 0, None);
+            let total_cells = line.len();
+            let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+
+            let mut coverage = vec![0u32; total_cells];
+            for cluster in &clusters {
+                for cell_idx in cluster.first_cell_idx..cluster.first_cell_idx + cluster.width {
+                    assert!(
+                        cell_idx < total_cells,
+                        "text={text:?}: cluster {cluster:?} covers out-of-range cell {cell_idx}"
+                    );
+                    coverage[cell_idx] += 1;
+                }
+            }
+            for (cell_idx, count) in coverage.iter().enumerate() {
+                assert_eq!(
+                    *count, 1,
+                    "text={text:?}: cell {cell_idx} covered {count} times (want exactly 1); clusters={clusters:#?}"
+                );
+            }
+        }
     }
 
     /// Regression reproduction for a real crash: rendering Hebrew text with
@@ -1025,6 +1167,180 @@ mod test {
     /// pipeline, with bidi enabled (as it now is by default), panicked with
     /// "byte index N is not a char boundary" inside `ClusterResolver`
     /// (`do_shape`, around the `let substr = &s[sub_range.clone()];` line).
+    #[test]
+    fn bidi_multi_word_hebrew_phrase_cluster_order() {
+        // Diagnostic: for a multi-word, uniform-attrs Hebrew phrase, how
+        // many clusters does `Line::cluster()` produce and in what order?
+        // If it stays as ONE cluster, the shaper reorders inter-word RTL
+        // layout correctly on its own. If it gets split into several
+        // clusters (eg: by the whitespace force-break heuristic), the
+        // clusters themselves need to be in VISUAL (reversed) order for
+        // RTL, since crossing a cluster boundary means the shaper can't
+        // reorder across it.
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let text = "שלום עליכם עליכם שלום";
+        let line = Line::from_text(text, &CellAttributes::default(), 0, None);
+        let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+        eprintln!("{} cluster(s) for {:?}", clusters.len(), text);
+        for c in &clusters {
+            eprintln!(
+                "  text={:?} width={} first_cell_idx={} direction={:?}",
+                c.text, c.width, c.first_cell_idx, c.direction
+            );
+        }
+    }
+
+    #[test]
+    fn unresolved_mark_does_not_discard_its_base_letter() {
+        // Regression test: hiriq (U+05B4) is not covered by Cascadia Mono,
+        // and there's no secondary Hebrew fallback font behind it. Before
+        // the fix, a grapheme where the base letter resolved but its
+        // combining mark didn't (both share one rustybuzz "cluster" under
+        // `MonotoneGraphemes`) was entirely discarded and re-shaped as two
+        // separate notdef glyphs once fallback fonts were exhausted --
+        // losing the base letter's real glyph and injecting an extra
+        // full-width blank cell for the mark. Now the base letter's glyph
+        // must survive and the unresolved mark must claim zero cells.
+        let _ = env_logger::Builder::new()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Warn)
+            .try_init();
+
+        let text = "\u{5d4}\u{5b4}\u{5d9}\u{5d0}"; // he + hiriq + yod + alef ("הִיא")
+        let config = config::configuration();
+        let shaper = RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+        let mut no_glyphs = vec![];
+        let info = shaper
+            .shape(text, 14., 72, &mut no_glyphs, None, Direction::RightToLeft, None, None)
+            .unwrap();
+
+        let total_cells: usize = info.iter().map(|i| i.num_cells as usize).sum();
+        assert_eq!(
+            total_cells, 3,
+            "he+yod+alef should claim 3 cells total (hiriq is unresolved and \
+             must claim 0), got {total_cells}: {info:#?}"
+        );
+
+        let he_resolved = info
+            .iter()
+            .any(|i| i.font_idx == 1 && i.glyph_pos != 0 && i.num_cells == 1);
+        assert!(
+            he_resolved,
+            "the base letter he (U+05D4) should keep its real, resolved \
+             Cascadia Mono glyph even though the hiriq mark attached to \
+             the same grapheme has no glyph in that font: {info:#?}"
+        );
+    }
+
+    #[test]
+    fn bidi_multi_word_hebrew_phrase_shapes_with_correct_cell_widths() {
+        // Reproduction attempt using the REAL current default font stack
+        // (JetBrains Mono primary -- has zero Hebrew coverage -- falling
+        // back to the bundled Cascadia Mono) for a full multi-word
+        // Hebrew phrase, checking that every shaped glyph's num_cells adds
+        // up to exactly the cluster's width (no glyph should claim 0 cells
+        // or more cells than are left, which would show up as glued-together
+        // or overly-wide gaps on screen).
+        let _ = env_logger::Builder::new()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Warn)
+            .try_init();
+
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let text = "שלום עליכם עליכם שלום";
+        let line = Line::from_text(text, &CellAttributes::default(), 0, None);
+        let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+
+        let config = config::configuration();
+        let shaper =
+            RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+
+        for cluster in &clusters {
+            let presentation_width = PresentationWidth::with_cluster(cluster);
+            let mut no_glyphs = vec![];
+            let info = shaper
+                .shape(
+                    &cluster.text,
+                    14.,
+                    72,
+                    &mut no_glyphs,
+                    Some(cluster.presentation),
+                    cluster.direction,
+                    None,
+                    Some(&presentation_width),
+                )
+                .unwrap();
+            let total_cells: usize = info.iter().map(|i| i.num_cells as usize).sum();
+            eprintln!(
+                "cluster width={} total_shaped_cells={} no_glyphs={:?}",
+                cluster.width, total_cells, no_glyphs
+            );
+            for i in &info {
+                eprintln!(
+                    "  glyph_pos={} num_cells={} x_advance={:.2} cluster={} only_char={:?}",
+                    i.glyph_pos, i.num_cells, i.x_advance.get(), i.cluster, i.only_char
+                );
+            }
+            assert_eq!(
+                total_cells, cluster.width,
+                "shaped glyphs' num_cells sum ({total_cells}) doesn't match cluster width ({}) for {:?}",
+                cluster.width, cluster.text
+            );
+        }
+    }
+
+    #[test]
+    fn bidi_cluster_widths_per_char_attrs() {
+        // Diagnostic (not a hard assertion yet): does giving each Hebrew
+        // character DIFFERENT cell attributes -- as a chatty/streaming CLI
+        // like Claude Code plausibly does per-token/per-color-span -- cause
+        // `Line::cluster()` to split what should be one contiguous Hebrew
+        // word into several tiny independent bidi "paragraphs", each
+        // auto-detecting its own direction independently and losing the
+        // surrounding context? This inspects cluster count/width/
+        // first_cell_idx directly, without going through the shaper at all.
+        use termwiz::cell::{Cell, CellAttributes};
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let text = "שלום";
+
+        let uniform = Line::from_text(text, &CellAttributes::default(), 0, None);
+        let uniform_clusters = uniform.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+        eprintln!("uniform attrs: {} cluster(s)", uniform_clusters.len());
+        for c in &uniform_clusters {
+            eprintln!(
+                "  text={:?} width={} first_cell_idx={} direction={:?}",
+                c.text, c.width, c.first_cell_idx, c.direction
+            );
+        }
+
+        let mut varied = Line::new(0);
+        for (idx, c) in text.chars().enumerate() {
+            let mut attrs = CellAttributes::default();
+            // Alternate foreground color per character, mimicking
+            // per-character/per-token styling.
+            attrs.set_foreground(termwiz::color::ColorAttribute::PaletteIndex(
+                (idx % 2) as u8,
+            ));
+            varied.set_cell(idx, Cell::new(c, attrs), 0);
+        }
+        let varied_clusters = varied.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+        eprintln!("varied attrs: {} cluster(s)", varied_clusters.len());
+        for c in &varied_clusters {
+            eprintln!(
+                "  text={:?} width={} first_cell_idx={} direction={:?}",
+                c.text, c.width, c.first_cell_idx, c.direction
+            );
+        }
+    }
+
     #[test]
     fn shapes_hebrew_text_with_niqqud_under_bidi() {
         let _ = env_logger::Builder::new()

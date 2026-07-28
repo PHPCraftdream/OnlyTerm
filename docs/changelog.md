@@ -22,12 +22,26 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
-* Hebrew/RTL support: bundled [Noto Sans Hebrew](https://fonts.google.com/noto/specimen/Noto+Sans+Hebrew)
-  (SIL OFL 1.1, full niqqud/cantillation coverage) as an automatic fallback
-  font, and `bidi_enabled`/`bidi_direction` now default to `true`/
+* Hebrew/RTL support: bundled [Cascadia Mono](https://github.com/microsoft/cascadia-code)
+  (SIL OFL 1.1, genuinely monospaced Hebrew consonants) as an automatic
+  fallback font, and `bidi_enabled`/`bidi_direction` now default to `true`/
   `AutoLeftToRight` so right-to-left text renders correctly out of the box
   instead of requiring manual configuration. The baseline font stays
-  JetBrains Mono.
+  JetBrains Mono. Cascadia Mono doesn't cover cantillation marks or some
+  niqqud (those render as `.notdef`); no secondary Hebrew fallback font is
+  chained in, to avoid mixing metrics from two different Hebrew fonts in
+  the same word.
+* Fixed several bidi/shaping bugs that produced duplicated punctuation,
+  garbled letter spacing and, in one case, a crash when rendering
+  multi-word right-to-left text: bidi resolution now runs across the whole
+  line instead of per attribute-run, bidi run reconstruction uses the
+  exact (deduplicated) codepoint list instead of an unsafe numeric range,
+  and the shaper's cluster resolver now correctly converts rustybuzz's
+  cluster offsets (relative to the shaped substring) to absolute offsets
+  when recursing into a fallback font mid-line.
+* GPU context loss (driver TDR) now tears down the affected window's panes
+  and their child processes before closing the window, instead of leaving
+  them orphaned.
 * `enable_scroll_bar` now defaults to `true`; the scrollbar's auto-sized
   width goes from 1 cell to 1.75 cells and its minimum thumb height from
   0.5 cell to 2 cells, so it stays visible and easy to grab.
