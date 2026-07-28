@@ -1692,7 +1692,21 @@ impl KeyEvent {
         match &self.key {
             KeyCode::Composed(_) => None,
             KeyCode::Char(c) => {
-                let uni = self.win32_uni_char.unwrap_or(*c) as u32;
+                // CTRL and (non-AltGr) ALT combinations are keybinding
+                // modifiers, not text input: `self.key` was already resolved
+                // to the layout-independent physical key identity for these
+                // (see the equivalent logic in the Windows `key()` handler),
+                // so prefer that over `win32_uni_char`, which is always the
+                // raw `ToUnicode` result and stays layout-translated (eg.
+                // physical "V" still reports Cyrillic 'м' under a Russian
+                // layout) even when a modifier is held.
+                let prefer_physical = self.modifiers.contains(Modifiers::CTRL)
+                    || self.modifiers.contains(Modifiers::ALT);
+                let uni = if prefer_physical {
+                    *c as u32
+                } else {
+                    self.win32_uni_char.unwrap_or(*c) as u32
+                };
                 Some(format!(
                     "\u{1b}[{};{};{};{};{};{}_",
                     vkey, scan_code, uni, key_down, control_key_state, self.repeat_count

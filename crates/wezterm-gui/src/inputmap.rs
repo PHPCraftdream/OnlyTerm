@@ -1021,9 +1021,11 @@ mod tests {
     /// `termwiz::input::KeyCode::encode`), which -- absent an app that
     /// negotiated CSI-u/kitty keyboard protocol -- degrades to a bare
     /// carriage return ('\r'), identical to plain Enter and NOT a line
-    /// feed. So both are given an explicit default `SendString("\n")`
-    /// binding, which unconditionally writes the raw byte to the pane,
-    /// bypassing that encoding path entirely.
+    /// feed. So both are given an explicit default `SendEnterOrNewline`
+    /// binding, which encodes through whatever protocol the app has
+    /// negotiated (so eg. Codex CLI, which negotiates kitty keyboard
+    /// protocol, gets the disambiguated CSI-u form it expects), falling
+    /// back to a raw '\n' only for apps that haven't negotiated one.
     #[test]
     fn ctrl_enter_sends_newline() {
         let input_map = InputMap::default_input_map();
@@ -1031,7 +1033,10 @@ mod tests {
         let entry = input_map
             .lookup_key(&KeyCode::Char('\r'), Modifiers::CTRL, None)
             .expect("CTRL+Enter must have a default binding");
-        assert_eq!(entry.action, KeyAssignment::SendString("\n".to_string()));
+        assert_eq!(
+            entry.action,
+            KeyAssignment::SendEnterOrNewline(Modifiers::CTRL)
+        );
     }
 
     #[test]
@@ -1041,7 +1046,10 @@ mod tests {
         let entry = input_map
             .lookup_key(&KeyCode::Char('\r'), Modifiers::SHIFT, None)
             .expect("SHIFT+Enter must have a default binding");
-        assert_eq!(entry.action, KeyAssignment::SendString("\n".to_string()));
+        assert_eq!(
+            entry.action,
+            KeyAssignment::SendEnterOrNewline(Modifiers::SHIFT)
+        );
     }
 
     /// Regression test: CTRL+Enter must also resolve via its physical-key

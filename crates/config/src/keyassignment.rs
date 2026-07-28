@@ -602,6 +602,16 @@ pub enum KeyAssignment {
     /// selection to copy, without ever preventing a plain Ctrl+C from
     /// reaching the running program to interrupt it when there isn't.
     CopySelectionOrInterrupt,
+    /// Sends Enter with the given modifier (eg. CTRL or SHIFT) through
+    /// whatever keyboard protocol the pane's app has negotiated (kitty or
+    /// win32-input-mode), so an app that asked for eg. Kitty's
+    /// DISAMBIGUATE_ESCAPE_CODES gets the modified-Enter CSI-u sequence it
+    /// expects instead of a plain carriage return. If the app hasn't
+    /// negotiated a protocol that can represent a modified Enter, falls
+    /// back to sending a literal line feed ('\n'), since that is the best
+    /// a plain/legacy app can do with this chord. This is the default
+    /// binding for CTRL+Enter and SHIFT+Enter.
+    SendEnterOrNewline(Modifiers),
     CompleteSelection(ClipboardCopyDestination),
     CompleteSelectionOrOpenLinkAtMouseCursor(ClipboardCopyDestination),
     StartWindowDrag,

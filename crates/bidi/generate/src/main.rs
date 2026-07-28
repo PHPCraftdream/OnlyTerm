@@ -221,8 +221,75 @@ fn gen_brackets() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn gen_mirroring() -> anyhow::Result<()> {
+    let data = std::fs::read_to_string("bidi/data/BidiMirroring.txt")
+        .context("bidi/data/BidiMirroring.txt")?;
+
+    struct Entry {
+        code_point: u32,
+        mirrored: u32,
+        comment: String,
+    }
+
+    impl Entry {
+        fn parse(line: &str) -> anyhow::Result<Option<Self>> {
+            let line = line.trim();
+            if line.starts_with('#') || line.is_empty() {
+                return Ok(None);
+            }
+            let fields: Vec<&str> = line.split(';').collect();
+
+            let code_point: u32 = parse_codepoint(fields[0])?;
+
+            let fields: Vec<&str> = fields[1].split('#').collect();
+            let mirrored: u32 = parse_codepoint(fields[0])?;
+            let comment = fields[1].trim().to_string();
+
+            Ok(Some(Entry {
+                code_point,
+                mirrored,
+                comment,
+            }))
+        }
+    }
+
+    let mut entries = vec![];
+
+    for line in data.lines() {
+        if let Some(entry) = Entry::parse(line)? {
+            entries.push(entry);
+        }
+    }
+
+    entries.sort_by_key(|e| e.code_point);
+
+    let mut f = std::fs::File::create("bidi/src/bidi_mirroring.rs")
+        .context("bidi/src/bidi_mirroring.rs")?;
+    writeln!(
+        f,
+        "//! Generated from bidi/data/BidiMirroring.txt by bidi/generate/src/main.rs"
+    )?;
+    writeln!(
+        f,
+        "pub const BIDI_MIRRORING: &'static [(char, char)] = &["
+    )?;
+    for entry in entries.into_iter() {
+        writeln!(
+            f,
+            "  ('{}', '{}'), // {}",
+            char::from_u32(entry.code_point).unwrap().escape_unicode(),
+            char::from_u32(entry.mirrored).unwrap().escape_unicode(),
+            entry.comment
+        )?;
+    }
+
+    writeln!(f, "];")?;
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     gen_brackets().context("gen_brackets")?;
     gen_class().context("gen_class")?;
+    gen_mirroring().context("gen_mirroring")?;
     Ok(())
 }
