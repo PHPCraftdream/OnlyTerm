@@ -932,7 +932,15 @@ impl<'a> ClusterResolver<'a> {
         }
 
         let mut cluster_starts: Vec<Item> = map.into_values().collect();
-        cluster_starts.sort();
+        // Must sort by byte position, not the derived `Ord` (which
+        // compares `cell_idx` first since it's declared first): walking
+        // this vector assumes consecutive entries are consecutive byte
+        // ranges (`next_start - start` below). That coincided with
+        // sorting by `cell_idx` as long as cell_idx only ever increased
+        // with byte position, which no longer holds once a line can
+        // contain a right-to-left phrase whose cells were reordered
+        // in `cluster.text` relative to their original cell index.
+        cluster_starts.sort_by_key(|item| item.start);
 
         cluster_starts.dedup_by(|a, b| match (a.cell_idx, b.cell_idx) {
             (Some(a), Some(b)) => a == b,
@@ -1142,9 +1150,26 @@ mod test {
             let total_cells = line.len();
             let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
 
+            // A cluster's cells no longer need to be a contiguous
+            // `first_cell_idx..first_cell_idx+width` range now that a
+            // Hebrew phrase can be reordered within its cluster (only the
+            // *set* of covered cells, via `byte_to_cell_idx`, needs to
+            // partition the line exactly). `byte_to_cell_idx` is the
+            // authoritative per-byte mapping actually used to position
+            // glyphs at render time.
             let mut coverage = vec![0u32; total_cells];
             for cluster in &clusters {
-                for cell_idx in cluster.first_cell_idx..cluster.first_cell_idx + cluster.width {
+                // Dedup within the cluster first: a niqqud/base pair is
+                // two chars sharing one cell, which must count once, not
+                // once per char.
+                let mut cluster_cells: Vec<usize> = cluster
+                    .text
+                    .char_indices()
+                    .map(|(byte_idx, _)| cluster.byte_to_cell_idx(byte_idx))
+                    .collect();
+                cluster_cells.sort_unstable();
+                cluster_cells.dedup();
+                for cell_idx in cluster_cells {
                     assert!(
                         cell_idx < total_cells,
                         "text={text:?}: cluster {cluster:?} covers out-of-range cell {cell_idx}"
@@ -1334,6 +1359,202 @@ mod test {
         let varied_clusters = varied.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
         eprintln!("varied attrs: {} cluster(s)", varied_clusters.len());
         for c in &varied_clusters {
+            eprintln!(
+                "  text={:?} width={} first_cell_idx={} direction={:?}",
+                c.text, c.width, c.first_cell_idx, c.direction
+            );
+        }
+    }
+
+    #[test]
+    fn hebrew_phrase_reverses_in_place_without_touching_neighbors() {
+        // Regression test for the simplified (non-UAX#9) rendering
+        // model: a terminal ties cursor movement, selection and shell
+        // line-editing to each character's typed/logical column, so
+        // instead of running the full Bidi Algorithm (which
+        // right-justifies RTL-based paragraphs and can sweep a stray
+        // dash or number into the wrong end of the line), only the
+        // Hebrew letters themselves get reversed relative to each other,
+        // exactly where they were typed. Brackets/digits/Latin text
+        // never move and are never mirrored, since they never change
+        // position relative to the rest of the line.
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        for (text, want) in [
+            ("(שלום)", "(םולש)"),
+            ("שלום עולם", "םלוע םולש"),
+            // The geresh stays bonded to its letter (moves with it) but
+            // the pair itself still reverses along with the rest of the
+            // phrase, same as any other letter -- reading the resulting
+            // "'א קרפ" span right-to-left recovers "פרק א'" exactly.
+            ("פרק א' — Chapter", "'א קרפ — Chapter"),
+        ] {
+            let line = Line::from_text(text, &CellAttributes::default(), 0, None);
+            let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+            let joined: String = clusters.iter().map(|c| c.text.as_str()).collect();
+            assert_eq!(joined, want, "input {text:?}");
+        }
+    }
+
+    #[test]
+    fn punctuation_inside_hebrew_phrase_moves_with_the_phrase() {
+        // A comma/question mark *between* two Hebrew words punctuates the
+        // Hebrew, so it has to travel with it when the phrase is reversed
+        // (this is Unicode rule UAX #9 N1: a neutral run surrounded by
+        // right-to-left text becomes right-to-left too). Quotes/brackets
+        // wrapping the whole phrase have non-Hebrew on their far side, so
+        // they are *not* part of the phrase and must stay put -- which is
+        // what keeps the line growing left-to-right from column 0 with
+        // the Hebrew half still ahead of its Russian translation.
+        //
+        // Each case is written as (before, phrase, after) and the
+        // expectation is built as `before + reverse(phrase) + after`:
+        // reversing is by definition what "reads right-to-left" means, so
+        // this states the intent without restating the algorithm.
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        for (before, phrase, after) in [
+            // The reported case: quoted Hebrew, then its quoted Russian
+            // translation. The comma is inside the phrase and moves; the
+            // quotes and the ` / ` separator do not.
+            (
+                "\"",
+                "אם אין אני לי, מי לי",
+                "\" / \"Если не я за себя, то кто за меня\"",
+            ),
+            ("«", "כל ישראל ערבים זה בזה", "» / «Весь Израиль в ответе»"),
+            ("(", "איזהו עשיר", ") (кто богат?)"),
+            // A closing ASCII apostrophe is a quote, not a geresh: it
+            // must stay outside the phrase it closes rather than being
+            // dragged to the far side of it.
+            ("'", "דע לפני מי אתה עומד", "' / 'знай, перед кем ты стоишь'"),
+        ] {
+            let text = format!("{before}{phrase}{after}");
+            let want = format!(
+                "{before}{}{after}",
+                phrase.chars().rev().collect::<String>()
+            );
+            let line = Line::from_text(&text, &CellAttributes::default(), 0, None);
+            let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+            let joined: String = clusters.iter().map(|c| c.text.as_str()).collect();
+            assert_eq!(joined, want, "input {text:?}");
+        }
+    }
+
+    #[test]
+    fn hebrew_phrase_touching_wrap_boundary_is_left_unreversed() {
+        // Regression test: a physical row only ever sees its own cells,
+        // so a Hebrew phrase touching the first/last cell might actually
+        // be an incomplete fragment of a longer phrase that continues on
+        // the row before/after it (the line wrapped there). Reversing an
+        // incomplete fragment produces worse results (a bracket ending up
+        // on the wrong side) than leaving it as typed, so
+        // `cluster_with_wrap_context` must leave an edge-touching phrase
+        // untouched when the wrap topology says it might be incomplete.
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let text = "שלום עולם";
+        let line = Line::from_text(text, &CellAttributes::default(), 0, None);
+        let hint = Some(ParagraphDirectionHint::AutoLeftToRight);
+
+        // Baseline: with no wrap context, the whole phrase reverses.
+        let normal: String = line
+            .cluster(hint)
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(normal, "םלוע םולש");
+
+        // This row is the tail of a wrapped phrase (its first cell might
+        // continue a run from the row above) -- since the phrase touches
+        // cell 0, it must be left exactly as typed.
+        let as_continuation: String = line
+            .cluster_with_wrap_context(hint, true)
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+        assert_eq!(as_continuation, text);
+    }
+
+    #[test]
+    fn diag_quoted_hebrew_then_russian_char_by_char() {
+        // Diagnostic: build the same line two ways -- via `Line::from_text`
+        // (grapheme-aware, used by `render_line`/most tests) and via
+        // per-character `set_cell` (mimicking how the real terminal builds
+        // a line one printed character at a time from PTY bytes) -- and
+        // compare the resulting cluster order, to check whether the two
+        // construction paths actually produce the same `CellCluster`s for
+        // a line reported to render differently in the two contexts.
+        use termwiz::cell::{Cell, CellAttributes};
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let text = "\"אם אין אני לי, מי לי\" / \"Если не я за себя, то кто за меня\"";
+        let hint = Some(ParagraphDirectionHint::AutoLeftToRight);
+
+        let from_text = Line::from_text(text, &CellAttributes::default(), 0, None);
+        let joined_from_text: String = from_text
+            .cluster(hint)
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+
+        let mut char_by_char = Line::new(0);
+        for (idx, c) in text.chars().enumerate() {
+            char_by_char.set_cell(idx, Cell::new(c, CellAttributes::default()), 0);
+        }
+        let joined_char_by_char: String = char_by_char
+            .cluster(hint)
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+
+        eprintln!("from_text:     {joined_from_text:?}");
+        eprintln!("char_by_char:  {joined_char_by_char:?}");
+        assert_eq!(joined_from_text, joined_char_by_char);
+    }
+
+    #[test]
+    fn diag_mixed_lang_quote_boundary() {
+        // Diagnostic: a Russian translation wrapped in guillemets, an em
+        // dash, and the Hebrew original -- with the Russian+punctuation
+        // portion given one set of attrs and the Hebrew portion another
+        // (mimicking a chatty CLI's per-language color styling), the way
+        // a real user reported broken quote mirroring/positioning.
+        use termwiz::cell::{Cell, CellAttributes};
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let ru = "«Если не я за себя, то кто?» — ";
+        let he = "אם אין אני לי";
+        let mut line = Line::new(0);
+        let mut idx = 0;
+        let mut ru_attrs = CellAttributes::default();
+        ru_attrs.set_foreground(termwiz::color::ColorAttribute::PaletteIndex(1));
+        for c in ru.chars() {
+            line.set_cell(idx, Cell::new(c, ru_attrs.clone()), 0);
+            idx += 1;
+        }
+        let mut he_attrs = CellAttributes::default();
+        he_attrs.set_foreground(termwiz::color::ColorAttribute::PaletteIndex(2));
+        for c in he.chars() {
+            line.set_cell(idx, Cell::new(c, he_attrs.clone()), 0);
+            idx += 1;
+        }
+
+        let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
+        eprintln!("{} cluster(s):", clusters.len());
+        for c in &clusters {
             eprintln!(
                 "  text={:?} width={} first_cell_idx={} direction={:?}",
                 c.text, c.width, c.first_cell_idx, c.direction

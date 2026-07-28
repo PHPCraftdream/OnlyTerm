@@ -72,6 +72,7 @@ pub struct LineQuadCacheKey {
     pub cursor: Option<CursorProperties>,
     pub reverse_video: bool,
     pub password_input: bool,
+    pub is_wrap_continuation: bool,
 }
 
 pub struct LineQuadCacheValue {
@@ -90,6 +91,7 @@ pub struct LineToElementParams<'a> {
     pub window_is_transparent: bool,
     pub reverse_video: bool,
     pub shape_key: &'a Option<LineToEleShapeCacheKey>,
+    pub is_wrap_continuation: bool,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -97,6 +99,7 @@ pub struct LineToEleShapeCacheKey {
     pub shape_hash: [u8; 16],
     pub composing: Option<(usize, String)>,
     pub shape_generation: usize,
+    pub is_wrap_continuation: bool,
 }
 
 pub struct LineToElementShapeItem {
@@ -117,6 +120,15 @@ pub struct LineToElementShape {
     pub pixel_width: f32,
     pub glyph_info: Rc<Vec<ShapedInfo>>,
     pub cluster: CellCluster,
+    /// Column this cluster is actually drawn at, counted from the start
+    /// of the line. This is NOT `cluster.first_cell_idx`: a Hebrew phrase
+    /// gets reordered within the line, so its clusters' logical cell
+    /// indices run backwards while they are still painted one after
+    /// another from the start of the line. Glyphs are positioned by
+    /// accumulating widths in exactly this order, so anything else drawn
+    /// per-cluster (backgrounds, underlines) has to use the same counter
+    /// or it lands underneath a different piece of the line.
+    pub first_visual_cell_idx: usize,
 }
 
 pub struct RenderScreenLineResult {
@@ -168,6 +180,7 @@ pub struct RenderScreenLineParams<'a> {
     pub render_metrics: RenderMetrics,
     pub shape_key: Option<LineToEleShapeCacheKey>,
     pub password_input: bool,
+    pub is_wrap_continuation: bool,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]

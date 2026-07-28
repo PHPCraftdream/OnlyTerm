@@ -27,9 +27,18 @@ use wezterm_font::shaper::{new_shaper, PresentationWidth};
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Opt {
-    /// Text to render. May include Hebrew/RTL and mixed scripts.
+    /// Text to render. May include Hebrew/RTL and mixed scripts. Prefer
+    /// `--text-file` for anything with mixed scripts/RTL: passing such
+    /// text as a raw CLI argument through a shell is unreliable (the
+    /// shell/console layer can reorder or mangle it before this program
+    /// ever sees it).
     #[arg(long)]
-    text: String,
+    text: Option<String>,
+
+    /// Read the text to render from a UTF-8 file instead of `--text`
+    /// (trailing newline stripped). Use this for RTL/mixed-script input.
+    #[arg(long)]
+    text_file: Option<std::path::PathBuf>,
 
     /// Number of terminal columns to allocate for the canvas.
     #[arg(long, default_value_t = 60)]
@@ -87,6 +96,12 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     let opt = Opt::parse();
 
+    let text = match (&opt.text, &opt.text_file) {
+        (_, Some(path)) => std::fs::read_to_string(path)?.trim_end_matches('\n').to_string(),
+        (Some(text), None) => text.clone(),
+        (None, None) => anyhow::bail!("either --text or --text-file must be given"),
+    };
+
     let db = FontDatabase::with_built_in()?;
     let mut handles = vec![resolve(&db, &opt.primary_font, false)?];
     for fam in &opt.fallback_fonts {
@@ -104,7 +119,7 @@ fn main() -> anyhow::Result<()> {
     use termwiz::surface::Line;
     use wezterm_bidi::ParagraphDirectionHint;
 
-    let line = Line::from_text(&opt.text, &CellAttributes::default(), 0, None);
+    let line = Line::from_text(&text, &CellAttributes::default(), 0, None);
     let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
 
     let canvas_width = (opt.cols as f32 * cell_width).ceil() as u32;

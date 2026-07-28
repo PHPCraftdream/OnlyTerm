@@ -188,7 +188,7 @@ enum OnlyKeyBindings {
 }
 
 impl super::TermWindow {
-    fn encode_win32_input(&self, pane: &Arc<dyn Pane>, key: &KeyEvent) -> Option<String> {
+    pub(crate) fn encode_win32_input(&self, pane: &Arc<dyn Pane>, key: &KeyEvent) -> Option<String> {
         if !self.config.allow_win32_input_mode
             || pane.get_keyboard_encoding() != KeyboardEncoding::Win32
         {
@@ -197,7 +197,7 @@ impl super::TermWindow {
         key.encode_win32_input_mode()
     }
 
-    fn encode_kitty_input(&self, pane: &Arc<dyn Pane>, key: &KeyEvent) -> Option<String> {
+    pub(crate) fn encode_kitty_input(&self, pane: &Arc<dyn Pane>, key: &KeyEvent) -> Option<String> {
         if !self.config.enable_kitty_keyboard {
             return None;
         }
@@ -206,6 +206,21 @@ impl super::TermWindow {
         } else {
             None
         }
+    }
+
+    /// Encodes `key` through whatever keyboard protocol the pane's app has
+    /// negotiated (win32-input-mode or kitty), or `None` if it hasn't
+    /// negotiated one that can represent this event. Used for synthetic
+    /// key events raised from key *assignments* (eg. `CopySelectionOrInterrupt`,
+    /// `SendEnterOrNewline`) that need to respect the app's negotiated
+    /// protocol rather than always writing a hardcoded legacy byte.
+    pub(crate) fn encode_via_negotiated_protocol(
+        &self,
+        pane: &Arc<dyn Pane>,
+        key: &KeyEvent,
+    ) -> Option<String> {
+        self.encode_win32_input(pane, key)
+            .or_else(|| self.encode_kitty_input(pane, key))
     }
 
     fn lookup_key(

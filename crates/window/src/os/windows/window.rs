@@ -2833,36 +2833,59 @@ unsafe fn key(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<L
                     0,
                 );
 
-                let key = match res {
-                    1 => Some(KeyCode::Char(std::char::from_u32_unchecked(out[0] as u32))),
-                    // No mapping, so use our raw info
-                    0 => {
-                        log::trace!(
-                            "ToUnicode had no mapping for {:?} wparam={}",
-                            phys_code,
-                            wparam
-                        );
-                        phys_code.map(|p| p.to_key_code())
-                    }
-                    _ => {
-                        // dead key: if our dead key mapping in KeyboardLayoutInfo was
-                        // correct, we shouldn't be able to get here as we should have
-                        // landed in the dead key case above.
-                        // If somehow we do get here, we don't have a valid mapping
-                        // as -1 indicates the start of a dead key sequence,
-                        // and any other n > 1 indicates an ambiguous expansion.
-                        // Either way, indicate that we don't have a valid result.
-                        log::error!(
-                            "unexpected dead key expansion: \
-                             modifiers={:?} vk={:?} res={} releasing={} {:?}",
-                            modifiers,
-                            vk,
-                            res,
-                            releasing,
-                            out
-                        );
-                        KeyboardLayoutInfo::clear_key_state();
-                        None
+                // CTRL and (non-AltGr) ALT combinations are keybinding
+                // modifiers, not text input: `modifiers` only ever
+                // contains CTRL/ALT here when AltGr was ruled out above
+                // (AltGr sets RIGHT_ALT instead), so this can't misfire
+                // on eg. a German/French AltGr+letter that legitimately
+                // produces a different character. `ToUnicode` still
+                // layout-translates the physical key even with a
+                // modifier held (eg. physical "V" maps to Cyrillic 'м'
+                // under a Russian layout), which then fails to match a
+                // keybinding registered against the US-QWERTY letter (eg.
+                // `ALT|CTRL+V`). Prefer the layout-independent physical
+                // key identity for these so bindings resolve the same
+                // way regardless of the active keyboard layout, matching
+                // how every other modifier-based terminal shortcut is
+                // expected to behave.
+                let prefer_physical_for_binding =
+                    (modifiers.contains(Modifiers::CTRL) || modifiers.contains(Modifiers::ALT))
+                        && phys_code.map(|p| p.to_key_code()).is_some();
+
+                let key = if prefer_physical_for_binding {
+                    phys_code.map(|p| p.to_key_code())
+                } else {
+                    match res {
+                        1 => Some(KeyCode::Char(std::char::from_u32_unchecked(out[0] as u32))),
+                        // No mapping, so use our raw info
+                        0 => {
+                            log::trace!(
+                                "ToUnicode had no mapping for {:?} wparam={}",
+                                phys_code,
+                                wparam
+                            );
+                            phys_code.map(|p| p.to_key_code())
+                        }
+                        _ => {
+                            // dead key: if our dead key mapping in KeyboardLayoutInfo was
+                            // correct, we shouldn't be able to get here as we should have
+                            // landed in the dead key case above.
+                            // If somehow we do get here, we don't have a valid mapping
+                            // as -1 indicates the start of a dead key sequence,
+                            // and any other n > 1 indicates an ambiguous expansion.
+                            // Either way, indicate that we don't have a valid result.
+                            log::error!(
+                                "unexpected dead key expansion: \
+                                 modifiers={:?} vk={:?} res={} releasing={} {:?}",
+                                modifiers,
+                                vk,
+                                res,
+                                releasing,
+                                out
+                            );
+                            KeyboardLayoutInfo::clear_key_state();
+                            None
+                        }
                     }
                 };
 
