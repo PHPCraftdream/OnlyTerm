@@ -7,9 +7,8 @@ use crate::color::{
 use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
 use crate::font::{
-    AllowSquareGlyphOverflow, DisplayPixelGeometry, FontAttributes, FontLocatorSelection,
-    FontRasterizerSelection, FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget,
-    StyleRule, TextStyle,
+    AllowSquareGlyphOverflow, DisplayPixelGeometry, FontLocatorSelection, FontRasterizerSelection,
+    FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
 };
 use crate::frontend::FrontEndSelection;
 use crate::keyassignment::{
@@ -111,7 +110,7 @@ pub struct Config {
     pub dpi_by_screen: HashMap<String, f64>,
 
     /// The baseline font to use
-    #[dynamic(default = "default_font_style")]
+    #[dynamic(default)]
     pub font: TextStyle,
 
     /// An optional set of style rules to select the font based
@@ -2022,26 +2021,8 @@ fn windows_default_prog() -> Option<Vec<String>> {
     None
 }
 
-/// OnlyTerm is Windows-focused: default to Lucida Console, a system font
-/// that ships with every Windows install, rather than the bundled
-/// JetBrains Mono. JetBrains Mono stays wired in as the automatic fallback
-/// (see `TextStyle::font_with_fallback`), so it's still used for glyphs
-/// Lucida Console doesn't cover.
-#[cfg(windows)]
-fn default_font_style() -> TextStyle {
-    TextStyle {
-        foreground: None,
-        font: vec![FontAttributes::new("Lucida Console")],
-    }
-}
-
 fn default_bidi_direction() -> ParagraphDirectionHint {
     ParagraphDirectionHint::AutoLeftToRight
-}
-
-#[cfg(not(windows))]
-fn default_font_style() -> TextStyle {
-    TextStyle::default()
 }
 
 fn default_bypass_mouse_reporting_modifiers() -> Modifiers {
