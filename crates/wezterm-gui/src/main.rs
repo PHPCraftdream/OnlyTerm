@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 // Don't create a new standard console window when launched from the windows GUI.
 #![cfg_attr(not(test), windows_subsystem = "windows")]
 

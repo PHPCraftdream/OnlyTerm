@@ -80,6 +80,8 @@ pub struct PseudoCon {
 // `Mutex<Inner>` in `ConPtyMasterPty`, so sharing the value across threads
 // and sending it to other threads is sound.
 unsafe impl Send for PseudoCon {}
+// SAFETY: same rationale as the `Send` impl above - access is always
+// serialized through the `Mutex<Inner>` in `ConPtyMasterPty`.
 unsafe impl Sync for PseudoCon {}
 
 impl Drop for PseudoCon {

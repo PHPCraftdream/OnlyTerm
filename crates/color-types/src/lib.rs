@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 #![cfg_attr(not(feature = "std"), no_std)]
 
 use core::hash::{Hash, Hasher};

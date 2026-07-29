@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 pub mod ringlog;
 pub use ringlog::setup_logger;
 use std::path::{Path, PathBuf};

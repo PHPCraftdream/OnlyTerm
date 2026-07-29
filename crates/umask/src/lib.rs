@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 #[cfg(unix)]
 use libc::{mode_t, umask};
 #[cfg(unix)]

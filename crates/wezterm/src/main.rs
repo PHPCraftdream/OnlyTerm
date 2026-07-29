@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 #[global_allocator]
 static GLOBAL_ALLOC: sefer_alloc::SeferAlloc = sefer_alloc::SeferAlloc::new();
 

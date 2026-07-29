@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! An implementation of the state machine described by
 //! [DEC ANSI Parser](https://vt100.net/emu/dec_ansi_parser), modified to support UTF-8.
 //!

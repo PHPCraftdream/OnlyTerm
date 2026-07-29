@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! Configuration for the gui portion of the terminal
 
 use anyhow::{anyhow, bail, Context, Error};

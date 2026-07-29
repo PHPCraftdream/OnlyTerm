@@ -96,6 +96,8 @@ impl<T: FromRawSocket> FromRawSocketDescriptor for T {
 // Mutation of the underlying kernel object is governed by the kernel, not by
 // Rust's `&mut` exclusivity.
 unsafe impl Send for OwnedHandle {}
+// SAFETY: same rationale as the `Send` impl above - the handle has no thread
+// affinity and the kernel, not `&mut` exclusivity, governs mutation safety.
 unsafe impl Sync for OwnedHandle {}
 
 impl OwnedHandle {
@@ -472,6 +474,8 @@ impl Pipe {
         };
         let mut read: HANDLE = INVALID_HANDLE_VALUE as _;
         let mut write: HANDLE = INVALID_HANDLE_VALUE as _;
+        // SAFETY: `&mut read`/`&mut write` are valid out-pointers for the pipe
+        // handles and `&mut sa` is a fully-initialized `SECURITY_ATTRIBUTES`.
         if unsafe { CreatePipe(&mut read, &mut write, &mut sa, 0) } == 0 {
             Err(Error::Pipe(IoError::last_os_error()))
         } else {
@@ -547,11 +551,12 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
         *in_addr.sin_addr.S_un.S_addr_mut() = htonl(INADDR_LOOPBACK);
     }
 
-    // SAFETY: `bind` takes a `*const SOCKADDR`; SOCKADDR_IN is layout-
-    // compatible (it is a superset). We use an explicit cast instead of
-    // transmute to avoid the unsafe pointer reinterpretation.
     {
         let addr_ptr = &in_addr as *const SOCKADDR_IN as *const winapi::shared::ws2def::SOCKADDR;
+        // SAFETY: `bind` takes a `*const SOCKADDR`; SOCKADDR_IN is layout-
+        // compatible (it is a superset). We use an explicit cast instead of
+        // transmute to avoid the unsafe pointer reinterpretation. `addr_ptr`
+        // points at the live `in_addr` local for the duration of this call.
         if unsafe {
             bind(
                 s.as_raw_handle() as _,
@@ -566,10 +571,11 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 
     let mut addr_len = std::mem::size_of_val(&in_addr) as i32;
 
-    // SAFETY: `getsockname` takes a `*mut SOCKADDR`; same layout-
-    // compatibility rationale as `bind` above.
     {
         let addr_ptr = &mut in_addr as *mut SOCKADDR_IN as *mut winapi::shared::ws2def::SOCKADDR;
+        // SAFETY: `getsockname` takes a `*mut SOCKADDR`; same layout-
+        // compatibility rationale as `bind` above. `addr_ptr` and `&mut
+        // addr_len` are valid out-pointers for the duration of this call.
         if unsafe {
             getsockname(
                 s.as_raw_handle() as _,
@@ -592,10 +598,11 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 
     let client = socket(AF_INET, SOCK_STREAM, 0)?;
 
-    // SAFETY: `connect` takes a `*const SOCKADDR`; same layout-
-    // compatibility rationale as `bind` above.
     {
         let addr_ptr = &in_addr as *const SOCKADDR_IN as *const winapi::shared::ws2def::SOCKADDR;
+        // SAFETY: `connect` takes a `*const SOCKADDR`; same layout-
+        // compatibility rationale as `bind` above. `addr_ptr` points at the
+        // live `in_addr` local for the duration of this call.
         if unsafe {
             connect(
                 client.as_raw_handle() as _,

@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 #![cfg_attr(not(feature = "std"), no_std)]
 //! Model a cell in the terminal display
 use crate::color::{ColorAttribute, PaletteIndex};

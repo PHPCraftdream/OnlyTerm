@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 mod dbus;
 mod macos;
 mod windows;
