@@ -176,6 +176,12 @@ fn run() -> anyhow::Result<()> {
         {
             use std::os::unix::process::CommandExt;
             if let Some(mask) = umask::UmaskSaver::saved_umask() {
+                // SAFETY: `pre_exec` is `unsafe` because its closure runs in a
+                // forked child before exec, where only async-signal-safe
+                // functions may be called. The closure calls only `libc::umask`,
+                // which is async-signal-safe (POSIX.1), and captures only `mask`
+                // (a Copy mode_t) by move, so it performs no allocation, locking
+                // or other non-signal-safe work. `cmd` outlives the call.
                 unsafe {
                     cmd.pre_exec(move || {
                         libc::umask(mask);

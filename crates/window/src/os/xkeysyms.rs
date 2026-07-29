@@ -26,12 +26,13 @@ pub fn modifiers_from_state(state: u32) -> Modifiers {
 /// and/or define them in KeyCode.
 pub fn keysym_to_keycode(keysym: u32) -> Option<KeyCode> {
     let utf32 = xkbcommon::xkb::keysym_to_utf32(keysym.into());
+    // keysym_to_utf32 returns 0 for no match. Use the safe `from_u32`, which
+    // rejects values above U+10FFFF and the surrogate range, instead of the
+    // previous `from_u32_unchecked`, which was unsound for such inputs. When
+    // `from_u32` returns None we fall through to the keysym match below.
     if utf32 >= 0x20 {
-        // Unsafety: this is ok because we trust that keysym_to_utf32
-        // is only going to return valid utf32 codepoints.
-        // Note that keysym_to_utf32 returns 0 for no match.
-        unsafe {
-            return Some(KeyCode::Char(std::char::from_u32_unchecked(utf32)));
+        if let Some(ch) = std::char::from_u32(utf32) {
+            return Some(KeyCode::Char(ch));
         }
     }
 
