@@ -165,7 +165,11 @@ fn linear_f32_to_srgb8_using_table(f: f32) -> u8 {
     let minval = f32::from_bits(MINVAL);
     let almost_one = f32::from_bits(ALMOST_ONE);
 
-    let f = if f < minval {
+    // `f.is_nan()` is checked explicitly because NaN compares false against
+    // both bounds below (`NaN < minval` and `NaN > almost_one` are both
+    // false), so a plain min/max-style clamp would let NaN fall through
+    // unclamped and produce an out-of-bounds table index below.
+    let f = if f.is_nan() || f < minval {
         minval
     } else if f > almost_one {
         almost_one
@@ -1120,6 +1124,17 @@ impl LinearRgba {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn nan_component_does_not_panic_converting_to_srgb() {
+        // Regression test: a NaN linear-rgb component used to bypass the
+        // clamp in `linear_f32_to_srgb8_using_table` (NaN compares false
+        // against both bounds) and index the lookup table out of bounds.
+        let pixel = LinearRgba(f32::NAN, 0.5, 1.0, 1.0).srgba_pixel();
+        // No particular color is "correct" for NaN input; just assert the
+        // conversion completed without panicking and returned some pixel.
+        let _ = pixel;
+    }
+
     #[test]
     fn named_rgb() {
         let dark_green = SrgbaTuple::from_named("DarkGreen").unwrap();
