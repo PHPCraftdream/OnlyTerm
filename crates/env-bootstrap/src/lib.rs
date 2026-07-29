@@ -128,10 +128,12 @@ pub fn set_lang_from_locale() {
 
     if !lang_is_set() {
         // SAFETY: `nsstring_to_str` borrows the internal buffer of an
-        // NSString for the duration of the reference. The NSString must
-        // outlive the returned &str and must contain valid UTF-8 (which
+        // NSString for the duration of the reference. The output lifetime is
+        // tied to the input `&'a NSString` below (rather than left unbound),
+        // so the borrow checker enforces that the NSString outlives the
+        // returned &str; the string must also contain valid UTF-8 (which
         // NSString.UTF8String guarantees by contract).
-        unsafe fn nsstring_to_str<'a>(ns: &NSString) -> &'a str {
+        unsafe fn nsstring_to_str<'a>(ns: &'a NSString) -> &'a str {
             let data = ns.UTF8String() as *const u8;
             let len = ns.len();
             // SAFETY: `data` is a valid pointer to `len` bytes (the UTF-8

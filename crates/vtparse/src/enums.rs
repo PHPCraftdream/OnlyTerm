@@ -30,7 +30,7 @@ impl Action {
         // The transition/entry/exit tables only ever pack valid Action
         // discriminants (0..=18), so every reachable call lands on an explicit
         // arm. The catch-all maps any (impossible) out-of-range value to the
-        // zero discriminant instead of invoking UB via transmute.
+        // last discriminant (ApcEnd) instead of invoking UB via transmute.
         match v {
             0 => Action::None,
             1 => Action::Ignore,
@@ -84,7 +84,7 @@ impl State {
         // The transition/entry/exit tables only ever pack valid State
         // discriminants (0..=16), so every reachable call lands on an explicit
         // arm. The catch-all maps any (impossible) out-of-range value to the
-        // zero discriminant instead of invoking UB via transmute.
+        // last discriminant (Utf8Sequence) instead of invoking UB via transmute.
         match v {
             0 => State::Ground,
             1 => State::Escape,

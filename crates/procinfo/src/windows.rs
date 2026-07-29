@@ -165,8 +165,13 @@ impl ProcHandle {
         if !NT_SUCCESS(res) {
             return None;
         }
-        // SAFETY: NtQueryInformationProcess returned NT_SUCCESS, so `data`
-        // has been fully initialized.
+        // SAFETY: NtQueryInformationProcess wrote exactly `size_of::<T>()`
+        // bytes on success, so every byte of `data` is initialized. This is
+        // only sound because every caller instantiates `T` with a plain
+        // winapi POD struct (e.g. `LPVOID`, `PROCESS_BASIC_INFORMATION`) that
+        // has no validity invariants beyond "any bit pattern is valid" - this
+        // function does not itself constrain `T`, so a future caller must
+        // preserve that property.
         let data = unsafe { data.assume_init() };
         Some(data)
     }
@@ -188,8 +193,13 @@ impl ProcHandle {
         if res == 0 {
             return None;
         }
-        // SAFETY: ReadProcessMemory returned non-zero (success), so `data`
-        // has been fully initialized.
+        // SAFETY: ReadProcessMemory wrote exactly `size_of::<T>()` bytes from
+        // the target process into `data` on success. As with `query_proc`
+        // above, this is only sound because every caller instantiates `T`
+        // with a plain POD struct read from the remote process's memory
+        // layout (e.g. `PEB32`) with no validity invariants beyond
+        // "any bit pattern is valid" - this function does not itself
+        // constrain `T`.
         let data = unsafe { data.assume_init() };
         Some(data)
     }
