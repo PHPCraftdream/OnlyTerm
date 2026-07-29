@@ -49,9 +49,7 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
     engine.register_type_with_name::<GuiWin>("GuiWin");
 
     engine.register_fn("to_string", |this: &mut GuiWin| -> String {
-        format!("GuiWin(mux_window_id:{}, pid:{})", this.mux_window_id, unsafe {
-            libc::getpid()
-        })
+        format!("GuiWin(mux_window_id:{}, pid:{})", this.mux_window_id, std::process::id())
     });
 
     engine.register_fn("window_id", |this: &mut GuiWin| -> rhai::INT {

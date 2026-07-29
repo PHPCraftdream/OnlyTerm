@@ -53,12 +53,18 @@ impl RawHandlePair {
 
 impl HasWindowHandle for RawHandlePair {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+        // SAFETY: `borrow_raw` requires the handle to outlive the returned
+        // borrow. `self.window` is an owned `RawWindowHandle` living as long as
+        // `&self`, matching the returned `WindowHandle<'_>` lifetime.
         unsafe { Ok(WindowHandle::borrow_raw(self.window)) }
     }
 }
 
 impl HasDisplayHandle for RawHandlePair {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
+        // SAFETY: `borrow_raw` requires the handle to outlive the returned
+        // borrow. `self.display` is an owned `RawDisplayHandle` living as long
+        // as `&self`, matching the returned `DisplayHandle<'_>` lifetime.
         unsafe { Ok(DisplayHandle::borrow_raw(self.display)) }
     }
 }
@@ -228,6 +234,11 @@ impl WebGpuState {
             backends,
             ..Default::default()
         });
+        // SAFETY: `create_surface_unsafe` is the only way to build a surface
+        // from a raw window handle. `handle` is a `RawHandlePair` whose owned
+        // handles are valid (obtained from a live window in
+        // `RawHandlePair::new`) and satisfy the `HasWindowHandle` contract for
+        // the surface's lifetime; the surface is dropped before the window.
         let surface = unsafe {
             instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&handle)?)?
         };
@@ -542,7 +553,13 @@ impl WebGpuState {
         match self.handle.window {
             #[cfg(windows)]
             RawWindowHandle::Win32(h) => {
+                // SAFETY: `RECT` is a POD with no validity invariants, so
+                // `mem::zeroed()` yields a valid all-zero value as an out-param.
                 let mut rect = unsafe { std::mem::zeroed() };
+                // SAFETY: `h.hwnd.get()` is the live HWND for this window and
+                // `&mut rect` is a valid out-pointer. `GetClientRect` only
+                // writes the client rectangle; on failure `rect` stays usable
+                // because it was zero-initialised.
                 unsafe { winapi::um::winuser::GetClientRect(h.hwnd.get() as _, &mut rect) };
                 dims.pixel_width = (rect.right - rect.left) as usize;
                 dims.pixel_height = (rect.bottom - rect.top) as usize;

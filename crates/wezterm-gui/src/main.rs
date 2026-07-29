@@ -348,7 +348,7 @@ async fn async_run_terminal_gui(
     should_publish: bool,
 ) -> anyhow::Result<()> {
     let unix_socket_path =
-        config::RUNTIME_DIR.join(format!("gui-sock-{}", unsafe { libc::getpid() }));
+        config::RUNTIME_DIR.join(format!("gui-sock-{}", std::process::id()));
     std::env::set_var("ONLYTERM_UNIX_SOCKET", unix_socket_path.clone());
     wezterm_blob_leases::register_storage(Arc::new(
         wezterm_blob_leases::simple_tempdir::SimpleTempDir::new_in(&*config::CACHE_DIR)?,
@@ -1102,6 +1102,11 @@ fn run() -> anyhow::Result<()> {
     // attributed to our application.
     #[cfg(windows)]
     {
+        // SAFETY: `SetCurrentProcessExplicitAppUserModelID` takes a PCWSTR that
+        // must point to a NUL-terminated UTF-16 string valid for the call's
+        // duration. `wide_string` appends a trailing NUL and the returned
+        // `Vec<u16>` lives until the end of this statement, so the borrowed
+        // pointer is valid. The call only affects the current process.
         unsafe {
             ::windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(
                 ::windows::core::PCWSTR(wide_string("org.wezfurlong.onlyterm").as_ptr()),
@@ -1123,6 +1128,10 @@ fn run() -> anyhow::Result<()> {
     // the command window, which means that it will appear to the user
     // that we hung at the end, when in reality the shell is waiting for
     // input but didn't know to re-draw the prompt.
+    // SAFETY: `AttachConsole` attaches the calling process to the console of
+    // the given process id; `ATTACH_PARENT_PROCESS` is the sentinel (DWORD)-1
+    // meaning "the parent process". No pointers are dereferenced and the single
+    // `u32` argument is a value type, so there is no aliasing or lifetime concern.
     #[cfg(windows)]
     unsafe {
         if opts.attach_parent_console {
