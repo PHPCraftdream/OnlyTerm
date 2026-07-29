@@ -35,7 +35,7 @@ impl TerminalState {
         self.encode_coord(event.x as i64, &mut buf);
         self.encode_coord(event.y, &mut buf);
         log::trace!("{event:?} {buf:?}");
-        self.writer.write(&buf)?;
+        self.writer.write_all(&buf)?;
         self.writer.flush()?;
         Ok(())
     }
