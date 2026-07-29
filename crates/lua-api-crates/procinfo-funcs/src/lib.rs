@@ -23,7 +23,7 @@ fn local_process_info_to_rhai(info: &LocalProcessInfo) -> rhai::Dynamic {
 pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
     let mut proc_module = rhai::Module::new();
 
-    proc_module.set_native_fn("pid", || Ok(unsafe { libc::getpid() } as rhai::INT));
+    proc_module.set_native_fn("pid", || Ok(std::process::id() as rhai::INT));
 
     proc_module.set_native_fn(
         "get_info_for_pid",
