@@ -23,6 +23,12 @@ use winapi::um::wingdi::{
 pub struct GdiFontLocator {}
 
 fn extract_raw_font_data(font: HFONT, name: &str) -> anyhow::Result<FontDataSource> {
+    // SAFETY: We create and own the compatible device context returned by
+    // `CreateCompatibleDC` and free it with `DeleteDC` before returning. Each
+    // `GetFontData` call is made twice: first with a null buffer to query the
+    // size, then with a `vec![0u8; size]` buffer of exactly that length, so the
+    // write destination is always large enough for the bytes GDI returns. The
+    // caller-owned `font` (HFONT) is only selected into the DC, never freed here.
     unsafe {
         let hdc = CreateCompatibleDC(std::ptr::null_mut());
         SelectObject(hdc, font as *mut _);
@@ -127,6 +133,10 @@ fn load_font(font_attr: &FontAttributes, pixel_size: u16) -> anyhow::Result<Pars
         log_font.lfFaceName[i] = c;
     }
 
+    // SAFETY: `log_font` is a fully-initialized `LOGFONTW`: its face name was
+    // filled from `wide_string` (which appends a NUL terminator) and length-
+    // checked against `LF_FACESIZE` above. `CreateFontIndirectW` returns an
+    // owned HFONT that we release with `DeleteObject` after extracting its data.
     unsafe {
         let font = CreateFontIndirectW(&log_font);
         let result = extract_font_data(font, font_attr, pixel_size);
@@ -137,6 +147,10 @@ fn load_font(font_attr: &FontAttributes, pixel_size: u16) -> anyhow::Result<Pars
 
 pub fn parse_log_font(log_font: &LOGFONTW, hdc: HDC) -> anyhow::Result<(ParsedFont, f64)> {
     let name = String::from_utf16(&log_font.lfFaceName)?;
+    // SAFETY: `log_font` is a caller-provided, fully-initialized `LOGFONTW` that
+    // `CreateFontIndirectW` treats as read-only; the resulting owned HFONT is
+    // freed via `DeleteObject`. `hdc` is caller-owned and only read by
+    // `GetDeviceCaps`; `MulDiv` is pure integer arithmetic with no pointers.
     unsafe {
         let font = CreateFontIndirectW(log_font);
         let source = extract_raw_font_data(font, &name);
