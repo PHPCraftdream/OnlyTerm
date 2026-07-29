@@ -781,6 +781,8 @@ mod test {
             Self {
                 size,
                 buf,
+                // SAFETY: Termios is a plain POD struct; all-zero bits are a
+                // valid (default) value for this test-only fake tty.
                 termios: unsafe { mem::zeroed() },
             }
         }

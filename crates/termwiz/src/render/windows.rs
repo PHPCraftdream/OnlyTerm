@@ -151,6 +151,9 @@ impl ScreenBuffer {
         let c = c as u16;
         for cell in &mut self.buf[idx..end] {
             cell.Attributes = attr;
+            // SAFETY: `cell.Char.UnicodeChar_mut()` returns a valid `*mut u16`
+            // pointing in-place at the u16 variant of this cell's `Char` union
+            // (derived from the live `&mut` cell), so writing through it is sound.
             unsafe {
                 *cell.Char.UnicodeChar_mut() = c;
             }
@@ -215,6 +218,9 @@ impl ScreenBuffer {
 
                     let cell = &mut self.buf[idx];
                     cell.Attributes = attr;
+                    // SAFETY: `cell.Char.UnicodeChar_mut()` returns a valid `*mut u16`
+                    // pointing in-place at the u16 variant of this cell's `Char` union
+                    // (derived from the live `&mut` cell), so writing through it is sound.
                     unsafe {
                         *cell.Char.UnicodeChar_mut() = c as u16;
                     }
