@@ -44,6 +44,9 @@ impl IntoRawFd for UnixStream {
 }
 #[cfg(unix)]
 impl FromRawFd for UnixStream {
+    // SAFETY: forwards the `FromRawFd` contract to
+    // `StreamImpl::from_raw_fd` unchanged: the caller must pass ownership of a
+    // valid, open file descriptor that is not used or closed elsewhere.
     unsafe fn from_raw_fd(fd: RawFd) -> UnixStream {
         UnixStream(StreamImpl::from_raw_fd(fd))
     }
@@ -75,6 +78,9 @@ impl AsSocket for UnixStream {
 }
 #[cfg(windows)]
 impl FromRawSocket for UnixStream {
+    // SAFETY: forwards the `FromRawSocket` contract to
+    // `StreamImpl::from_raw_socket` unchanged: the caller must pass ownership of
+    // a valid socket that is not used or closed elsewhere.
     unsafe fn from_raw_socket(socket: RawSocket) -> UnixStream {
         UnixStream(StreamImpl::from_raw_socket(socket))
     }
@@ -95,6 +101,12 @@ impl Write for UnixStream {
     }
 }
 
+// SAFETY: `IoSafe` is async-io's marker asserting that the type's I/O is
+// safe to drive via its reactor. `UnixStream` wraps `StreamImpl` (std
+// `UnixStream` on unix, `uds_windows::UnixStream` on windows) and forwards
+// `Read`/`Write`/`Async` to it unchanged; std's `UnixStream` already implements
+// `IoSafe`, and the Windows wrapper performs I/O on a real socket handle,
+// satisfying the trait's requirements on both platforms.
 unsafe impl async_io::IoSafe for UnixStream {}
 
 impl UnixStream {

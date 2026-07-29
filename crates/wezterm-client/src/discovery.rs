@@ -45,6 +45,9 @@ mod windows {
 
     impl Drop for FileMapping {
         fn drop(&mut self) {
+            // SAFETY: `self.handle` is an owned HANDLE obtained from
+            // CreateFileMappingW/OpenFileMappingW and not closed elsewhere; the
+            // type ensures single ownership, so closing it once on drop is sound.
             unsafe { CloseHandle(self.handle) };
         }
     }
@@ -54,6 +57,10 @@ mod windows {
         pub fn create(name: &str, size: usize) -> anyhow::Result<Self> {
             let wide_name = wide_string(&name);
 
+            // SAFETY: `INVALID_HANDLE_VALUE` backed by the page file is a valid
+            // mapping source; the security attrs pointer is null (default). The
+            // size and name args are well-formed; `wide_name` is NUL-terminated
+            // (see `wide_string`) and outlives the call.
             let handle = unsafe {
                 CreateFileMappingW(
                     INVALID_HANDLE_VALUE,
@@ -79,6 +86,8 @@ mod windows {
         pub fn open(name: &str, size: usize) -> anyhow::Result<Self> {
             let wide_name = wide_string(&name);
 
+            // SAFETY: `wide_name` is NUL-terminated (see `wide_string`) and
+            // outlives the call; the access/inherit args are constants.
             let handle = unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, wide_name.as_ptr()) };
             if handle.is_null() {
                 return Err(IoError::last_os_error())
@@ -93,6 +102,8 @@ mod windows {
 
         /// Map the mapping into the process address space
         pub fn map(&self) -> anyhow::Result<MappedView> {
+            // SAFETY: `self.handle` is a valid file-mapping HANDLE; the offset
+            // is 0 and `self.size` matches the size the mapping was created with.
             let buf =
                 unsafe { MapViewOfFile(self.handle, FILE_MAP_ALL_ACCESS, 0, 0, self.size as _) };
             if buf.is_null() {
@@ -113,6 +124,8 @@ mod windows {
     }
     impl Drop for NamedMutex {
         fn drop(&mut self) {
+            // SAFETY: `self.handle` is an owned mutex HANDLE from CreateMutexW,
+            // closed exactly once on drop.
             unsafe {
                 CloseHandle(self.handle);
             }
@@ -123,6 +136,9 @@ mod windows {
         /// Create a mutex with the specified name
         pub fn new(name: &str) -> anyhow::Result<Self> {
             let wide_name = wide_string(name);
+            // SAFETY: null security attrs and an initial-owner arg of 0 are
+            // valid; `wide_name` is NUL-terminated (see `wide_string`) and
+            // outlives the call.
             let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, wide_name.as_ptr()) };
             if handle.is_null() {
                 return Err(IoError::last_os_error())
@@ -138,12 +154,16 @@ mod windows {
         where
             F: FnOnce() -> anyhow::Result<T>,
         {
+            // SAFETY: `self.handle` is a valid sync-object HANDLE; the call
+            // blocks until signaled without touching caller memory.
             let res = unsafe { WaitForSingleObject(self.handle, INFINITE) };
             if res != WAIT_OBJECT_0 {
                 return Err(IoError::last_os_error()).context("acquire mutex");
             }
 
             let res = func();
+            // SAFETY: `self.handle` is a valid mutex HANDLE owned by this thread
+            // (acquired via WaitForSingleObject just above).
             unsafe { ReleaseMutex(self.handle) };
             res
         }
@@ -157,6 +177,9 @@ mod windows {
 
     impl Drop for MappedView {
         fn drop(&mut self) {
+            // SAFETY: `self.buf` is a valid base address returned by
+            // MapViewOfFile and owned solely by this MappedView, so unmapping
+            // once on drop is sound.
             unsafe {
                 UnmapViewOfFile(self.buf as _);
             }
@@ -165,10 +188,14 @@ mod windows {
 
     impl MappedView {
         fn slice_mut(&mut self) -> &mut [u8] {
+            // SAFETY: `self.buf` is a valid, mapped, `self.size`-byte region from
+            // MapViewOfFile; the borrow ties the slice to `&mut self` so no aliasing.
             unsafe { std::slice::from_raw_parts_mut(self.buf, self.size) }
         }
 
         fn slice(&self) -> &[u8] {
+            // SAFETY: `self.buf` is a valid, mapped, `self.size`-byte region from
+            // MapViewOfFile; the borrow ties the slice to `&self`.
             unsafe { std::slice::from_raw_parts(self.buf, self.size) }
         }
     }

@@ -31,7 +31,7 @@ impl ClientId {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|_| "localhost".to_string()),
             username: config::username_from_env().unwrap_or_else(|_| "somebody".to_string()),
-            pid: unsafe { libc::getpid() as u32 },
+            pid: std::process::id(),
             epoch: *EPOCH,
             id,
             ssh_auth_sock: crate::AgentProxy::default_ssh_auth_sock(),

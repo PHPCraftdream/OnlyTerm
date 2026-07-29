@@ -51,9 +51,7 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
     engine.register_type_with_name::<MuxWindow>("MuxWindow");
 
     engine.register_fn("to_string", |this: &mut MuxWindow| -> String {
-        format!("MuxWindow(mux_window_id:{}, pid:{})", this.0, unsafe {
-            libc::getpid()
-        })
+        format!("MuxWindow(mux_window_id:{}, pid:{})", this.0, std::process::id())
     });
     engine.register_fn(
         "window_id",

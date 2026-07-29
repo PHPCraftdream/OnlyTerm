@@ -376,6 +376,10 @@ fn parse_buffered_data(pane: Weak<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: Fil
 fn set_socket_buffer(fd: &mut FileDescriptor, option: i32, size: usize) -> anyhow::Result<()> {
     let size = size as c_int;
     let socklen = std::mem::size_of_val(&size);
+    // SAFETY: `fd.as_socket_descriptor()` is a valid open socket descriptor.
+    // `&size` points to a valid `c_int` that outlives the call, and `socklen`
+    // is exactly `size_of::<c_int>()`. `setsockopt` only reads `socklen` bytes
+    // from that pointer for the given SOL_SOCKET level option.
     unsafe {
         let res = libc::setsockopt(
             fd.as_socket_descriptor(),

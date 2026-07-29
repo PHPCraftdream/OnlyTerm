@@ -647,7 +647,11 @@ mod test {
 
         // Save the current fd limit so we can restore it even if an
         // assertion below fails.
+        // SAFETY: `libc::rlimit` is a POD (two `rlim_t` fields) with no
+        // validity invariants, so `mem::zeroed()` produces a valid value.
         let mut saved: libc::rlimit = unsafe { std::mem::zeroed() };
+        // SAFETY: `RLIMIT_NOFILE` is a valid resource constant and `&mut saved`
+        // is a valid out-pointer that outlives the call.
         let got = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut saved) };
         assert_eq!(got, 0, "getrlimit failed");
 
@@ -673,6 +677,9 @@ mod test {
             rlim_cur: current_fd_count.saturating_sub(1).max(3),
             rlim_max: saved.rlim_max,
         };
+        // SAFETY: `&tight` is a valid pointer to an `rlimit` that outlives the
+        // call; lowering the soft RLIMIT_NOFILE limit is a supported operation
+        // and stays within the existing hard limit (`tight.rlim_max = saved.rlim_max`).
         let set = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &tight) };
 
         let result = if set == 0 {
@@ -688,6 +695,8 @@ mod test {
         // Restore the fd limit and release our held-open files before making
         // any assertions, so a failing assertion doesn't leave the test
         // process (and subsequent tests) starved of file descriptors.
+        // SAFETY: `&saved` is a valid pointer to the previously captured
+        // `rlimit`; this restores the original limit, which was valid on entry.
         unsafe {
             libc::setrlimit(libc::RLIMIT_NOFILE, &saved);
         }

@@ -32,9 +32,7 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
     engine.register_type_with_name::<MuxDomain>("MuxDomain");
 
     engine.register_fn("to_string", |this: &mut MuxDomain| -> String {
-        format!("MuxDomain(pane_id:{}, pid:{})", this.0, unsafe {
-            libc::getpid()
-        })
+        format!("MuxDomain(pane_id:{}, pid:{})", this.0, std::process::id())
     });
     engine.register_fn(
         "domain_id",

@@ -114,9 +114,7 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
     engine.register_type_with_name::<MuxPane>("MuxPane");
 
     engine.register_fn("to_string", |this: &mut MuxPane| -> String {
-        format!("MuxPane(pane_id:{}, pid:{})", this.0, unsafe {
-            libc::getpid()
-        })
+        format!("MuxPane(pane_id:{}, pid:{})", this.0, std::process::id())
     });
     engine.register_fn("pane_id", |this: &mut MuxPane| -> rhai::INT {
         this.0 as rhai::INT

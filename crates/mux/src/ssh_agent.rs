@@ -81,7 +81,7 @@ fn update_symlink<P: AsRef<Path>, Q: AsRef<Path>>(original: P, link: Q) -> anyho
 
 impl AgentProxy {
     pub fn new() -> Self {
-        let pid = unsafe { libc::getpid() };
+        let pid = std::process::id();
         let sock_path = config::RUNTIME_DIR.join(format!("agent.{pid}"));
 
         if let Some(inherited) = Self::default_ssh_auth_sock() {
