@@ -103,7 +103,7 @@ impl<'a> ProbeCapabilities<'a> {
 
         while !done {
             let mut byte = [0u8];
-            self.read.read(&mut byte)?;
+            self.read.read_exact(&mut byte)?;
 
             parser.parse(&byte, |action| {
                 // print!("{action:?}\r\n");
@@ -177,7 +177,7 @@ impl<'a> ProbeCapabilities<'a> {
 
         while !done {
             let mut byte = [0u8];
-            self.read.read(&mut byte)?;
+            self.read.read_exact(&mut byte)?;
 
             parser.parse(&byte, |action| {
                 // print!("{action:?}\r\n");

@@ -145,7 +145,10 @@ fn load_font(font_attr: &FontAttributes, pixel_size: u16) -> anyhow::Result<Pars
     }
 }
 
-pub fn parse_log_font(log_font: &LOGFONTW, hdc: HDC) -> anyhow::Result<(ParsedFont, f64)> {
+/// # Safety
+/// `hdc` must be a valid device context handle (e.g. obtained from
+/// `GetDC`/`CreateDC`); it is passed to `GetDeviceCaps` which reads through it.
+pub unsafe fn parse_log_font(log_font: &LOGFONTW, hdc: HDC) -> anyhow::Result<(ParsedFont, f64)> {
     let name = String::from_utf16(&log_font.lfFaceName)?;
     // SAFETY: `log_font` is a caller-provided, fully-initialized `LOGFONTW` that
     // `CreateFontIndirectW` treats as read-only; the resulting owned HFONT is

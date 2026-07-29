@@ -31,7 +31,7 @@ impl Display for FontOrigin {
     }
 }
 
-#[derive(Clone, Hash)]
+#[derive(Clone)]
 pub enum FontDataSource {
     OnDisk(PathBuf),
     BuiltIn {
@@ -86,6 +86,21 @@ impl PartialEq for FontDataSource {
                 name_a == name_b
             }
             _ => false,
+        }
+    }
+}
+
+// Hand-written to stay consistent with the hand-written `PartialEq` above
+// (which only compares `path`/`name`, not `data`): two values that compare
+// equal must hash equally, which a derived `Hash` (hashing every field,
+// including `data`) would violate.
+impl std::hash::Hash for FontDataSource {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            Self::OnDisk(path) => path.hash(state),
+            Self::BuiltIn { name, .. } => name.hash(state),
+            Self::Memory { name, .. } => name.hash(state),
         }
     }
 }

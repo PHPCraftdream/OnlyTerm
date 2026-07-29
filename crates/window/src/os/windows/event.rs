@@ -12,6 +12,7 @@ pub struct EventHandle(pub HANDLE);
 // across threads (Send + Sync) is sound. The handle is only ever passed to
 // the event APIs below and is closed exactly once in `Drop`.
 unsafe impl Send for EventHandle {}
+// SAFETY: same rationale as the `Send` impl above.
 unsafe impl Sync for EventHandle {}
 
 impl Drop for EventHandle {

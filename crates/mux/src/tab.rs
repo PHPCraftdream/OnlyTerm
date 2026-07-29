@@ -1635,10 +1635,7 @@ impl TabInner {
 
     fn remove_pane(&mut self, pane_id: PaneId) -> Option<Arc<dyn Pane>> {
         let panes = self.remove_pane_if(|_, pane| pane.pane_id() == pane_id, false);
-        for pane in panes {
-            return Some(pane);
-        }
-        None
+        panes.into_iter().next()
     }
 
     fn remove_pane_if<F>(&mut self, f: F, kill: bool) -> Vec<Arc<dyn Pane>>
