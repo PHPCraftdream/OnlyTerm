@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 // suppress inscrutable useless_attribute clippy that shows up when
 // using derive(FromPrimitive)
 #![allow(clippy::useless_attribute)]

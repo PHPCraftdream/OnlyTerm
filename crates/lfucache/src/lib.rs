@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 use ahash::AHasher;
 use config::ConfigHandle;
 use intrusive_collections::{

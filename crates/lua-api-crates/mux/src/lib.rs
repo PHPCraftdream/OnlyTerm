@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 use config::keyassignment::SpawnTabDomain;
 use config::impl_rhai_conversion_dynamic;
 use mux::domain::{DomainId, SplitSource};

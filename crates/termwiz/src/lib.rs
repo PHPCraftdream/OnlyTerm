@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! # Terminal Wizardry
 //!
 //! This is a rust crate that provides a number of support functions

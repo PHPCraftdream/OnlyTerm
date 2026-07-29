@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 

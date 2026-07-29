@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! Types for representing Rust types in a more dynamic form
 //! that is similar to JSON or Lua values.
 

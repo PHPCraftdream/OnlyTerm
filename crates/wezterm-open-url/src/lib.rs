@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 // Portions of this file are derived from code that is
 // Copyright © 2015 Sebastian Thiel
 // <https://github.com/Byron/open-rs>

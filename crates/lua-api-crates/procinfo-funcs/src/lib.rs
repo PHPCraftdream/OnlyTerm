@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 use procinfo::LocalProcessInfo;
 use wezterm_dynamic::ToDynamic;
 
