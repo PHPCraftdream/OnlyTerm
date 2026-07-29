@@ -10,7 +10,7 @@ use ::window::bitmaps::TextureRect;
 use ::window::DeadKeyStatus;
 use anyhow::Context;
 use config::VisualBellTarget;
-use mux::pane::{PaneId, WithPaneLines};
+use mux::pane::PaneId;
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::tab::PositionedPane;
 use ordered_float::NotNan;
@@ -372,7 +372,7 @@ impl crate::TermWindow {
                     &mut self,
                     stable_top: StableRowIndex,
                     line_idx: usize,
-                    line: &&mut Line,
+                    line: &Line,
                     is_wrap_continuation: bool,
                 ) -> anyhow::Result<()> {
                     let stable_row = stable_top + line_idx as StableRowIndex;
@@ -498,7 +498,7 @@ impl crate::TermWindow {
                                 pixel_width: self.dims.cols as f32
                                     * self.term_window.render_metrics.cell_size.width as f32,
                                 stable_line_idx: Some(stable_row),
-                                line: &line,
+                                line,
                                 selection: selrange.clone(),
                                 cursor: &self.cursor,
                                 palette: &self.palette,
@@ -558,8 +558,8 @@ impl crate::TermWindow {
                 }
             }
 
-            impl<'a, 'b> WithPaneLines for LineRender<'a, 'b> {
-                fn with_lines_mut(&mut self, stable_top: StableRowIndex, lines: &mut [&mut Line]) {
+            impl<'a, 'b> LineRender<'a, 'b> {
+                fn render_lines(&mut self, stable_top: StableRowIndex, lines: &[Line]) {
                     for line_idx in 0..lines.len() {
                         // A physical row only ever sees its own cells, so
                         // it can't tell on its own whether a Hebrew phrase
@@ -568,9 +568,27 @@ impl crate::TermWindow {
                         // the row above -- check the previous *visible*
                         // physical row directly (if any is currently on
                         // screen) rather than guessing.
-                        let is_wrap_continuation = line_idx > 0
-                            && lines[line_idx - 1].last_cell_was_wrapped();
+                        //
+                        // That lookup depends on which lines happen to be
+                        // in the currently visible window, which shifts
+                        // every time the pane scrolls -- so gate it behind
+                        // a cheap check of this line's own first cell.
+                        // Lines that don't start with Hebrew content can
+                        // never be affected by wrap-continuation either
+                        // way, so their `is_wrap_continuation` can stay a
+                        // constant `false` that doesn't depend on scroll
+                        // position, instead of flip-flopping every time
+                        // the visible window shifts by one row and
+                        // needlessly invalidating their shape/quad cache
+                        // entries (this caused a visible scroll stutter).
                         let line = &lines[line_idx];
+                        let first_cell_is_hebrew = line
+                            .get_cell(0)
+                            .map(|c| wezterm_surface::cellcluster::CellCluster::is_hebrew_cell(c.str()))
+                            .unwrap_or(false);
+                        let is_wrap_continuation = first_cell_is_hebrew
+                            && line_idx > 0
+                            && lines[line_idx - 1].last_cell_was_wrapped();
                         if let Err(err) =
                             self.render_line(stable_top, line_idx, line, is_wrap_continuation)
                         {
@@ -581,9 +599,16 @@ impl crate::TermWindow {
                 }
             }
 
-            pos.pane.with_lines_mut(stable_range.clone(), &mut render);
+            // Snapshot the lines (a cheap clone of each `Line`) before doing
+            // any shaping/quad-building: `Pane::get_lines` only holds the
+            // pane's `Mutex<Terminal>` for the duration of that clone, unlike
+            // the old `with_lines_mut` callback, which held the lock for the
+            // whole render loop below and could starve the pty reader/parser
+            // and input handling for as long as a frame took to build.
+            let (stable_top, lines) = pos.pane.get_lines(stable_range.clone());
+            render.render_lines(stable_top, &lines);
             if let Some(error) = render.error.take() {
-                return Err(error).context("error while calling with_lines_mut");
+                return Err(error).context("error while calling get_lines");
             }
         }
 
