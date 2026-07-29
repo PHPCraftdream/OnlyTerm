@@ -274,9 +274,9 @@ fn setup_pretty() -> (LevelFilter, Logger) {
         prune_old_logs();
     }
 
-    let log_file_name = config::RUNTIME_DIR.join(format!("{}-log-{}.txt", base_name, unsafe {
-        libc::getpid()
-    }));
+    let log_file_name = config::RUNTIME_DIR.join(format!("{}-log-{}.txt", base_name,
+        // SAFETY: `getpid` has no preconditions and no UB.
+        unsafe { libc::getpid() }));
 
     let mut filters = FilterBuilder::new();
     for (module, level) in [

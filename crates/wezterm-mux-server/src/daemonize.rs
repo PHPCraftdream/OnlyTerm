@@ -11,10 +11,15 @@ enum Fork {
 }
 
 fn fork() -> anyhow::Result<Fork> {
+    // SAFETY: `fork` is a standard POSIX call. The child inherits a copy of
+    // the address space; only async-signal-safe functions should be called
+    // between fork and exec in a multi-threaded process. Here we only call
+    // `getpid`, which is async-signal-safe.
     let pid = unsafe { libc::fork() };
 
     if pid == 0 {
         // We are the child
+        // SAFETY: `getpid` has no preconditions.
         let pid = unsafe { libc::getpid() };
         Ok(Fork::Child(pid))
     } else if pid < 0 {
@@ -27,6 +32,8 @@ fn fork() -> anyhow::Result<Fork> {
 }
 
 fn setsid() -> anyhow::Result<()> {
+    // SAFETY: `setsid` creates a new session; it is a standard POSIX call
+    // with no memory-safety preconditions.
     let pid = unsafe { libc::setsid() };
     if pid == -1 {
         let err: anyhow::Error = std::io::Error::last_os_error().into();
@@ -53,12 +60,15 @@ fn lock_pid_file(config: &config::ConfigHandle) -> anyhow::Result<std::fs::File>
         .open(&pid_file)
         .with_context(|| format!("opening pid file {}", pid_file.display()))?;
     config::set_sticky_bit(&pid_file);
+    // SAFETY: `file.as_raw_fd()` is a valid fd; LOCK_EX | LOCK_NB are valid
+    // flock flags for a non-blocking exclusive lock.
     let res = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if res != 0 {
         let err = std::io::Error::last_os_error();
         anyhow::bail!("unable to lock pid file {}: {}", pid_file.display(), err);
     }
 
+    // SAFETY: `file.as_raw_fd()` is a valid fd; truncating to 0 is safe.
     unsafe { libc::ftruncate(file.as_raw_fd(), 0) };
 
     Ok(file)
@@ -83,6 +93,8 @@ pub fn daemonize(config: &config::ConfigHandle) -> anyhow::Result<Option<RawFd>>
     match fork()? {
         Fork::Parent(pid) => {
             let mut status = 0;
+            // SAFETY: `pid` is a valid child process id returned by fork;
+            // `&mut status` is a valid out-pointer.
             unsafe { libc::waitpid(pid, &mut status, 0) };
             std::process::exit(0);
         }
@@ -98,6 +110,7 @@ pub fn daemonize(config: &config::ConfigHandle) -> anyhow::Result<Option<RawFd>>
     }
 
     let pid_file_fd = pid_file.map(|mut pid_file| {
+        // SAFETY: `getpid` has no preconditions.
         writeln!(pid_file, "{}", unsafe { libc::getpid() }).ok();
         // Leak it so that the descriptor remains open for the duration
         // of the process runtime
@@ -111,6 +124,8 @@ pub fn daemonize(config: &config::ConfigHandle) -> anyhow::Result<Option<RawFd>>
         fd
     });
 
+    // SAFETY: `devnull`, `stdout`, `stderr` are valid fds; the STDIN/OUT/ERR
+    // constants are valid destination fds.
     unsafe { libc::dup2(devnull.as_raw_fd(), libc::STDIN_FILENO) };
     unsafe { libc::dup2(stdout.as_raw_fd(), libc::STDOUT_FILENO) };
     unsafe { libc::dup2(stderr.as_raw_fd(), libc::STDERR_FILENO) };
@@ -119,6 +134,8 @@ pub fn daemonize(config: &config::ConfigHandle) -> anyhow::Result<Option<RawFd>>
 }
 
 pub fn set_cloexec(fd: RawFd, enable: bool) {
+    // SAFETY: `fd` is a valid open file descriptor. F_GETFD reads flags,
+    // F_SETFD writes flags.
     unsafe {
         let flags = libc::fcntl(fd, libc::F_GETFD);
         if flags == -1 {

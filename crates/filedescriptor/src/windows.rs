@@ -89,6 +89,12 @@ impl<T: FromRawSocket> FromRawSocketDescriptor for T {
     }
 }
 
+// SAFETY: `OwnedHandle` wraps a Windows kernel `HANDLE`, which is a
+// process-global, thread-independent value (it is an integer/pointer into
+// the process handle table, not a thread-local resource). Moving or sharing
+// it across threads is sound; the handle carries no thread affinity.
+// Mutation of the underlying kernel object is governed by the kernel, not by
+// Rust's `&mut` exclusivity.
 unsafe impl Send for OwnedHandle {}
 unsafe impl Sync for OwnedHandle {}
 
@@ -102,7 +108,10 @@ impl OwnedHandle {
 
     pub(crate) fn probe_handle_type(handle: RawHandle) -> HandleType {
         let handle = handle as HANDLE;
-        match unsafe { GetFileType(handle) } {
+        match
+            // SAFETY: `handle` is a valid HANDLE (or INVALID_HANDLE_VALUE).
+            unsafe { GetFileType(handle) }
+        {
             FILE_TYPE_CHAR => HandleType::Char,
             FILE_TYPE_DISK => HandleType::Disk,
             FILE_TYPE_PIPE => {
@@ -111,6 +120,8 @@ impl OwnedHandle {
                 let mut out_buf = 0;
                 let mut in_buf = 0;
                 let mut inst = 0;
+                // SAFETY: `handle` is a valid HANDLE; all out-pointers are
+                // valid `*mut DWORD`.
                 if unsafe {
                     GetNamedPipeInfo(handle, &mut flags, &mut out_buf, &mut in_buf, &mut inst)
                 } != 0
@@ -121,6 +132,8 @@ impl OwnedHandle {
                     // when piping between WSL and native win32 apps.
                     let mut err = 0;
                     let mut errsize = std::mem::size_of_val(&err) as _;
+                    // SAFETY: `handle` is a valid HANDLE cast to a SOCKET;
+                    // all out-pointers are valid.
                     if unsafe {
                         getsockopt(
                             handle as _,
@@ -153,6 +166,8 @@ impl OwnedHandle {
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
         if self.handle != INVALID_HANDLE_VALUE as _ && !self.handle.is_null() {
+            // SAFETY: `self.handle` was checked non-null and non-INVALID;
+            // `is_socket_handle` determines the correct close function.
             unsafe {
                 if self.is_socket_handle() {
                     closesocket(self.handle as _);
@@ -166,6 +181,8 @@ impl Drop for OwnedHandle {
 
 impl FromRawHandle for OwnedHandle {
     unsafe fn from_raw_handle(handle: RawHandle) -> Self {
+        // SAFETY: forwarded from the trait contract — the caller guarantees
+        // `handle` is a valid, owned HANDLE (or INVALID_HANDLE_VALUE).
         OwnedHandle {
             handle,
             handle_type: Self::probe_handle_type(handle),
@@ -186,8 +203,12 @@ impl OwnedHandle {
 
         let handle_type = Self::probe_handle_type_if_unknown(handle, handle_type);
 
+        // SAFETY: GetCurrentProcess returns a pseudo-handle with no
+        // preconditions.
         let proc = unsafe { GetCurrentProcess() };
         let mut duped = INVALID_HANDLE_VALUE;
+        // SAFETY: `proc` is a valid pseudo-handle; `handle` is a valid source;
+        // `&mut duped` is a valid out-pointer.
         let ok = unsafe {
             DuplicateHandle(
                 proc,
@@ -229,6 +250,8 @@ impl FileDescriptor {
     pub(crate) fn as_stdio_impl(&self) -> Result<std::process::Stdio> {
         let duped = self.handle.try_clone()?;
         let handle = duped.into_raw_handle();
+        // SAFETY: `handle` is a duplicated, valid HANDLE obtained via
+        // DuplicateHandle; ownership is transferred to `Stdio`.
         let stdio = unsafe { std::process::Stdio::from_raw_handle(handle) };
         Ok(stdio)
     }
@@ -237,6 +260,8 @@ impl FileDescriptor {
     pub(crate) fn as_file_impl(&self) -> Result<std::fs::File> {
         let duped = self.handle.try_clone()?;
         let handle = duped.into_raw_handle();
+        // SAFETY: `handle` is a duplicated, valid HANDLE obtained via
+        // DuplicateHandle; ownership is transferred to `File`.
         let stdio = unsafe { std::fs::File::from_raw_handle(handle) };
         Ok(stdio)
     }
@@ -248,6 +273,8 @@ impl FileDescriptor {
         }
 
         let mut on = if non_blocking { 1 } else { 0 };
+        // SAFETY: The handle was verified to be a socket; FIONBIO is a
+        // standard ioctl.
         let res = unsafe {
             ioctlsocket(
                 self.as_raw_socket() as SOCKET,
@@ -272,10 +299,15 @@ impl FileDescriptor {
             StdioDescriptor::Stderr => STD_ERROR_HANDLE,
         };
 
+        // SAFETY: `std_handle` is a valid STD_* constant.
         let raw_std_handle = unsafe { GetStdHandle(std_handle) } as *mut _;
+        // SAFETY: `raw_std_handle` is a valid (possibly NULL) stdio handle;
+        // ownership is transferred to the returned `FileDescriptor`.
         let std_original = unsafe { FileDescriptor::from_raw_handle(raw_std_handle) };
 
         let cloned_handle = OwnedHandle::dup(f)?;
+        // SAFETY: `std_handle` is a valid STD_* constant; `cloned_handle`
+        // is a valid duplicated handle.
         if unsafe { SetStdHandle(std_handle, cloned_handle.into_raw_handle() as *mut _) } == 0 {
             Err(Error::SetStdHandle(std::io::Error::last_os_error()))
         } else {
@@ -297,6 +329,8 @@ impl AsRawHandle for FileDescriptor {
 }
 
 impl FromRawHandle for FileDescriptor {
+    // SAFETY: forwarded from the trait contract — the caller guarantees
+    // `handle` is a valid, owned HANDLE.
     unsafe fn from_raw_handle(handle: RawHandle) -> FileDescriptor {
         Self {
             handle: OwnedHandle::from_raw_handle(handle),
@@ -322,11 +356,15 @@ impl AsRawSocket for FileDescriptor {
 
 impl AsSocket for FileDescriptor {
     fn as_socket(&self) -> BorrowedSocket {
+        // SAFETY: `self.as_raw_socket()` returns a valid socket handle; the
+        // `BorrowedSocket` borrows it for the lifetime of `self`.
         unsafe { BorrowedSocket::borrow_raw(self.as_raw_socket()) }
     }
 }
 
 impl FromRawSocket for FileDescriptor {
+    // SAFETY: forwarded from the trait contract — the caller guarantees
+    // `handle` is a valid, owned socket.
     unsafe fn from_raw_socket(handle: RawSocket) -> FileDescriptor {
         Self {
             handle: OwnedHandle::from_raw_handle(handle as RawHandle),
@@ -340,6 +378,8 @@ impl io::Read for FileDescriptor {
             // It's important to use the winsock functions to read/write
             // even though ReadFile and WriteFile technically work; only
             // the winsock functions respect non-blocking mode.
+            // SAFETY: `self.as_socket_descriptor()` is a valid socket;
+            // `buf.as_mut_ptr()` is a valid buffer of `buf.len()` bytes.
             let num_read = unsafe {
                 recv(
                     self.as_socket_descriptor(),
@@ -355,6 +395,8 @@ impl io::Read for FileDescriptor {
             }
         } else {
             let mut num_read = 0;
+            // SAFETY: `self.handle.as_raw_handle()` is a valid file handle;
+            // `buf.as_mut_ptr()` and `&mut num_read` are valid out-pointers.
             let ok = unsafe {
                 ReadFile(
                     self.handle.as_raw_handle() as *mut _,
@@ -381,6 +423,8 @@ impl io::Read for FileDescriptor {
 impl io::Write for FileDescriptor {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if self.handle.is_socket_handle() {
+            // SAFETY: `self.as_socket_descriptor()` is a valid socket;
+            // `buf.as_ptr()` is a valid buffer of `buf.len()` bytes.
             let num_wrote = unsafe {
                 send(
                     self.as_socket_descriptor(),
@@ -396,6 +440,8 @@ impl io::Write for FileDescriptor {
             }
         } else {
             let mut num_wrote = 0;
+            // SAFETY: `self.handle.as_raw_handle()` is a valid file handle;
+            // `buf.as_ptr()` and `&mut num_wrote` are valid.
             let ok = unsafe {
                 WriteFile(
                     self.handle.as_raw_handle() as *mut _,
@@ -449,17 +495,20 @@ impl Pipe {
 
 fn init_winsock() {
     static START: Once = Once::new();
-    START.call_once(|| unsafe {
-        let mut data: WSADATA = std::mem::zeroed();
-        let ret = WSAStartup(
-            0x202, // version 2.2
-            &mut data,
-        );
-        assert_eq!(ret, 0, "failed to initialize winsock");
-    });
+    START.call_once(||
+        // SAFETY: WSAStartup is the standard winsock initialization call;
+        // `0x202` requests version 2.2; `&mut data` is a valid out-pointer.
+        // WSADATA is a `repr(C)` struct valid when zero-initialized.
+        unsafe {
+            let mut data: WSADATA = std::mem::zeroed();
+            let ret = WSAStartup(0x202, &mut data); // version 2.2
+            assert_eq!(ret, 0, "failed to initialize winsock");
+        });
 }
 
 fn socket(af: i32, sock_type: i32, proto: i32) -> Result<FileDescriptor> {
+    // SAFETY: `af`, `sock_type`, `proto` are valid socket parameters;
+    // WSA_FLAG_NO_HANDLE_INHERIT is a valid flag.
     let s = unsafe {
         WSASocketW(
             af,
@@ -488,18 +537,28 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 
     let s = socket(AF_INET, SOCK_STREAM, 0)?;
 
+    // SAFETY: SOCKADDR_IN is a `repr(C)` struct of primitive types;
+    // zero-initialization is valid.
     let mut in_addr: SOCKADDR_IN = unsafe { std::mem::zeroed() };
     in_addr.sin_family = AF_INET as _;
+    // SAFETY: `S_un.S_addr_mut()` returns a valid `*mut u32` inside the
+    // union; `htonl` converts the loopback address to network byte order.
     unsafe {
         *in_addr.sin_addr.S_un.S_addr_mut() = htonl(INADDR_LOOPBACK);
     }
 
-    unsafe {
-        if bind(
-            s.as_raw_handle() as _,
-            std::mem::transmute(&in_addr),
-            std::mem::size_of_val(&in_addr) as _,
-        ) != 0
+    // SAFETY: `bind` takes a `*const SOCKADDR`; SOCKADDR_IN is layout-
+    // compatible (it is a superset). We use an explicit cast instead of
+    // transmute to avoid the unsafe pointer reinterpretation.
+    {
+        let addr_ptr = &in_addr as *const SOCKADDR_IN as *const winapi::shared::ws2def::SOCKADDR;
+        if unsafe {
+            bind(
+                s.as_raw_handle() as _,
+                addr_ptr,
+                std::mem::size_of_val(&in_addr) as _,
+            )
+        } != 0
         {
             return Err(Error::Bind(IoError::last_os_error()));
         }
@@ -507,17 +566,24 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 
     let mut addr_len = std::mem::size_of_val(&in_addr) as i32;
 
-    unsafe {
-        if getsockname(
-            s.as_raw_handle() as _,
-            std::mem::transmute(&mut in_addr),
-            &mut addr_len,
-        ) != 0
+    // SAFETY: `getsockname` takes a `*mut SOCKADDR`; same layout-
+    // compatibility rationale as `bind` above.
+    {
+        let addr_ptr = &mut in_addr as *mut SOCKADDR_IN as *mut winapi::shared::ws2def::SOCKADDR;
+        if unsafe {
+            getsockname(
+                s.as_raw_handle() as _,
+                addr_ptr,
+                &mut addr_len,
+            )
+        } != 0
         {
             return Err(Error::Getsockname(IoError::last_os_error()));
         }
     }
 
+    // SAFETY: `s` is a bound, listening-capable socket; `1` is a valid
+    // backlog.
     unsafe {
         if listen(s.as_raw_handle() as _, 1) != 0 {
             return Err(Error::Listen(IoError::last_os_error()));
@@ -526,17 +592,24 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 
     let client = socket(AF_INET, SOCK_STREAM, 0)?;
 
-    unsafe {
-        if connect(
-            client.as_raw_handle() as _,
-            std::mem::transmute(&in_addr),
-            addr_len,
-        ) != 0
+    // SAFETY: `connect` takes a `*const SOCKADDR`; same layout-
+    // compatibility rationale as `bind` above.
+    {
+        let addr_ptr = &in_addr as *const SOCKADDR_IN as *const winapi::shared::ws2def::SOCKADDR;
+        if unsafe {
+            connect(
+                client.as_raw_handle() as _,
+                addr_ptr,
+                addr_len,
+            )
+        } != 0
         {
             return Err(Error::Connect(IoError::last_os_error()));
         }
     }
 
+    // SAFETY: `s` is a listening socket; NULL out-pointers are valid for
+    // accept when the caller address is not needed.
     let server = unsafe { accept(s.as_raw_handle() as _, ptr::null_mut(), ptr::null_mut()) };
     if server == INVALID_SOCKET {
         return Err(Error::Accept(IoError::last_os_error()));
@@ -553,6 +626,8 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 
 #[doc(hidden)]
 pub fn poll_impl(pfd: &mut [pollfd], duration: Option<Duration>) -> Result<usize> {
+    // SAFETY: WSAPoll is the winsock polling function; `pfd.as_mut_ptr()` is
+    // a valid array of `pfd.len()` pollfd entries.
     let poll_result = unsafe {
         WSAPoll(
             pfd.as_mut_ptr(),

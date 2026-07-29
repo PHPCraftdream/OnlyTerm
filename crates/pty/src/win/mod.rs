@@ -59,6 +59,8 @@ impl WinChild {
     fn is_complete(&mut self) -> IoResult<Option<ExitStatus>> {
         let mut status: DWORD = 0;
         let proc = self.proc.lock().unwrap().try_clone().unwrap();
+        // SAFETY: `proc` is a duplicated, valid process handle. `&mut status`
+        // is a valid `*mut DWORD`.
         let res = unsafe { GetExitCodeProcess(proc.as_raw_handle() as _, &mut status) };
         if res != 0 {
             if status == STILL_ACTIVE {
@@ -97,11 +99,13 @@ impl WinChild {
 /// This runs on a background thread (spawned by `do_kill`/`WinChildKiller::kill`)
 /// so blocking here for up to 5 seconds does not stall the GUI/mux thread.
 fn kill_gracefully_then_forcefully(proc: OwnedHandle, job: Option<OwnedHandle>) {
+    // SAFETY: `proc` is a duplicated, valid process handle.
     let wait_result = unsafe { WaitForSingleObject(proc.as_raw_handle() as _, GRACEFUL_KILL_TIMEOUT_MS) };
     const WAIT_OBJECT_0: DWORD = 0;
     if wait_result != WAIT_OBJECT_0 {
         // Still running after the grace period: escalate to a forceful
         // kill of the direct child.
+        // SAFETY: `proc` is a valid process handle.
         unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
     }
 
@@ -109,6 +113,7 @@ fn kill_gracefully_then_forcefully(proc: OwnedHandle, job: Option<OwnedHandle>) 
     // the Job Object handle (if any) so that JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     // cleans up any descendant processes still assigned to it.
     if let Some(job) = job {
+        // SAFETY: `job` is a valid Job Object handle from CreateJobObjectW.
         unsafe {
             CloseHandle(job.as_raw_handle() as _);
         }
@@ -191,10 +196,12 @@ impl Child for WinChild {
             return Ok(status);
         }
         let proc = self.proc.lock().unwrap().try_clone().unwrap();
+        // SAFETY: `proc` is a duplicated, valid process handle.
         unsafe {
             WaitForSingleObject(proc.as_raw_handle() as _, INFINITE);
         }
         let mut status: DWORD = 0;
+        // SAFETY: `proc` is a valid process handle; `&mut status` is valid.
         let res = unsafe { GetExitCodeProcess(proc.as_raw_handle() as _, &mut status) };
         if res != 0 {
             Ok(ExitStatus::with_exit_code(status))
@@ -204,6 +211,7 @@ impl Child for WinChild {
     }
 
     fn process_id(&self) -> Option<u32> {
+        // SAFETY: The handle is valid for the lifetime of `WinChild`.
         let res = unsafe { GetProcessId(self.proc.lock().unwrap().as_raw_handle() as _) };
         if res == 0 {
             None
@@ -227,6 +235,10 @@ impl std::future::Future for WinChild {
             Err(err) => Poll::Ready(Err(err).context("Failed to retrieve process exit status")),
             Ok(None) => {
                 struct PassRawHandleToWaiterThread(pub RawHandle);
+                // SAFETY: `RawHandle` is a process-global Windows handle with no
+                // thread affinity. The handle was obtained via `try_clone`
+                // (DuplicateHandle), so it is independently owned and safe to send
+                // to the waiter thread.
                 unsafe impl Send for PassRawHandleToWaiterThread {}
 
                 let proc = self.proc.lock().unwrap().try_clone()?;
@@ -234,6 +246,7 @@ impl std::future::Future for WinChild {
 
                 let waker = cx.waker().clone();
                 std::thread::spawn(move || {
+                    // SAFETY: `handle.0` is a duplicated, valid process handle.
                     unsafe {
                         WaitForSingleObject(handle.0 as _, INFINITE);
                     }

@@ -49,12 +49,20 @@ fn openpty(size: PtySize) -> anyhow::Result<(UnixMasterPty, UnixSlavePty)> {
     let tty_name = tty_name(slave);
 
     let master = UnixMasterPty {
-        fd: PtyFd(unsafe { FileDescriptor::from_raw_fd(master) }),
+        fd: PtyFd(
+            // SAFETY: `master` was returned by a successful `openpty` call and
+            // is a valid, owned fd that we transfer to `FileDescriptor`.
+            unsafe { FileDescriptor::from_raw_fd(master) },
+        ),
         took_writer: RefCell::new(false),
         tty_name,
     };
     let slave = UnixSlavePty {
-        fd: PtyFd(unsafe { FileDescriptor::from_raw_fd(slave) }),
+        fd: PtyFd(
+            // SAFETY: `slave` was returned by a successful `openpty` call and
+            // is a valid, owned fd that we transfer to `FileDescriptor`.
+            unsafe { FileDescriptor::from_raw_fd(slave) },
+        ),
     };
 
     // Ensure that these descriptors will get closed when we execute
@@ -109,6 +117,8 @@ fn tty_name(fd: RawFd) -> Option<PathBuf> {
     let mut buf = vec![0 as std::ffi::c_char; 128];
 
     loop {
+        // SAFETY: `fd` is a valid file descriptor; `buf` is a valid writable
+        // buffer of `buf.len()` bytes. `ttyname_r` is thread-safe.
         let res = unsafe { libc::ttyname_r(fd, buf.as_mut_ptr(), buf.len()) };
 
         if res == libc::ERANGE {
@@ -123,6 +133,8 @@ fn tty_name(fd: RawFd) -> Option<PathBuf> {
         }
 
         return if res == 0 {
+            // SAFETY: `ttyname_r` wrote a NUL-terminated string into `buf`
+            // (it returned 0 on success). `buf.as_ptr()` points to that string.
             let cstr = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr()) };
             let osstr = OsStr::from_bytes(cstr.to_bytes());
             Some(PathBuf::from(osstr))
@@ -184,6 +196,8 @@ impl PtyFd {
             ws_ypixel: size.pixel_height,
         };
 
+        // SAFETY: `self.0.as_raw_fd()` is a valid pty fd; `ws_size` is a
+        // valid `*const winsize`. TIOCSWINSZ is a standard ioctl.
         if unsafe {
             libc::ioctl(
                 self.0.as_raw_fd(),
@@ -202,7 +216,11 @@ impl PtyFd {
     }
 
     fn get_size(&self) -> Result<PtySize, Error> {
+        // SAFETY: `winsize` is a `repr(C)` struct of primitive integer
+        // types; zero-initialization is valid.
         let mut size: winsize = unsafe { mem::zeroed() };
+        // SAFETY: `self.0.as_raw_fd()` is a valid pty fd; `&mut size` is a
+        // valid `*mut winsize`. TIOCGWINSZ is a standard ioctl.
         if unsafe {
             libc::ioctl(
                 self.0.as_raw_fd(),
@@ -230,8 +248,11 @@ impl PtyFd {
         let mut cmd = builder.as_command()?;
         let controlling_tty = builder.get_controlling_tty();
 
+        // SAFETY: `pre_exec` closures run after fork and before exec; they
+        // must be async-signal-safe. The libc calls inside (signal,
+        // sigprocmask, setsid, ioctl, umask) are all async-signal-safe.
+        // `self.as_stdio()?` duplicates the fd so it is valid for the child.
         unsafe {
-            cmd.stdin(self.as_stdio()?)
                 .stdout(self.as_stdio()?)
                 .stderr(self.as_stdio()?)
                 .pre_exec(move || {
@@ -249,6 +270,8 @@ impl PtyFd {
                         libc::signal(*signo, libc::SIG_DFL);
                     }
 
+                    // SAFETY: `sigset_t` is a `repr(C)` struct of primitive
+                    // integer types; zero-initialization produces an empty set.
                     let empty_set: libc::sigset_t = std::mem::zeroed();
                     libc::sigprocmask(libc::SIG_SETMASK, &empty_set, std::ptr::null_mut());
 
@@ -313,13 +336,18 @@ struct UnixSlavePty {
 
 /// Helper function to set the close-on-exec flag for a raw descriptor
 fn cloexec(fd: RawFd) -> Result<(), Error> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+    let flags =
+        // SAFETY: `fd` is a valid open file descriptor. F_GETFD reads the
+        // close-on-exec flag.
+        unsafe { libc::fcntl(fd, libc::F_GETFD) };
     if flags == -1 {
         bail!(
             "fcntl to read flags failed: {:?}",
             io::Error::last_os_error()
         );
     }
+    // SAFETY: `fd` is a valid open file descriptor. F_SETFD sets the
+    // close-on-exec flag to `flags | FD_CLOEXEC`.
     let result = unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
     if result == -1 {
         bail!(
@@ -371,6 +399,8 @@ impl MasterPty for UnixMasterPty {
     }
 
     fn process_group_leader(&self) -> Option<libc::pid_t> {
+        // SAFETY: `self.fd.0.as_raw_fd()` is a valid pty fd.
+        // `tcgetpgrp` returns the foreground process group id.
         match unsafe { libc::tcgetpgrp(self.fd.0.as_raw_fd()) } {
             pid if pid > 0 => Some(pid),
             _ => None,
@@ -391,7 +421,12 @@ struct UnixMasterWriter {
 
 impl Drop for UnixMasterWriter {
     fn drop(&mut self) {
+        // SAFETY: `termios` is a `repr(C)` struct of primitive types;
+        // zero-initialization is valid. The value is overwritten by
+        // `tcgetattr` before use.
         let mut t: libc::termios = unsafe { std::mem::MaybeUninit::zeroed().assume_init() };
+        // SAFETY: `self.fd.0.as_raw_fd()` is a valid pty fd; `&mut t` is a
+        // valid out-pointer for `tcgetattr`.
         if unsafe { libc::tcgetattr(self.fd.0.as_raw_fd(), &mut t) } == 0 {
             // EOF is only interpreted after a newline, so if it is set,
             // we send a newline followed by EOF.
