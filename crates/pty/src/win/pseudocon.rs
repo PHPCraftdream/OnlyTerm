@@ -75,6 +75,10 @@ pub struct PseudoCon {
     output: FileDescriptor,
 }
 
+// SAFETY: An `HPCON` is a process-global Windows kernel handle with no
+// thread affinity. All mutation of a `PseudoCon` happens behind the
+// `Mutex<Inner>` in `ConPtyMasterPty`, so sharing the value across threads
+// and sending it to other threads is sound.
 unsafe impl Send for PseudoCon {}
 unsafe impl Sync for PseudoCon {}
 
@@ -89,6 +93,11 @@ impl Drop for PseudoCon {
         // A pipe for communicating with the PTY, a handle to keep it alive
         // until ClosePseudoConsole is called, and a process handle to the
         // underlying conhost process.
+        // SAFETY: As documented above, an `HPCON` is internally a struct of
+        // three `HANDLE`s. We cast the opaque pointer to `*mut [HANDLE; 3]`
+        // and close each handle individually to work around conpty blocking.
+        // `self.con` is still valid because we have not yet called
+        // ClosePseudoConsole (that happens after this drain loop).
         unsafe {
             let handles = self.con as *mut [HANDLE; 3];
             for i in 0..3 {
@@ -106,6 +115,9 @@ impl Drop for PseudoCon {
         }
 
         // This won't do anything but deallocate the handle.
+        // SAFETY: FFI call into the loaded conpty.dll. `self.con` was obtained
+        // from CreatePseudoConsole and is still a valid (now manually-closed)
+        // pseudo-console handle.
         unsafe { (CONPTY.ClosePseudoConsole)(self.con) };
     }
 }
@@ -113,6 +125,8 @@ impl Drop for PseudoCon {
 impl PseudoCon {
     pub fn new(size: COORD, input: FileDescriptor, output: FileDescriptor) -> Result<Self, Error> {
         let mut con: HPCON = INVALID_HANDLE_VALUE;
+        // SAFETY: FFI call into conpty.dll. `input` and `output` are valid
+        // FileDescriptor handles and `&mut con` is a valid out-pointer.
         let result = unsafe {
             (CONPTY.CreatePseudoConsole)(
                 size,
@@ -133,6 +147,8 @@ impl PseudoCon {
     }
 
     pub fn resize(&self, size: COORD) -> Result<(), Error> {
+        // SAFETY: FFI call into conpty.dll. `self.con` is a valid HPCON
+        // obtained from CreatePseudoConsole.
         let result = unsafe { (CONPTY.ResizePseudoConsole)(self.con, size) };
         ensure!(
             result == S_OK,
@@ -145,6 +161,8 @@ impl PseudoCon {
     }
 
     pub fn spawn_command(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
+        // SAFETY: STARTUPINFOEXW is a `repr(C)` struct of primitive types;
+        // zero-initialization is valid. `cb` is set immediately after.
         let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
         si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
         // Explicitly set the stdio handles as invalid handles otherwise
@@ -162,6 +180,9 @@ impl PseudoCon {
         attrs.set_pty(self.con)?;
         si.lpAttributeList = attrs.as_mut_ptr();
 
+        // SAFETY: PROCESS_INFORMATION is a `repr(C)` struct of primitive
+        // types; zero-initialization is valid. It will be filled by
+        // CreateProcessW below.
         let mut pi: PROCESS_INFORMATION = unsafe { mem::zeroed() };
 
         let (mut exe, mut cmdline) = cmd.cmdline()?;
@@ -169,6 +190,9 @@ impl PseudoCon {
 
         let cwd = cmd.current_directory();
 
+        // SAFETY: `exe` and `cmdline` are NUL-terminated wide strings with
+        // valid mutable pointers. `si` is a valid STARTUPINFOEXW with the
+        // attribute list set. `pi` is a valid out-pointer.
         let res = unsafe {
             CreateProcessW(
                 exe.as_mut_slice().as_mut_ptr(),
@@ -207,7 +231,12 @@ impl PseudoCon {
 
         // Make sure we close out the thread handle so we don't leak it;
         // we do this simply by making it owned
+        // SAFETY: `pi.hThread` was populated by a successful CreateProcessW
+        // with a valid thread handle. We take exclusive ownership so it is
+        // closed on drop.
         let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
+        // SAFETY: `pi.hProcess` was populated by a successful CreateProcessW
+        // with a valid process handle. We take exclusive ownership.
         let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
 
         // Create a Job Object and assign the freshly spawned process to it,
@@ -222,6 +251,8 @@ impl PseudoCon {
         // Failure to set up the job object is non-fatal: we still have a
         // usable direct-child kill path, so we simply log a warning and
         // proceed without job-based cleanup in that (unexpected) case.
+        // SAFETY: FFI call with NULL security attributes and NULL name;
+        // returns either a valid job handle or NULL.
         let job = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
         let job = if job.is_null() {
             log::warn!(
@@ -232,9 +263,14 @@ impl PseudoCon {
             );
             None
         } else {
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                // SAFETY: `repr(C)` POD struct of primitive types; valid
+                // zero-initialized.
+                unsafe { mem::zeroed() };
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
+            // SAFETY: `job` is a valid handle from CreateJobObjectW.
+            // `info` is a properly initialized JOBOBJECT_EXTENDED_LIMIT_INFORMATION.
             let set_res = unsafe {
                 SetInformationJobObject(
                     job,
@@ -250,11 +286,15 @@ impl PseudoCon {
                     IoError::last_os_error(),
                     cmd_os,
                 );
+                // SAFETY: `job` is a valid handle; we clean it up because
+                // SetInformationJobObject failed.
                 unsafe {
                     CloseHandle(job);
                 }
                 None
             } else {
+                // SAFETY: Both `job` (from CreateJobObjectW) and `proc`
+                // (from CreateProcessW) are valid handles.
                 let assign_res = unsafe { AssignProcessToJobObject(job, proc.as_raw_handle() as _) };
                 if assign_res == 0 {
                     log::warn!(
@@ -263,11 +303,16 @@ impl PseudoCon {
                         IoError::last_os_error(),
                         cmd_os,
                     );
+                    // SAFETY: `job` is a valid handle; we clean it up
+                    // because AssignProcessToJobObject failed.
                     unsafe {
                         CloseHandle(job);
                     }
                     None
                 } else {
+                    // SAFETY: `job` is a valid, fully-configured job object
+                    // handle. We take exclusive ownership so it is closed (and
+                    // thus triggers KILL_ON_JOB_CLOSE) on drop.
                     Some(unsafe { OwnedHandle::from_raw_handle(job as _) })
                 }
             }

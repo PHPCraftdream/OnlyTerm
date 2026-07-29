@@ -18,8 +18,13 @@ impl From<u32> for LocalProcessStatus {
 
 impl LocalProcessInfo {
     pub fn current_working_dir(pid: u32) -> Option<PathBuf> {
+        // SAFETY: `proc_vnodepathinfo` is a `repr(C)` struct of primitive
+        // types; zero-initialization is valid.
         let mut pathinfo: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
         let size = std::mem::size_of_val(&pathinfo) as libc::c_int;
+        // SAFETY: `pid` is a valid process id; `&mut pathinfo` is a valid
+        // writable pointer with `size` bytes; PROC_PIDVNODEPATHINFO is a
+        // valid flavor.
         let ret = unsafe {
             libc::proc_pidinfo(
                 pid as _,
@@ -38,6 +43,10 @@ impl LocalProcessInfo {
         // is defined as a horrible nested array by the libc crate:
         // `[[c_char; 32]; 32]`.
         // Urgh.  Let's re-cast it as the correct kind of slice.
+        // SAFETY: `vip_path` is documented as a `[c_char; MAXPATHLEN]` array
+        // (reinterpreted by the libc crate as `[[c_char; 32]; 32]`). Casting
+        // the base pointer to `*const u8` and reading `MAXPATHLEN` bytes is
+        // valid because the array occupies exactly that many bytes.
         let vip_path = unsafe {
             std::slice::from_raw_parts(
                 pathinfo.pvi_cdir.vip_path.as_ptr() as *const u8,
@@ -50,6 +59,8 @@ impl LocalProcessInfo {
 
     pub fn executable_path(pid: u32) -> Option<PathBuf> {
         let mut buffer: Vec<u8> = Vec::with_capacity(libc::PROC_PIDPATHINFO_MAXSIZE as _);
+        // SAFETY: `pid` is a valid process id; `buffer.as_mut_ptr()` is a
+        // valid writable pointer with PROC_PIDPATHINFO_MAXSIZE capacity.
         let x = unsafe {
             libc::proc_pidpath(
                 pid as _,
@@ -61,6 +72,8 @@ impl LocalProcessInfo {
             return None;
         }
 
+        // SAFETY: `buffer` has capacity for PROC_PIDPATHINFO_MAXSIZE bytes;
+        // `x` (bytes written by proc_pidpath) is at most that capacity.
         unsafe { buffer.set_len(x as usize) };
         Some(OsString::from_vec(buffer).into())
     }
@@ -68,6 +81,7 @@ impl LocalProcessInfo {
     pub fn with_root_pid(pid: u32) -> Option<Self> {
         /// Enumerate all current process identifiers
         fn all_pids() -> Vec<libc::pid_t> {
+            // SAFETY: Passing NULL with 0 size queries the count.
             let num_pids = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
             if num_pids < 1 {
                 return vec![];
@@ -78,6 +92,8 @@ impl LocalProcessInfo {
             const PADDING: usize = 32;
             let mut pids: Vec<libc::pid_t> = Vec::with_capacity(num_pids as usize + PADDING);
             loop {
+                // SAFETY: `pids.as_mut_ptr()` is valid for `pids.capacity()`
+                // elements; the size argument is in bytes as expected by the API.
                 let n = unsafe {
                     libc::proc_listallpids(
                         pids.as_mut_ptr() as *mut _,
@@ -96,6 +112,8 @@ impl LocalProcessInfo {
                     continue;
                 }
 
+                // SAFETY: `n` is at most `pids.capacity()` (checked above);
+                // proc_listallpids wrote exactly `n` pid_t values.
                 unsafe { pids.set_len(n) };
                 return pids;
             }
@@ -106,8 +124,12 @@ impl LocalProcessInfo {
         /// observed the pid and the time we call this, so we must
         /// be able to tolerate this failing.
         fn info_for_pid(pid: libc::pid_t) -> Option<libc::proc_bsdinfo> {
+            // SAFETY: `proc_bsdinfo` is a `repr(C)` struct of primitive types;
+            // zero-initialization is valid.
             let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
             let wanted_size = std::mem::size_of::<libc::proc_bsdinfo>() as _;
+            // SAFETY: `pid` is a valid process id; `&mut info` is a valid
+            // writable pointer with `wanted_size` bytes.
             let res = unsafe {
                 libc::proc_pidinfo(
                     pid,
@@ -135,6 +157,8 @@ impl LocalProcessInfo {
             let mut buf: Vec<u8> = Vec::with_capacity(size);
             let mut mib = [libc::CTL_KERN, libc::KERN_PROCARGS2, pid as c_int];
 
+            // SAFETY: `mib` is a valid 3-element CTL_KERN array; `buf` has
+            // capacity for `size` bytes; the remaining args are NULL/0.
             let res = unsafe {
                 libc::sysctl(
                     mib.as_mut_ptr(),
@@ -152,6 +176,8 @@ impl LocalProcessInfo {
                 // Not big enough
                 return None;
             }
+            // SAFETY: `size` was returned by sysctl and is at most
+            // `buf.capacity()` (checked above).
             unsafe { buf.set_len(size) };
 
             parse_exe_and_argv_sysctl(buf)
@@ -167,7 +193,10 @@ impl LocalProcessInfo {
             let (executable, argv) = exe_and_args_for_pid_sysctl(info.pbi_pid as _)
                 .unwrap_or_else(|| (exe_for_pid(info.pbi_pid as _), vec![]));
 
-            let name = unsafe { std::ffi::CStr::from_ptr(info.pbi_comm.as_ptr() as _) };
+            let name =
+                // SAFETY: `info.pbi_comm` is a NUL-terminated C string array;
+                // the pointer is valid for the lifetime of `info`.
+                unsafe { std::ffi::CStr::from_ptr(info.pbi_comm.as_ptr() as _) };
             let name = name.to_str().unwrap_or("").to_string();
 
             LocalProcessInfo {
@@ -208,7 +237,11 @@ fn parse_exe_and_argv_sysctl(buf: Vec<u8>) -> Option<(PathBuf, Vec<String>)> {
 
     let mut ptr = &buf[0..buf.len()];
 
-    let argc: c_int = unsafe { std::ptr::read(ptr.as_ptr() as *const c_int) };
+    let argc: c_int =
+        // SAFETY: `ptr` has at least `size_of::<c_int>()` bytes (checked by
+        // the `size < size_of::<c_int>() * 2` guard above). The buffer was
+        // obtained from sysctl, which writes aligned data.
+        unsafe { std::ptr::read(ptr.as_ptr() as *const c_int) };
     ptr = &ptr[std::mem::size_of::<c_int>()..];
 
     fn consume_cstr(ptr: &mut &[u8]) -> Option<String> {

@@ -212,10 +212,15 @@ impl From<std::process::ExitStatus> for ExitStatus {
             use std::os::unix::process::ExitStatusExt;
 
             if let Some(signal) = status.signal() {
+                // SAFETY: `strsignal` is a standard libc function that takes a
+                // valid signal number and returns a pointer to a static C string
+                // (or NULL if the signal is unknown).
                 let signame = unsafe { libc::strsignal(signal) };
                 let signal = if signame.is_null() {
                     format!("Signal {}", signal)
                 } else {
+                    // SAFETY: `signame` is non-null (checked above) and points to
+                    // a valid NUL-terminated C string returned by `strsignal`.
                     let signame = unsafe { std::ffi::CStr::from_ptr(signame) };
                     signame.to_string_lossy().to_string()
                 };
@@ -302,6 +307,8 @@ struct ProcessSignaller {
 impl ChildKiller for ProcessSignaller {
     fn kill(&mut self) -> IoResult<()> {
         if let Some(handle) = &self.handle {
+            // SAFETY: `handle` is a valid process handle obtained via
+            // DuplicateHandle.
             unsafe {
                 if winapi::um::processthreadsapi::TerminateProcess(handle.as_raw_handle() as _, 127)
                     == 0
@@ -324,6 +331,8 @@ impl ChildKiller for ProcessSignaller {
 impl ChildKiller for ProcessSignaller {
     fn kill(&mut self) -> IoResult<()> {
         if let Some(pid) = self.pid {
+            // SAFETY: `pid` is a valid process id obtained from a spawned child.
+            // SIGHUP is a standard signal number.
             let result = unsafe { libc::kill(pid as i32, libc::SIGHUP) };
             if result != 0 {
                 return Err(std::io::Error::last_os_error());
@@ -344,6 +353,8 @@ impl ChildKiller for std::process::Child {
             // On unix, we send the SIGHUP signal instead of trying to kill
             // the process. The default behavior of a process receiving this
             // signal is to be killed unless it configured a signal handler.
+            // SAFETY: `self.id()` is a valid child process id; SIGHUP is a
+            // standard signal number.
             let result = unsafe { libc::kill(self.id() as i32, libc::SIGHUP) };
             if result != 0 {
                 return Err(std::io::Error::last_os_error());

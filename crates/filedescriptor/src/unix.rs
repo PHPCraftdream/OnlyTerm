@@ -55,6 +55,7 @@ impl<T: FromRawFd> FromRawSocketDescriptor for T {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
+        // SAFETY: `self.handle` is a valid, owned fd that we close on drop.
         unsafe {
             libc::close(self.handle);
         }
@@ -63,6 +64,7 @@ impl Drop for OwnedHandle {
 
 impl std::os::fd::AsFd for OwnedHandle {
     fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        // SAFETY: `self.handle` is a valid fd for the lifetime of `self`.
         unsafe { std::os::fd::BorrowedFd::borrow_raw(self.handle) }
     }
 }
@@ -82,6 +84,8 @@ impl IntoRawFd for OwnedHandle {
 }
 
 impl FromRawFd for OwnedHandle {
+    // SAFETY: forwarded from the trait contract — the caller guarantees
+    // `fd` is a valid, owned file descriptor.
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
         Self {
             handle: fd,
@@ -93,10 +97,14 @@ impl FromRawFd for OwnedHandle {
 impl OwnedHandle {
     /// Helper function to set the close-on-exec flag for a raw descriptor
     fn cloexec(&mut self) -> Result<()> {
+        // SAFETY: `self.handle` is a valid fd. F_GETFD reads the
+        // close-on-exec flag.
         let flags = unsafe { libc::fcntl(self.handle, libc::F_GETFD) };
         if flags == -1 {
             return Err(Error::Fcntl(std::io::Error::last_os_error()));
         }
+        // SAFETY: `self.handle` is a valid fd. F_SETFD sets the
+        // close-on-exec flag.
         let result = unsafe { libc::fcntl(self.handle, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
         if result == -1 {
             Err(Error::Cloexec(std::io::Error::last_os_error()))
@@ -106,6 +114,7 @@ impl OwnedHandle {
     }
 
     fn non_atomic_dup(fd: RawFd) -> Result<Self> {
+        // SAFETY: `fd` is a valid open file descriptor.
         let duped = unsafe { libc::dup(fd) };
         if duped == -1 {
             Err(Error::Dup {
@@ -123,6 +132,7 @@ impl OwnedHandle {
     }
 
     fn non_atomic_dup2(fd: RawFd, dest_fd: RawFd) -> Result<Self> {
+        // SAFETY: `fd` and `dest_fd` are valid open file descriptors.
         let duped = unsafe { libc::dup2(fd, dest_fd) };
         if duped == -1 {
             Err(Error::Dup2 {
@@ -146,6 +156,8 @@ impl OwnedHandle {
         handle_type: HandleType,
     ) -> Result<Self> {
         let fd = fd.as_raw_file_descriptor();
+        // SAFETY: `fd` is a valid open file descriptor. F_DUPFD_CLOEXEC
+        // atomically duplicates with close-on-exec.
         let duped = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
         if duped == -1 {
             let err = std::io::Error::last_os_error();
@@ -176,6 +188,8 @@ impl OwnedHandle {
 
         #[cfg(target_os = "linux")]
         {
+            // SAFETY: `fd` and `dest_fd` are valid open file descriptors.
+            // dup3 atomically duplicates with O_CLOEXEC.
             let duped = libc::dup3(fd, dest_fd, libc::O_CLOEXEC);
 
             if duped == -1 {
@@ -207,6 +221,8 @@ impl OwnedHandle {
 
 impl std::io::Read for FileDescriptor {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // SAFETY: `self.handle.handle` is a valid fd; `buf.as_mut_ptr()` is
+        // a valid buffer of `buf.len()` bytes.
         let size = unsafe { libc::read(self.handle.handle, buf.as_mut_ptr() as *mut _, buf.len()) };
         if size == -1 {
             Err(std::io::Error::last_os_error())
@@ -218,6 +234,8 @@ impl std::io::Read for FileDescriptor {
 
 impl std::io::Write for FileDescriptor {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // SAFETY: `self.handle.handle` is a valid fd; `buf.as_ptr()` is a
+        // valid buffer of `buf.len()` bytes.
         let size = unsafe { libc::write(self.handle.handle, buf.as_ptr() as *const _, buf.len()) };
         if size == -1 {
             Err(std::io::Error::last_os_error())
@@ -249,6 +267,8 @@ impl IntoRawFd for FileDescriptor {
 }
 
 impl FromRawFd for FileDescriptor {
+    // SAFETY: forwarded from the trait contract — the caller guarantees
+    // `fd` is a valid, owned file descriptor.
     unsafe fn from_raw_fd(fd: RawFd) -> Self {
         Self {
             handle: OwnedHandle::from_raw_fd(fd),
@@ -261,6 +281,8 @@ impl FileDescriptor {
     pub(crate) fn as_stdio_impl(&self) -> Result<std::process::Stdio> {
         let duped = OwnedHandle::dup(self)?;
         let fd = duped.into_raw_fd();
+        // SAFETY: `fd` is a duplicated, valid fd; ownership is transferred
+        // to `Stdio`.
         let stdio = unsafe { std::process::Stdio::from_raw_fd(fd) };
         Ok(stdio)
     }
@@ -269,6 +291,8 @@ impl FileDescriptor {
     pub(crate) fn as_file_impl(&self) -> Result<std::fs::File> {
         let duped = OwnedHandle::dup(self)?;
         let fd = duped.into_raw_fd();
+        // SAFETY: `fd` is a duplicated, valid fd; ownership is transferred
+        // to `File`.
         let stdio = unsafe { std::fs::File::from_raw_fd(fd) };
         Ok(stdio)
     }
@@ -276,6 +300,8 @@ impl FileDescriptor {
     #[inline]
     pub(crate) fn set_non_blocking_impl(&mut self, non_blocking: bool) -> Result<()> {
         let on = if non_blocking { 1 } else { 0 };
+        // SAFETY: `self.handle.as_raw_file_descriptor()` is a valid fd;
+        // FIONBIO is a standard ioctl for non-blocking mode.
         let res = unsafe { libc::ioctl(self.handle.as_raw_file_descriptor(), libc::FIONBIO, &on) };
         if res != 0 {
             Err(Error::FionBio(std::io::Error::last_os_error()))
@@ -291,16 +317,20 @@ impl FileDescriptor {
     /// resources that may not be available, this is a potentially fallible operation.
     /// The returned handle has a separate lifetime from the source, but
     /// references the same object at the kernel level.
+    // SAFETY: forwarded to `dup2_impl` — the caller must guarantee `f`'s
+    // descriptor is valid and `dest_fd` is safe to overwrite.
     pub unsafe fn dup2<F: AsRawFileDescriptor>(f: &F, dest_fd: RawFd) -> Result<Self> {
         OwnedHandle::dup2_impl(f, dest_fd).map(|handle| Self { handle })
     }
 
     /// Helper function to unset the close-on-exec flag for a raw descriptor
     fn no_cloexec(fd: RawFd) -> Result<()> {
+        // SAFETY: `fd` is a valid open file descriptor.
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
         if flags == -1 {
             return Err(Error::Fcntl(std::io::Error::last_os_error()));
         }
+        // SAFETY: `fd` is a valid open file descriptor.
         let result = unsafe { libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) };
         if result == -1 {
             Err(Error::Cloexec(std::io::Error::last_os_error()))
@@ -324,6 +354,7 @@ impl FileDescriptor {
         // we don't close it when the returned FileDescriptor is dropped.
         // Then we discard/ignore the fd because it is nominally owned by
         // the stdio machinery for the process
+        // SAFETY: `f`'s descriptor and `std_descriptor` are valid fds.
         let _ = unsafe { FileDescriptor::dup2(f, std_descriptor) }?.into_raw_fd();
         Self::no_cloexec(std_descriptor)?;
 
@@ -335,6 +366,8 @@ impl Pipe {
     #[cfg(target_os = "linux")]
     pub fn new() -> Result<Pipe> {
         let mut fds = [-1i32; 2];
+        // SAFETY: `fds.as_mut_ptr()` is a valid 2-element array; O_CLOEXEC
+        // sets close-on-exec atomically.
         let res = unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) };
         if res == -1 {
             Err(Error::Pipe(std::io::Error::last_os_error()))
@@ -358,6 +391,7 @@ impl Pipe {
     #[cfg(not(target_os = "linux"))]
     pub fn new() -> Result<Pipe> {
         let mut fds = [-1i32; 2];
+        // SAFETY: `fds.as_mut_ptr()` is a valid 2-element array.
         let res = unsafe { libc::pipe(fds.as_mut_ptr()) };
         if res == -1 {
             Err(Error::Pipe(std::io::Error::last_os_error()))
@@ -385,6 +419,8 @@ impl Pipe {
 #[doc(hidden)]
 pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
     let mut fds = [-1i32; 2];
+    // SAFETY: `fds.as_mut_ptr()` is a valid 2-element array; SOCK_CLOEXEC
+    // sets close-on-exec atomically.
     let res = unsafe {
         libc::socketpair(
             libc::PF_LOCAL,
@@ -416,6 +452,7 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
 #[doc(hidden)]
 pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
     let mut fds = [-1i32; 2];
+    // SAFETY: `fds.as_mut_ptr()` is a valid 2-element array.
     let res = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
     if res == -1 {
         Err(Error::Socketpair(std::io::Error::last_os_error()))
@@ -444,8 +481,11 @@ use std::time::Duration;
 #[cfg(not(target_os = "macos"))]
 #[doc(hidden)]
 pub fn poll_impl(pfd: &mut [pollfd], duration: Option<Duration>) -> Result<usize> {
-    let poll_result = unsafe {
-        libc::poll(
+    let poll_result =
+        // SAFETY: `pfd.as_mut_ptr()` is a valid array of `pfd.len()` pollfd
+        // entries; the timeout is a valid c_int.
+        unsafe {
+            libc::poll(
             pfd.as_mut_ptr(),
             pfd.len() as _,
             duration
@@ -484,6 +524,8 @@ mod macos {
 
     impl FdSet {
         pub fn new() -> Self {
+            // SAFETY: `fd_set` is a `repr(C)` struct; FD_ZERO initializes
+            // it to the empty set. The pointer is valid for one `fd_set`.
             unsafe {
                 let mut set = std::mem::MaybeUninit::uninit();
                 FD_ZERO(set.as_mut_ptr());
@@ -495,6 +537,8 @@ mod macos {
 
         pub fn add(&mut self, fd: RawFd) -> Result<()> {
             check_fd(fd)?;
+            // SAFETY: `fd` was validated by `check_fd` (0 <= fd < FD_SETSIZE);
+            // `&mut self.set` is a valid `*mut fd_set`.
             unsafe {
                 FD_SET(fd, &mut self.set);
             }
@@ -503,6 +547,7 @@ mod macos {
 
         pub fn contains(&mut self, fd: RawFd) -> bool {
             check_fd(fd).unwrap();
+            // SAFETY: `fd` was validated by `check_fd`; `&mut self.set` is valid.
             unsafe { FD_ISSET(fd, &mut self.set) }
         }
     }
@@ -546,6 +591,9 @@ mod macos {
             tv_usec: d.subsec_micros() as _,
         });
 
+        // SAFETY: `nfds + 1` is the highest fd + 1 as required by select;
+        // all set pointers are valid `*mut fd_set` (or NULL); timeout is
+        // a valid `*mut timeval` (or NULL).
         let res = unsafe {
             libc::select(
                 nfds + 1,

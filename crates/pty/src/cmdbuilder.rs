@@ -45,8 +45,14 @@ fn get_shell() -> String {
     use std::ffi::CStr;
     use std::str;
 
+    // SAFETY: `getuid` returns the current process's uid; `getpwuid` is a
+    // standard libc function that returns a pointer to a static passwd entry
+    // (or NULL if not found). The returned pointer is valid until the next
+    // libc call that modifies the passwd database.
     let ent = unsafe { libc::getpwuid(libc::getuid()) };
     if !ent.is_null() {
+        // SAFETY: `ent` is non-null (checked above) and was returned by
+        // getpwuid, so `(*ent).pw_shell` points to a valid NUL-terminated string.
         let shell = unsafe { CStr::from_ptr((*ent).pw_shell) };
         match shell.to_str().map(str::to_owned) {
             Err(err) => {
@@ -112,15 +118,24 @@ fn get_base_env() -> BTreeMap<OsString, EnvEntry> {
         fn reg_value_to_string(value: &RegValue) -> anyhow::Result<OsString> {
             match value.vtype {
                 RegType::REG_EXPAND_SZ => {
-                    let src = unsafe {
-                        std::slice::from_raw_parts(
-                            value.bytes.as_ptr() as *const u16,
-                            value.bytes.len() / 2,
-                        )
-                    };
+                    // Reinterpret the raw bytes as native-endian u16 (UTF-16LE
+                    // on Windows). Using chunks_exact avoids the alignment UB
+                    // that a raw pointer cast (*const u8 as *const u16) would
+                    // introduce when the Vec<u8> backing allocation is not
+                    // guaranteed to be 2-byte aligned.
+                    let src: Vec<u16> = value
+                        .bytes
+                        .chunks_exact(2)
+                        .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+                        .collect();
+                    // SAFETY: ExpandEnvironmentStringsW is a standard win32 FFI
+                    // call. Passing a NULL output buffer with 0 capacity is the
+                    // documented way to query the required buffer size.
                     let size =
                         unsafe { ExpandEnvironmentStringsW(src.as_ptr(), std::ptr::null_mut(), 0) };
                     let mut buf = vec![0u16; size as usize + 1];
+                    // SAFETY: `buf` is a valid writable buffer of `buf.len()`
+                    // u16 elements; `src` is a valid wide-string input.
                     unsafe {
                         ExpandEnvironmentStringsW(src.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
                     };
@@ -578,12 +593,16 @@ impl CommandBuilder {
             return Ok(home_dir.into());
         }
 
+        // SAFETY: `getuid` returns the current process's uid; `getpwuid` is
+        // a standard libc function returning a static passwd entry or NULL.
         let ent = unsafe { libc::getpwuid(libc::getuid()) };
         if ent.is_null() {
             Ok("/".into())
         } else {
             use std::ffi::CStr;
             use std::str;
+            // SAFETY: `ent` is non-null (checked above) and was returned by
+            // getpwuid, so `(*ent).pw_dir` points to a valid NUL-terminated string.
             let home = unsafe { CStr::from_ptr((*ent).pw_dir) };
             home.to_str()
                 .map(str::to_owned)
