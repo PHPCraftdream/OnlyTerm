@@ -28,8 +28,16 @@ As features stabilize some brief notes about them will accumulate here.
   invariant that makes it sound. Fixed several genuine latent
   undefined-behavior bugs found in the process (an overlapping-region
   `ptr::copy_nonoverlapping` in the mux wire codec, two `_unchecked`
-  conversions on unvalidated input). `#![warn(clippy::undocumented_unsafe_blocks)]`
-  is now enabled in every affected crate so future unsafe code without a
+  conversions on unvalidated input, an uninitialized-memory `Vec::set_len`,
+  a NaN value bypassing a color-conversion clamp and indexing out of
+  bounds, and several silently-ignored partial `Write::write` calls that
+  could truncate a terminal's response to its child process). An
+  independent review pass caught and corrected several inaccurate
+  `// SAFETY:` justifications that the initial audit had left in place
+  (a couple of them describing an invariant the code didn't actually
+  hold). `#![warn(clippy::undocumented_unsafe_blocks)]` is now enabled in
+  every affected crate, and `cargo clippy --workspace` runs clean end to
+  end with zero occurrences of that lint, so future unsafe code without a
   safety comment is caught automatically.
 * Replaced the `zstd`/`zstd-sys` dependency (the project's last remaining
   C/C++ dependency) with the pure-Rust `flate2` crate, then disabled mux
