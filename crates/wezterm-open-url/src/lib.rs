@@ -76,6 +76,13 @@ fn shell_execute(url: String, with: Option<String>) {
             None => (url.as_ptr(), std::ptr::null()),
         };
 
+        // SAFETY: ShellExecuteW is the documented Win32 shell API for opening a
+        // URL/document. The string arguments (`lpOperation`, `lpFile`, and when
+        // present `lpParameters`) are NUL-terminated UTF-16 buffers produced by
+        // `wide_string`, which remain valid for the duration of this synchronous
+        // call. `hwnd`, `lpDirectory` and (in the plain open-URL case) `lpParameters`
+        // are NULL, which MSDN explicitly permits, and `SW_SHOW` is a valid
+        // window-show constant.
         unsafe {
             ShellExecuteW(
                 std::ptr::null_mut(),
