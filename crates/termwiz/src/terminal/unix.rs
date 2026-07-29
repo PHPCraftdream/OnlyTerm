@@ -70,6 +70,9 @@ impl TtyReadHandle {
 
 impl Read for TtyReadHandle {
     fn read(&mut self, buf: &mut [u8]) -> std::result::Result<usize, IoError> {
+        // SAFETY: `self.fd` is a valid owned fd; `buf.as_mut_ptr()`/`buf.len()`
+        // describe the caller's writable buffer for the duration of the call, so
+        // read writes at most buf.len() bytes into valid memory.
         let size =
             unsafe { libc::read(self.fd.as_raw_fd(), buf.as_mut_ptr() as *mut _, buf.len()) };
         if size == -1 {
@@ -142,7 +145,10 @@ impl RenderTty for TtyWriteHandle {
 
 impl UnixTty for TtyWriteHandle {
     fn get_size(&mut self) -> Result<winsize> {
+        // SAFETY: winsize is a plain POD struct; all-zero bits are a valid value.
         let mut size: winsize = unsafe { mem::zeroed() };
+        // SAFETY: `self.fd` is a valid owned fd; `size` is a valid out-pointer
+        // live for the call. TIOCGWINSZ fills it with the terminal window size.
         if unsafe { libc::ioctl(self.fd.as_raw_fd(), libc::TIOCGWINSZ as _, &mut size) } != 0 {
             bail!("failed to ioctl(TIOCGWINSZ): {}", IoError::last_os_error());
         }
@@ -150,6 +156,8 @@ impl UnixTty for TtyWriteHandle {
     }
 
     fn set_size(&mut self, size: winsize) -> Result<()> {
+        // SAFETY: `self.fd` is a valid owned fd; `&size` is a valid shared
+        // reference live for the call. TIOCSWINSZ reads the winsize it points at.
         if unsafe {
             libc::ioctl(
                 self.fd.as_raw_fd(),

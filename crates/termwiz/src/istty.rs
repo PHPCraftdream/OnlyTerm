@@ -23,6 +23,8 @@ pub trait IsTty {
 impl<S: AsRawFd> IsTty for S {
     fn is_tty(&self) -> bool {
         let fd = self.as_raw_fd();
+        // SAFETY: `fd` is a valid raw fd obtained via AsRawFd; isatty takes no
+        // pointers and has no other preconditions.
         unsafe { libc::isatty(fd) == 1 }
     }
 }
@@ -31,6 +33,8 @@ impl<S: AsRawFd> IsTty for S {
 impl<S: AsRawHandle> IsTty for S {
     fn is_tty(&self) -> bool {
         let mut mode = 0;
+        // SAFETY: `self.as_raw_handle()` is a valid raw handle for the lifetime
+        // of the call; `mode` is a valid u32 out-pointer live for the call.
         let ok = unsafe { GetConsoleMode(self.as_raw_handle() as *mut _, &mut mode) };
         ok == 1
     }
