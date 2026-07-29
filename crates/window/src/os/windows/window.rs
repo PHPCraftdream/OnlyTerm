@@ -111,6 +111,7 @@ pub(crate) struct HWindow(HWND);
 // bare token value across threads is sound; actual window operations are only
 // ever performed on the window's owning thread via the message loop.
 unsafe impl Send for HWindow {}
+// SAFETY: same rationale as the `Send` impl above.
 unsafe impl Sync for HWindow {}
 
 pub(crate) struct WindowInner {
@@ -715,6 +716,9 @@ impl WindowInner {
                 right: 0,
                 top: 0,
             };
+            // SAFETY: `hwnd` is the window's own live HWND; `rect` is a valid
+            // out-parameter for `GetWindowRect`, and `client_to_screen` below
+            // takes the same valid `hwnd`.
             unsafe {
                 GetWindowRect(hwnd, &mut rect);
 
@@ -1079,6 +1083,9 @@ impl WindowOps for Window {
         let hwnd = self.0 .0;
         anyhow::ensure!(!hwnd.is_null(), "HWND is null");
 
+        // SAFETY: `GetFocus` takes no arguments and returns the HWND of the
+        // window with keyboard focus on the calling thread's message queue,
+        // or null; comparing it to our own `hwnd` is a plain value comparison.
         let has_focus = unsafe { GetFocus() } == hwnd;
         let is_full_screen = window_state.contains(WindowState::FULL_SCREEN);
 
@@ -1820,6 +1827,9 @@ fn mods_and_buttons(wparam: WPARAM) -> (Modifiers, MouseButtons) {
     if wparam & MK_SHIFT != 0 {
         modifiers |= Modifiers::SHIFT;
     }
+    // SAFETY: `GetKeyState` takes a plain virtual-key-code value (`VK_MENU`)
+    // and returns the key's current thread-message-queue state; no pointers
+    // are involved.
     if unsafe { GetKeyState(VK_MENU) } as u16 & 0x8000 != 0 {
         modifiers |= Modifiers::ALT;
     }
@@ -2426,8 +2436,12 @@ unsafe fn clear_key_state() {
     /// one of these yields a single unicode character output then we assume that
     /// it does have AltGr.
     /// # Safety
-/// `self.hwnd` must be a valid window handle; the keyboard APIs receive valid
-/// handle/scan/vk arguments.
+    /// `KeyboardLayoutInfo` holds no window handle - the underlying `ToUnicode`/
+    /// `MapVirtualKeyW` calls only take VK/scan-code values, all of which are
+    /// constructed locally and valid. The real precondition is that this reads
+    /// and mutates *thread-global* keyboard state (`GetKeyboardState`/
+    /// `ToUnicode`), so it must only be called from the UI thread that owns
+    /// the keyboard focus, never concurrently from multiple threads.
 unsafe fn probe_alt_gr(&mut self) {
         self.has_alt_gr = false;
 
@@ -2470,8 +2484,9 @@ unsafe fn probe_alt_gr(&mut self) {
 
     /// Probe the keymap to figure out which keys are dead keys
     /// # Safety
-/// `self.hwnd` must be a valid window handle; the keyboard APIs receive valid
-/// handle/scan/vk arguments.
+    /// Same rationale as `probe_alt_gr` above: no window handle is involved,
+    /// but this reads/mutates thread-global keyboard state and must only run
+    /// on the UI thread, not concurrently with other callers of these APIs.
 unsafe fn probe_dead_keys(&mut self) {
         self.dead_keys.clear();
 
@@ -2598,8 +2613,9 @@ unsafe fn probe_dead_keys(&mut self) {
     }
 
     /// # Safety
-/// `self.hwnd` must be a valid window handle; the FFI calls receive valid
-/// arguments.
+    /// Same rationale as `probe_alt_gr`/`probe_dead_keys`: no window handle is
+    /// involved; this must only run on the UI thread since it reads/mutates
+    /// thread-global keyboard state.
 unsafe fn update(&mut self) {
         let current_layout = GetKeyboardLayout(0);
         if current_layout == self.layout {
@@ -2621,6 +2637,8 @@ unsafe fn update(&mut self) {
     }
 
     pub fn has_alt_gr(&mut self) -> bool {
+        // SAFETY: called from the UI thread (window event handling), per
+        // `update`'s documented thread-affinity requirement.
         unsafe {
             self.update();
         }
@@ -2638,6 +2656,8 @@ unsafe fn update(&mut self) {
     }
 
     pub fn is_dead_key_leader(&mut self, mods: Modifiers, vk: u32) -> Option<char> {
+        // SAFETY: called from the UI thread (window event handling), per
+        // `update`'s documented thread-affinity requirement.
         unsafe {
             self.update();
         }
@@ -2655,6 +2675,8 @@ unsafe fn update(&mut self) {
         leader: (Modifiers, u32),
         key: (Modifiers, u32),
     ) -> ResolvedDeadKey {
+        // SAFETY: called from the UI thread (window event handling), per
+        // `update`'s documented thread-affinity requirement.
         unsafe {
             self.update();
         }

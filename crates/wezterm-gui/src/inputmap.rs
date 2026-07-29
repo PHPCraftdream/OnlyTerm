@@ -683,25 +683,23 @@ fn luaify(value: Value, is_top: bool) -> String {
             format!("wat {a:?}")
         }
         Value::Object(o) if is_top => {
-            for (k, v) in o {
-                let k = match k {
-                    Value::String(s) => s,
-                    _ => unreachable!(),
-                };
-                let arg = match v {
-                    Value::String(_) => format!(" {}", luaify(v, false)),
-                    Value::Array(a) => {
-                        let b: Vec<String> = a.into_iter().map(|v| luaify(v, false)).collect();
-                        format!("{{ {} }}", b.join(", "))
-                    }
-                    Value::I64(i) => format!("({i})"),
-                    Value::U64(i) => format!("({i})"),
-                    Value::F64(i) => format!("({i})"),
-                    _ => luaify(v, false),
-                };
-                return format!("act.{k}{arg}");
-            }
-            unreachable!()
+            let (k, v) = o.into_iter().next().unwrap();
+            let k = match k {
+                Value::String(s) => s,
+                _ => unreachable!(),
+            };
+            let arg = match v {
+                Value::String(_) => format!(" {}", luaify(v, false)),
+                Value::Array(a) => {
+                    let b: Vec<String> = a.into_iter().map(|v| luaify(v, false)).collect();
+                    format!("{{ {} }}", b.join(", "))
+                }
+                Value::I64(i) => format!("({i})"),
+                Value::U64(i) => format!("({i})"),
+                Value::F64(i) => format!("({i})"),
+                _ => luaify(v, false),
+            };
+            format!("act.{k}{arg}")
         }
         Value::Object(o) => {
             let mut fields = vec![];
