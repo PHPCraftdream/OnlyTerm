@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 use crate::db::FontDatabase;
 use crate::locator::{new_locator, FontLocator};
 use crate::parser::ParsedFont;

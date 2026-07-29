@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! encode and decode the frames for the mux protocol.
 //! The frames include the length of a PDU as well as an identifier
 //! that informs us how to decode it.  The length, ident and serial

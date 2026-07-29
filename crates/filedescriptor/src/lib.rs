@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! The purpose of this crate is to make it a bit more ergonomic for portable
 //! applications that need to work with the platform level `RawFd` and
 //! `RawHandle` types.
@@ -175,6 +176,9 @@ pub trait IntoRawFileDescriptor {
 /// to indicate that care must be taken by the caller to ensure that it
 /// is used appropriately.
 pub trait FromRawFileDescriptor {
+    /// # Safety
+    /// `fd` must be a valid, owned file descriptor; ownership transfers to
+    /// the returned value, which will close it on drop.
     unsafe fn from_raw_file_descriptor(fd: RawFileDescriptor) -> Self;
 }
 
@@ -185,6 +189,9 @@ pub trait IntoRawSocketDescriptor {
     fn into_socket_descriptor(self) -> SocketDescriptor;
 }
 pub trait FromRawSocketDescriptor {
+    /// # Safety
+    /// `fd` must be a valid, owned socket descriptor; ownership transfers to
+    /// the returned value, which will close it on drop.
     unsafe fn from_socket_descriptor(fd: SocketDescriptor) -> Self;
 }
 

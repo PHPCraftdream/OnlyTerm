@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};

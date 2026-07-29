@@ -1,3 +1,4 @@
+#![warn(clippy::undocumented_unsafe_blocks)]
 //! Implements basE91 encoding; see http://base91.sourceforge.net/
 //! basE91 is an advanced method for encoding binary data as ASCII characters. It is similar to
 //! UUencode or base64, but is more efficient. The overhead produced by basE91 depends on the input
