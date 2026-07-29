@@ -2,7 +2,13 @@ use anyhow::{anyhow, bail, ensure, Error};
 use std::ffi::c_void;
 use std::rc::Rc;
 
-#[allow(non_camel_case_types, clippy::unreadable_literal)]
+// SAFETY: `generated` below is entirely `gl_generator` build-script output;
+// its `unsafe impl Send` markers are generated code, not hand-written here.
+#[allow(
+    non_camel_case_types,
+    clippy::unreadable_literal,
+    clippy::undocumented_unsafe_blocks
+)]
 pub mod ffi {
     // gl_generator emits these weird cyclical and redundant type references;
     // the types appear to have to be in a module and need to reference super,

@@ -978,18 +978,26 @@ mod windows {
             callback: &mut F,
         ) {
             for record in records {
-                // SAFETY: `record.Event` is a discriminated union whose active
-                // variant is selected by `record.EventType`. We only read the
-                // variant matching the EventType we matched on, so each accessor
-                // returns a valid pointer into the correct field.
+                // `record.Event` is a discriminated union whose active variant
+                // is selected by `record.EventType`; each arm below only reads
+                // the variant matching the `EventType` it matched on, so every
+                // accessor returns a valid pointer into the correct field.
                 match record.EventType {
-                    KEY_EVENT => {
-                        self.decode_key_record(unsafe { record.Event.KeyEvent() }, callback)
-                    }
-                    MOUSE_EVENT => {
-                        self.decode_mouse_record(unsafe { record.Event.MouseEvent() }, callback)
-                    }
+                    KEY_EVENT => self.decode_key_record(
+                        // SAFETY: EventType == KEY_EVENT, so .KeyEvent() is the
+                        // union's active variant.
+                        unsafe { record.Event.KeyEvent() },
+                        callback,
+                    ),
+                    MOUSE_EVENT => self.decode_mouse_record(
+                        // SAFETY: EventType == MOUSE_EVENT, so .MouseEvent() is
+                        // the union's active variant.
+                        unsafe { record.Event.MouseEvent() },
+                        callback,
+                    ),
                     WINDOW_BUFFER_SIZE_EVENT => self.decode_resize_record(
+                        // SAFETY: EventType == WINDOW_BUFFER_SIZE_EVENT, so
+                        // .WindowBufferSizeEvent() is the union's active variant.
                         unsafe { record.Event.WindowBufferSizeEvent() },
                         callback,
                     ),

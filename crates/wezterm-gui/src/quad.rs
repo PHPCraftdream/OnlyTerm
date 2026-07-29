@@ -365,8 +365,17 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
         // https://doc.rust-lang.org/std/primitive.slice.html#method.as_chunks_unchecked
         // which is currently nightly-only
         assert_eq!(vertices.len() % VERTICES_PER_CELL, 0);
-        let src_quads: &[[Vertex; VERTICES_PER_CELL]] =
-            unsafe { std::slice::from_raw_parts(vertices.as_ptr().cast(), vertices.len() / 4) };
+        // SAFETY: `vertices` is a `&[Vertex]` whose length is a multiple of
+        // `VERTICES_PER_CELL` (asserted above); reinterpreting it as a slice
+        // of `[Vertex; VERTICES_PER_CELL]` chunks is layout-compatible since
+        // both sides are the same repr and alignment, and the element count
+        // (`len() / VERTICES_PER_CELL`) exactly covers the original buffer.
+        let src_quads: &[[Vertex; VERTICES_PER_CELL]] = unsafe {
+            std::slice::from_raw_parts(
+                vertices.as_ptr().cast(),
+                vertices.len() / VERTICES_PER_CELL,
+            )
+        };
 
         for quad in src_quads {
             dest_quads.push(Box::new(BoxedQuad::from_vertices(quad)));
