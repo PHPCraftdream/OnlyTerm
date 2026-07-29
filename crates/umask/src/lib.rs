@@ -23,6 +23,9 @@ impl UmaskSaver {
     pub fn new() -> Self {
         let me = Self {
             #[cfg(unix)]
+            // SAFETY: `umask(2)` is a thread-safe syscall that simply sets the
+            // process file-creation mask and returns the previous mask; it has
+            // no preconditions and cannot fail.
             mask: unsafe { umask(0o077) },
         };
 
@@ -47,6 +50,9 @@ impl UmaskSaver {
 impl Drop for UmaskSaver {
     fn drop(&mut self) {
         #[cfg(unix)]
+        // SAFETY: `umask(2)` is a thread-safe syscall that sets the process
+        // file-creation mask and returns the previous one; it cannot fail. We
+        // restore the mask captured in `new()` and clear the saved value.
         unsafe {
             umask(self.mask);
             SAVED_UMASK.lock().unwrap().take();

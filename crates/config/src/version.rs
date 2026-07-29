@@ -22,9 +22,13 @@ pub fn wezterm_target_triple() -> &'static str {
 
 pub fn running_under_wsl() -> bool {
     #[cfg(unix)]
-    unsafe {
+    {
+        // SAFETY: `libc::uname` writes into the caller-provided `utsname` and
+        // returns 0 on success. `name` is zero-initialized so any field left
+        // untouched is a valid NUL-terminated C string. We only read `version`
+        // and `release` via `CStr::from_ptr` when uname reports success.
         let mut name: libc::utsname = std::mem::zeroed();
-        if libc::uname(&mut name) == 0 {
+        if unsafe { libc::uname(&mut name) } == 0 {
             // 'microsoft' is usually in version, in some cases it can be in release instead
             // (see #7136)
             let version = format!(
@@ -34,7 +38,7 @@ pub fn running_under_wsl() -> bool {
             );
             return version.to_ascii_lowercase().contains("microsoft");
         }
-    };
+    }
 
     false
 }

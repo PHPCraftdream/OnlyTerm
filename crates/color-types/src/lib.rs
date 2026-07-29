@@ -152,7 +152,7 @@ fn linear_f32_to_srgbf32(f: f32) -> f32 {
 
 #[cfg(feature = "std")]
 pub fn linear_u8_to_srgb8(f: u8) -> u8 {
-    unsafe { *RGB_TO_SRGB_TABLE.get_unchecked(f as usize) }
+    RGB_TO_SRGB_TABLE[f as usize]
 }
 
 #[cfg(feature = "std")]
@@ -173,7 +173,9 @@ fn linear_f32_to_srgb8_using_table(f: f32) -> u8 {
     };
 
     let f_bits = f.to_bits();
-    let tab = unsafe { *F32_TO_U8_TABLE.get_unchecked(((f_bits - MINVAL) >> 20) as usize) };
+    // `f` is clamped to [minval, almost_one] above, so `f_bits - MINVAL` is in
+    // [0, 0x67fffff] and `>> 20` yields 0..=103, always within the 104-entry table.
+    let tab = F32_TO_U8_TABLE[((f_bits - MINVAL) >> 20) as usize];
     let bias = (tab >> 16) << 9;
     let scale = tab & 0xffff;
 
@@ -197,7 +199,8 @@ fn linear_f32_to_srgb8(f: f32) -> u8 {
 fn srgb8_to_linear_f32(val: u8) -> f32 {
     #[cfg(feature = "std")]
     {
-        return unsafe { *SRGB_TO_F32_TABLE.get_unchecked(val as usize) };
+        // `val` is a u8, always a valid index into the 256-entry table.
+        return SRGB_TO_F32_TABLE[val as usize];
     }
     #[cfg(not(feature = "std"))]
     {
@@ -213,7 +216,8 @@ fn srgb8_to_linear_f32(val: u8) -> f32 {
 fn rgb_to_linear_f32(val: u8) -> f32 {
     #[cfg(feature = "std")]
     {
-        unsafe { *RGB_TO_F32_TABLE.get_unchecked(val as usize) }
+        // `val` is a u8, always a valid index into the 256-entry table.
+        RGB_TO_F32_TABLE[val as usize]
     }
     #[cfg(not(feature = "std"))]
     {

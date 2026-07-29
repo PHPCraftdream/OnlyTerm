@@ -174,6 +174,11 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
             }
 
             // Adjust lfu
+            // SAFETY: `entry` is a live `Rc<Entry>` currently linked in
+            // `frequency_index` (every entry is inserted into all three indices
+            // by `put`). We hold it via the recency cursor and no other mutable
+            // cursor into `frequency_index` is outstanding, so removing it by
+            // pointer is sound; the returned `Rc` is re-inserted immediately.
             unsafe {
                 let lfu_entry = self
                     .frequency_index
@@ -201,6 +206,10 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
         let mut cursor = self.frequency_index.lower_bound_mut(Bound::Included(&0));
         if let Some(entry) = cursor.remove() {
             let bucket = self.bucket_for_key(&entry.key);
+            // SAFETY: `entry` was just removed from `frequency_index` and is
+            // still linked in `buckets[bucket]` and `recency_index`. The
+            // pointer is valid and belongs to each respective collection, and
+            // no other mutable cursor into either is outstanding.
             unsafe {
                 self.buckets
                     .get_mut(bucket)
@@ -232,6 +241,10 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
         while let Some(entry) = cursor.get() {
             if entry.key.borrow() == k {
                 // Adjust lru
+                // SAFETY: `entry` is the matched entry, currently linked in
+                // `recency_index` (inserted by `put`). No other mutable cursor
+                // into `recency_index` is outstanding; the removed `Rc` is
+                // immediately re-pushed to the front.
                 unsafe {
                     let lru_entry = self
                         .recency_index
@@ -249,6 +262,9 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
                 *entry.last_tick.borrow_mut() = self.tick;
 
                 // Adjust lfu
+                // SAFETY: `entry` is the matched entry, currently linked in
+                // `frequency_index`. No other mutable cursor into it is
+                // outstanding; the removed `Rc` is mutated then re-inserted.
                 unsafe {
                     let lfu_entry = self
                         .frequency_index
@@ -285,6 +301,11 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
                 .front_mut();
             while let Some(entry) = cursor.get() {
                 if entry.key == k {
+                    // SAFETY: `entry` is a live member of both `frequency_index`
+                    // and `recency_index` (inserted by the original `put`). The
+                    // pointer belongs to each collection and no other mutable
+                    // cursor into either is outstanding. After removal the entry
+                    // is dropped below via `cursor.remove()`.
                     unsafe {
                         self.frequency_index.cursor_mut_from_ptr(entry).remove();
                         self.recency_index.cursor_mut_from_ptr(entry).remove();

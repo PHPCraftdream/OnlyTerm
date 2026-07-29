@@ -67,13 +67,16 @@ impl WslDistro {
                 anyhow::bail!("input data has odd length, cannot be utf16");
             }
 
-            // This is "safe" because we checked that the length seems reasonable,
-            // and our new slice is within those same bounds.
-            let wide: &[u16] = unsafe {
-                std::slice::from_raw_parts(bytes.as_ptr() as *const u16, bytes.len() / 2)
-            };
+            // wsl.exe emits UTF-16LE, so decode each byte pair as a little-endian
+            // u16. This is alignment-safe (no pointer reinterpretation) and matches
+            // the previous `slice::from_raw_parts` cast on the (always
+            // little-endian) Windows target.
+            let wide: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
 
-            String::from_utf16(wide).map_err(|_| anyhow!("wsl -l -v output is not valid utf16"))
+            String::from_utf16(&wide).map_err(|_| anyhow!("wsl -l -v output is not valid utf16"))
         }
 
         let wsl_list = utf16_to_utf8(&output.stdout)?.replace("\r\n", "\n");
