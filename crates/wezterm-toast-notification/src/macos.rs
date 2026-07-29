@@ -20,6 +20,11 @@ fn ns_error_to_string(err: *mut NSError) -> String {
     if err.is_null() {
         "null error".to_string()
     } else {
+        // SAFETY: `err` was checked for null above. It is a raw pointer to an
+        // NSError object handed to us by an Objective-C completion-handler
+        // callback, which retains the object for the duration of the call, so
+        // creating a temporary shared reference to invoke read-only accessor
+        // methods is sound.
         unsafe {
             let err: &NSError = &*err;
             format!(
@@ -32,13 +37,25 @@ fn ns_error_to_string(err: *mut NSError) -> String {
 }
 
 define_class!(
+    // SAFETY: `#[unsafe(super = NSObject)]` declares that WezTermNotifDelegate
+    // inherits from the real Foundation `NSObject` base class, the valid root
+    // superclass for a new Objective-C class.
     #[unsafe(super = NSObject)]
     #[name = "WezTermNotifDelegate"]
     #[derive(Debug)]
     struct NotifDelegate;
 
+    // SAFETY: NotifDelegate derives from NSObject, which itself conforms to the
+    // NSObjectProtocol, so claiming conformance here is valid.
     unsafe impl NSObjectProtocol for NotifDelegate {}
+
+    // SAFETY: NotifDelegate implements the selectors required by the
+    // UNUserNotificationCenterDelegate protocol; the two method attributes below
+    // map to the real delegate selectors with matching Objective-C signatures.
     unsafe impl UNUserNotificationCenterDelegate for NotifDelegate {
+        // SAFETY: this attribute maps to the real selector
+        // `- [UNUserNotificationCenterDelegate userNotificationCenter:willPresentNotification:withCompletionHandler:]`
+        // and the Rust argument types match the documented Objective-C parameter types.
         #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
         unsafe fn will_present(
             &self,
@@ -54,6 +71,9 @@ define_class!(
             completion_handler.call((options,));
         }
 
+        // SAFETY: this attribute maps to the real selector
+        // `- [UNUserNotificationCenterDelegate userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:]`
+        // and the Rust argument types match the documented Objective-C parameter types.
         #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
         unsafe fn did_receive_notification(
             &self,
@@ -81,6 +101,9 @@ define_class!(
 impl NotifDelegate {
     fn new() -> Retained<Self> {
         let this = Self::alloc().set_ivars(());
+        // SAFETY: `this` is a freshly allocated NotifDelegate instance. Sending
+        // `[super init]` is the standard NSObject designated initializer and
+        // completes initialization of the NSObject superclass.
         let me: Retained<Self> = unsafe { msg_send![super(this), init] };
         log::debug!("new delegate {:?}", Retained::as_ptr(&me));
         me
@@ -93,12 +116,21 @@ impl Drop for NotifDelegate {
     }
 }
 
-const CENTER: LazyLock<Retained<UNUserNotificationCenter>> =
-    LazyLock::new(|| unsafe { UNUserNotificationCenter::currentNotificationCenter() });
+const CENTER: LazyLock<Retained<UNUserNotificationCenter>> = LazyLock::new(|| {
+    // SAFETY: `currentNotificationCenter` is a thread-safe factory class method
+    // returning the process-wide shared UNUserNotificationCenter singleton.
+    unsafe { UNUserNotificationCenter::currentNotificationCenter() }
+});
 
 pub fn initialize() {
     static INIT: Once = Once::new();
     INIT.call_once(|| unsafe {
+        // SAFETY: the following are Objective-C message sends targeting the
+        // shared, owned `CENTER` singleton and freshly allocated, owned
+        // UNNotificationAction/UNNotificationCategory objects. Block arguments
+        // are wrapped in `RcBlock` with matching signatures, and string arguments
+        // are `ns_string!`/`NSString` values that live for the call. This runs
+        // exactly once thanks to `Once`.
         CENTER.requestAuthorizationWithOptions_completionHandler(
             UNAuthorizationOptions::Alert
                 | UNAuthorizationOptions::Provisional
@@ -149,6 +181,11 @@ pub fn initialize() {
 
 pub fn show_notif(toast: ToastNotification) -> Result<(), Box<dyn std::error::Error>> {
     initialize();
+    // SAFETY: the calls below target the shared, already-initialized `CENTER`
+    // singleton and freshly allocated, owned UNMutableNotificationContent /
+    // UNNotificationRequest objects. String arguments are owned NSStrings valid
+    // for the call, and the completion-handler block is wrapped in an `RcBlock`
+    // with a matching signature.
     unsafe {
         log::debug!("show_notif center.delegate is {:?}", CENTER.delegate());
 

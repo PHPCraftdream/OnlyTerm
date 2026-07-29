@@ -554,16 +554,11 @@ impl Pdu {
             Ok(decoded) => {
                 let consumed = cursor.position() as usize;
                 let remain = buffer.len() - consumed;
-                // Remove `consumed` bytes from the start of the vec.
-                // This is safe because the vec is just bytes and we are
-                // constrained the offsets accordingly.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        buffer.as_ptr().add(consumed),
-                        buffer.as_mut_ptr(),
-                        remain,
-                    );
-                }
+                // Remove `consumed` bytes from the start of the vec. `copy_within`
+                // uses memmove semantics and correctly handles the overlapping
+                // shift here; the previous ptr::copy_nonoverlapping was in fact
+                // unsound whenever consumed < remain (overlapping src/dest).
+                buffer.copy_within(consumed.., 0);
                 buffer.truncate(remain);
                 Ok(Some(decoded))
             }
