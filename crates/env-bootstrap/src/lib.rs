@@ -126,13 +126,24 @@ pub fn set_lang_from_locale() {
     }
 
     if !lang_is_set() {
+        // SAFETY: `nsstring_to_str` borrows the internal buffer of an
+        // NSString for the duration of the reference. The NSString must
+        // outlive the returned &str and must contain valid UTF-8 (which
+        // NSString.UTF8String guarantees by contract).
         unsafe fn nsstring_to_str<'a>(ns: &NSString) -> &'a str {
             let data = ns.UTF8String() as *const u8;
             let len = ns.len();
+            // SAFETY: `data` is a valid pointer to `len` bytes (the UTF-8
+            // representation of the NSString), valid for the lifetime of `ns`.
             let bytes = std::slice::from_raw_parts(data, len);
+            // SAFETY: NSString.UTF8String returns valid UTF-8 by contract.
             std::str::from_utf8_unchecked(bytes)
         }
 
+        // SAFETY: The objc2_foundation calls below are standard Objective-C
+        // runtime calls. NSLocale returns retained objects that are valid for
+        // the scope. `setlocale` is a standard libc function; `old` is a
+        // valid pointer returned by the first setlocale call.
         unsafe {
             let locale = NSLocale::autoupdatingCurrentLocale();
             let lang_code_obj = locale.languageCode();

@@ -25,6 +25,8 @@ struct Snapshot(HANDLE);
 
 impl Snapshot {
     pub fn new() -> Option<Self> {
+        // SAFETY: TH32CS_SNAPPROCESS and 0 are valid arguments; the returned
+        // handle is stored in `Self` and closed on drop.
         let handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
         if handle.is_null() {
             None
@@ -50,6 +52,8 @@ impl Snapshot {
 
 impl Drop for Snapshot {
     fn drop(&mut self) {
+        // SAFETY: `self.0` is a valid snapshot handle obtained from
+        // CreateToolhelp32Snapshot.
         unsafe { CloseHandle(self.0) };
     }
 }
@@ -63,12 +67,17 @@ impl<'a> Iterator for ProcIter<'a> {
     type Item = PROCESSENTRY32W;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: PROCESSENTRY32W is a `repr(C)` struct of primitive types;
+        // zero-initialization is valid. `dwSize` is set immediately after.
         let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as _;
         let res = if self.first {
             self.first = false;
+            // SAFETY: `self.snapshot.0` is a valid snapshot handle;
+            // `&mut entry` is a valid out-pointer with `dwSize` set.
             unsafe { Process32FirstW(self.snapshot.0, &mut entry) }
         } else {
+            // SAFETY: same as above.
             unsafe { Process32NextW(self.snapshot.0, &mut entry) }
         };
         if res == 0 {
@@ -105,13 +114,18 @@ struct ProcHandle {
 
 impl ProcHandle {
     pub fn new(pid: u32) -> Option<Self> {
-        if pid == unsafe { GetCurrentProcessId() } {
+        if pid ==
+            // SAFETY: GetCurrentProcessId has no preconditions and no UB.
+            unsafe { GetCurrentProcessId() }
+        {
             // Avoid the potential for deadlock if we're examining ourselves
             log::trace!("ProcHandle::new({}): skip because it is my own pid", pid);
             return None;
         }
         let options = PROCESS_QUERY_INFORMATION | PROCESS_VM_READ;
         log::trace!("ProcHandle::new({}): OpenProcess", pid);
+        // SAFETY: `options` and `pid` are valid values; `FALSE` is a valid BOOL.
+        // The returned handle (or NULL) is stored and closed on drop.
         let handle = unsafe { OpenProcess(options, FALSE as _, pid) };
         log::trace!("ProcHandle::new({}): OpenProcess -> {:?}", pid, handle);
         if handle.is_null() {
@@ -124,6 +138,8 @@ impl ProcHandle {
     pub fn executable(&self) -> Option<PathBuf> {
         let mut buf = [0u16; MAX_PATH + 1];
         let mut len = buf.len() as DWORD;
+        // SAFETY: `self.proc` is a valid process handle; `buf` is a valid
+        // writable buffer; `&mut len` is a valid out-pointer.
         let res = unsafe { QueryFullProcessImageNameW(self.proc, 0, buf.as_mut_ptr(), &mut len) };
         if res == 0 {
             None
@@ -135,6 +151,8 @@ impl ProcHandle {
     /// Wrapper around NtQueryInformationProcess that fetches `what` as `T`
     fn query_proc<T>(&self, what: u32) -> Option<T> {
         let mut data = MaybeUninit::<T>::uninit();
+        // SAFETY: `self.proc` is a valid process handle; `data.as_mut_ptr()`
+        // is a valid writable pointer with `size_of::<T>()` bytes.
         let res = unsafe {
             NtQueryInformationProcess(
                 self.proc,
@@ -147,6 +165,8 @@ impl ProcHandle {
         if !NT_SUCCESS(res) {
             return None;
         }
+        // SAFETY: NtQueryInformationProcess returned NT_SUCCESS, so `data`
+        // has been fully initialized.
         let data = unsafe { data.assume_init() };
         Some(data)
     }
@@ -154,6 +174,8 @@ impl ProcHandle {
     /// Read a `T` from the target process at the specified address
     fn read_struct<T>(&self, addr: LPVOID) -> Option<T> {
         let mut data = MaybeUninit::<T>::uninit();
+        // SAFETY: `self.proc` is a valid process handle with PROCESS_VM_READ
+        // access; `addr` and `data.as_mut_ptr()` are valid pointers.
         let res = unsafe {
             ReadProcessMemory(
                 self.proc,
@@ -166,6 +188,8 @@ impl ProcHandle {
         if res == 0 {
             return None;
         }
+        // SAFETY: ReadProcessMemory returned non-zero (success), so `data`
+        // has been fully initialized.
         let data = unsafe { data.assume_init() };
         Some(data)
     }
@@ -259,6 +283,9 @@ impl ProcHandle {
         let mut buf = vec![0u16; byte_size / 2];
         let mut bytes_read = 0;
 
+        // SAFETY: `self.proc` is a valid process handle with PROCESS_VM_READ;
+        // `ptr` is an address in the target process; `buf.as_mut_ptr()` is a
+        // valid writable buffer; `&mut bytes_read` is a valid out-pointer.
         let res = unsafe {
             ReadProcessMemory(
                 self.proc,
@@ -306,6 +333,8 @@ impl ProcHandle {
         let mut kernel = empty();
         let mut user = empty();
 
+        // SAFETY: `self.proc` is a valid process handle; all out-pointers are
+        // valid `*mut FILETIME`.
         let res =
             unsafe { GetProcessTimes(self.proc, &mut start, &mut exit, &mut kernel, &mut user) };
         if res == 0 {
@@ -319,18 +348,27 @@ impl ProcHandle {
 /// Parse a command line string into an argv array
 fn cmd_line_to_argv(buf: &[u16]) -> Vec<String> {
     let mut argc = 0;
+    // SAFETY: `buf.as_ptr()` is a valid pointer to a NUL-terminated wide
+    // string; `&mut argc` is a valid out-pointer.
     let argvp = unsafe { CommandLineToArgvW(buf.as_ptr(), &mut argc) };
     if argvp.is_null() {
         return vec![];
     }
 
+    // SAFETY: CommandLineToArgvW returned a non-null pointer to an array of
+    // `argc` wide-string pointers. The array is valid until LocalFree is called.
     let argv = unsafe { std::slice::from_raw_parts(argvp, argc as usize) };
     let mut args = vec![];
     for &arg in argv {
+        // SAFETY: `arg` is a valid NUL-terminated wide string pointer returned
+        // by CommandLineToArgvW.
         let len = unsafe { libc::wcslen(arg) };
+        // SAFETY: `arg` is valid for `len` u16 elements (wcslen counted them).
         let arg = unsafe { std::slice::from_raw_parts(arg, len) };
         args.push(wstr_to_string(arg));
     }
+    // SAFETY: `argvp` was returned by CommandLineToArgvW and must be freed
+    // via LocalFree.
     unsafe { LocalFree(argvp as _) };
     args
 }
@@ -338,6 +376,7 @@ fn cmd_line_to_argv(buf: &[u16]) -> Vec<String> {
 impl Drop for ProcHandle {
     fn drop(&mut self) {
         log::trace!("ProcHandle::drop(pid={} proc={:?})", self.pid, self.proc);
+        // SAFETY: `self.proc` is a valid handle obtained from OpenProcess.
         unsafe { CloseHandle(self.proc) };
     }
 }
