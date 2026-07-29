@@ -5,7 +5,6 @@ use crate::color::{ColorAttribute, PaletteIndex};
 use crate::image::ImageCell;
 use alloc::sync::Arc;
 use core::hash::{Hash, Hasher};
-use core::mem;
 use finl_unicode::grapheme_clusters::Graphemes;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -156,7 +155,9 @@ macro_rules! bitfield {
     ($getter:ident, $setter:ident, $enum:ident, $bitmask:expr, $bitshift:expr) => {
         #[inline]
         pub fn $getter(&self) -> $enum {
-            unsafe { mem::transmute(((self.attributes >> $bitshift) & $bitmask) as u8) }
+            <$enum as crate::FromAttrBits>::from_attr_bits(
+                ((self.attributes >> $bitshift) & $bitmask) as u8,
+            )
         }
 
         #[inline]
@@ -191,6 +192,69 @@ impl Default for SemanticType {
 }
 
 pub use wezterm_escape_parser::csi::{Blink, Intensity, Underline, VerticalAlign};
+
+/// Reconstruct an attribute-enum value from the raw discriminant stored in
+/// the [`CellAttributes`] bitfield. Each implementation maps an out-of-range
+/// value to its zero-discriminant variant; that never happens in practice
+/// because the matching `bitfield!` setter only ever stores a valid
+/// discriminant. Replaces the previous `mem::transmute` (which was UB for any
+/// value outside the enum's discriminant set) with a safe, exhaustive match.
+trait FromAttrBits {
+    fn from_attr_bits(value: u8) -> Self;
+}
+
+impl FromAttrBits for Intensity {
+    fn from_attr_bits(value: u8) -> Self {
+        match value {
+            1 => Intensity::Bold,
+            2 => Intensity::Half,
+            _ => Intensity::Normal,
+        }
+    }
+}
+
+impl FromAttrBits for Underline {
+    fn from_attr_bits(value: u8) -> Self {
+        match value {
+            1 => Underline::Single,
+            2 => Underline::Double,
+            3 => Underline::Curly,
+            4 => Underline::Dotted,
+            5 => Underline::Dashed,
+            _ => Underline::None,
+        }
+    }
+}
+
+impl FromAttrBits for Blink {
+    fn from_attr_bits(value: u8) -> Self {
+        match value {
+            1 => Blink::Slow,
+            2 => Blink::Rapid,
+            _ => Blink::None,
+        }
+    }
+}
+
+impl FromAttrBits for VerticalAlign {
+    fn from_attr_bits(value: u8) -> Self {
+        match value {
+            1 => VerticalAlign::SuperScript,
+            2 => VerticalAlign::SubScript,
+            _ => VerticalAlign::BaseLine,
+        }
+    }
+}
+
+impl FromAttrBits for SemanticType {
+    fn from_attr_bits(value: u8) -> Self {
+        match value {
+            1 => SemanticType::Input,
+            2 => SemanticType::Prompt,
+            _ => SemanticType::Output,
+        }
+    }
+}
 
 impl Default for CellAttributes {
     fn default() -> Self {
@@ -535,9 +599,9 @@ fn serialize_teenystring<S>(value: &TeenyString, serializer: S) -> Result<S::Ok,
 where
     S: Serializer,
 {
-    // unsafety: this is safe because the Cell constructor guarantees
-    // that the storage is valid utf8
-    let s = unsafe { core::str::from_utf8_unchecked(value.as_bytes()) };
+    // The constructor guarantees the storage is valid UTF-8 (input is always a
+    // `&str` or a `char`'s UTF-8 encoding); validate rather than trust.
+    let s = core::str::from_utf8(value.as_bytes()).expect("TeenyString storage is valid UTF-8");
     s.serialize(serializer)
 }
 
@@ -617,15 +681,18 @@ impl TeenyString {
         let width = width.unwrap_or_else(|| grapheme_column_width(s, unicode_version));
 
         if len < core::mem::size_of::<u64>() && width < 3 {
-            let mut word = 0u64;
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    bytes.as_ptr(),
-                    &mut word as *mut u64 as *mut u8,
-                    len,
-                );
-            }
-            let word = Self::set_marker_bit(word as u64, width);
+            // Pack the inline bytes into a u64 in memory order: place bytes at
+            // the low addresses and zero-pad the rest, then reinterpret via the
+            // native-endian conversion so the in-memory layout is identical to
+            // the previous `copy_nonoverlapping` into `&mut word`.
+            let mut arr = [0u8; core::mem::size_of::<u64>()];
+            arr[..len].copy_from_slice(bytes);
+            let word = if cfg!(target_endian = "little") {
+                u64::from_le_bytes(arr)
+            } else {
+                u64::from_be_bytes(arr)
+            };
+            let word = Self::set_marker_bit(word, width);
             Self(word)
         } else {
             let vec = Box::new(TeenyStringHeap {
@@ -655,19 +722,29 @@ impl TeenyString {
             if Self::is_double_width(self.0) { 2 } else { 1 }
         } else {
             let heap = self.0 as *const u64 as *const TeenyStringHeap;
+            // SAFETY: when the marker bit is clear, self.0 holds a valid owned
+            // pointer produced by `Box::into_raw` in `from_str` (or cloned from
+            // such a value). The heap allocation stays alive for the lifetime of
+            // this TeenyString and we only read through the pointer.
             unsafe { (*heap).width }
         }
     }
 
     pub fn str(&self) -> &str {
-        // unsafety: this is safe because the constructor guarantees
-        // that the storage is valid utf8
-        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
+        // The constructor guarantees the storage is valid UTF-8 (input is always
+        // a `&str` or a `char`'s UTF-8 encoding); validate rather than trust.
+        core::str::from_utf8(self.as_bytes()).expect("TeenyString storage is valid UTF-8")
     }
 
     pub fn as_bytes(&self) -> &[u8] {
         if Self::is_marker_bit_set(self.0) {
             let bytes = &self.0 as *const u64 as *const u8;
+            // SAFETY: `bytes` points at the inline representation of `self.0`,
+            // which outlives the returned borrow. We read exactly 7 bytes
+            // (size_of::<u64>() - 1), all within the u64, so the slice is in
+            // bounds and properly aligned. A safe wrapper is impossible here
+            // because we must return a borrow into the interior bytes of the
+            // packed u64 field, which is what keeps TeenyString 8 bytes.
             let bytes =
                 unsafe { core::slice::from_raw_parts(bytes, core::mem::size_of::<u64>() - 1) };
             let len = bytes
@@ -678,6 +755,9 @@ impl TeenyString {
             &bytes[0..len]
         } else {
             let heap = self.0 as *const u64 as *const TeenyStringHeap;
+            // SAFETY: marker bit clear means self.0 is a valid owned pointer to
+            // a TeenyStringHeap (see `from_str`/`Drop`); it outlives this borrow
+            // and we only read its `bytes` Vec.
             unsafe { (*heap).bytes.as_slice() }
         }
     }
@@ -686,6 +766,11 @@ impl TeenyString {
 impl Drop for TeenyString {
     fn drop(&mut self) {
         if !Self::is_marker_bit_set(self.0) {
+            // SAFETY: marker bit clear means self.0 is the exact raw pointer
+            // produced by `Box::into_raw` in `from_str` (Clone rebuilds via
+            // from_str rather than copying the pointer, so ownership is unique).
+            // We own exactly one reference, so reconstructing and dropping the
+            // Box exactly once frees the heap allocation without double-free.
             let vec = unsafe { Box::from_raw(self.0 as *mut usize as *mut TeenyStringHeap) };
             drop(vec);
         }

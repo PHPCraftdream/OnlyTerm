@@ -336,6 +336,8 @@ mod win {
 
     impl Drop for HandleWrapper {
         fn drop(&mut self) {
+            // SAFETY: `handle` was returned by `OpenFileMappingW` and is owned
+            // exclusively by this wrapper, so it is closed exactly once here.
             unsafe {
                 CloseHandle(self.handle);
             }
@@ -344,6 +346,9 @@ mod win {
 
     impl Drop for SharedMemObject {
         fn drop(&mut self) {
+            // SAFETY: `buf` was returned by the matching `MapViewOfFile` call
+            // and is owned exclusively by this struct, so it is unmapped
+            // exactly once here, before `_handle` closes the mapping object.
             unsafe {
                 UnmapViewOfFile(self.buf as _);
             }
@@ -366,6 +371,9 @@ mod win {
     ) -> std::result::Result<std::vec::Vec<u8>, std::io::Error> {
         let wide_name = wide_string(&name);
 
+        // SAFETY: `wide_name` is a valid null-terminated UTF-16 string owned
+        // by this function for the duration of the call; failure is reported
+        // via a null return and handled below, not through UB.
         let handle = unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS, 0, wide_name.as_ptr()) };
         if handle.is_null() {
             let err = std::io::Error::last_os_error();
@@ -376,6 +384,9 @@ mod win {
         }
 
         let handle_wrapper = HandleWrapper { handle };
+        // SAFETY: `handle_wrapper.handle` was just verified non-null above,
+        // so it is a valid file-mapping handle; mapping the whole object
+        // (size 0) is a plain FFI call, failure reported via null return.
         let buf = unsafe { MapViewOfFile(handle_wrapper.handle, FILE_MAP_ALL_ACCESS, 0, 0, 0) };
         if buf.is_null() {
             let err = std::io::Error::last_os_error();
@@ -391,6 +402,10 @@ mod win {
         };
 
         let mut memory_info = MEMORY_BASIC_INFORMATION::default();
+        // SAFETY: `shm.buf` is a valid pointer into the view mapped above and
+        // is not dereferenced here (VirtualQuery only inspects the address
+        // range); `memory_info` is a live, correctly-sized out-parameter
+        // matching `MEMORY_BASIC_INFORMATION`'s layout.
         let res = unsafe {
             VirtualQuery(
                 shm.buf as _,
@@ -423,6 +438,10 @@ mod win {
         if let Some(val) = data_size {
             size = size.min(val as usize);
         }
+        // SAFETY: `offset < size` was checked above and `size` was clamped to
+        // the region reported by `VirtualQuery`, so `[buf+offset, buf+offset+size)`
+        // lies entirely within the mapped view; `shm` is still alive (dropped
+        // only after this function returns), keeping the mapping valid.
         let buf_slice = unsafe { std::slice::from_raw_parts(shm.buf.add(offset), size) };
         let data = buf_slice.to_vec();
 

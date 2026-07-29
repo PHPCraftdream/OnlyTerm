@@ -50,9 +50,12 @@ impl DerefMut for Map {
     }
 }
 
-fn take(object: Map) -> BTreeMap<Value, Value> {
-    let object = core::mem::ManuallyDrop::new(object);
-    unsafe { core::ptr::read(&object.inner) }
+fn take(mut object: Map) -> BTreeMap<Value, Value> {
+    // Swap the real contents out, leaving `object` holding an empty map so that
+    // Map's Drop impl (which drains `inner` via safely()) is a no-op when it
+    // runs. This replaces the previous ManuallyDrop + ptr::read dance with a
+    // fully safe move that preserves the lazy BTreeMap::IntoIter return type.
+    std::mem::take(&mut object.inner)
 }
 
 impl IntoIterator for Map {

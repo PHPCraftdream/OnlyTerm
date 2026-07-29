@@ -27,7 +27,31 @@ pub enum Action {
 impl Action {
     #[inline(always)]
     pub fn from_u16(v: u16) -> Self {
-        unsafe { core::mem::transmute(v) }
+        // The transition/entry/exit tables only ever pack valid Action
+        // discriminants (0..=18), so every reachable call lands on an explicit
+        // arm. The catch-all maps any (impossible) out-of-range value to the
+        // zero discriminant instead of invoking UB via transmute.
+        match v {
+            0 => Action::None,
+            1 => Action::Ignore,
+            2 => Action::Print,
+            3 => Action::Execute,
+            4 => Action::Clear,
+            5 => Action::Collect,
+            6 => Action::Param,
+            7 => Action::EscDispatch,
+            8 => Action::CsiDispatch,
+            9 => Action::Hook,
+            10 => Action::Put,
+            11 => Action::Unhook,
+            12 => Action::OscStart,
+            13 => Action::OscPut,
+            14 => Action::OscEnd,
+            15 => Action::Utf8,
+            16 => Action::ApcStart,
+            17 => Action::ApcPut,
+            _ => Action::ApcEnd,
+        }
     }
 }
 
@@ -57,6 +81,28 @@ pub enum State {
 impl State {
     #[inline(always)]
     pub fn from_u16(v: u16) -> Self {
-        unsafe { core::mem::transmute(v) }
+        // The transition/entry/exit tables only ever pack valid State
+        // discriminants (0..=16), so every reachable call lands on an explicit
+        // arm. The catch-all maps any (impossible) out-of-range value to the
+        // zero discriminant instead of invoking UB via transmute.
+        match v {
+            0 => State::Ground,
+            1 => State::Escape,
+            2 => State::EscapeIntermediate,
+            3 => State::CsiEntry,
+            4 => State::CsiParam,
+            5 => State::CsiIntermediate,
+            6 => State::CsiIgnore,
+            7 => State::DcsEntry,
+            8 => State::DcsParam,
+            9 => State::DcsIntermediate,
+            10 => State::DcsPassthrough,
+            11 => State::DcsIgnore,
+            12 => State::OscString,
+            13 => State::SosPmString,
+            14 => State::ApcString,
+            15 => State::Anywhere,
+            _ => State::Utf8Sequence,
+        }
     }
 }

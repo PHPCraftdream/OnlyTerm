@@ -29,18 +29,16 @@ use transitions::{ENTRY, EXIT, TRANSITIONS};
 
 #[inline(always)]
 fn lookup(state: State, b: u8) -> (Action, State) {
-    let v = unsafe {
-        TRANSITIONS
-            .get_unchecked(state as usize)
-            .get_unchecked(b as usize)
-    };
+    // `state` is one of the 15 table-indexed states (0..14) and `b` is a u8, so
+    // both indices are always in range; the bounds checks are elided by LLVM.
+    let v = TRANSITIONS[state as usize][b as usize];
     (Action::from_u16(v >> 8), State::from_u16(v & 0xff))
 }
 
 #[inline(always)]
 #[cfg(not(test))]
 fn lookup_entry(state: State) -> Action {
-    unsafe { *ENTRY.get_unchecked(state as usize) }
+    ENTRY[state as usize]
 }
 
 #[inline(always)]
@@ -62,7 +60,7 @@ fn lookup_exit(state: State) -> Action {
 #[inline(always)]
 #[cfg(not(test))]
 fn lookup_exit(state: State) -> Action {
-    unsafe { *EXIT.get_unchecked(state as usize) }
+    EXIT[state as usize]
 }
 
 /// `VTActor` is a trait that allows the host application to process

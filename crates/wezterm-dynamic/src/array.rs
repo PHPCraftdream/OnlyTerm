@@ -39,9 +39,12 @@ impl Drop for Array {
     }
 }
 
-fn take(array: Array) -> Vec<Value> {
-    let array = core::mem::ManuallyDrop::new(array);
-    unsafe { core::ptr::read(&array.inner) }
+fn take(mut array: Array) -> Vec<Value> {
+    // Swap the real contents out, leaving `array` holding an empty vec so that
+    // Array's Drop impl (which drains `inner` via safely()) is a no-op when it
+    // runs. This replaces the previous ManuallyDrop + ptr::read dance with a
+    // fully safe move that preserves the lazy Vec::IntoIter return type.
+    core::mem::take(&mut array.inner)
 }
 
 impl Array {
