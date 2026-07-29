@@ -176,7 +176,7 @@ fn update_checker() {
 
     std::thread::sleep(if force_ui { initial_interval } else { delay });
 
-    let my_sock = config::RUNTIME_DIR.join(format!("gui-sock-{}", unsafe { libc::getpid() }));
+    let my_sock = config::RUNTIME_DIR.join(format!("gui-sock-{}", std::process::id()));
 
     loop {
         // Figure out which other wezterm-guis are running.
