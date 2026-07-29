@@ -46,7 +46,8 @@ pub fn is_running_in_rdp_session() -> bool {
         Err(_) => return false,
     };
 
-    // SAFETY: GetCurrentProcessId returns a pseudo-handle-derived PID (no args);
+    // SAFETY: GetCurrentProcessId takes no arguments and returns the calling
+    // process's real DWORD PID (not a pseudo-handle - that's GetCurrentProcess);
     // ProcessIdToSessionId is the documented session-id API and receives a valid
     // PID plus a pointer to our local `current_session` DWORD in which to write.
     unsafe {
