@@ -880,6 +880,17 @@ pub struct Config {
     #[dynamic(default = "default_max_fps")]
     pub max_fps: u64,
 
+    /// When true (the default), a background watchdog thread monitors the
+    /// GUI thread's message loop and logs+counts when it appears to be
+    /// stuck (see `gui_watchdog_threshold_ms`).
+    #[dynamic(default = "default_true")]
+    pub gui_watchdog_enabled: bool,
+
+    /// How long the GUI thread's message loop heartbeat may go without
+    /// advancing before the watchdog considers it hung, in milliseconds.
+    #[dynamic(default = "default_gui_watchdog_threshold_ms")]
+    pub gui_watchdog_threshold_ms: u64,
+
     #[dynamic(default = "default_shape_cache_size")]
     pub shape_cache_size: usize,
     #[dynamic(default = "default_line_state_cache_size")]
@@ -2047,6 +2058,10 @@ fn default_anim_fps() -> u8 {
 
 fn default_max_fps() -> u64 {
     60
+}
+
+fn default_gui_watchdog_threshold_ms() -> u64 {
+    4_000
 }
 
 fn default_tiling_desktop_environments() -> Vec<String> {
