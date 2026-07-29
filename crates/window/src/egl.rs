@@ -75,6 +75,8 @@ impl std::ops::Deref for GlConnection {
 
 impl Drop for GlConnection {
     fn drop(&mut self) {
+        // SAFETY: `self.display` is the valid EGL display owned by this connection,
+        // obtained earlier via `GetDisplay`/`Initialize`.
         unsafe {
             self.egl.egl.Terminate(self.display);
         }
@@ -90,6 +92,9 @@ pub struct GlState {
 
 impl Drop for GlState {
     fn drop(&mut self) {
+        // SAFETY: `display`/`surface`/`context` are the valid EGL objects owned
+        // by this `GlState`; releasing the current context and destroying them
+        // exactly once on drop.
         unsafe {
             self.connection.MakeCurrent(
                 self.connection.display,
@@ -111,12 +116,16 @@ type GetProcAddressFunc =
 impl EglWrapper {
     pub fn load_egl(lib: libloading::Library) -> anyhow::Result<Self> {
         let get_proc_address: libloading::Symbol<GetProcAddressFunc> =
+            // SAFETY: `b"eglGetProcAddress\0"` is a valid null-terminated symbol name.
             unsafe { lib.get(b"eglGetProcAddress\0")? };
         let egl = ffi::Egl::load_with(|s: &'static str| {
             let sym_name = std::ffi::CString::new(s).expect("symbol to be cstring compatible");
+            // SAFETY: `sym_name` is a live null-terminated C string; `_lib` outlives
+            // the returned function pointers (kept alive by `EglWrapper`).
             if let Ok(sym) = unsafe { lib.get(sym_name.as_bytes_with_nul()) } {
                 return *sym;
             }
+            // SAFETY: valid null-terminated name for the loaded `eglGetProcAddress`.
             unsafe { get_proc_address(sym_name.as_ptr()) }
         });
         log::trace!("load_egl: {:?}", lib);
@@ -127,6 +136,8 @@ impl EglWrapper {
         &self,
         display: Option<ffi::EGLNativeDisplayType>,
     ) -> anyhow::Result<ffi::types::EGLDisplay> {
+        // SAFETY: `DEFAULT_DISPLAY` (or the provided display) is a valid EGL
+        // native display argument; the call returns a display handle or null.
         let display = unsafe { self.egl.GetDisplay(display.unwrap_or(ffi::DEFAULT_DISPLAY)) };
         if display.is_null() {
             Err(self.error("egl GetDisplay"))
@@ -136,7 +147,9 @@ impl EglWrapper {
     }
 
     pub fn error(&self, context: &str) -> Error {
-        let label = match unsafe { self.egl.GetError() } as u32 {
+        let label =
+            // SAFETY: `GetError` takes no arguments and is always safe to call.
+            match unsafe { self.egl.GetError() } as u32 {
             ffi::NOT_INITIALIZED => "NOT_INITIALIZED".into(),
             ffi::BAD_ACCESS => "BAD_ACCESS".into(),
             ffi::BAD_ALLOC => "BAD_ALLOC".into(),
@@ -162,6 +175,8 @@ impl EglWrapper {
     ) -> anyhow::Result<(ffi::EGLint, ffi::EGLint)> {
         let mut major = 0;
         let mut minor = 0;
+        // SAFETY: `display` is a valid EGL display; `major`/`minor` are valid
+        // out-pointers the call writes to.
         unsafe {
             if self.egl.Initialize(display, &mut major, &mut minor) != 0 {
                 Ok((major, minor))
@@ -178,6 +193,7 @@ impl EglWrapper {
         attribute: u32,
     ) -> Option<ffi::EGLint> {
         let mut value = 0;
+        // SAFETY: `display`/`config` are valid and `value` is a valid out-pointer.
         let res = unsafe {
             self.egl
                 .GetConfigAttrib(display, config, attribute as ffi::EGLint, &mut value)
@@ -271,6 +287,8 @@ impl EglWrapper {
         );
 
         let mut num_configs = 0;
+        // SAFETY: `display` is valid; a null buffer with capacity 0 queries the
+        // config count into `num_configs` without writing.
         if unsafe {
             self.egl
                 .GetConfigs(display, std::ptr::null_mut(), 0, &mut num_configs)
@@ -281,6 +299,8 @@ impl EglWrapper {
 
         let mut configs = vec![std::ptr::null(); num_configs as usize];
 
+        // SAFETY: `configs` holds `num_configs` slots and the call writes at most
+        // that many into it.
         if unsafe {
             self.egl
                 .GetConfigs(display, configs.as_mut_ptr(), num_configs, &mut num_configs)
@@ -294,6 +314,8 @@ impl EglWrapper {
             self.log_config_info(display, *c);
         }
 
+        // SAFETY: `display` is valid, `attributes` is NONE-terminated (checked
+        // above), and `configs`/`num_configs` are valid out-params.
         if unsafe {
             self.egl.ChooseConfig(
                 display,
@@ -347,6 +369,8 @@ impl EglWrapper {
         config: ffi::types::EGLConfig,
         window: ffi::EGLNativeWindowType,
     ) -> anyhow::Result<ffi::types::EGLSurface> {
+        // SAFETY: `display`/`config` are valid and `window` is a valid native
+        // window handle; the colorspace attribute array is NONE-terminated.
         let surface = unsafe {
             self.egl.CreateWindowSurface(
                 display,
@@ -378,6 +402,8 @@ impl EglWrapper {
             !attributes.is_empty() && attributes[attributes.len() - 1] == ffi::NONE,
             "attributes list must be terminated with ffi::NONE"
         );
+        // SAFETY: `display`/`config`/`share_context` are valid and `attributes`
+        // is NONE-terminated (checked above).
         let context = unsafe {
             self.egl.CreateContext(
                 display,
@@ -440,6 +466,9 @@ impl GlState {
                 std::env::set_var("LIBGL_ALWAYS_SOFTWARE", "true");
             }
             for path in &paths {
+                // SAFETY: `path` is a valid filesystem path; `Library::new` loads it
+                // and we discard it on failure. The loaded symbols outlive this call
+                // only because `EglWrapper` keeps the `Library` alive.
                 match unsafe { libloading::Library::new(path) } {
                     Ok(lib) => match EglWrapper::load_egl(lib) {
                         Ok(egl) => match func(egl) {
@@ -499,8 +528,10 @@ impl GlState {
             let (major, minor) = egl.initialize_and_get_version(egl_display)?;
             log::trace!("initialized EGL version {}.{}", major, minor);
 
-            let is_opengl = unsafe {
-                if egl.egl.BindAPI(ffi::OPENGL_API) != 0 {
+            let is_opengl =
+                // SAFETY: `BindAPI` takes a valid API enum constant.
+                unsafe {
+                    if egl.egl.BindAPI(ffi::OPENGL_API) != 0 {
                     log::trace!("using OpenGL");
                     true
                 } else if egl.egl.BindAPI(ffi::OPENGL_ES_API) != 0 {
@@ -511,10 +542,12 @@ impl GlState {
                 }
             };
 
+            // SAFETY: `egl_display` is valid and `EXTENSIONS` is a valid query name.
             let extensions = unsafe { egl.egl.QueryString(egl_display, ffi::EXTENSIONS as _) };
             let extensions = if extensions.is_null() {
                 String::new()
             } else {
+                // SAFETY: a non-null `QueryString(EXTENSIONS)` result is a NUL-terminated C string.
                 let cstr = unsafe { std::ffi::CStr::from_ptr(extensions) };
                 String::from_utf8_lossy(cstr.to_bytes()).to_string()
             };
@@ -642,6 +675,8 @@ impl GlState {
 
             // Request non-blocking buffer swaps; we'll manage throttling
             // frames at the application level.
+            // SAFETY: `connection.display` is a valid EGL display; 0 requests
+            // non-blocking swaps.
             unsafe {
                 connection.egl.egl.SwapInterval(connection.display, 0);
             }
@@ -657,17 +692,22 @@ impl GlState {
     }
 }
 
+// SAFETY: `GlState` owns a valid EGL display/surface/context triple and
+// faithfully implements the glium `Backend` contract on the thread that owns
+// the context.
 unsafe impl glium::backend::Backend for GlState {
     fn resize(&self, _: (u32, u32)) {
         todo!()
     }
 
     fn swap_buffers(&self) -> Result<(), glium::SwapBuffersError> {
+        // SAFETY: `display`/`surface` are the valid EGL objects owned by this state.
         let res = unsafe {
             self.connection
                 .SwapBuffers(self.connection.display, self.surface)
         };
         if res != 1 {
+            // SAFETY: `GetError` takes no arguments and is always safe to call.
             Err(match unsafe { self.connection.GetError() } as u32 {
                 ffi::CONTEXT_LOST => glium::SwapBuffersError::ContextLost,
                 _ => glium::SwapBuffersError::AlreadySwapped,
@@ -686,6 +726,7 @@ unsafe impl glium::backend::Backend for GlState {
         let mut width = 0;
         let mut height = 0;
 
+        // SAFETY: `display`/`surface` are valid and `width` is a valid out-pointer.
         unsafe {
             self.connection.QuerySurface(
                 self.connection.display,
@@ -694,6 +735,7 @@ unsafe impl glium::backend::Backend for GlState {
                 &mut width,
             );
         }
+        // SAFETY: same as the WIDTH query above.
         unsafe {
             self.connection.QuerySurface(
                 self.connection.display,
@@ -706,6 +748,7 @@ unsafe impl glium::backend::Backend for GlState {
     }
 
     fn is_current(&self) -> bool {
+        // SAFETY: `GetCurrentContext` takes no arguments; `self.context` is valid.
         unsafe { self.connection.GetCurrentContext() == self.context }
     }
 
