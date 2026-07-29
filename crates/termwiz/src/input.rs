@@ -791,6 +791,9 @@ mod windows {
                 return;
             }
 
+            // SAFETY: `event.uChar.UnicodeChar()` returns a valid `*const u16`
+            // into the `uChar` union of this borrowed KEY_EVENT_RECORD; reading
+            // the u16 variant is sound (the record is a valid key event).
             let key_code = match std::char::from_u32(*unsafe { event.uChar.UnicodeChar() } as u32) {
                 Some(unicode) if unicode > '\x00' => {
                     let mut buf = [0u8; 4];
@@ -975,6 +978,10 @@ mod windows {
             callback: &mut F,
         ) {
             for record in records {
+                // SAFETY: `record.Event` is a discriminated union whose active
+                // variant is selected by `record.EventType`. We only read the
+                // variant matching the EventType we matched on, so each accessor
+                // returns a valid pointer into the correct field.
                 match record.EventType {
                     KEY_EVENT => {
                         self.decode_key_record(unsafe { record.Event.KeyEvent() }, callback)
@@ -1376,6 +1383,9 @@ impl InputParser {
             Err(err) => {
                 let (valid, _after_valid) = bytes.split_at(err.valid_up_to());
                 if !valid.is_empty() {
+                    // SAFETY: `valid` is the leading byte slice up to
+                    // `err.valid_up_to()`, which by contract of Utf8Error is
+                    // guaranteed to be valid UTF-8, so from_utf8_unchecked is sound.
                     let s = unsafe { std::str::from_utf8_unchecked(valid) };
                     let (c, len) = Self::first_char_and_len(s);
                     Some((c, len))

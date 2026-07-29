@@ -87,6 +87,9 @@ impl Read for InputHandle {
 
 impl ConsoleInputHandle for InputHandle {
     fn set_input_mode(&mut self, mode: u32) -> Result<()> {
+        // SAFETY: `self.handle` is a valid owned console input handle (kept
+        // alive by the FileDescriptor for the lifetime of self); `mode` is a
+        // plain u32. SetConsoleMode has no other preconditions.
         if unsafe { consoleapi::SetConsoleMode(self.handle.as_raw_handle() as *mut _, mode) } == 0 {
             bail!("SetConsoleMode failed: {}", IoError::last_os_error());
         }
@@ -95,6 +98,8 @@ impl ConsoleInputHandle for InputHandle {
 
     fn get_input_mode(&mut self) -> Result<u32> {
         let mut mode = 0;
+        // SAFETY: `self.handle` is a valid owned console input handle; `mode`
+        // is a valid u32 out-pointer live for the duration of the call.
         if unsafe { consoleapi::GetConsoleMode(self.handle.as_raw_handle() as *mut _, &mut mode) }
             == 0
         {
@@ -104,6 +109,7 @@ impl ConsoleInputHandle for InputHandle {
     }
 
     fn set_input_cp(&mut self, cp: u32) -> Result<()> {
+        // SAFETY: SetConsoleCP takes a plain u32 code page id; no pointers.
         if unsafe { SetConsoleCP(cp) } == 0 {
             bail!("SetConsoleCP failed: {}", IoError::last_os_error());
         }
@@ -111,11 +117,14 @@ impl ConsoleInputHandle for InputHandle {
     }
 
     fn get_input_cp(&mut self) -> u32 {
+        // SAFETY: GetConsoleCP takes no arguments and has no preconditions.
         unsafe { consoleapi::GetConsoleCP() }
     }
 
     fn get_number_of_input_events(&mut self) -> Result<usize> {
         let mut num = 0;
+        // SAFETY: `self.handle` is a valid owned console input handle; `num`
+        // is a valid u32 out-pointer live for the duration of the call.
         if unsafe {
             consoleapi::GetNumberOfConsoleInputEvents(
                 self.handle.as_raw_handle() as *mut _,
@@ -133,11 +142,17 @@ impl ConsoleInputHandle for InputHandle {
 
     fn read_console_input(&mut self, num_events: usize) -> Result<Vec<INPUT_RECORD>> {
         let mut res = Vec::with_capacity(num_events);
+        // SAFETY: INPUT_RECORD is a plain win32 POD struct; an all-zero bit
+        // pattern is a valid value (zeroed EventType + zeroed event union).
         let empty_record: INPUT_RECORD = unsafe { mem::zeroed() };
         res.resize(num_events, empty_record);
 
         let mut num = 0;
 
+        // SAFETY: `self.handle` is a valid owned console input handle. `res`
+        // owns `num_events` initialized INPUT_RECORD slots and `as_mut_ptr`/
+        // `num_events` describe exactly that buffer; `num` is a valid
+        // out-pointer. The call fills at most `num_events` records.
         if unsafe {
             consoleapi::ReadConsoleInputW(
                 self.handle.as_raw_handle() as *mut _,
@@ -150,6 +165,9 @@ impl ConsoleInputHandle for InputHandle {
             bail!("ReadConsoleInput failed: {}", IoError::last_os_error());
         }
 
+        // SAFETY: ReadConsoleInputW reported `num` records written (and num
+        // <= num_events), into `res` whose capacity is num_events, so `num` is
+        // a valid in-bounds length and every slot is initialized.
         unsafe { res.set_len(num as usize) };
         Ok(res)
     }
@@ -190,17 +208,25 @@ struct EventHandle {
 
 impl EventHandle {
     fn new() -> IoResult<Self> {
+        // SAFETY: standard win32 call; both pointer args are explicitly NULL
+        // (manual-reset event, unnamed object). Returns a valid HANDLE or NULL,
+        // which is checked immediately below.
         let handle = unsafe { CreateEventW(ptr::null_mut(), 0, 0, ptr::null_mut()) };
         if handle.is_null() {
             Err(IoError::last_os_error())
         } else {
             Ok(Self {
+                // SAFETY: `handle` is a valid, owned, non-null event HANDLE
+                // freshly created by CreateEventW above and not aliased
+                // anywhere else, so transferring sole ownership is sound.
                 handle: unsafe { OwnedHandle::from_raw_handle(handle as *mut _) },
             })
         }
     }
 
     fn set(&self) -> IoResult<()> {
+        // SAFETY: `self.handle` is a valid owned event HANDLE. SetEvent has no
+        // other preconditions and is documented to be thread-safe.
         let ok = unsafe { SetEvent(self.handle.as_raw_handle() as *mut _) };
         if ok == 0 {
             Err(IoError::last_os_error())
@@ -210,7 +236,10 @@ impl EventHandle {
     }
 }
 
-// Handle created by `CreateEventW` is safe to be shared.
+// SAFETY: EventHandle only wraps a CreateEventW HANDLE and exposes `set`
+// (which calls the thread-safe SetEvent) plus as_raw_handle reads. The handle
+// is immutable after construction, so sharing a &EventHandle across threads is
+// sound. OwnedHandle is already Send, so EventHandle becomes Send + Sync.
 unsafe impl Sync for EventHandle {}
 
 impl Write for OutputHandle {
@@ -236,6 +265,9 @@ impl Write for OutputHandle {
 
 impl ConsoleOutputHandle for OutputHandle {
     fn set_output_mode(&mut self, mode: u32) -> Result<()> {
+        // SAFETY: `self.handle` is a valid owned console output handle (kept
+        // alive by the FileDescriptor for the lifetime of self); `mode` is a
+        // plain u32. SetConsoleMode has no other preconditions.
         if unsafe { consoleapi::SetConsoleMode(self.handle.as_raw_handle() as *mut _, mode) } == 0 {
             bail!("SetConsoleMode failed: {}", IoError::last_os_error());
         }
@@ -244,6 +276,8 @@ impl ConsoleOutputHandle for OutputHandle {
 
     fn get_output_mode(&mut self) -> Result<u32> {
         let mut mode = 0;
+        // SAFETY: `self.handle` is a valid owned console output handle; `mode`
+        // is a valid u32 out-pointer live for the duration of the call.
         if unsafe { consoleapi::GetConsoleMode(self.handle.as_raw_handle() as *mut _, &mut mode) }
             == 0
         {
@@ -253,6 +287,7 @@ impl ConsoleOutputHandle for OutputHandle {
     }
 
     fn set_output_cp(&mut self, cp: u32) -> Result<()> {
+        // SAFETY: SetConsoleOutputCP takes a plain u32 code page id; no pointers.
         if unsafe { SetConsoleOutputCP(cp) } == 0 {
             bail!("SetConsoleOutputCP failed: {}", IoError::last_os_error());
         }
@@ -260,11 +295,14 @@ impl ConsoleOutputHandle for OutputHandle {
     }
 
     fn get_output_cp(&mut self) -> u32 {
+        // SAFETY: GetConsoleOutputCP takes no arguments and has no preconditions.
         unsafe { consoleapi::GetConsoleOutputCP() }
     }
 
     fn fill_char(&mut self, text: char, x: i16, y: i16, len: u32) -> Result<u32> {
         let mut wrote = 0;
+        // SAFETY: `self.handle` is a valid owned console output handle; `wrote`
+        // is a valid u32 out-pointer. The remaining args are plain values/copies.
         if unsafe {
             FillConsoleOutputCharacterW(
                 self.handle.as_raw_handle() as *mut _,
@@ -285,6 +323,8 @@ impl ConsoleOutputHandle for OutputHandle {
 
     fn fill_attr(&mut self, attr: u16, x: i16, y: i16, len: u32) -> Result<u32> {
         let mut wrote = 0;
+        // SAFETY: `self.handle` is a valid owned console output handle; `wrote`
+        // is a valid u32 out-pointer. The remaining args are plain values/copies.
         if unsafe {
             FillConsoleOutputAttribute(
                 self.handle.as_raw_handle() as *mut _,
@@ -304,6 +344,8 @@ impl ConsoleOutputHandle for OutputHandle {
     }
 
     fn set_attr(&mut self, attr: u16) -> Result<()> {
+        // SAFETY: `self.handle` is a valid owned console output handle; `attr`
+        // is a plain u16. SetConsoleTextAttribute has no other preconditions.
         if unsafe { SetConsoleTextAttribute(self.handle.as_raw_handle() as *mut _, attr) } == 0 {
             bail!(
                 "SetConsoleTextAttribute failed: {}",
@@ -314,6 +356,9 @@ impl ConsoleOutputHandle for OutputHandle {
     }
 
     fn set_cursor_position(&mut self, x: i16, y: i16) -> Result<()> {
+        // SAFETY: `self.handle` is a valid owned console output handle; the
+        // COORD is a plain copy. SetConsoleCursorPosition has no other
+        // preconditions.
         if unsafe {
             SetConsoleCursorPosition(self.handle.as_raw_handle() as *mut _, COORD { X: x, Y: y })
         } == 0
@@ -337,6 +382,8 @@ impl ConsoleOutputHandle for OutputHandle {
         let mut res = vec![
             CHAR_INFO {
                 Attributes: 0,
+                // SAFETY: the Char union is a plain POD union; all-zero bits
+                // are a valid value for the u16/AsciiChar variants it holds.
                 Char: unsafe { mem::zeroed() }
             };
             cols * rows
@@ -347,6 +394,9 @@ impl ConsoleOutputHandle for OutputHandle {
             Top: info.srWindow.Top,
             Bottom: info.srWindow.Bottom,
         };
+        // SAFETY: `self.handle` is a valid owned console output handle; `res`
+        // owns cols*rows CHAR_INFO slots and the buffer/size/coord describe it;
+        // `read_region` is a valid out-pointer. The call only writes into `res`.
         unsafe {
             if ReadConsoleOutputW(
                 self.handle.as_raw_handle() as *mut _,
@@ -382,6 +432,10 @@ impl ConsoleOutputHandle for OutputHandle {
             Bottom: info.srWindow.Bottom,
         };
 
+        // SAFETY: `self.handle` is a valid owned console output handle;
+        // `buffer` is a valid shared slice of rows*cols CHAR_INFO (checked
+        // above) whose lifetime encloses the call; `write_region` is a valid
+        // out-pointer.
         unsafe {
             if WriteConsoleOutputW(
                 self.handle.as_raw_handle() as *mut _,
@@ -401,7 +455,11 @@ impl ConsoleOutputHandle for OutputHandle {
     }
 
     fn get_buffer_info(&mut self) -> Result<CONSOLE_SCREEN_BUFFER_INFO> {
+        // SAFETY: CONSOLE_SCREEN_BUFFER_INFO is a plain POD struct; all-zero
+        // bits are a valid value to pass to GetConsoleScreenBufferInfo.
         let mut info: CONSOLE_SCREEN_BUFFER_INFO = unsafe { mem::zeroed() };
+        // SAFETY: `self.handle` is a valid owned console output handle; `info`
+        // is a valid out-pointer live for the duration of the call.
         let ok = unsafe {
             GetConsoleScreenBufferInfo(self.handle.as_raw_handle() as *mut _, &mut info as *mut _)
         };
@@ -421,6 +479,8 @@ impl ConsoleOutputHandle for OutputHandle {
             Right: right,
             Bottom: bottom,
         };
+        // SAFETY: `self.handle` is a valid owned console output handle; `&rect`
+        // is a valid shared SMALL_RECT reference live for the call.
         if unsafe { SetConsoleWindowInfo(self.handle.as_raw_handle() as *mut _, 1, &rect) } == 0 {
             bail!("SetConsoleWindowInfo failed: {}", IoError::last_os_error());
         }
@@ -449,6 +509,10 @@ impl ConsoleOutputHandle for OutputHandle {
             Right: right,
             Bottom: bottom,
         };
+        // SAFETY: CHAR_INFO is POD and its Char union is valid zeroed; the
+        // `fill.Char.UnicodeChar_mut()` pointer is a valid in-place pointer
+        // into the local `fill`, so writing through it initializes the u16
+        // variant before `fill` is read.
         let fill = unsafe {
             let mut fill = CHAR_INFO {
                 Char: mem::zeroed(),
@@ -457,6 +521,9 @@ impl ConsoleOutputHandle for OutputHandle {
             *fill.Char.UnicodeChar_mut() = ' ' as u16;
             fill
         };
+        // SAFETY: `self.handle` is a valid owned console output handle;
+        // `scroll_rect`, `clip_rect` and `fill` are valid shared references
+        // for the call; the COORD is a plain copy.
         if unsafe {
             ScrollConsoleScreenBufferW(
                 self.handle.as_raw_handle() as *mut _,
@@ -785,6 +852,8 @@ impl Terminal for WindowsTerminal {
             Y: cast(size.rows)?,
         };
         let handle = self.output_handle.handle.as_raw_handle();
+        // SAFETY: `handle` is a valid owned console output handle; `size` is a
+        // plain COORD copy. SetConsoleScreenBufferSize has no other preconditions.
         if unsafe { SetConsoleScreenBufferSize(handle as *mut _, size) } != 1 {
             bail!(
                 "failed to SetConsoleScreenBufferSize: {}",
@@ -821,6 +890,9 @@ impl Terminal for WindowsTerminal {
                     self.waker_handle.handle.as_raw_handle() as *mut _,
                 ];
                 let result = unsafe {
+                    // SAFETY: `handles` holds two valid raw handles (owned
+                    // console input + event) live for the call; count is 2 and
+                    // the array outlives WaitForMultipleObjects.
                     WaitForMultipleObjects(
                         2,
                         handles.as_mut_ptr(),
