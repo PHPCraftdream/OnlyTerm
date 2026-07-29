@@ -201,6 +201,11 @@ struct DecodedImageHandle<'a> {
 }
 
 impl<'a> BitmapImage for DecodedImageHandle<'a> {
+    // SAFETY: Required to be `unsafe fn` by the `BitmapImage` trait contract.
+    // The returned pointer borrows pixel data held alive by `self`: the
+    // `MutexGuard` keeps the underlying `ImageDataType` pinned for the
+    // handle's lifetime, so the pointer is valid while `&self` is live.
+    // Callers must respect the `image_dimensions` bounds.
     unsafe fn pixel_data(&self) -> *const u8 {
         match &*self.h {
             ImageDataType::Rgba8 { data, .. } => data.as_ptr(),
@@ -209,6 +214,8 @@ impl<'a> BitmapImage for DecodedImageHandle<'a> {
         }
     }
 
+    // SAFETY: Trait-mandated `unsafe fn`. This implementation always panics:
+    // decoded images are immutable, so no mutable pointer is ever produced.
     unsafe fn pixel_data_mut(&mut self) -> *mut u8 {
         panic!("cannot mutate DecodedImage");
     }
