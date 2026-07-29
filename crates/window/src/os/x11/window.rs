@@ -146,6 +146,8 @@ impl HasDisplayHandle for XWindowInner {
         if let Some(conn) = self.conn.upgrade() {
             let handle =
                 XcbDisplayHandle::new(NonNull::new(conn.conn.get_raw_conn() as _), conn.screen_num);
+            // SAFETY: `handle` wraps a live xcb connection owned by `conn`, valid
+            // for the connection's lifetime, so borrowing it raw is sound.
             unsafe { Ok(DisplayHandle::borrow_raw(RawDisplayHandle::Xcb(handle))) }
         } else {
             Err(HandleError::Unavailable)
@@ -158,6 +160,7 @@ impl HasWindowHandle for XWindowInner {
         let mut handle =
             XcbWindowHandle::new(NonZeroU32::new(self.child_id.resource_id()).expect("non-zero"));
         handle.visual_id = NonZeroU32::new(self.conn.upgrade().unwrap().visual.visual_id());
+        // SAFETY: `handle` mirrors a live xcb window id valid for the window's lifetime.
         unsafe { Ok(WindowHandle::borrow_raw(RawWindowHandle::Xcb(handle))) }
     }
 }
@@ -187,10 +190,13 @@ impl XWindowInner {
         };
 
         // Don't chain on the end of the above to avoid borrowing gl_connection twice.
-        let gl_state = gl_state.map(Rc::new).and_then(|state| unsafe {
-            conn.gl_connection
-                .borrow_mut()
-                .replace(Rc::clone(state.get_connection()));
+        let gl_state = gl_state.map(Rc::new).and_then(|state| {
+            // SAFETY: `state` is a freshly-created valid GL `Backend` owning a
+            // current context; `glium::backend::Context::new` only trusts that.
+            unsafe {
+                conn.gl_connection
+                    .borrow_mut()
+                    .replace(Rc::clone(state.get_connection()));
             Ok(glium::backend::Context::new(
                 Rc::clone(&state),
                 true,
@@ -200,6 +206,7 @@ impl XWindowInner {
                     glium::debug::DebugCallbackBehavior::Ignore
                 },
             )?)
+            }
         })?;
 
         Ok(gl_state)
@@ -1327,6 +1334,9 @@ impl XWindowInner {
 
         let conn = self.conn();
 
+        // SAFETY: the motif WM hints struct is a `#[repr(C)]` POD of exactly 5
+        // `u32`-sized fields with no padding, so reinterpreting it as a `[u32; 5]`
+        // slice is sound.
         let hints_slice =
             unsafe { std::slice::from_raw_parts(&hints as *const _ as *const u32, 5) };
 
@@ -1536,7 +1546,10 @@ impl XWindow {
             window: window_id,
             property: conn.atom_net_wm_pid,
             r#type: xcb::x::ATOM_CARDINAL,
-            data: &[unsafe { libc::getpid() as u32 }],
+            data: &[
+                // SAFETY: `getpid()` is always safe to call on Unix.
+                unsafe { libc::getpid() as u32 },
+            ],
         })?;
 
         conn.send_request_no_reply(&xcb::x::ChangeProperty {
@@ -1918,6 +1931,9 @@ impl XWindowInner {
             win_gravity: 0,
         };
 
+        // SAFETY: `xcb_size_hints_t` is a POD composed of `CARD32`-sized fields, so
+        // `size_of::<xcb_size_hints_t>() / 4` is the exact element count and the
+        // memory is `u32`-reinterpretable without padding issues.
         let data = unsafe {
             std::slice::from_raw_parts(
                 &hints as *const _ as *const u32,
@@ -1944,6 +1960,7 @@ impl HasDisplayHandle for XWindow {
             .x11();
         let handle = XcbDisplayHandle::new(NonNull::new(conn.get_raw_conn() as _), conn.screen_num);
 
+        // SAFETY: `handle` wraps a live xcb connection valid for the connection lifetime.
         unsafe { Ok(DisplayHandle::borrow_raw(RawDisplayHandle::Xcb(handle))) }
     }
 }
@@ -1958,6 +1975,7 @@ impl HasWindowHandle for XWindow {
 
         let inner = handle.lock().unwrap();
         let handle = inner.window_handle()?;
+        // SAFETY: `handle` is a valid XcbWindowHandle backed by a live window.
         unsafe { Ok(WindowHandle::borrow_raw(handle.as_raw())) }
     }
 }

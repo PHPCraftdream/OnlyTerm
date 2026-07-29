@@ -110,6 +110,9 @@ impl std::fmt::Debug for NSRange {
     }
 }
 
+// SAFETY: `NSRange` is a plain `{location, length}` POD of two `NSUInteger`s and
+// the encoding string below describes exactly that layout, matching the ABI that
+// the objc runtime expects for the type.
 unsafe impl objc::Encode for NSRange {
     fn encode() -> objc::Encoding {
         let encoding = format!(
@@ -117,12 +120,16 @@ unsafe impl objc::Encode for NSRange {
             NSUInteger::encode().as_str(),
             NSUInteger::encode().as_str()
         );
+        // SAFETY: `encoding` is a valid type-encoding string for this POD layout.
         unsafe { objc::Encoding::from_str(&encoding) }
     }
 }
 
+// SAFETY: `NSRangePointer` is a pointer (`^`) to an `NSRange`; the encoding
+// string reflects that and matches the ABI.
 unsafe impl objc::Encode for NSRangePointer {
     fn encode() -> objc::Encoding {
+        // SAFETY: the constructed `^<NSRange-encoding>` string is a valid encoding.
         unsafe { objc::Encoding::from_str(&format!("^{}", NSRange::encode().as_str())) }
     }
 }
@@ -313,12 +320,16 @@ mod cglbits {
         }
     }
 
+    // SAFETY: `GlState` owns a valid CGL context/PIXEL_FORMAT/PFA and faithfully
+    // implements the glium `Backend` contract on the main thread that owns it.
     unsafe impl glium::backend::Backend for GlState {
         fn resize(&self, _: (u32, u32)) {
             todo!()
         }
 
         fn swap_buffers(&self) -> Result<(), glium::SwapBuffersError> {
+            // SAFETY: `self.gl_context` is a valid CGL context; the autorelease
+            // pool brackets the flushBuffer call and is released before return.
             unsafe {
                 let pool = NSAutoreleasePool::new(nil);
                 self.gl_context.flushBuffer();
@@ -411,6 +422,11 @@ pub struct Window {
     ns_view: *mut Object,
 }
 
+// SAFETY: `Window` holds raw Objective-C object pointers (`NSWindow`/`NSView`).
+// AppKit is single-threaded (main thread only); every operation on these
+// pointers is marshalled onto the main run loop, so sharing the owning handle
+// across threads is sound and no two threads ever mutate AppKit state
+// concurrently.
 unsafe impl Send for Window {}
 unsafe impl Sync for Window {}
 
@@ -1955,6 +1971,9 @@ impl WindowView {
             this.set_ivar(VIEW_CLS_NAME, std::ptr::null_mut() as *mut c_void);
 
             if !myself.is_null() {
+                // SAFETY: `myself` is the `Box<Self>` raw pointer stashed in the
+                // view ivar by `init_with_frame` (via `Box::into_raw`); the ivar
+                // was just nulled above so this is the unique reclaiming owner.
                 let myself = Box::from_raw(myself as *mut Self);
                 drop(myself);
             }
@@ -3185,7 +3204,10 @@ impl WindowView {
     fn init_with_frame(inner: &Rc<RefCell<Inner>>, rect: NSRect) -> anyhow::Result<StrongPtr> {
         let cls = Self::get_class();
 
+        // SAFETY: `cls` is a registered NSView subclass; `alloc` returns a valid
+        // (uninitialized) instance and `initWithFrame:` initializes it.
         let view_id: id = unsafe { msg_send![cls, alloc] };
+        // SAFETY: `view_id` was just alloc'd and `rect` is a valid frame.
         let view_id: StrongPtr = unsafe { StrongPtr::new(msg_send![view_id, initWithFrame:rect]) };
         inner.borrow_mut().view_id.replace(view_id.weak());
 
@@ -3193,6 +3215,8 @@ impl WindowView {
             inner: Rc::clone(&inner),
         }));
 
+        // SAFETY: `view` is a valid `Box<Self>` raw pointer being stashed in the
+        // view ivar; it is reclaimed by `Box::from_raw` in `drop_inner`.
         unsafe {
             (**view_id).set_ivar(VIEW_CLS_NAME, view as *mut c_void);
         }

@@ -78,6 +78,8 @@ lazy_static! {
             ..Default::default()
         };
 
+        // SAFETY: `osver` is a stack-local, fully-initialized `OSVERSIONINFOW`
+        // with the correct `dwOSVersionInfoSize`; `GetVersionExW` only reads it.
         if unsafe { GetVersionExW(&osver as *const _ as _) } == winapi::shared::minwindef::TRUE {
             osver.dwBuildNumber < 22000
         } else {
@@ -90,6 +92,8 @@ lazy_static! {
             ..Default::default()
         };
 
+        // SAFETY: `osver` is a stack-local, fully-initialized `OSVERSIONINFOW`
+        // with the correct `dwOSVersionInfoSize`; `GetVersionExW` only reads it.
         if unsafe { GetVersionExW(&osver as *const _ as _) } == winapi::shared::minwindef::TRUE {
             osver.dwBuildNumber >= 22621
         } else {
@@ -101,6 +105,11 @@ lazy_static! {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub(crate) struct HWindow(HWND);
+// SAFETY: `HWindow` is a plain newtype around an `HWND` used only as an opaque
+// identifier/token (it is `Copy` and never dereferenced into shared state by
+// these impls). An `HWND` is a process-global handle and sending/sharing the
+// bare token value across threads is sound; actual window operations are only
+// ever performed on the window's owning thread via the message loop.
 unsafe impl Send for HWindow {}
 unsafe impl Sync for HWindow {}
 
@@ -156,6 +165,9 @@ fn adjust_client_to_window_dimensions(
         right: width as _,
         bottom: height as _,
     };
+    // SAFETY: `rect` is a live `RECT` and `style`/`dpi` are plain integers;
+    // there is no menu (bMenu=0) and the ex-style is 0. The call only writes
+    // back into `rect`.
     unsafe { AdjustWindowRectExForDpi(&mut rect, style, 0, 0, dpi) };
 
     (rect_width(&rect), rect_height(&rect))
@@ -163,11 +175,18 @@ fn adjust_client_to_window_dimensions(
 
 fn rc_to_pointer(arc: &Rc<RefCell<WindowInner>>) -> *const RefCell<WindowInner> {
     let cloned = Rc::clone(arc);
+    // SAFETY: `cloned` is a freshly cloned `Rc` with refcount incremented, so
+    // `into_raw` leaks one strong reference that remains valid until reclaimed
+    // by `Rc::from_raw`. The raw pointer is stored in the window's user data.
     Rc::into_raw(cloned)
 }
 
 fn rc_from_pointer(lparam: LPVOID) -> Rc<RefCell<WindowInner>> {
-    // Turn it into an Rc
+    // SAFETY: `lparam` is a pointer previously produced by `rc_to_pointer`
+    // (and stored in the window's GWLP_USERDATA) and is thus a valid `Rc` raw
+    // pointer with a live strong reference. We `from_raw` to borrow it, clone
+    // (incrementing the refcount for the caller), then `into_raw` to leave the
+    // original strong reference intact so the stored pointer stays valid.
     let arc = unsafe { Rc::from_raw(std::mem::transmute(lparam)) };
     // Add a ref for the caller
     let cloned = Rc::clone(&arc);
@@ -179,6 +198,9 @@ fn rc_from_pointer(lparam: LPVOID) -> Rc<RefCell<WindowInner>> {
 }
 
 fn rc_from_hwnd(hwnd: HWND) -> Option<Rc<RefCell<WindowInner>>> {
+    // SAFETY: `hwnd` is a valid window handle and `GWLP_USERDATA` was set to an
+    // `Rc` raw pointer (via `rc_to_pointer`) during `WM_NCCREATE`, or is left
+    // null for windows we did not create. We only reinterpret a non-null value.
     let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as LPVOID };
     if raw.is_null() {
         None
@@ -188,6 +210,9 @@ fn rc_from_hwnd(hwnd: HWND) -> Option<Rc<RefCell<WindowInner>>> {
 }
 
 fn take_rc_from_pointer(lparam: LPVOID) -> Rc<RefCell<WindowInner>> {
+    // SAFETY: `lparam` is an `Rc` raw pointer produced by `rc_to_pointer` with
+    // a live strong reference; `from_raw` reclaims that reference (the caller
+    // transfers ownership rather than borrowing it, unlike `rc_from_pointer`).
     unsafe { Rc::from_raw(std::mem::transmute(lparam)) }
 }
 
@@ -203,6 +228,8 @@ fn callback_behavior() -> glium::debug::DebugCallbackBehavior {
 
 impl HasDisplayHandle for WindowInner {
     fn display_handle(&self) -> Result<DisplayHandle, HandleError> {
+        // SAFETY: `WindowsDisplayHandle` is a zero-sized marker with no raw
+        // pointers, so borrowing it raw for the lifetime of the handle is sound.
         unsafe {
             Ok(DisplayHandle::borrow_raw(RawDisplayHandle::Windows(
                 WindowsDisplayHandle::new(),
@@ -215,7 +242,12 @@ impl HasWindowHandle for WindowInner {
     fn window_handle(&self) -> Result<WindowHandle, HandleError> {
         let mut handle =
             Win32WindowHandle::new(NonZeroIsize::new(self.hwnd.0 as _).expect("non-zero"));
+        // SAFETY: passing `null()` for the module name returns the handle of
+        // the current process's exe, which is always valid and non-null.
         handle.hinstance = NonZeroIsize::new(unsafe { GetModuleHandleW(null()) } as _);
+        // SAFETY: `self.hwnd.0` is a live window handle valid for the lifetime
+        // of `WindowInner`; the constructed `Win32WindowHandle` mirrors it, so
+        // borrowing it raw is sound.
         unsafe { Ok(WindowHandle::borrow_raw(RawWindowHandle::Win32(handle))) }
     }
 }
@@ -234,26 +266,35 @@ impl WindowInner {
         } else {
             Err(anyhow::anyhow!("Config says to avoid EGL"))
         }
-        .and_then(|egl| unsafe {
-            log::trace!("Initialized EGL!");
-            conn.gl_connection
-                .borrow_mut()
-                .replace(Rc::clone(egl.get_connection()));
-            let backend = Rc::new(egl);
-            Ok(glium::backend::Context::new(
-                backend,
-                true,
-                callback_behavior(),
-            )?)
-        })
-        .or_else(|err| {
-            log::trace!("EGL init failed {:?}, fall back to WGL", err);
-            super::wgl::GlState::create(self.hwnd.0).and_then(|state| unsafe {
+        .and_then(|egl| {
+            // SAFETY: `egl` is a freshly-created, valid EGL `Backend` owning a
+            // current GL context; `glium::backend::Context::new` is unsafe only
+            // because it trusts the backend to be a valid GL context provider.
+            unsafe {
+                log::trace!("Initialized EGL!");
+                conn.gl_connection
+                    .borrow_mut()
+                    .replace(Rc::clone(egl.get_connection()));
+                let backend = Rc::new(egl);
                 Ok(glium::backend::Context::new(
-                    Rc::new(state),
+                    backend,
                     true,
                     callback_behavior(),
                 )?)
+            }
+        })
+        .or_else(|err| {
+            log::trace!("EGL init failed {:?}, fall back to WGL", err);
+            super::wgl::GlState::create(self.hwnd.0).and_then(|state| {
+                // SAFETY: `state` is a freshly-created, valid WGL `Backend`
+                // owning a current GL context; same rationale as the EGL branch.
+                unsafe {
+                    Ok(glium::backend::Context::new(
+                        Rc::new(state),
+                        true,
+                        callback_behavior(),
+                    )?)
+                }
             })
         })?;
 
@@ -263,12 +304,16 @@ impl WindowInner {
     }
 
     fn get_effective_dpi(&self) -> usize {
+        // SAFETY: `self.hwnd.0` is a live window handle.
         let actual_dpi = unsafe { GetDpiForWindow(self.hwnd.0) } as f64;
 
         if self.config.dpi_by_screen.is_empty() {
             return self.config.dpi.unwrap_or(actual_dpi) as usize;
         }
 
+        // SAFETY: `mi` is zeroed then sized correctly before use; `MonitorFromWindow`
+        // and `GetMonitorInfoW` receive a valid `hwnd`/`MONITORINFO` pointer and only
+        // write into `mi`.
         unsafe {
             let mut mi: MONITORINFOEXW = std::mem::zeroed();
             mi.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
@@ -308,6 +353,8 @@ impl WindowInner {
             right: 0,
             top: 0,
         };
+        // SAFETY: `rect` is a live stack `RECT` and `self.hwnd.0` is a valid
+        // window handle; `GetClientRect` only writes the client rect into it.
         unsafe {
             GetClientRect(self.hwnd.0, &mut rect);
         }
@@ -364,6 +411,9 @@ fn apply_decoration_immediate(hwnd: HWND, decorations: WindowDecorations) {
         None => return,
     };
 
+    // SAFETY: `hwnd` is a valid window handle; the style flags are plain
+    // integers and `SetWindowPos` receives valid no-op position/size flags
+    // (NOMOVE|NOSIZE) with a null hwndInsertAfter.
     unsafe {
         let orig_style = GetWindowLongW(hwnd, GWL_STYLE);
         let style = decorations_to_style(decorations);
@@ -402,10 +452,14 @@ fn decorations_to_style(decorations: WindowDecorations) -> u32 {
 }
 
 fn get_primary_monitor_dpi() -> u32 {
+    // SAFETY: a null hwnd with MONITOR_DEFAULTTOPRIMARY returns the primary
+    // monitor handle, which is asserted non-null below.
     let primary = unsafe { MonitorFromWindow(null_mut(), MONITOR_DEFAULTTOPRIMARY) };
     assert!(!primary.is_null(), "MonitorFromWindow() returned NULL");
     let mut dpi_x = USER_DEFAULT_SCREEN_DPI as u32;
     let mut dpi_y = USER_DEFAULT_SCREEN_DPI as u32;
+    // SAFETY: `primary` is a valid monitor handle (asserted above) and the dpi
+    // out-params are valid `u32` pointers that the call only writes to.
     unsafe { GetDpiForMonitor(primary, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) };
     dpi_x
 }
@@ -419,6 +473,8 @@ impl Window {
         lparam: *const RefCell<WindowInner>,
     ) -> anyhow::Result<HWND> {
         let class_name = wide_string(class_name);
+        // SAFETY: null module name returns the current process's exe handle,
+        // which is always valid and non-null on Windows.
         let h_inst = unsafe { GetModuleHandleW(null()) };
         let class = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
@@ -429,6 +485,8 @@ impl Window {
             // FIXME: this resource is specific to the wezterm build and this should
             // really be made generic for other sorts of windows.
             // The ID is defined in assets/windows/resource.rc
+            // SAFETY: `h_inst` is a valid module handle and `MAKEINTRESOURCEW(0x101)`
+            // is a valid resource-id token for the bundled icon.
             hIcon: unsafe { LoadIconW(h_inst, MAKEINTRESOURCEW(0x101)) },
             hCursor: null_mut(),
             hbrBackground: null_mut(),
@@ -436,6 +494,9 @@ impl Window {
             lpszClassName: class_name.as_ptr(),
         };
 
+        // SAFETY: `class` is a fully-initialized `WNDCLASSW` with valid string
+        // pointers and a registered `wnd_proc`; the failure case (return 0) is
+        // handled below, including the benign CLASS_ALREADY_EXISTS case.
         if unsafe { RegisterClassW(&class) } == 0 {
             let err = IoError::last_os_error();
             match err.raw_os_error() {
@@ -460,6 +521,8 @@ impl Window {
                     // WS_POPUP windows need to specify the initial position.
                     // We pick the middle of the primary monitor
 
+                    // SAFETY: `mi` is zeroed then sized before use; the monitor
+                    // handle and info pointer are valid and only written to.
                     unsafe {
                         let mut mi: MONITORINFO = std::mem::zeroed();
                         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
@@ -481,6 +544,11 @@ impl Window {
         };
 
         let name = wide_string(name);
+        // SAFETY: `class_name`/`name` are live null-terminated UTF-16 buffers,
+        // all handle/pointer args are null (no parent/menu/instance), and
+        // `lparam` is an `Rc` raw pointer produced by `rc_to_pointer` that is
+        // recovered as the window's `WM_CREATE`/`WM_NCCREATE` lparam. A null
+        // result is reported as an error below.
         let hwnd = unsafe {
             CreateWindowExW(
                 0,
@@ -560,6 +628,9 @@ impl Window {
             Ok(hwnd) => HWindow(hwnd),
             Err(err) => {
                 // Ensure that we drop the extra ref to raw before we return
+                // SAFETY: `raw` was produced by `rc_to_pointer` above (a valid
+                // `Rc` raw pointer with one extra strong ref); since window
+                // creation failed it was never stored, so we reclaim it here.
                 drop(unsafe { Rc::from_raw(raw) });
                 return Err(err);
             }
@@ -574,6 +645,7 @@ impl Window {
         enable_blur_behind(hwnd.0);
 
         // Make window capable of accepting drag and drop
+        // SAFETY: `hwnd.0` is a valid, just-created window handle.
         unsafe {
             DragAcceptFiles(hwnd.0, winapi::shared::minwindef::TRUE);
         }
@@ -598,6 +670,8 @@ fn schedule_show_window(hwnd: HWindow, show: ShowWindowCommand) {
     // to lock inner, so we avoid locking it ourselves here
     log::trace!("scheduling ShowWindowCommand {show:?}");
     promise::spawn::spawn(async move {
+        // SAFETY: `hwnd.0` is a valid window handle and the show command is a
+        // valid `SW_*` constant.
         unsafe {
             log::trace!("applying ShowWindowCommand {show:?}");
             ShowWindow(
@@ -617,6 +691,8 @@ impl WindowInner {
     fn close(&mut self) {
         let hwnd = self.hwnd;
         promise::spawn::spawn(async move {
+            // SAFETY: `hwnd.0` is a valid window handle; `DestroyWindow` is
+            // queued on the owning thread via the spawned task.
             unsafe {
                 DestroyWindow(hwnd.0);
             }
@@ -661,6 +737,8 @@ impl WindowInner {
 
     fn set_title(&mut self, title: &str) {
         let title = wide_string(title);
+        // SAFETY: `self.hwnd.0` is a valid window handle and `title` is a live
+        // null-terminated UTF-16 buffer.
         unsafe {
             SetWindowTextW(self.hwnd.0, title.as_ptr());
         }
@@ -684,6 +762,10 @@ impl WindowInner {
     }
 
     fn toggle_fullscreen(&mut self) {
+        // SAFETY: `self.hwnd.0` is a valid window handle; all FFI calls receive
+        // valid handle/pointer args (zeroed/sized `WINDOWPLACEMENT`/`MONITORINFO`,
+        // valid style integers and no-op size flags). The window state is only
+        // mutated via `SetWindow*` from the owning thread.
         unsafe {
             let hwnd = self.hwnd.0;
             let style = GetWindowLongW(hwnd, GWL_STYLE);
@@ -736,6 +818,8 @@ impl WindowInner {
 
 impl HasDisplayHandle for Window {
     fn display_handle(&self) -> Result<DisplayHandle, HandleError> {
+        // SAFETY: `WindowsDisplayHandle` is a zero-sized marker with no raw
+        // pointers, so borrowing it raw is sound.
         unsafe {
             Ok(DisplayHandle::borrow_raw(RawDisplayHandle::Windows(
                 WindowsDisplayHandle::new(),
@@ -751,6 +835,8 @@ impl HasWindowHandle for Window {
 
         let inner = handle.borrow();
         let handle = inner.window_handle()?;
+        // SAFETY: `handle` is a valid `Win32WindowHandle` backed by a live `hwnd`
+        // kept alive by the owning `Connection`, so borrowing it raw is sound.
         unsafe { Ok(WindowHandle::borrow_raw(handle.as_raw())) }
     }
 }
@@ -805,6 +891,9 @@ impl WindowOps for Window {
             // This is a little hack which can "steal" the foreground window permission
             // We only call this function in the window creation, so it should be fine.
             // See : https://stackoverflow.com/questions/10740346/setforegroundwindow-only-working-while-visual-studio-is-open
+            // SAFETY: `handle` is a valid window handle; the two `INPUT` structs are
+            // fully initialized keyboard events and `SendInput` receives their
+            // correct count/pointer/size.
             unsafe {
                 let alt_sc = MapVirtualKeyW(VK_MENU as u32, MAPVK_VK_TO_VSC);
 
@@ -864,6 +953,8 @@ impl WindowOps for Window {
     fn invalidate(&self) {
         let hwnd = self.0 .0;
         log::trace!("WindowOps::invalidate calling InvalidateRect");
+        // SAFETY: `hwnd` is a valid window handle; a null rect invalidates the
+        // whole client area and the erase flag (0) is a valid constant.
         unsafe {
             InvalidateRect(hwnd, null(), 0);
         }
@@ -905,6 +996,7 @@ impl WindowOps for Window {
             let decorations = inner.config.window_decorations;
             promise::spawn::spawn(async move {
                 log::trace!("set_inner_size called with {width}x{height}");
+                // SAFETY: `hwnd.0` is a valid window handle.
                 let frame_dpi = unsafe { GetDpiForWindow(hwnd.0) };
                 let (width, height) = adjust_client_to_window_dimensions(
                     decorations_to_style(decorations),
@@ -915,6 +1007,8 @@ impl WindowOps for Window {
                 let window_state = get_window_state(hwnd.0);
                 if window_state.can_resize() {
                     log::trace!("set_inner_size now calling SetWindowPos with {width}x{height}");
+                    // SAFETY: `hwnd.0` is a valid handle; NOMOVE|NOZORDER
+                    // make position/insert-after args inert.
                     unsafe {
                         SetWindowPos(
                             hwnd.0,
@@ -1045,6 +1139,11 @@ impl WindowOps for Window {
     }
 }
 
+/// Returns the theme log font used for the window caption.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle and `hdc` a valid DC (or the calls
+/// simply fail and return `None`).
 unsafe fn get_title_log_font(hwnd: HWND, hdc: HDC) -> Option<LOGFONTW> {
     let mut log_font = LOGFONTW::default();
     let theme = OpenThemeData(hwnd, wide_string("HEADER").as_ptr());
@@ -1075,6 +1174,8 @@ unsafe fn get_title_log_font(hwnd: HWND, hdc: HDC) -> Option<LOGFONTW> {
     }
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle.
 unsafe fn update_title_font(hwnd: HWND) {
     let hdc = GetDC(hwnd);
     if hdc.is_null() {
@@ -1092,9 +1193,17 @@ unsafe fn update_title_font(hwnd: HWND) {
 /// Set up bidirectional pointers:
 /// hwnd.USERDATA -> WindowInner
 /// WindowInner.hwnd -> hwnd
+///
+/// # Safety
+/// `hwnd` must be the window being created and `lparam` the `CREATESTRUCTW`
+/// from a real `WM_NCCREATE` message whose `lpCreateParams` is an `Rc` raw
+/// pointer produced by `rc_to_pointer`.
 unsafe fn wm_nccreate(hwnd: HWND, _msg: UINT, _wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+    // SAFETY: `lparam` points at the `CREATESTRUCTW` Win32 passes to WM_NCCREATE.
     let create: &CREATESTRUCTW = &*(lparam as *const CREATESTRUCTW);
     let inner = rc_from_pointer(create.lpCreateParams);
+    // SAFETY: valid hwnd; storing the `Rc` raw pointer in GWLP_USERDATA for later
+    // recovery (balanced by `wm_ncdestroy`).
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as _);
     inner.borrow_mut().hwnd = HWindow(hwnd);
 
@@ -1104,6 +1213,10 @@ unsafe fn wm_nccreate(hwnd: HWND, _msg: UINT, _wparam: WPARAM, lparam: LPARAM) -
 /// Called when the window is being destroyed.
 /// Goal is to release the WindowInner reference that was stashed
 /// in the window by wm_nccreate.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle whose `GWLP_USERDATA` was set by
+/// `wm_nccreate` (or is null).
 unsafe fn wm_ncdestroy(
     hwnd: HWND,
     _msg: UINT,
@@ -1127,6 +1240,10 @@ fn no_native_title_bar(decorations: WindowDecorations) -> bool {
         || decorations.contains(WindowDecorations::INTEGRATED_BUTTONS)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and `wparam`/`lparam` the values from a
+/// real `WM_NCCALCSIZE` message (when `wparam==1`, `lparam` points at a valid
+/// `NCCALCSIZE_PARAMS`).
 unsafe fn wm_nccalcsize(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let inner = match inner.try_borrow() {
@@ -1180,6 +1297,9 @@ unsafe fn wm_nccalcsize(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) 
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args the values from a real
+/// `WM_NCHITTEST` message.
 unsafe fn wm_nchittest(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let inner = match inner.try_borrow() {
@@ -1283,6 +1403,8 @@ fn get_window_state(hwnd: HWND) -> WindowState {
     };
 
     let placement =
+        // SAFETY: `hwnd` is valid and `placement` is a fully-initialized
+        // `WINDOWPLACEMENT` that the call only writes to.
         if unsafe { GetWindowPlacement(hwnd, &mut placement) } == winapi::shared::minwindef::TRUE {
             placement.showCmd as i32
         } else {
@@ -1292,22 +1414,26 @@ fn get_window_state(hwnd: HWND) -> WindowState {
     match placement {
         SW_SHOWMAXIMIZED => WindowState::MAXIMIZED,
         SW_SHOWMINIMIZED => WindowState::HIDDEN,
-        _ => unsafe {
-            let mut rect = std::mem::zeroed();
-            GetWindowRect(hwnd, &mut rect);
+        _ => {
+            // SAFETY: `hwnd` is valid; `rect`/`mi` are zeroed then sized, and the
+            // calls only write into them.
+            unsafe {
+                let mut rect = std::mem::zeroed();
+                GetWindowRect(hwnd, &mut rect);
 
-            let mut mi: MONITORINFO = std::mem::zeroed();
-            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-            GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi);
+                let mut mi: MONITORINFO = std::mem::zeroed();
+                mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi);
 
-            if mi.rcMonitor.left == rect.left
-                && mi.rcMonitor.top == rect.top
-                && mi.rcMonitor.right == rect.right
-                && mi.rcMonitor.bottom == rect.bottom
-            {
-                WindowState::FULL_SCREEN
-            } else {
-                WindowState::default()
+                if mi.rcMonitor.left == rect.left
+                    && mi.rcMonitor.top == rect.top
+                    && mi.rcMonitor.right == rect.right
+                    && mi.rcMonitor.bottom == rect.bottom
+                {
+                    WindowState::FULL_SCREEN
+                } else {
+                    WindowState::default()
+                }
             }
         },
     }
@@ -1323,6 +1449,8 @@ fn enable_blur_behind(hwnd: HWND) {
     use winapi::um::dwmapi::*;
     use winapi::um::wingdi::*;
 
+    // SAFETY: `hwnd` is valid; the GDI region/handle args are valid and the
+    // `DWM_BLURBEHIND` struct is fully initialized.
     unsafe {
         let region = CreateRectRgn(0, 0, -1, -1);
 
@@ -1396,6 +1524,9 @@ fn apply_theme(hwnd: HWND) -> Option<LRESULT> {
         DWMSBT_TABBEDWINDOW = 4,    // Tabbed
     }
 
+    // SAFETY: `hwnd` is a valid window handle; every FFI call receives either
+    // that handle or a pointer to a fully-initialized stack struct of the
+    // correct `repr(C)` layout with matching `cbData`/size.
     unsafe {
         update_title_font(hwnd);
 
@@ -1528,6 +1659,9 @@ fn apply_theme(hwnd: HWND) -> Option<LRESULT> {
     None
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and `msg`/args from a real
+/// `WM_ENTER/EXITSIZEMOVE` message.
 unsafe fn wm_enter_exit_size_move(
     hwnd: HWND,
     msg: UINT,
@@ -1560,6 +1694,9 @@ unsafe fn wm_enter_exit_size_move(
 /// We handle WM_WINDOWPOSCHANGED and dispatch directly to our wm_size as it
 /// is a bit more efficient than letting DefWindowProcW parse this and
 /// trigger WM_SIZE.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle.
 unsafe fn wm_windowposchanged(
     hwnd: HWND,
     _msg: UINT,
@@ -1571,6 +1708,8 @@ unsafe fn wm_windowposchanged(
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle.
 unsafe fn wm_size(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> Option<LRESULT> {
     let mut should_paint = false;
     let mut should_pump = false;
@@ -1591,6 +1730,8 @@ unsafe fn wm_size(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> O
     None
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle.
 unsafe fn wm_set_focus(
     hwnd: HWND,
     _msg: UINT,
@@ -1604,6 +1745,8 @@ unsafe fn wm_set_focus(
     None
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle.
 unsafe fn wm_kill_focus(
     hwnd: HWND,
     _msg: UINT,
@@ -1617,6 +1760,9 @@ unsafe fn wm_kill_focus(
     None
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle; the `PAINTSTRUCT` is fully
+/// initialized before being passed to `BeginPaint`/`EndPaint`.
 unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let mut inner = inner.borrow_mut();
@@ -1706,6 +1852,7 @@ fn screen_to_client(hwnd: HWND, point: ScreenPoint) -> Point {
         x: point.x.try_into().unwrap(),
         y: point.y.try_into().unwrap(),
     };
+    // SAFETY: `hwnd` is a valid window handle and `point` is a live `POINT`.
     unsafe { ScreenToClient(hwnd, &mut point as *mut _) };
     Point::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
 }
@@ -1715,15 +1862,19 @@ fn client_to_screen(hwnd: HWND, point: Point) -> ScreenPoint {
         x: point.x.try_into().unwrap(),
         y: point.y.try_into().unwrap(),
     };
+    // SAFETY: `hwnd` is a valid window handle and `point` is a live `POINT`.
     unsafe { ClientToScreen(hwnd, &mut point as *mut _) };
     ScreenPoint::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
 }
 
 fn apply_mouse_cursor(cursor: Option<MouseCursor>) {
     match cursor {
+        // SAFETY: passing a null cursor simply resets to the default; no args.
         None => unsafe {
             SetCursor(null_mut());
         },
+        // SAFETY: null instance loads a system (OCR_*) cursor; the matched
+        // `IDC_*` constants are all valid system cursor identifiers.
         Some(cursor) => unsafe {
             SetCursor(LoadCursorW(
                 null_mut(),
@@ -1739,6 +1890,9 @@ fn apply_mouse_cursor(cursor: Option<MouseCursor>) {
     }
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and `msg`/`wparam`/`lparam` the values
+/// from a real client-area mouse-button message.
 unsafe fn mouse_button(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     // To support dragging the window, capture when the left
@@ -1774,6 +1928,9 @@ unsafe fn mouse_button(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) ->
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real
+/// non-client mouse-button message.
 unsafe fn nc_mouse_button(
     hwnd: HWND,
     msg: UINT,
@@ -1824,6 +1981,9 @@ unsafe fn nc_mouse_button(
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and `wparam`/`lparam` from a real
+/// `WM_MOUSEMOVE` message.
 unsafe fn mouse_move(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let mut inner = inner.borrow_mut();
@@ -1855,6 +2015,9 @@ unsafe fn mouse_move(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real non-client
+/// `WM_NCMOUSEMOVE` message.
 unsafe fn nc_mouse_move(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let mut inner = inner.borrow_mut();
@@ -1893,6 +2056,8 @@ unsafe fn nc_mouse_move(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) 
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle.
 unsafe fn mouse_leave(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let mut inner = inner.borrow_mut();
@@ -1916,6 +2081,9 @@ fn read_scroll_speed(name: &str) -> io::Result<i16> {
         .and_then(|v| v.parse().map_err(|_| io::ErrorKind::InvalidData.into()))
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real mouse-wheel
+/// message.
 unsafe fn mouse_wheel(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let (modifiers, mouse_buttons) = mods_and_buttons(wparam);
@@ -1997,6 +2165,8 @@ impl ImmContext {
     pub fn get(hwnd: HWND) -> Self {
         Self {
             hwnd,
+            // SAFETY: `hwnd` is a valid window handle; `ImmGetContext` returns an
+            // HIMC that is released in `Drop`.
             imc: unsafe { ImmGetContext(hwnd) },
         }
     }
@@ -2021,6 +2191,8 @@ impl ImmContext {
                 bottom: cursor.max_y().max(0) as i32,
             },
         };
+        // SAFETY: `self.imc` is a valid HIMC and `cf` is a fully-initialized
+        // `CANDIDATEFORM`.
         unsafe {
             ImmSetCandidateWindow(self.imc, &mut cf);
         }
@@ -2036,6 +2208,8 @@ impl ImmContext {
             },
             rcArea: RECT::default(),
         };
+        // SAFETY: `self.imc` is a valid HIMC and `cf` is a fully-initialized
+        // `COMPOSITIONFORM`.
         unsafe {
             ImmSetCompositionWindow(self.imc, &mut cf);
         }
@@ -2043,11 +2217,14 @@ impl ImmContext {
 
     pub fn get_str(&self, which: DWORD) -> Result<String, OsString> {
         // This returns a size in bytes even though it is for a buffer of u16!
+        // SAFETY: a null buffer/zero size queries the byte length without writing.
         let byte_size =
             unsafe { ImmGetCompositionStringW(self.imc, which, std::ptr::null_mut(), 0) };
         if byte_size > 0 {
             let word_size = byte_size as usize / 2;
             let mut wide_buf = vec![0u16; word_size];
+            // SAFETY: `wide_buf` holds `word_size` `u16`s and `byte_size` matches
+            // the queried length, so the write is in-bounds; `self.imc` is valid.
             unsafe {
                 ImmGetCompositionStringW(
                     self.imc,
@@ -2065,12 +2242,17 @@ impl ImmContext {
 
 impl Drop for ImmContext {
     fn drop(&mut self) {
+        // SAFETY: `self.hwnd`/`self.imc` are the valid pair obtained in `get`;
+        // `ImmReleaseContext` releases the context exactly once.
         unsafe {
             ImmReleaseContext(self.hwnd, self.imc);
         }
     }
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real
+/// `WM_IME_SETCONTEXT` message.
 unsafe fn ime_set_context(
     hwnd: HWND,
     msg: UINT,
@@ -2095,6 +2277,9 @@ unsafe fn ime_set_context(
     Some(result)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real
+/// `WM_IME_ENDCOMPOSITION` message.
 unsafe fn ime_end_composition(
     hwnd: HWND,
     _msg: UINT,
@@ -2115,6 +2300,9 @@ unsafe fn ime_end_composition(
     Some(1)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real
+/// `WM_IME_COMPOSITION` message.
 unsafe fn ime_composition(
     hwnd: HWND,
     _msg: UINT,
@@ -2213,7 +2401,10 @@ impl KeyboardLayoutInfo {
         }
     }
 
-    unsafe fn clear_key_state() {
+    /// # Safety
+/// Calls `keybd_event` with synthesized key state; only valid VK/scan codes are
+/// produced from `ToAsciiEx` results.
+unsafe fn clear_key_state() {
         let mut out = [0u16; 16];
         let state = [0u8; 256];
         let scan = MapVirtualKeyW(VK_DECIMAL as _, MAPVK_VK_TO_VSC);
@@ -2234,7 +2425,10 @@ impl KeyboardLayoutInfo {
     /// pressed and then testing the virtual key presses.  If we find that
     /// one of these yields a single unicode character output then we assume that
     /// it does have AltGr.
-    unsafe fn probe_alt_gr(&mut self) {
+    /// # Safety
+/// `self.hwnd` must be a valid window handle; the keyboard APIs receive valid
+/// handle/scan/vk arguments.
+unsafe fn probe_alt_gr(&mut self) {
         self.has_alt_gr = false;
 
         let mut state = [0u8; 256];
@@ -2275,7 +2469,10 @@ impl KeyboardLayoutInfo {
     }
 
     /// Probe the keymap to figure out which keys are dead keys
-    unsafe fn probe_dead_keys(&mut self) {
+    /// # Safety
+/// `self.hwnd` must be a valid window handle; the keyboard APIs receive valid
+/// handle/scan/vk arguments.
+unsafe fn probe_dead_keys(&mut self) {
         self.dead_keys.clear();
 
         let shift_states = [
@@ -2400,7 +2597,10 @@ impl KeyboardLayoutInfo {
         Self::clear_key_state();
     }
 
-    unsafe fn update(&mut self) {
+    /// # Safety
+/// `self.hwnd` must be a valid window handle; the FFI calls receive valid
+/// arguments.
+unsafe fn update(&mut self) {
         let current_layout = GetKeyboardLayout(0);
         if current_layout == self.layout {
             // Avoid recomputing this if the layout hasn't changed
@@ -2482,6 +2682,8 @@ impl KeyboardLayoutInfo {
 }
 
 /// Generate a MSG and call TranslateMessage upon it
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real key message.
 unsafe fn translate_message(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) {
     TranslateMessage(&MSG {
         hwnd,
@@ -2493,6 +2695,8 @@ unsafe fn translate_message(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARA
     });
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args from a real key message.
 unsafe fn key(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let mut inner = inner.borrow_mut();
@@ -2925,22 +3129,30 @@ unsafe fn key(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<L
     None
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and `wparam` the `HDROP` from a real
+/// `WM_DROPFILES` message.
 unsafe fn drop_files(hwnd: HWND, _msg: UINT, wparam: WPARAM, _lparam: LPARAM) -> Option<LRESULT> {
     let inner = rc_from_hwnd(hwnd)?;
     let h_drop = wparam as HDROP;
 
     // Get the number of files dropped
+    // SAFETY: `h_drop` is the valid `HDROP` from the message; a null buffer
+    // with index 0xFFFFFFFF queries the file count without writing.
     let file_count = DragQueryFileW(h_drop, 0xFFFFFFFF, null_mut(), 0);
 
     let mut filenames: Vec<PathBuf> = Vec::with_capacity(file_count as usize);
 
     for idx in 0..file_count {
         // The returned size of buffer is in characters, not including the terminating null character
+        // SAFETY: null buffer queries the per-file length without writing.
         let buf_size = DragQueryFileW(h_drop, idx, null_mut(), 0);
         if buf_size > 0 {
             // Windows will truncate the filename and add null terminator if space isn't enough
             let buf_size = buf_size as usize + 1;
             let mut wide_buf = vec![0u16; buf_size];
+            // SAFETY: `wide_buf` is large enough for the queried length plus the
+            // null terminator; `h_drop` is the valid drop handle.
             DragQueryFileW(h_drop, idx, wide_buf.as_mut_ptr(), wide_buf.len() as u32);
             wide_buf.pop(); // Drops the null terminator
             filenames.push(OsString::from_wide(&wide_buf).into());
@@ -2950,10 +3162,14 @@ unsafe fn drop_files(hwnd: HWND, _msg: UINT, wparam: WPARAM, _lparam: LPARAM) ->
     let mut inner = inner.borrow_mut();
     inner.events.dispatch(WindowEvent::DroppedFile(filenames));
 
+    // SAFETY: `h_drop` is the valid drop handle being released once.
     DragFinish(h_drop);
     Some(0)
 }
 
+/// # Safety
+/// `hwnd` must be a valid window handle and the args the values from the Win32
+/// message being dispatched.
 unsafe fn do_wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
     match msg {
         WM_NCCREATE => wm_nccreate(hwnd, msg, wparam, lparam),
@@ -3023,6 +3239,9 @@ unsafe fn do_wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
     }
 }
 
+/// # Safety
+/// This is the `WNDCLASSW::lpfnWndProc` callback: Win32 supplies a valid `hwnd`
+/// and the raw message arguments.
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
     msg: UINT,

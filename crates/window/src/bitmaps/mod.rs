@@ -99,6 +99,8 @@ pub trait BitmapImage {
 
     fn pixel_data_slice(&self) -> &[u8] {
         let (width, height) = self.image_dimensions();
+        // SAFETY: by the `pixel_data` contract the returned pointer addresses at
+        // least `width * height * 4` bytes (bgra32 storage).
         unsafe {
             let first = self.pixel_data();
             std::slice::from_raw_parts(first, width * height * 4)
@@ -107,6 +109,7 @@ pub trait BitmapImage {
 
     fn pixel_data_slice_mut(&mut self) -> &mut [u8] {
         let (width, height) = self.image_dimensions();
+        // SAFETY: same storage contract as `pixel_data_slice`, for the mutable pointer.
         unsafe {
             let first = self.pixel_data_mut();
             std::slice::from_raw_parts_mut(first, width * height * 4)
@@ -116,6 +119,8 @@ pub trait BitmapImage {
     #[inline]
     fn pixels(&self) -> &[u32] {
         let (width, height) = self.image_dimensions();
+        // SAFETY: the bgra32 storage is `width*height*4` bytes, i.e. `width*height`
+        // `u32`s; the storage is naturally aligned for `u32` access.
         unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             let first = self.pixel_data() as *const u32;
@@ -126,6 +131,7 @@ pub trait BitmapImage {
     #[inline]
     fn pixels_mut(&mut self) -> &mut [u32] {
         let (width, height) = self.image_dimensions();
+        // SAFETY: same as `pixels`, for the mutable pointer.
         unsafe {
             #[allow(clippy::cast_ptr_alignment)]
             let first = self.pixel_data_mut() as *mut u32;
@@ -145,6 +151,9 @@ pub trait BitmapImage {
             y,
             height
         );
+        // SAFETY: `x < width && y < height` is asserted above, so the byte
+        // offset lands inside the `width*height*4` bgra32 storage; the access is
+        // `u32`-aligned.
         unsafe {
             let offset = (y * width * 4) + (x * 4);
             #[allow(clippy::cast_ptr_alignment)]
@@ -157,6 +166,8 @@ pub trait BitmapImage {
     fn pixel(&self, x: usize, y: usize) -> &u32 {
         let (width, height) = self.image_dimensions();
         debug_assert!(x < width && y < height);
+        // SAFETY: `x < width && y < height` is asserted above, so the byte
+        // offset lands inside the bgra32 storage; the access is `u32`-aligned.
         unsafe {
             let offset = (y * width * 4) + (x * 4);
             #[allow(clippy::cast_ptr_alignment)]
@@ -166,11 +177,14 @@ pub trait BitmapImage {
 
     #[inline]
     fn horizontal_pixel_range(&self, x1: usize, x2: usize, y: usize) -> &[u32] {
+        // SAFETY: `pixel(x1, y)` is a valid `u32` inside the row `y`, and the row
+        // is contiguous, so `x2 - x1` elements starting there are in-bounds.
         unsafe { std::slice::from_raw_parts(self.pixel(x1, y), x2 - x1) }
     }
 
     #[inline]
     fn horizontal_pixel_range_mut(&mut self, x1: usize, x2: usize, y: usize) -> &mut [u32] {
+        // SAFETY: same contiguity rationale as `horizontal_pixel_range`.
         unsafe { std::slice::from_raw_parts_mut(self.pixel_mut(x1, y), x2 - x1) }
     }
 

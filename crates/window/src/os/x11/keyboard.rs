@@ -821,8 +821,11 @@ impl Keyboard {
 }
 
 fn query_lc_ctype() -> anyhow::Result<&'static OsStr> {
+    // SAFETY: passing a null locale queries the current LC_CTYPE without
+    // changing it; the returned string is valid for the process lifetime.
     let ptr = unsafe { libc::setlocale(libc::LC_CTYPE, std::ptr::null()) };
     ensure!(!ptr.is_null(), "failed to query locale");
+    // SAFETY: `ptr` is a non-null NUL-terminated C string returned by setlocale.
     let cstr = unsafe { CStr::from_ptr(ptr) };
     Ok(OsStr::from_bytes(cstr.to_bytes()))
 }

@@ -552,6 +552,7 @@ pub(crate) fn read_pipe_with_timeout(mut file: ReadPipe) -> anyhow::Result<Strin
 
     // set non-blocking I/O on the pipe
     // (adapted from FileDescriptor::set_non_blocking_impl in /filedescriptor/src/unix.rs)
+    // SAFETY: `file.as_raw_fd()` is a valid open fd; F_SETFL/O_NONBLOCK are valid args.
     if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } != 0 {
         bail!(
             "failed to change non-blocking mode: {}",
@@ -568,6 +569,7 @@ pub(crate) fn read_pipe_with_timeout(mut file: ReadPipe) -> anyhow::Result<Strin
     let mut buf = [0u8; 8192];
 
     loop {
+        // SAFETY: `pfd` is a single valid pollfd entry; polling is thread-safe.
         if unsafe { libc::poll(&mut pfd, 1, 3000) == 1 } {
             match file.read(&mut buf) {
                 Ok(size) if size == 0 => {
@@ -690,11 +692,14 @@ impl WaylandWindowInner {
                 ),
             }
         };
-        let gl_state = gl_state.map(Rc::new).and_then(|state| unsafe {
-            wayland_conn
-                .gl_connection
-                .borrow_mut()
-                .replace(Rc::clone(state.get_connection()));
+        let gl_state = gl_state.map(Rc::new).and_then(|state| {
+            // SAFETY: `state` is a freshly-created valid GL `Backend` owning a
+            // current context; `glium::backend::Context::new` only trusts that.
+            unsafe {
+                wayland_conn
+                    .gl_connection
+                    .borrow_mut()
+                    .replace(Rc::clone(state.get_connection()));
             Ok(glium::backend::Context::new(
                 Rc::clone(&state),
                 true,
@@ -704,6 +709,7 @@ impl WaylandWindowInner {
                     glium::debug::DebugCallbackBehavior::Ignore
                 },
             )?)
+            }
         })?;
 
         self.gl_state.replace(gl_state.clone());
@@ -1685,6 +1691,7 @@ impl HasDisplayHandle for WaylandWindowInner {
         let conn = WaylandConnection::get().unwrap().wayland();
         let backend = conn.connection.backend();
         let handle = backend.display_handle()?;
+        // SAFETY: `handle` is a valid wl_display raw handle owned by the live connection.
         Ok(unsafe { DisplayHandle::borrow_raw(handle.as_raw()) })
     }
 }
@@ -1694,6 +1701,7 @@ impl HasWindowHandle for WaylandWindowInner {
         let handle = WaylandWindowHandle::new(
             NonNull::new(self.surface().id().as_ptr() as _).expect("non-null"),
         );
+        // SAFETY: `handle` wraps a live wl_surface pointer valid for the window's lifetime.
         unsafe { Ok(WindowHandle::borrow_raw(RawWindowHandle::Wayland(handle))) }
     }
 }
@@ -1703,6 +1711,7 @@ impl HasDisplayHandle for WaylandWindow {
         let conn = WaylandConnection::get().unwrap().wayland();
         let backend = conn.connection.backend();
         let handle = backend.display_handle()?;
+        // SAFETY: `handle` is a valid wl_display raw handle owned by the live connection.
         Ok(unsafe { DisplayHandle::borrow_raw(handle.as_raw()) })
     }
 }
@@ -1717,6 +1726,7 @@ impl HasWindowHandle for WaylandWindow {
 
         let inner = handle.borrow();
         let handle = inner.window_handle()?;
+        // SAFETY: `handle` is a valid WaylandWindowHandle backed by a live surface.
         unsafe { Ok(WindowHandle::borrow_raw(handle.as_raw())) }
     }
 }
