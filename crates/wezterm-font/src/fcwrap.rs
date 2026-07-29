@@ -6,7 +6,7 @@ use config::{FontStretch, FontWeight};
 pub use fontconfig::*;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int};
-use std::{fmt, mem, ptr};
+use std::{fmt, ptr};
 
 pub const FC_CHARCELL: i32 = 110;
 pub const FC_MONO: i32 = 100;
@@ -18,6 +18,8 @@ pub struct FontSet {
 
 impl Drop for FontSet {
     fn drop(&mut self) {
+        // SAFETY: `self.fonts` is a valid owned `FcFontSet` obtained from
+        // `FcFontList`/`FcFontSort` and destroyed exactly once here on drop.
         unsafe {
             FcFontSetDestroy(self.fonts);
         }
@@ -39,6 +41,10 @@ impl<'a> Iterator for FontSetIter<'a> {
     type Item = Pattern;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // SAFETY: `self.position` is kept `< nfont` by the bounds check below,
+        // and `self.set.fonts` is a valid `FcFontSet` borrowed for the iterator's
+        // lifetime. `FcPatternReference` adopts the returned pattern so the
+        // `Pattern` wrapper owns an independent reference count.
         unsafe {
             if self.position == (*self.set.fonts).nfont as isize {
                 None
@@ -115,6 +121,9 @@ impl<'a> CharSetRef<'a> {
         const FC_CHARSET_MAP_SIZE: usize = 256 / 32;
         const FC_CHARSET_DONE: FcChar32 = FcChar32::MAX;
         let mut map = [FcChar32::default(); FC_CHARSET_MAP_SIZE];
+        // SAFETY: `self.cset` is a valid `FcCharSet`; `map.as_mut_ptr()` points
+        // at an `[FcChar32; 8]` buffer (`FC_CHARSET_MAP_SIZE`) sized for one
+        // charset page, and `next_base_code_point` is a valid out-pointer.
         let mut base_code_point =
             unsafe { FcCharSetFirstPage(self.cset, map.as_mut_ptr(), &mut next_base_code_point) };
         let mut range_start = FcChar32::MAX;
@@ -135,6 +144,8 @@ impl<'a> CharSetRef<'a> {
                     }
                 }
             }
+            // SAFETY: same preconditions as `FcCharSetFirstPage` above: a valid
+            // `FcCharSet` and a sufficiently sized `map` buffer.
             base_code_point = unsafe {
                 FcCharSetNextPage(self.cset, map.as_mut_ptr(), &mut next_base_code_point)
             };
@@ -148,6 +159,8 @@ impl<'a> CharSetRef<'a> {
 
 impl Drop for CharSet {
     fn drop(&mut self) {
+        // SAFETY: `self.cset` is a valid owned `FcCharSet` from
+        // `FcCharSetCreate`, destroyed exactly once here on drop.
         unsafe {
             FcCharSetDestroy(self.cset);
         }
@@ -165,6 +178,8 @@ impl<'a> From<&'a CharSet> for CharSetRef<'a> {
 
 impl CharSet {
     pub fn new() -> anyhow::Result<Self> {
+        // SAFETY: `FcCharSetCreate` returns a freshly allocated owned charset;
+        // the null return is checked before it is wrapped.
         unsafe {
             let cset = FcCharSetCreate();
             ensure!(!cset.is_null(), "FcCharSetCreate failed");
@@ -173,6 +188,7 @@ impl CharSet {
     }
 
     pub fn add(&mut self, c: char) -> anyhow::Result<()> {
+        // SAFETY: `self.cset` is a valid owned `FcCharSet`.
         unsafe {
             ensure!(
                 FcCharSetAddChar(self.cset, c as u32) != 0,
@@ -189,6 +205,8 @@ pub struct Pattern {
 
 impl Pattern {
     pub fn new() -> Result<Pattern, Error> {
+        // SAFETY: `FcPatternCreate` returns a freshly allocated owned pattern;
+        // the null return is checked before it is wrapped.
         unsafe {
             let p = FcPatternCreate();
             ensure!(!p.is_null(), "FcPatternCreate failed");
@@ -198,6 +216,9 @@ impl Pattern {
 
     pub fn get_charset<'a>(&'a self) -> anyhow::Result<CharSetRef<'a>> {
         let mut c = ptr::null_mut();
+        // SAFETY: `self.pat` is a valid `FcPattern`; the key is a NUL-terminated
+        // C string literal and `&mut c` is a properly typed `*mut FcCharSet`
+        // out-pointer.
         unsafe {
             FcPatternGetCharSet(self.pat, b"charset\0".as_ptr() as *const c_char, 0, &mut c);
         }
@@ -209,6 +230,8 @@ impl Pattern {
     }
 
     pub fn add_charset(&mut self, charset: &CharSet) -> anyhow::Result<()> {
+        // SAFETY: `self.pat` and `charset.cset` are valid owned objects; the key
+        // is a NUL-terminated C string literal.
         unsafe {
             ensure!(
                 FcPatternAddCharSet(
@@ -223,6 +246,8 @@ impl Pattern {
     }
 
     pub fn charset_intersect_count(&self, charset: &CharSet) -> anyhow::Result<u32> {
+        // SAFETY: `self.pat` and `charset.cset` are valid objects; the key is a
+        // NUL-terminated C string literal.
         unsafe {
             let mut c = ptr::null_mut();
             FcPatternGetCharSet(self.pat, b"charset\0".as_ptr() as *const c_char, 0, &mut c);
@@ -234,6 +259,8 @@ impl Pattern {
     pub fn add_string(&mut self, key: &str, value: &str) -> Result<(), Error> {
         let key = CString::new(key)?;
         let value = CString::new(value)?;
+        // SAFETY: `self.pat` is a valid pattern; `key` and `value` are `CString`s
+        // (NUL-terminated and guaranteed free of interior NUL bytes).
         unsafe {
             ensure!(
                 FcPatternAddString(self.pat, key.as_ptr(), value.as_ptr() as *const u8) != 0,
@@ -248,6 +275,8 @@ impl Pattern {
     #[allow(dead_code)]
     pub fn add_double(&mut self, key: &str, value: f64) -> Result<(), Error> {
         let key = CString::new(key)?;
+        // SAFETY: `self.pat` is a valid pattern; `key` is a NUL-terminated
+        // `CString`.
         unsafe {
             ensure!(
                 FcPatternAddDouble(self.pat, key.as_ptr(), value) != 0,
@@ -261,6 +290,8 @@ impl Pattern {
 
     pub fn add_integer(&mut self, key: &str, value: i32) -> Result<(), Error> {
         let key = CString::new(key)?;
+        // SAFETY: `self.pat` is a valid pattern; `key` is a NUL-terminated
+        // `CString`.
         unsafe {
             ensure!(
                 FcPatternAddInteger(self.pat, key.as_ptr(), value) != 0,
@@ -286,11 +317,16 @@ impl Pattern {
 
     pub fn delete_property(&mut self, key: &str) -> Result<bool, Error> {
         let key = CString::new(key)?;
+        // SAFETY: `self.pat` is a valid pattern; `key` is a NUL-terminated
+        // `CString`.
         unsafe { Ok(FcPatternDel(self.pat, key.as_ptr()) != 0) }
     }
 
     pub fn format(&self, fmt: &str) -> Result<String, Error> {
         let fmt = CString::new(fmt)?;
+        // SAFETY: `self.pat` is valid and `fmt` is a NUL-terminated `CString`.
+        // The returned `FcChar8*` string is copied into an owned Rust `String`
+        // before `FcStrFree` releases it.
         unsafe {
             let s = FcPatternFormat(self.pat, fmt.as_ptr() as *const u8);
             ensure!(!s.is_null(), "failed to format pattern");
@@ -304,6 +340,8 @@ impl Pattern {
     }
 
     pub fn render_prepare(&self, pat: &Pattern) -> Result<Pattern, Error> {
+        // SAFETY: `self.pat` and `pat.pat` are valid owned patterns; the null
+        // config pointer selects the default config. The result is null-checked.
         unsafe {
             let pat = FcFontRenderPrepare(ptr::null_mut(), self.pat, pat.pat);
             ensure!(!pat.is_null(), "failed to prepare pattern");
@@ -312,9 +350,13 @@ impl Pattern {
     }
 
     pub fn config_substitute(&mut self, match_kind: MatchKind) -> Result<(), Error> {
+        // SAFETY: `self.pat` is a valid owned pattern. `match_kind` is a
+        // `#[repr(C)]` fieldless enum, so casting it to `FcMatchKind` (`c_uint`)
+        // is a sound same-representation conversion. The null config pointer
+        // selects the default fontconfig configuration.
         unsafe {
             ensure!(
-                FcConfigSubstitute(ptr::null_mut(), self.pat, mem::transmute(match_kind)) != 0,
+                FcConfigSubstitute(ptr::null_mut(), self.pat, match_kind as FcMatchKind) != 0,
                 "FcConfigSubstitute failed"
             );
             Ok(())
@@ -322,12 +364,16 @@ impl Pattern {
     }
 
     pub fn default_substitute(&mut self) {
+        // SAFETY: `self.pat` is a valid owned `FcPattern`.
         unsafe {
             FcDefaultSubstitute(self.pat);
         }
     }
 
     pub fn list(&self) -> anyhow::Result<FontSet> {
+        // SAFETY: `self.pat` is a valid pattern. The object set (`oset`) is
+        // created here, used for the query, and freed with `FcObjectSetDestroy`
+        // in the same block; all key arguments are NUL-terminated byte literals.
         unsafe {
             // This defines the fields that are retrieved
             let oset = FcObjectSetCreate();
@@ -350,6 +396,8 @@ impl Pattern {
     }
 
     pub fn get_best_match(&self) -> Result<Self, Error> {
+        // SAFETY: `self.pat` is valid; `&mut res.0` is a properly typed
+        // `*mut FcResult` out-pointer. The null config selects the default config.
         unsafe {
             let mut res = FcResultWrap(0);
             let best = FcFontMatch(ptr::null_mut(), self.pat, &mut res.0 as *mut _);
@@ -363,6 +411,8 @@ impl Pattern {
     }
 
     pub fn sort(&self, trim: bool) -> Result<FontSet, Error> {
+        // SAFETY: `self.pat` is valid; `&mut res.0` is a valid `*mut FcResult`
+        // out-pointer and the null `FcCharSet**` argument is permitted by the API.
         unsafe {
             let mut res = FcResultWrap(0);
             let fonts = FcFontSort(
@@ -383,6 +433,8 @@ impl Pattern {
 
     #[allow(dead_code)]
     pub fn get_double(&self, key: &str) -> Result<f64, Error> {
+        // SAFETY: `self.pat` is valid; `key` is a NUL-terminated `CString` and
+        // `&mut fval` is a properly typed `*mut f64` out-pointer.
         unsafe {
             let key = CString::new(key)?;
             let mut fval: f64 = 0.0;
@@ -401,6 +453,8 @@ impl Pattern {
     }
 
     pub fn get_integer(&self, key: &str) -> Result<c_int, Error> {
+        // SAFETY: `self.pat` is valid; `key` is a NUL-terminated `CString` and
+        // `&mut ival` is a properly typed `*mut c_int` out-pointer.
         unsafe {
             let key = CString::new(key)?;
             let mut ival: c_int = 0;
@@ -419,6 +473,9 @@ impl Pattern {
     }
 
     pub fn get_string(&self, key: &str) -> Result<String, Error> {
+        // SAFETY: `self.pat` is valid; `key` is a NUL-terminated `CString`.
+        // `&mut ptr` is a valid `*mut *mut FcChar8` out-pointer; the borrowed
+        // string is copied out via `to_string_lossy` and is never freed by us.
         unsafe {
             let key = CString::new(key)?;
             let mut ptr: *mut u8 = ptr::null_mut();
@@ -441,6 +498,8 @@ impl Pattern {
 
 impl Drop for Pattern {
     fn drop(&mut self) {
+        // SAFETY: `self.pat` is a valid owned `FcPattern` from
+        // `FcPatternCreate`, destroyed exactly once here on drop.
         unsafe {
             FcPatternDestroy(self.pat);
         }

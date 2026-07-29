@@ -39,11 +39,17 @@ fn descriptor_from_attr(attr: &FontAttributes) -> anyhow::Result<CFArray<CTFontD
         .parse::<CFString>()
         .map_err(|_| anyhow::anyhow!("failed to parse family name {} as CFString", attr.family))?;
 
+    // SAFETY: `kCTFontFamilyNameAttribute` is an immortal CoreFoundation
+    // string constant obtained under the get-rule, so `wrap_under_get_rule`
+    // adopts it without claiming ownership (it will not be released on drop).
     let family_attr: CFString = unsafe { TCFType::wrap_under_get_rule(kCTFontFamilyNameAttribute) };
 
     let attributes = CFDictionary::from_CFType_pairs(&[(family_attr, family_name.as_CFType())]);
     let desc = core_text::font_descriptor::new_from_attributes(&attributes);
 
+    // SAFETY: `desc` is a valid owned `CTFontDescriptor` whose concrete ref we
+    // pass in, and the null object-set pointer is permitted by the API. The
+    // returned pointer is null-checked immediately below before adoption.
     let array = unsafe {
         core_text::font_descriptor::CTFontDescriptorCreateMatchingFontDescriptors(
             desc.as_concrete_TypeRef(),
@@ -53,6 +59,9 @@ fn descriptor_from_attr(attr: &FontAttributes) -> anyhow::Result<CFArray<CTFontD
     if array.is_null() {
         anyhow::bail!("no font matches {:?}", attr);
     } else {
+        // SAFETY: `array` was null-checked just above and follows the
+        // CoreFoundation get-rule, so `wrap_under_get_rule` is the correct
+        // adoption (it will not over-release on drop).
         Ok(unsafe { CFArray::wrap_under_get_rule(array) })
     }
 }
@@ -136,6 +145,9 @@ impl FontLocator for CoreTextFontLocator {
             wanted.add(c as u32);
             let text = CFString::new(&c.to_string());
 
+            // SAFETY: `menlo` and `text` are valid owned CoreFoundation objects
+            // passed as concrete refs, and the `CFRange` is a plain stack value.
+            // The returned font is null-checked immediately afterwards.
             let font = unsafe {
                 CTFontCreateForString(
                     menlo.as_concrete_TypeRef(),
@@ -148,6 +160,9 @@ impl FontLocator for CoreTextFontLocator {
                 continue;
             }
 
+            // SAFETY: `font` was null-checked above and was freshly created (not
+            // obtained under the get-rule), so `wrap_under_create_rule` is the
+            // correct adoption and claims ownership.
             let font = unsafe { CTFont::wrap_under_create_rule(font) };
 
             let candidates = handles_from_descriptor(&font.copy_descriptor());
@@ -252,12 +267,19 @@ fn build_fallback_list_impl() -> anyhow::Result<Vec<ParsedFont>> {
     let menlo =
         new_from_name("Menlo", 0.0).map_err(|_| anyhow::anyhow!("failed to get Menlo font"))?;
 
+    // SAFETY: `+[NSUserDefaults standardUserDefaults]` returns the process-wide
+    // shared defaults singleton (not a +1 create), so we hold it without
+    // ownership and never release it.
     let user_defaults: id = unsafe { msg_send![class!(NSUserDefaults), standardUserDefaults] };
 
     let apple_lang = "AppleLanguages"
         .parse::<CFString>()
         .map_err(|_| anyhow::anyhow!("failed to parse lang name en as CFString"))?;
 
+    // SAFETY: `user_defaults` is the valid shared `NSUserDefaults` instance
+    // obtained above and `apple_lang` is a valid `CFString`; the Objective-C
+    // message send follows the same ownership conventions used elsewhere in
+    // this module.
     let langs: CFArray<CFString> =
         unsafe { msg_send![user_defaults, stringArrayForKey:apple_lang] };
 
