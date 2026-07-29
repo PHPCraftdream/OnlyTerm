@@ -25,16 +25,11 @@ impl ProcThreadAttributeList {
                 &mut bytes_required,
             )
         };
-        let mut data = Vec::with_capacity(bytes_required);
-        // We have the right capacity, so force the vec to consider itself
-        // that length.  The contents of those bytes will be maintained
-        // by the win32 apis used in this impl.
-        //
-        // SAFETY: `bytes_required` was returned by the win32 API and matches
-        // the capacity we just reserved. The bytes are uninitialized but will
-        // be fully initialized by the `InitializeProcThreadAttributeList` call
-        // below before they are ever read.
-        unsafe { data.set_len(bytes_required) };
+        // Zero-initialize rather than `with_capacity` + `set_len`: the latter
+        // would materialize a `&mut [u8]` over uninitialized memory, which is
+        // its own soundness violation regardless of whether the bytes are
+        // read before `InitializeProcThreadAttributeList` overwrites them.
+        let mut data = vec![0u8; bytes_required];
 
         let attr_ptr = data.as_mut_slice().as_mut_ptr() as *mut _;
         // SAFETY: `attr_ptr` points to `data` which has the exact capacity
