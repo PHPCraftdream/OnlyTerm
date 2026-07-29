@@ -22,6 +22,36 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* Audited every `unsafe` block in the codebase (~85 files across all crates)
+  and either removed it in favor of safe Rust where it wasn't strictly
+  necessary, or documented it with a `// SAFETY:` comment explaining the
+  invariant that makes it sound. Fixed several genuine latent
+  undefined-behavior bugs found in the process (an overlapping-region
+  `ptr::copy_nonoverlapping` in the mux wire codec, two `_unchecked`
+  conversions on unvalidated input). `#![warn(clippy::undocumented_unsafe_blocks)]`
+  is now enabled in every affected crate so future unsafe code without a
+  safety comment is caught automatically.
+* Replaced the `zstd`/`zstd-sys` dependency (the project's last remaining
+  C/C++ dependency) with the pure-Rust `flate2` crate, then disabled mux
+  protocol compression entirely: a real-unix-socket benchmark showed
+  sending PDUs raw is faster end-to-end than compressing them on typical
+  hardware, even though compression shrinks the payload by up to ~47x.
+  `flate2` decoding is kept only so a peer that still compresses (e.g. an
+  older client) remains readable. OnlyTerm is now a 100% Rust project.
+* Hebrew niqqud (vowel points) and cantillation marks are now stripped
+  from rendering instead of being drawn as combining marks, since the
+  glyph stacking for these diacritics was unreliable across fonts;
+  Hebrew consonants, punctuation (maqaf, paseq, sof pasuq, geresh/
+  gershayim) and all other scripts are unaffected.
+* Fixed a Hebrew rendering bug where, in a line containing several
+  Hebrew words, each word's letters were correctly reversed
+  right-to-left but the words themselves stayed in typed (left-to-right)
+  order; consecutive Hebrew words glued by spaces/punctuation now
+  reverse together as a single block, matching standard bidi behavior.
+  This also fixes the case where such a multi-word phrase is split by a
+  line wrap: previously the wrap-boundary heuristic left *both* halves
+  completely unreversed instead of correctly reversing each row's
+  content independently.
 * Hebrew/RTL rendering no longer runs the full Unicode Bidirectional
   Algorithm: a line is always laid out left-to-right from column 0, and
   only the cell order *within* a maximal run of Hebrew letters (glued
@@ -29,9 +59,10 @@ As features stabilize some brief notes about them will accumulate here.
   punctuation that Hebrew resumes after) is reversed. Digits, brackets,
   quotes, dashes and Latin/Cyrillic text are never moved or mirrored, so
   the terminal cursor and selection always track the typed column
-  regardless of script direction. A Hebrew run that touches a physical
-  line-wrap boundary is left unreversed, since a single wrapped row can't
-  tell whether it's a fragment of a longer phrase.
+  regardless of script direction. A Hebrew run is reversed the same way
+  regardless of whether it touches a physical line-wrap boundary, since
+  each visual row is laid out independently (see the wrap-boundary fix
+  above).
 * Fixed backgrounds/underlines being drawn under the wrong glyphs on lines
   containing a reversed Hebrew phrase: per-cluster decorations now use the
   cluster's actual on-screen column instead of its pre-reversal logical
