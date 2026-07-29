@@ -2,6 +2,7 @@ pub mod connection;
 pub mod event;
 mod extra_constants;
 mod keycodes;
+pub mod watchdog;
 mod wgl;
 pub mod window;
 

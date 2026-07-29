@@ -1,4 +1,5 @@
 //! The connection to the GUI subsystem
+use super::watchdog;
 use super::{HWindow, WindowInner};
 use crate::connection::ConnectionOps;
 use crate::screen::{ScreenInfo, Screens};
@@ -76,6 +77,11 @@ impl ConnectionOps for Connection {
         // before any field is read.
         let mut msg: MSG = unsafe { std::mem::zeroed() };
         loop {
+            // Cheap heartbeat bump so the watchdog thread (see
+            // `super::watchdog`) can tell this loop is still alive; must
+            // stay a plain atomic increment to avoid adding latency here.
+            watchdog::record_heartbeat();
+
             SPAWN_QUEUE.run();
 
             // SAFETY: PeekMessageW is the documented Win32 message-queue API.
@@ -137,6 +143,7 @@ impl ConnectionOps for Connection {
 impl Connection {
     pub(crate) fn create_new() -> anyhow::Result<Self> {
         let event_handle = SPAWN_QUEUE.event_handle.0;
+        watchdog::spawn_watchdog_thread();
         Ok(Self {
             event_handle,
             windows: RefCell::new(HashMap::new()),
