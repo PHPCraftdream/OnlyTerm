@@ -515,11 +515,17 @@ pub fn unix_connect_with_retry(
 
                 if error.is_none() {
                     #[cfg(unix)]
+                    // SAFETY: `a.into_raw_fd()` yields an owned, valid file
+                    // descriptor; `from_raw_fd` takes sole ownership of it and it
+                    // is not used or closed elsewhere.
                     unsafe {
                         use std::os::unix::io::{FromRawFd, IntoRawFd};
                         return Ok(UnixStream::from_raw_fd(a.into_raw_fd()));
                     }
                     #[cfg(windows)]
+                    // SAFETY: `a.into_raw_socket()` yields an owned, valid socket;
+                    // `from_raw_socket` takes sole ownership of it and it is not
+                    // used or closed elsewhere.
                     unsafe {
                         use std::os::windows::io::{FromRawSocket, IntoRawSocket};
                         return Ok(UnixStream::from_raw_socket(a.into_raw_socket()));
@@ -625,6 +631,10 @@ impl Reconnectable {
 
                 #[cfg(unix)]
                 if let Some(mask) = umask::UmaskSaver::saved_umask() {
+                    // SAFETY: `pre_exec` runs the closure in a forked child before
+                    // exec, so only async-signal-safe operations are allowed.
+                    // `libc::umask` is a simple async-signal-safe syscall that
+                    // sets the file-mode creation mask and allocates no resources.
                     unsafe {
                         cmd.pre_exec(move || {
                             libc::umask(mask);

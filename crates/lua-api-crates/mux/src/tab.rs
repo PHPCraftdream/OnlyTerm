@@ -27,9 +27,7 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
     engine.register_type_with_name::<MuxTab>("MuxTab");
 
     engine.register_fn("to_string", |this: &mut MuxTab| -> String {
-        format!("MuxTab(tab_id:{}, pid:{})", this.0, unsafe {
-            libc::getpid()
-        })
+        format!("MuxTab(tab_id:{}, pid:{})", this.0, std::process::id())
     });
     engine.register_fn("tab_id", |this: &mut MuxTab| -> rhai::INT {
         this.0 as rhai::INT

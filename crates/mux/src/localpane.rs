@@ -98,6 +98,10 @@ impl CachedLeaderInfo {
     }
 
     fn update(&mut self) {
+        // SAFETY: `self.fd` is a valid open terminal file descriptor -- guarded
+        // by `can_update`, which requires `self.fd != -1`. `tcgetpgrp` only reads
+        // the foreground process group of that terminal and takes no pointers,
+        // so there is no aliasing or lifetime concern.
         self.pid = unsafe { libc::tcgetpgrp(self.fd) } as u32;
         if self.pid > 0 {
             self.path = LocalProcessInfo::executable_path(self.pid);
