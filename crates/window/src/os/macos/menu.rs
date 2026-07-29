@@ -183,11 +183,16 @@ pub enum RepresentedItem {
 
 impl RepresentedItem {
     fn wrap(self) -> StrongPtr {
+        // SAFETY: `get_wrapper_class()` returns a registered NSObject subclass;
+        // `alloc` returns a valid instance.
         let wrapper: id = unsafe { msg_send![get_wrapper_class(), alloc] };
         let wrapper = unsafe { StrongPtr::new(wrapper) };
         let item = Box::new(self);
+        // SAFETY: leaks the boxed item into a raw pointer stashed in the wrapper's
+        // ivar; it is reclaimed by `Box::from_raw` in `dealloc`.
         let item: *const RepresentedItem = Box::into_raw(item);
         let item = item as *const c_void;
+        // SAFETY: `wrapper` is a valid object and the ivar exists on the class.
         unsafe {
             (**wrapper).set_ivar(WRAPPER_FIELD_NAME, item);
         }
@@ -374,6 +379,8 @@ fn get_wrapper_class() -> &'static Class {
             ClassDecl::new(WRAPPER_CLS_NAME, class!(NSObject)).expect("Unable to register class");
 
         extern "C" fn dealloc(this: &mut Object, _sel: Sel) {
+            // SAFETY: the ivar holds the `Box<RepresentedItem>` raw pointer stashed
+            // by `wrap`; `from_raw` reclaims it once before forwarding to super dealloc.
             unsafe {
                 let item = this.get_ivar::<*mut c_void>(WRAPPER_FIELD_NAME);
                 let item = (*item) as *mut RepresentedItem;

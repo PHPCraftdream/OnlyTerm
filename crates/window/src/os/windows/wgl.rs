@@ -34,6 +34,7 @@ impl Drop for WglWrapper {
 impl WglWrapper {
     fn load() -> anyhow::Result<Self> {
         let class_name = wide_string("wezterm wgl extension probing window");
+        // SAFETY: null module name returns the current process's exe handle.
         let h_inst = unsafe { GetModuleHandleW(null()) };
         let class = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
@@ -48,6 +49,8 @@ impl WglWrapper {
             lpszClassName: class_name.as_ptr(),
         };
 
+        // SAFETY: `class` is a fully-initialized `WNDCLASSW`; the benign
+        // CLASS_ALREADY_EXISTS failure is tolerated below.
         if unsafe { RegisterClassW(&class) } == 0 {
             let err = IoError::last_os_error();
             match err.raw_os_error() {
@@ -57,6 +60,8 @@ impl WglWrapper {
             }
         }
 
+        // SAFETY: `class_name` is a live null-terminated UTF-16 buffer and all
+        // handle args are null; a null result is reported as an error below.
         let hwnd = unsafe {
             CreateWindowExW(
                 0,
@@ -80,6 +85,8 @@ impl WglWrapper {
 
         let mut state = GlState::create_basic(WglWrapper::create()?, hwnd)?;
 
+        // SAFETY: `state` is a freshly-created WGL backend with a current GL
+        // context, the precondition `make_current` requires.
         unsafe {
             state.make_current();
         }
@@ -100,25 +107,33 @@ impl WglWrapper {
                 .join("mesa");
             let mesa_dir = wide_string(mesa_dir.to_str().unwrap());
 
+            // SAFETY: `mesa_dir` is a live null-terminated UTF-16 path; the DLL
+            // directory APIs only configure the loader search order.
             unsafe {
                 AddDllDirectory(mesa_dir.as_ptr());
                 SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
             }
         }
 
+        // SAFETY: "opengl32.dll" is a valid null-terminated literal name.
         let lib = unsafe { libloading::Library::new("opengl32.dll") }.map_err(|e| {
             log::error!("{:?}", e);
             e
         })?;
         log::trace!("loaded {:?}", lib);
 
+        // SAFETY: `b"wglGetProcAddress\0"` is a valid null-terminated symbol name.
         let get_proc_address: libloading::Symbol<GetProcAddressFunc> =
             unsafe { lib.get(b"wglGetProcAddress\0")? };
         let wgl = ffi::Wgl::load_with(|s: &'static str| {
             let sym_name = std::ffi::CString::new(s).expect("symbol to be cstring compatible");
+            // SAFETY: `sym_name` is a live null-terminated C string; `lib` outlives
+            // the lookup. The returned function pointer is only used while `lib` is alive.
             if let Ok(sym) = unsafe { lib.get(sym_name.as_bytes_with_nul()) } {
                 return *sym;
             }
+            // SAFETY: `sym_name.as_ptr()` is a valid null-terminated name for the
+            // loaded `wglGetProcAddress`.
             unsafe { get_proc_address(sym_name.as_ptr()) }
         });
         Ok(Self {
@@ -130,14 +145,18 @@ impl WglWrapper {
 
     fn load_ext(&mut self) -> anyhow::Result<()> {
         let get_proc_address: libloading::Symbol<GetProcAddressFunc> =
+            // SAFETY: valid null-terminated symbol name; `self.lib` outlives the symbol.
             unsafe { self.lib.get(b"wglGetProcAddress\0")? };
 
         self.ext
             .replace(ffiextra::Wgl::load_with(|s: &'static str| {
                 let sym_name = std::ffi::CString::new(s).expect("symbol to be cstring compatible");
+                // SAFETY: same rationale as `WglWrapper::create`; `self.lib` outlives
+                // the returned function pointers.
                 if let Ok(sym) = unsafe { self.lib.get(sym_name.as_bytes_with_nul()) } {
                     return *sym;
                 }
+                // SAFETY: valid null-terminated name for the loaded `wglGetProcAddress`.
                 unsafe { get_proc_address(sym_name.as_ptr()) }
             }));
 
@@ -165,16 +184,21 @@ impl GlState {
         let wgl = WglWrapper::load()?;
 
         if let Some(ext) = wgl.ext.as_ref() {
+            // SAFETY: `window` is a valid window handle.
             let hdc = unsafe { GetDC(window) };
 
             fn cstr(data: *const i8) -> String {
+                // SAFETY: callers pass a valid NUL-terminated C string returned by
+                // the WGL extension string query.
                 let data = unsafe { CStr::from_ptr(data).to_bytes().to_vec() };
                 String::from_utf8(data).unwrap()
             }
 
             let extensions = if ext.GetExtensionsStringARB.is_loaded() {
+                // SAFETY: `hdc` is the valid DC obtained above.
                 unsafe { cstr(ext.GetExtensionsStringARB(hdc as *const _)) }
             } else if ext.GetExtensionsStringEXT.is_loaded() {
+                // SAFETY: the EXT variant takes no context argument.
                 unsafe { cstr(ext.GetExtensionsStringEXT()) }
             } else {
                 "".to_owned()
@@ -247,6 +271,8 @@ impl GlState {
 
         // Request non-blocking buffer swaps; we manage frame throttling
         // ourselves at the application level.
+        // SAFETY: `ext.SwapIntervalEXT` is loaded (checked above); 0 is a valid
+        // interval requesting non-blocking swaps.
         let res = unsafe { ext.SwapIntervalEXT(0) };
         if res == 0 {
             log::debug!(
@@ -300,6 +326,8 @@ impl GlState {
         let mut format_id = 0;
         let mut num_formats = 0;
 
+        // SAFETY: `hdc` is valid and `attribs` is a correctly terminated
+        // attribute list; the out-params are valid pointers the call writes to.
         let res = unsafe {
             wgl.ext.as_ref().unwrap().ChoosePixelFormatARB(
                 hdc as _,
@@ -320,6 +348,7 @@ impl GlState {
 
         let mut pfd: PIXELFORMATDESCRIPTOR = unsafe { std::mem::zeroed() };
 
+        // SAFETY: `hdc`/`format_id` are valid and `pfd` has the correct size.
         let res = unsafe {
             DescribePixelFormat(
                 hdc,
@@ -335,6 +364,7 @@ impl GlState {
             );
         }
 
+        // SAFETY: `hdc`/`format_id` are valid and `pfd` is fully initialized.
         let res = unsafe { SetPixelFormat(hdc, format_id, &pfd) };
         if res == 0 {
             anyhow::bail!(
@@ -361,6 +391,8 @@ impl GlState {
         }
         attribs.push(0);
 
+        // SAFETY: `hdc` is valid and `attribs` is a correctly terminated list;
+        // a null share context is allowed.
         let rc = unsafe {
             wgl.ext
                 .as_ref()
@@ -369,6 +401,7 @@ impl GlState {
         };
 
         if rc.is_null() {
+            // SAFETY: `GetLastError` takes no arguments and is always safe to call.
             let err = unsafe { winapi::um::errhandlingapi::GetLastError() };
             anyhow::bail!(
                 "CreateContextAttribsARB failed, GetLastError={} {:x}",
@@ -377,6 +410,7 @@ impl GlState {
             );
         }
 
+        // SAFETY: `hdc` and `rc` are a valid DC/rendering-context pair just created.
         unsafe {
             wgl.wgl.MakeCurrent(hdc as *mut _, rc);
         }
@@ -389,6 +423,7 @@ impl GlState {
     }
 
     fn create_basic(wgl: WglWrapper, window: HWND) -> anyhow::Result<Self> {
+        // SAFETY: `window` is a valid window handle.
         let hdc = unsafe { GetDC(window) };
 
         let pfd = PIXELFORMATDESCRIPTOR {
@@ -419,12 +454,16 @@ impl GlState {
             dwVisibleMask: 0,
             dwDamageMask: 0,
         };
+        // SAFETY: `hdc` is valid and `pfd` is fully initialized.
         let format = unsafe { ChoosePixelFormat(hdc, &pfd) };
+        // SAFETY: `format` was just chosen for this DC and `pfd` matches it.
         unsafe {
             SetPixelFormat(hdc, format, &pfd);
         }
 
+        // SAFETY: `hdc` is a valid DC with a pixel format set.
         let rc = unsafe { wgl.wgl.CreateContext(hdc as *mut _) };
+        // SAFETY: `hdc`/`rc` are a valid DC/context pair just created.
         unsafe {
             wgl.wgl.MakeCurrent(hdc as *mut _, rc);
         }
@@ -438,6 +477,7 @@ impl GlState {
 
     fn make_not_current(&self) {
         if let Some(wgl) = self.wgl.as_ref() {
+            // SAFETY: releases the current context on the valid `self.hdc`.
             unsafe {
                 wgl.wgl.MakeCurrent(self.hdc as *mut _, std::ptr::null());
             }
@@ -447,6 +487,7 @@ impl GlState {
     fn delete(&mut self) {
         self.make_not_current();
         if let Some(wgl) = self.wgl.as_ref() {
+            // SAFETY: `self.rc` is a valid context made non-current above.
             unsafe {
                 wgl.wgl.DeleteContext(self.rc);
             }
@@ -460,12 +501,16 @@ impl Drop for GlState {
     }
 }
 
+// SAFETY: `GlState` owns a valid WGL device context + rendering context pair
+// and faithfully implements the glium `Backend` contract on the thread that
+// owns the context.
 unsafe impl glium::backend::Backend for GlState {
     fn resize(&self, _: (u32, u32)) {
         todo!()
     }
 
     fn swap_buffers(&self) -> Result<(), glium::SwapBuffersError> {
+        // SAFETY: `self.hdc` is a valid DC with a double-buffered pixel format.
         unsafe {
             SwapBuffers(self.hdc);
         }
@@ -499,6 +544,7 @@ unsafe impl glium::backend::Backend for GlState {
     }
 
     fn is_current(&self) -> bool {
+        // SAFETY: `GetCurrentContext` takes no arguments; `self.rc` is a valid context.
         unsafe { self.wgl.as_ref().unwrap().wgl.GetCurrentContext() == self.rc }
     }
 

@@ -114,6 +114,7 @@ pub(super) fn write_selection_to_pipe(fd: WritePipe, text: &str) {
 fn write_pipe_with_timeout(mut file: WritePipe, data: &[u8]) -> anyhow::Result<()> {
     // set non-blocking I/O on the pipe
     // (adapted from FileDescriptor::set_non_blocking_impl in /filedescriptor/src/unix.rs)
+    // SAFETY: `file.as_raw_fd()` is a valid open fd; F_SETFL/O_NONBLOCK are valid args.
     if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } != 0 {
         bail!(
             "failed to change non-blocking mode: {}",
@@ -130,6 +131,7 @@ fn write_pipe_with_timeout(mut file: WritePipe, data: &[u8]) -> anyhow::Result<(
     let mut buf = data;
 
     while !buf.is_empty() {
+        // SAFETY: `pfd` is a single valid pollfd entry; polling is thread-safe.
         if unsafe { libc::poll(&mut pfd, 1, 3000) == 1 } {
             match file.write(buf) {
                 Ok(size) if size == 0 => {

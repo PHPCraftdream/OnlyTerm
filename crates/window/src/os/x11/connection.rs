@@ -538,6 +538,9 @@ impl XConnection {
         }
     }
 
+    /// # Safety
+    /// `raw_ev` must be a valid pointer to an xcb event of a type whose xlib
+    /// wire-to-event converter is currently registered. The connection must be live.
     unsafe fn rewire_event(&self, raw_ev: *mut xcb::ffi::xcb_generic_event_t) {
         let ev_type = ((*raw_ev).response_type & 0x7f) as i32;
 
@@ -578,11 +581,13 @@ impl XConnection {
             // <https://bugs.freedesktop.org/show_bug.cgi?id=35945#c4>
             // and mailing thread starting here:
             // <http://lists.freedesktop.org/archives/xcb/2015-November/010556.html>
-            xcb::Event::Dri2(dri2::Event::BufferSwapComplete(ev)) => unsafe {
-                self.rewire_event(ev.as_raw())
+            xcb::Event::Dri2(dri2::Event::BufferSwapComplete(ev)) => {
+                // SAFETY: `ev.as_raw()` is a valid xcb event pointer for this connection.
+                unsafe { self.rewire_event(ev.as_raw()) }
             },
-            xcb::Event::Dri2(dri2::Event::InvalidateBuffers(ev)) => unsafe {
-                self.rewire_event(ev.as_raw())
+            xcb::Event::Dri2(dri2::Event::InvalidateBuffers(ev)) => {
+                // SAFETY: same as the BufferSwapComplete arm above.
+                unsafe { self.rewire_event(ev.as_raw()) }
             },
             xcb::Event::RandR(randr) => {
                 log::trace!("{randr:?}");
@@ -797,6 +802,9 @@ impl XConnection {
         };
 
         xcb_imdkit::ImeClient::set_logger(|msg| log::debug!("Ime: {}", msg));
+        // SAFETY: `&conn` is a live xcb connection that outlives the returned
+        // `ImeClient`; `screen_num`/`input_style` are valid values for the XIM
+        // IME client construction. (The upstream API is `unsafe_new`.)
         let ime = unsafe {
             xcb_imdkit::ImeClient::unsafe_new(
                 &conn,

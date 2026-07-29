@@ -12,6 +12,8 @@ pub struct XcbImage(*mut xcb_image_t);
 
 impl Drop for XcbImage {
     fn drop(&mut self) {
+        // SAFETY: `self.0` is a valid xcb_image_t created by `create_native` and
+        // not previously destroyed; `xcb_image_destroy` frees it exactly once.
         unsafe {
             xcb_image_destroy(self.0);
         }
@@ -29,6 +31,8 @@ impl XcbImage {
         bytes: u32,
         data: *mut u8,
     ) -> anyhow::Result<Self> {
+        // SAFETY: `c` is a live xcb connection and the remaining args are plain
+        // integer values or caller-provided pointers; a null result is handled below.
         let image = unsafe {
             xcb_image_create_native(
                 c.get_raw_conn(),
@@ -57,6 +61,8 @@ impl XcbImage {
         y: i16,
         left_pad: u8,
     ) -> xcb_void_cookie_t {
+        // SAFETY: `conn` is a live xcb connection, `draw`/`gc` are valid ids, and
+        // `self.0` is a valid image created by `create_native`.
         unsafe { xcb_image_put(conn.get_raw_conn(), draw, gc, self.0, x, y, left_pad) }
     }
 }

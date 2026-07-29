@@ -291,6 +291,9 @@ impl SpawnQueue {
         let spawned_funcs = Mutex::new(VecDeque::new());
         let spawned_funcs_low_pri = Mutex::new(VecDeque::new());
 
+        // SAFETY: null allocator/context args use defaults; `SpawnQueue::trigger`
+        // is a valid `CFRunLoopObserverCallBack` and the activity/mode/order args
+        // are valid constants. The observer is added to the main run loop below.
         let observer = unsafe {
             CFRunLoopObserverCreate(
                 std::ptr::null(),
@@ -301,6 +304,8 @@ impl SpawnQueue {
                 std::ptr::null_mut(),
             )
         };
+        // SAFETY: `CFRunLoopGetMain()` returns the main run loop and `observer`
+        // was just created; `kCFRunLoopCommonModes` is a valid mode constant.
         unsafe {
             CFRunLoopAddObserver(CFRunLoopGetMain(), observer, kCFRunLoopCommonModes);
         }
@@ -322,6 +327,8 @@ impl SpawnQueue {
     }
 
     fn queue_wakeup() {
+        // SAFETY: `CFRunLoopGetMain()` returns the main run loop; waking it is
+        // always safe.
         unsafe {
             CFRunLoopWakeUp(CFRunLoopGetMain());
         }

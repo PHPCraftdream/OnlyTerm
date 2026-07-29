@@ -67,6 +67,9 @@ impl Dispatch<WlKeyboard, KeyboardData> for WaylandState {
                         // In later protocol versions, the fd must be privately mmap'd.
                         // We let xkb handle this and then turn it back into a string.
                         #[allow(unused_unsafe)] // Upstream release will change this
+                        // SAFETY: `cloned_fd` is a valid owned fd and `*size` is the
+                        // advertised keymap size; `xkb::Keymap::new_from_fd` takes
+                        // ownership of the fd and reads at most that many bytes.
                         match unsafe {
                             let context = xkb::Context::new(CONTEXT_NO_FLAGS);
                             let cloned_fd = fd.try_clone().expect("Couldn't clone owned fd");

@@ -28,14 +28,14 @@ impl<'a> BitmapRef<'a> {
         let (width, height) = image.image_dimensions();
         let byte_size = width * height * 4;
 
-        // This is safe because BitmapRef<'a> borrows the
-        // data from BitmapImage and the compiler will ensure
-        // that the lifetime is maintained
+        // SAFETY: `BitmapRef<'a>` borrows the data from `BitmapImage` via the
+        // `pixel_data` contract (a valid pointer to `byte_size` bytes), and the
+        // borrow checker upholds the resulting slice lifetime.
         let slice = unsafe {
             let data = image.pixel_data();
             std::slice::from_raw_parts(data, byte_size)
         };
-        // This is also safe for the same reason as above
+        // SAFETY: `slice` is a valid borrowed byte slice (see above).
         let provider = unsafe { CGDataProvider::from_slice(slice) };
 
         let should_interpolate = true;
