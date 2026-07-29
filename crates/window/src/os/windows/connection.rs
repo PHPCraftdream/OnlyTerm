@@ -54,6 +54,9 @@ pub(crate) fn get_appearance() -> Appearance {
 
 impl ConnectionOps for Connection {
     fn terminate_message_loop(&self) {
+        // SAFETY: PostQuitMessage posts a WM_QUIT to this thread's queue and
+        // takes no pointer/string arguments; it is the documented Win32 way to
+        // request message-loop exit and is safe to call from any thread.
         unsafe {
             PostQuitMessage(0);
         }
@@ -68,10 +71,17 @@ impl ConnectionOps for Connection {
     }
 
     fn run_message_loop(&self) -> anyhow::Result<()> {
+        // SAFETY: MSG is a plain repr(C) struct of integer/handle fields; an
+        // all-zero value is valid and is fully overwritten by PeekMessageW
+        // before any field is read.
         let mut msg: MSG = unsafe { std::mem::zeroed() };
         loop {
             SPAWN_QUEUE.run();
 
+            // SAFETY: PeekMessageW is the documented Win32 message-queue API.
+            // `&mut msg` is a valid pointer to our local MSG; a NULL hwnd means
+            // "any window", the filter range 0..0 means "all messages", and
+            // PM_REMOVE is a valid flag, all permitted by MSDN.
             let res = unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) };
             if res != 0 {
                 if msg.message == WM_QUIT {
@@ -82,6 +92,10 @@ impl ConnectionOps for Connection {
                     return Ok(());
                 }
 
+                // SAFETY: DispatchMessageW dispatches the message that
+                // PeekMessageW just fully initialized into `msg`; `&mut msg` is
+                // a valid pointer to that MSG and the WndProc receives it by
+                // reference. (TranslateMessage is intentionally not called here.)
                 unsafe {
                     // We don't want to call TranslateMessage here
                     // unconditionally.  Instead, we perform translation
@@ -95,6 +109,8 @@ impl ConnectionOps for Connection {
     }
 
     fn beep(&self) {
+        // SAFETY: MessageBeep plays a system sound; MB_OK is a valid sound
+        // type and the call takes no pointer arguments.
         unsafe {
             MessageBeep(MB_OK);
         }
@@ -129,6 +145,10 @@ impl Connection {
     }
 
     fn wait_message(&self) {
+        // SAFETY: MsgWaitForMultipleObjects is the documented Win32 wait API.
+        // nCount=1 with `&self.event_handle` being a valid live HANDLE array of
+        // that length, waitAll=FALSE, INFINITE timeout, and a valid combined
+        // input wake mask are all permitted by MSDN.
         unsafe {
             MsgWaitForMultipleObjects(
                 1,
@@ -189,6 +209,11 @@ impl ScreenInfoHelper {
             active: None,
             by_name: HashMap::new(),
             virtual_rect: euclid::rect(0, 0, 0, 0),
+            // SAFETY: GetFocus and MonitorFromWindow are documented Win32
+            // APIs. GetFocus may return NULL (no focused window), but
+            // MONITOR_DEFAULTTONEAREST guarantees MonitorFromWindow returns a
+            // valid non-null HMONITOR in that case, so the result is always
+            // usable.
             active_handle: unsafe { MonitorFromWindow(GetFocus(), MONITOR_DEFAULTTONEAREST) },
             friendly_names: gdi_display_name_to_friendly_monitor_names()?,
             gdi_to_adapater: gdi_display_name_to_adapter_names(),
@@ -203,6 +228,14 @@ impl ScreenInfoHelper {
             _rect: *mut RECT,
             data: LPARAM,
         ) -> i32 {
+            // SAFETY: this fn is `unsafe extern "system"` to satisfy the
+            // MONITORENUMPROC ABI. `data` is the LPARAM we pass to
+            // EnumDisplayMonitors below (`self as *mut _ as LPARAM`), so casting
+            // it back to `&mut ScreenInfoHelper` is sound: `self` outlives the
+            // synchronous enumeration. `mon`/`_hdc` are valid GDI handles for
+            // the duration of the callback. The zeroed MONITORINFOEXW and
+            // DEVMODEW are repr(C) POD structs whose cbSize/dmSize fields are
+            // set before the GDI calls that populate them.
             let info: &mut ScreenInfoHelper = &mut *(data as *mut ScreenInfoHelper);
             let mut mi: MONITORINFOEXW = std::mem::zeroed();
             mi.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
@@ -265,6 +298,10 @@ impl ScreenInfoHelper {
             winapi::shared::ntdef::TRUE.into()
         }
 
+        // SAFETY: a NULL hdc with a NULL clipping rect enumerates every
+        // monitor; `callback` has the MONITORENUMPROC signature; the LPARAM is
+        // `self as *mut _ as LPARAM`, valid for the duration of this synchronous
+        // call, which is exactly what the callback casts back.
         unsafe {
             EnumDisplayMonitors(
                 std::ptr::null_mut(),
@@ -276,6 +313,11 @@ impl ScreenInfoHelper {
     }
 
     pub fn monitor_name(&self, mi: &MONITORINFOEXW) -> String {
+        // SAFETY: `mi.szDevice` / `display_device.DeviceString` are
+        // NUL-terminated wide arrays produced by GDI and are only read by the
+        // safe `wstr` helper (up to the NUL). EnumDisplayDevicesW receives a
+        // NULL device name with a valid `&mut display_device` whose `cb` is set
+        // and dwFlags=0, all permitted by MSDN.
         unsafe {
             let monitor_name = wstr(&mi.szDevice);
             let friendly_name = match self.friendly_names.get(&monitor_name) {
@@ -326,10 +368,15 @@ fn wstr(slice: &[u16]) -> String {
 fn gdi_display_name_to_adapter_names() -> HashMap<String, String> {
     let mut map = HashMap::new();
 
+    // SAFETY: DISPLAY_DEVICEW is a repr(C) POD struct; zero-initialising it is
+    // valid, and `cb` is set before it is passed to EnumDisplayDevicesW below.
     let mut display_device: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
     display_device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
 
     for n in 0.. {
+        // SAFETY: a NULL lpDevice enumerates adapters by index `n`; the
+        // `&mut display_device` pointer is valid and has its `cb` field set;
+        // dwFlags=0 is the documented no-op value.
         if unsafe { EnumDisplayDevicesW(std::ptr::null(), n, &mut display_device, 0) } == 0 {
             break;
         }
@@ -354,6 +401,9 @@ fn gdi_display_name_to_friendly_monitor_names() -> anyhow::Result<HashMap<String
         let mut path_count = 0u32;
         let mut mode_count = 0u32;
 
+        // SAFETY: GetDisplayConfigBufferSizes is the documented QueryDisplayConfig
+        // sizing API; `flags` is a valid combination and the two out-pointers
+        // reference local u32s.
         let result = unsafe {
             GetDisplayConfigBufferSizes(flags, &mut path_count as *mut _, &mut mode_count as *mut _)
         };
@@ -362,11 +412,19 @@ fn gdi_display_name_to_friendly_monitor_names() -> anyhow::Result<HashMap<String
             return Err(std::io::Error::last_os_error()).context("GetDisplayConfigBufferSizes");
         }
 
+        // SAFETY: `resize_with` is a safe Vec method; the only unsafe op here is
+        // `std::mem::zeroed()`, which produces valid zero-initialised
+        // DISPLAYCONFIG_PATH_INFO / DISPLAYCONFIG_MODE_INFO (repr(C) POD structs
+        // with no niche invalidity), sized by the caller-provided counts.
         unsafe {
             paths.resize_with(path_count as usize, || std::mem::zeroed());
             modes.resize_with(mode_count as usize, || std::mem::zeroed());
         }
 
+        // SAFETY: QueryDisplayConfig is the documented display-config API;
+        // `flags` is valid, the count pointers reference local u32s, and
+        // `paths`/`modes` are Vecs whose lengths match those counts with valid
+        // pointers; a NULL topology id is permitted.
         let result = unsafe {
             QueryDisplayConfig(
                 flags,
@@ -380,6 +438,10 @@ fn gdi_display_name_to_friendly_monitor_names() -> anyhow::Result<HashMap<String
 
         // Shrink down if fewer paths than were requested were
         // returned to us
+        // SAFETY: `resize_with` is a safe Vec method; the only unsafe op here is
+        // `std::mem::zeroed()`, which produces valid zero-initialised
+        // DISPLAYCONFIG_PATH_INFO / DISPLAYCONFIG_MODE_INFO (repr(C) POD structs
+        // with no niche invalidity), sized by the caller-provided counts.
         unsafe {
             paths.resize_with(path_count as usize, || std::mem::zeroed());
             modes.resize_with(mode_count as usize, || std::mem::zeroed());
@@ -397,6 +459,8 @@ fn gdi_display_name_to_friendly_monitor_names() -> anyhow::Result<HashMap<String
     }
 
     for path in &paths {
+        // SAFETY: DISPLAYCONFIG_TARGET_DEVICE_NAME is a repr(C) POD struct; zero
+        // initialisation is valid and its `header.size` is set before use.
         let mut target_name: DISPLAYCONFIG_TARGET_DEVICE_NAME = unsafe { std::mem::zeroed() };
 
         target_name.header.adapterId = path.targetInfo.adapterId;
@@ -404,17 +468,23 @@ fn gdi_display_name_to_friendly_monitor_names() -> anyhow::Result<HashMap<String
         target_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
         target_name.header.size = std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
 
+        // SAFETY: `target_name` is fully initialised (adapterId/id/type/size set);
+        // the pointer to its header is valid for the duration of this call.
         let result = unsafe { DisplayConfigGetDeviceInfo(&mut target_name.header) };
         if result != ERROR_SUCCESS as i32 {
             return Err(std::io::Error::last_os_error())
                 .context("DisplayConfigGetDeviceInfo DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME");
         }
 
+        // SAFETY: DISPLAYCONFIG_SOURCE_DEVICE_NAME is a repr(C) POD struct; zero
+        // initialisation is valid and its `header.size` is set before use.
         let mut source_name: DISPLAYCONFIG_SOURCE_DEVICE_NAME = unsafe { std::mem::zeroed() };
         source_name.header.adapterId = path.targetInfo.adapterId;
         source_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
         source_name.header.size = std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;
 
+        // SAFETY: `source_name` is fully initialised (adapterId/type/size set);
+        // the pointer to its header is valid for the duration of this call.
         let result = unsafe { DisplayConfigGetDeviceInfo(&mut source_name.header) };
         if result != ERROR_SUCCESS as i32 {
             return Err(std::io::Error::last_os_error())

@@ -32,6 +32,9 @@ impl Connection {
         // to run right now.
         SPAWN_QUEUE.run();
 
+        // SAFETY: NSApp()/setActivationPolicy_/setDelegate: are AppKit FFI with no
+        // safe wrappers. NSApp() returns the shared NSApplication; create_app_delegate()
+        // yields a valid NSObject delegate; setDelegate: consumes it synchronously.
         unsafe {
             let ns_app = NSApp();
             ns_app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
@@ -119,6 +122,9 @@ impl ConnectionOps for Connection {
     }
 
     fn terminate_message_loop(&self) {
+        // SAFETY: the two msg_send! calls (NSApp() stop:/abortModal) are AppKit FFI
+        // to break the run loop; they run on the main thread via spawn_into_main_thread
+        // and take only nil/() arguments.
         unsafe {
             // bounce via an event callback to encourage stop to apply
             // to the correct level of run loop
@@ -133,6 +139,8 @@ impl ConnectionOps for Connection {
     }
 
     fn get_appearance(&self) -> Appearance {
+        // SAFETY: self.ns_app is a valid NSApplication; effectiveAppearance/name are
+        // AppKit FFI accessors; nsstring_to_str only reads the returned NSString.
         let name = unsafe {
             let appearance: id = msg_send![self.ns_app, effectiveAppearance];
             nsstring_to_str(msg_send![appearance, name])
@@ -153,6 +161,8 @@ impl ConnectionOps for Connection {
     }
 
     fn run_message_loop(&self) -> anyhow::Result<()> {
+        // SAFETY: NSApplication -run is the AppKit run-loop entry point; self.ns_app
+        // is a valid, fully set-up NSApplication.
         unsafe {
             self.ns_app.run();
         }
@@ -161,12 +171,16 @@ impl ConnectionOps for Connection {
     }
 
     fn hide_application(&self) {
+        // SAFETY: hide: is the AppKit FFI to hide the app; self.ns_app is a valid
+        // NSApplication and the sender argument (also ns_app) is a valid object.
         unsafe {
             let () = msg_send![self.ns_app, hide: self.ns_app];
         }
     }
 
     fn beep(&self) {
+        // SAFETY: NSBeep is the documented AppKit alert-sound function (declared
+        // below as `extern "C" fn NSBeep()`); it takes no arguments.
         unsafe {
             NSBeep();
         }
@@ -176,6 +190,11 @@ impl ConnectionOps for Connection {
         let mut by_name = HashMap::new();
         let mut virtual_rect = euclid::rect(0, 0, 0, 0);
 
+        // SAFETY: the following NSScreen FFI calls (screens/count/objectAtIndex/
+        // mainScreen) all operate on valid AppKit objects. `screens` is the array
+        // returned by NSScreen::screens; objectAtIndex indices are bounded by
+        // count(); index 0 is guaranteed present because the menu-bar screen is
+        // always at index 0.
         let screens = unsafe { NSScreen::screens(nil) };
         for idx in 0..unsafe { screens.count() } {
             let screen = unsafe { screens.objectAtIndex(idx) };
@@ -200,6 +219,12 @@ impl ConnectionOps for Connection {
 }
 
 pub fn nsscreen_to_screen_info(screen: *mut Object) -> ScreenInfo {
+    // SAFETY: every call below is AppKit/objc FFI on `screen`, a valid NSScreen
+    // pointer obtained from the screens() enumeration above. frame/
+    // convertRectToBacking_ return plain NSRect values; respondsToSelector: is
+    // used to gate the optional localizedName/maximumFramesPerSecond selectors
+    // before they are sent, so msg_send! for those is only invoked when the
+    // object actually responds. nsstring_to_str only reads the returned NSString.
     let frame = unsafe { NSScreen::frame(screen) };
     let backing_frame = unsafe { NSScreen::convertRectToBacking_(screen, frame) };
     let rect = euclid::rect(

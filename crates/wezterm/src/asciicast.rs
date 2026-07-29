@@ -160,6 +160,10 @@ mod win {
             let mut saved_input = 0;
             let mut saved_output = 0;
             let saved_cp;
+            // SAFETY: read/write are valid console handles opened from CONIN$/CONOUT$;
+            // GetConsoleMode/GetConsoleOutputCP/SetConsoleOutputCP are the documented
+            // console APIs and the out-pointers (`&mut saved_input`/`saved_output`) are
+            // valid locals. CP_UTF8 is a valid code-page constant.
             unsafe {
                 GetConsoleMode(read.as_raw_file_descriptor() as *mut _, &mut saved_input);
                 GetConsoleMode(write.as_raw_file_descriptor() as *mut _, &mut saved_output);
@@ -177,6 +181,9 @@ mod win {
         }
 
         pub fn set_cooked(&mut self) -> anyhow::Result<()> {
+            // SAFETY: SetConsoleOutputCP/SetConsoleMode are the documented console
+            // APIs; the read/write handles are valid, and saved_cp/saved_input/
+            // saved_output are the mode values captured at construction time.
             unsafe {
                 SetConsoleOutputCP(self.saved_cp);
                 SetConsoleMode(self.read.as_raw_handle() as *mut _, self.saved_input);
@@ -186,6 +193,11 @@ mod win {
         }
 
         pub fn set_raw(&mut self) -> anyhow::Result<()> {
+            // SAFETY: SetConsoleMode is the documented console API; the read/write
+            // handles are valid and the flag combinations
+            // (ENABLE_VIRTUAL_TERMINAL_INPUT for input; ENABLE_PROCESSED_OUTPUT |
+            // ENABLE_WRAP_AT_EOL_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING |
+            // DISABLE_NEWLINE_AUTO_RETURN for output) are all valid documented modes.
             unsafe {
                 SetConsoleMode(
                     self.read.as_raw_file_descriptor() as *mut _,
@@ -203,7 +215,12 @@ mod win {
         }
 
         pub fn get_size(&self) -> anyhow::Result<PtySize> {
+            // SAFETY: CONSOLE_SCREEN_BUFFER_INFO is a repr(C) POD struct; zero
+            // initialisation is valid (the value is overwritten below).
             let mut info: CONSOLE_SCREEN_BUFFER_INFO = unsafe { std::mem::zeroed() };
+            // SAFETY: GetConsoleScreenBufferInfo is the documented console API;
+            // self.write is a valid console handle and &mut info is a valid
+            // out-pointer.
             let ok = unsafe {
                 GetConsoleScreenBufferInfo(
                     self.write.as_raw_handle() as *mut _,
@@ -292,6 +309,9 @@ mod unix {
 
         pub fn get_size(&self) -> anyhow::Result<PtySize> {
             let mut size = std::mem::MaybeUninit::<libc::winsize>::uninit();
+            // SAFETY: ioctl with TIOCGWINSZ is the documented way to query a tty
+            // window size; self.tty is a valid open fd and &mut size is a valid
+            // out-pointer for the winsize struct.
             if unsafe { libc::ioctl(self.tty.as_raw_fd(), libc::TIOCGWINSZ as _, &mut size) } != 0 {
                 anyhow::bail!(
                     "failed to ioctl(TIOCGWINSZ): {:#}",
@@ -299,6 +319,8 @@ mod unix {
                 );
             }
 
+            // SAFETY: the ioctl above returned 0 (success), so the kernel has
+            // fully initialised the winsize; assume_init is therefore sound.
             let size = unsafe { size.assume_init() };
 
             Ok(PtySize {
@@ -470,9 +492,13 @@ impl RecordCommand {
                         }
                         Err(error) => {
                             let valid_len = error.valid_up_to();
-                            Event::log_output(&mut cast_file, elapsed, unsafe {
-                                std::str::from_utf8_unchecked(&buffer[0..valid_len])
-                            })?;
+                            // valid_up_to() guarantees buffer[..valid_len] is valid
+                            // UTF-8, so this re-validation cannot fail; it replaces the
+                            // previous from_utf8_unchecked that merely *assumed* that
+                            // invariant and would be UB if it ever did not hold.
+                            let valid = std::str::from_utf8(&buffer[..valid_len])
+                                .expect("Utf8Error::valid_up_to guarantees validity");
+                            Event::log_output(&mut cast_file, elapsed, valid)?;
 
                             buffer.drain(0..valid_len);
 

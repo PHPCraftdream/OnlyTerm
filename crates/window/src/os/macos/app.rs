@@ -21,6 +21,10 @@ extern "C" fn application_should_terminate(
     _app: *mut Object,
 ) -> u64 {
     log::debug!("application termination requested");
+    // SAFETY: every operation inside is Objective-C `msg_send!` FFI into AppKit
+    // (NSAlert alloc/init, runModal and its setters), which has no safe wrapper.
+    // The arguments are all AppKit class/instance messages with correct types;
+    // nsstring() produces valid NSStrings consumed synchronously by the setters.
     unsafe {
         match config::configuration().window_close_confirmation {
             WindowCloseConfirmation::NeverPrompt => terminate_now(),
@@ -70,6 +74,9 @@ extern "C" fn application_will_finish_launching(
 
 extern "C" fn application_did_finish_launching(this: &mut Object, _sel: Sel, _notif: *mut Object) {
     log::debug!("application_did_finish_launching");
+    // SAFETY: `this` is a valid &mut Object of the WezTermAppDelegate class, which
+    // registers the `launched` BOOL ivar in get_class(); set_ivar writes that ivar
+    // with a BOOL value and is the documented objc crate accessor.
     unsafe {
         (*this).set_ivar("launched", YES);
     }
@@ -80,6 +87,9 @@ extern "C" fn application_open_untitled_file(
     _sel: Sel,
     _app: *mut Object,
 ) -> BOOL {
+    // SAFETY: `this` is a WezTermAppDelegate instance whose `launched` BOOL ivar
+    // is registered in get_class(); get_ivar reads it and the returned BOOL is a
+    // trivial copy.
     let launched: BOOL = unsafe { *this.get_ivar("launched") };
     log::debug!("application_open_untitled_file launched={launched}");
     if let Some(conn) = Connection::get() {
@@ -118,6 +128,10 @@ extern "C" fn application_open_file(
     _app: *mut Object,
     file_name: *mut Object,
 ) {
+    // SAFETY: `this` is a WezTermAppDelegate instance whose `launched` BOOL ivar
+    // is registered in get_class(); get_ivar reads it. `file_name` is an NSString
+    // pointer supplied by the AppKit openFile delegate callback; nsstring_to_str
+    // only reads its contents and is reached only when launched == YES.
     let launched: BOOL = unsafe { *this.get_ivar("launched") };
     if launched == YES {
         let file_name = unsafe { nsstring_to_str(file_name) }.to_string();
@@ -149,6 +163,11 @@ fn get_class() -> &'static Class {
 
         cls.add_ivar::<BOOL>("launched");
 
+        // SAFETY: add_method registers extern "C" function pointers for the
+        // given selectors. Each selector is a real AppKit delegate method and the
+        // paired Rust `extern "C" fn` signature matches the documented
+        // Objective-C method signature (argument count/types and return type),
+        // which is the invariant add_method requires.
         unsafe {
             cls.add_method(
                 sel!(applicationShouldTerminate:),
@@ -188,6 +207,10 @@ fn get_class() -> &'static Class {
 
 pub fn create_app_delegate() -> StrongPtr {
     let cls = get_class();
+    // SAFETY: cls is the registered WezTermAppDelegate class (a subclass of
+    // NSObject). alloc/init are the standard NSObject allocation messages and
+    // return a valid instance; set_ivar writes the registered `launched` BOOL
+    // ivar; StrongPtr::new takes ownership of the +1 retain count from alloc.
     unsafe {
         let delegate: *mut Object = msg_send![cls, alloc];
         let delegate: *mut Object = msg_send![delegate, init];

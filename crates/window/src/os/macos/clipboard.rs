@@ -9,6 +9,10 @@ pub struct Clipboard {
 
 impl Clipboard {
     pub fn new() -> Self {
+        // SAFETY: NSPasteboard::generalPasteboard is the documented AppKit API
+        // for obtaining the system pasteboard; passing nil as the receiver is the
+        // standard usage and it returns a valid non-null pasteboard (verified
+        // below before storing/using it).
         let pasteboard = unsafe { NSPasteboard::generalPasteboard(nil) };
         if pasteboard.is_null() {
             panic!("NSPasteboard::generalPasteboard returned null");
@@ -17,6 +21,11 @@ impl Clipboard {
     }
 
     pub fn read(&self) -> anyhow::Result<String> {
+        // SAFETY: self.pasteboard is a valid non-null NSPasteboard obtained in
+        // new(); propertyListForType/stringForType/count/objectAtIndex are AppKit
+        // FFI trait methods on it. Every returned id is null-checked before being
+        // passed to nsstring_to_str, and objectAtIndex is only called with indices
+        // bounded by count().
         unsafe {
             let plist = self.pasteboard.propertyListForType(NSFilenamesPboardType);
             if !plist.is_null() {
@@ -39,6 +48,10 @@ impl Clipboard {
     }
 
     pub fn write(&mut self, data: String) -> anyhow::Result<()> {
+        // SAFETY: clearContents/writeObjects are AppKit FFI on a valid
+        // pasteboard. nsstring(&data) produces a valid autoreleased NSString and
+        // NSArray::arrayWithObject wraps it in a valid single-element array that
+        // is consumed synchronously by writeObjects.
         unsafe {
             self.pasteboard.clearContents();
             let success: BOOL = self
