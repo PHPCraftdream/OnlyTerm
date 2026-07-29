@@ -27,6 +27,9 @@ pub fn is_running_in_rdp_session() -> bool {
     use winreg::enums::HKEY_LOCAL_MACHINE;
     use winreg::RegKey;
 
+    // SAFETY: GetSystemMetrics is the documented Win32 metrics API; SM_REMOTESESSION
+    // is a valid index and the call takes no pointer arguments, so it is safe to call
+    // here. A non-zero result means the session is remote (RDP).
     if unsafe { GetSystemMetrics(SM_REMOTESESSION) } != 0 {
         return true;
     }
@@ -43,6 +46,9 @@ pub fn is_running_in_rdp_session() -> bool {
         Err(_) => return false,
     };
 
+    // SAFETY: GetCurrentProcessId returns a pseudo-handle-derived PID (no args);
+    // ProcessIdToSessionId is the documented session-id API and receives a valid
+    // PID plus a pointer to our local `current_session` DWORD in which to write.
     unsafe {
         let mut current_session = 0;
         if ProcessIdToSessionId(GetCurrentProcessId(), &mut current_session) != 0 {
