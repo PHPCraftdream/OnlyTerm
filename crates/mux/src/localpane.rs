@@ -224,14 +224,25 @@ const TERMINAL_ACCESSOR_LOCK_TIMEOUT: Duration = Duration::from_millis(8);
 /// `metrics::counter!` whenever the timeout is hit, so a wedged pane
 /// shows up in metrics rather than only as an unexplained (bounded, but
 /// still real) latency blip.
+///
+/// Task #248: `unresponsive` (each `LocalPane`'s `unresponsive` field) is
+/// set to `true` on timeout and cleared back to `false` on success, so
+/// `LocalPane::is_unresponsive()` reflects the outcome of the most recent
+/// bounded lock attempt made by *any* of the four callers below, not just
+/// metrics/logs.
 fn try_lock_terminal_for<R>(
     terminal: &Mutex<Terminal>,
+    unresponsive: &AtomicBool,
     metric_name: &'static str,
     body: impl FnOnce(&mut Terminal) -> R,
 ) -> Option<R> {
     match terminal.try_lock_for(TERMINAL_ACCESSOR_LOCK_TIMEOUT) {
-        Some(mut term) => Some(body(&mut term)),
+        Some(mut term) => {
+            unresponsive.store(false, Ordering::Release);
+            Some(body(&mut term))
+        }
         None => {
+            unresponsive.store(true, Ordering::Release);
             metrics::counter!(metric_name).increment(1);
             log::debug!(
                 "{metric_name}: gave up waiting {:?} for terminal.lock(); \
@@ -275,6 +286,28 @@ pub struct LocalPane {
     /// not be able to block the GUI thread (and thus the whole
     /// process's message loop).
     unseen_output: Arc<AtomicBool>,
+    /// Task #248: set to `true` whenever a bounded `terminal.lock()`
+    /// attempt (`try_lock_terminal_for`, task #246) times out for *any*
+    /// of the four GUI-thread-reachable accessors below, and cleared
+    /// back to `false` the moment any subsequent bounded attempt
+    /// succeeds. `is_unresponsive()` reads this directly, with no lock
+    /// of its own, mirroring `unseen_output` above and for the same
+    /// reason: this needs to be safely pollable from the GUI thread for
+    /// *every* pane, including ones whose terminal mutex is currently
+    /// wedged.
+    ///
+    /// A plain bool (rather than e.g. an `AtomicU64` storing the
+    /// `Instant` of the last timeout, which would let a consumer show
+    /// "stale for how long") was chosen because nothing in this
+    /// codebase yet consumes a richer signal than "is this pane
+    /// currently suspect right now" -- the existing `has_unseen_output`
+    /// field this mirrors is the same shape, and `Instant` isn't
+    /// `Copy`-friendly for lock-free atomic storage without an extra
+    /// indirection (it would need to be encoded as a duration-since-some-
+    /// epoch to fit in an `AtomicU64`, adding complexity for a signal
+    /// nothing yet reads). If a future consumer needs "how long has this
+    /// been stuck" this field can be upgraded then.
+    unresponsive: Arc<AtomicBool>,
     /// Task #246: last known-good values for the other GUI-thread-polled
     /// accessors (`get_title()`, `get_progress()`, `copy_user_vars()`, and
     /// the terminal-cache half of `get_current_working_dir()`). Each is
@@ -389,6 +422,7 @@ impl Pane for LocalPane {
     fn copy_user_vars(&self) -> HashMap<String, String> {
         match try_lock_terminal_for(
             &self.terminal,
+            &self.unresponsive,
             "localpane.terminal_lock.timeout.copy_user_vars",
             |term| term.user_vars().clone(),
         ) {
@@ -787,6 +821,7 @@ impl Pane for LocalPane {
     fn get_title(&self) -> String {
         let title = match try_lock_terminal_for(
             &self.terminal,
+            &self.unresponsive,
             "localpane.terminal_lock.timeout.get_title",
             |term| term.get_title().to_string(),
         ) {
@@ -814,6 +849,7 @@ impl Pane for LocalPane {
     fn get_progress(&self) -> Progress {
         match try_lock_terminal_for(
             &self.terminal,
+            &self.unresponsive,
             "localpane.terminal_lock.timeout.get_progress",
             |term| term.get_progress(),
         ) {
@@ -852,6 +888,10 @@ impl Pane for LocalPane {
         self.unseen_output.load(Ordering::Acquire)
     }
 
+    fn is_unresponsive(&self) -> bool {
+        self.unresponsive.load(Ordering::Acquire)
+    }
+
     fn is_mouse_grabbed(&self) -> bool {
         if self.tmux_domain.lock().is_some() {
             false
@@ -875,6 +915,7 @@ impl Pane for LocalPane {
         // problem (task #247) and is deliberately left as-is here.
         match try_lock_terminal_for(
             &self.terminal,
+            &self.unresponsive,
             "localpane.terminal_lock.timeout.get_current_working_dir",
             |term| term.get_current_dir().cloned(),
         ) {
@@ -1420,6 +1461,7 @@ impl LocalPane {
             leader: Arc::new(Mutex::new(None)),
             command_description,
             unseen_output,
+            unresponsive: Arc::new(AtomicBool::new(false)),
             last_known_good: Mutex::new(CachedTerminalInfo::default()),
         }
     }
@@ -2471,6 +2513,66 @@ mod tests {
         // Let the blocker release the lock and join cleanly.
         release.store(true, std::sync::atomic::Ordering::SeqCst);
         handle.join().expect("blocker thread panicked");
+    }
+
+    /// Task #248: `is_unresponsive()` should flip to `true` the moment a
+    /// bounded `terminal.lock()` attempt (`try_lock_terminal_for`, task
+    /// #246) times out on any of the four GUI-thread-reachable accessors,
+    /// and flip back to `false` as soon as a subsequent bounded attempt
+    /// succeeds. This is what makes a wedged pane's terminal lock
+    /// *observable* at the pane level, rather than only showing up as a
+    /// silent `metrics::counter!` increment. Mirrors the
+    /// real-blocker-thread contention setup used by
+    /// `get_title_does_not_block_on_a_locked_terminal` (task #246).
+    #[test]
+    fn is_unresponsive_flips_on_timeout_and_clears_on_success() {
+        let (pane, _dropped) = make_pane();
+
+        // A fresh pane has never timed out: not unresponsive.
+        assert!(!pane.is_unresponsive());
+
+        // Hold `terminal.lock()` on another thread for longer than
+        // `TERMINAL_ACCESSOR_LOCK_TIMEOUT`, simulating a wedged mutex.
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let blocker_pane = Arc::clone(&pane);
+        let blocker_started = Arc::clone(&started);
+        let blocker_release = Arc::clone(&release);
+        let handle = std::thread::spawn(move || {
+            let _guard = blocker_pane.terminal.lock();
+            blocker_started.store(true, std::sync::atomic::Ordering::SeqCst);
+            while !blocker_release.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        // Wait until the blocker has actually acquired the lock.
+        while !started.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // Any of the four bounded accessors will do; `get_title()` is
+        // enough to exercise `try_lock_terminal_for`'s timeout path and
+        // set the flag.
+        let _ = pane.get_title();
+        assert!(
+            pane.is_unresponsive(),
+            "is_unresponsive() must become true after a bounded \
+             terminal.lock() attempt times out"
+        );
+
+        // Let the blocker release the lock and join cleanly.
+        release.store(true, std::sync::atomic::Ordering::SeqCst);
+        handle.join().expect("blocker thread panicked");
+
+        // Now that the lock is free, the next bounded access should
+        // succeed and clear the flag again.
+        let _ = pane.get_title();
+        assert!(
+            !pane.is_unresponsive(),
+            "is_unresponsive() must clear back to false once a bounded \
+             terminal.lock() attempt succeeds again"
+        );
     }
 
     /// After `kill()`, `self.pty` must be `None` (taken, not yet
