@@ -170,7 +170,7 @@ impl CellCluster {
         clusters
     }
 
-    fn is_hebrew_cell(s: &str) -> bool {
+    pub fn is_hebrew_cell(s: &str) -> bool {
         s.chars().any(|c| {
             let cp = c as u32;
             (0x0591..=0x05F4).contains(&cp) || (0xFB1D..=0xFB4F).contains(&cp)
