@@ -217,6 +217,20 @@ As features stabilize some brief notes about them will accumulate here.
 * windows: Improve detection of running in WSL. Thanks to @bew! #7137
 * [QuickSelect](quickselect.md) mode now hides non-matching labels as you type, making it
   easier to spot the remaining candidates. Thanks to @mr-felixoid and @bew! #7752
+* Started work on decoupling execution so one hung tab/window can't take
+  down the rest of the process (previously a single stuck GPU present call
+  would freeze every window's message loop, since all windows in a process
+  share one, and rendering runs synchronously inside it). So far: a
+  background watchdog thread now detects when the GUI message loop's
+  heartbeat stalls past a configurable threshold
+  (`gui_watchdog_enabled`/`gui_watchdog_threshold_ms`) and exposes that
+  state for future use; the per-frame line-shaping/quad-building pass no
+  longer holds each pane's terminal lock for its whole duration, only for
+  a quick snapshot of the visible lines, so a slow render no longer also
+  stalls that pane's pty reader; and mouse hit-testing now reads a
+  lock-free snapshot of the UI's clickable regions instead of the buffer
+  the render pass is actively rebuilding. Moving the actual GPU rendering
+  off the shared message loop onto a per-window thread is still pending.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
