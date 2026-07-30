@@ -328,13 +328,17 @@ impl Pane for LocalPane {
     /// That write is **not** performed on the calling thread. `kill()` is
     /// called synchronously from the GUI thread in several real paths
     /// (window close, render-thread-hang recovery, lost-context
-    /// recovery), and `self.writer` is a thin, unbuffered pass-through
-    /// over the real ConPTY stdin pipe. If the target process isn't
-    /// reading its stdin (e.g. its pipe buffer is full), a synchronous
-    /// write here could block forever and freeze every window in the
-    /// process -- exactly the kind of hang this mechanism exists to avoid
-    /// causing. Instead, the write is deferred onto the same detached
-    /// background thread described below, ahead of its sleep.
+    /// recovery). `self.writer` (a `WriterWrapper`, see
+    /// `crates/mux/src/domain.rs`) is itself non-blocking these days --
+    /// `write`/`flush` just enqueue onto its own background thread -- so
+    /// this is no longer strictly required to avoid blocking the caller.
+    /// It's kept anyway: deferring the write onto the same detached
+    /// background thread described below, ahead of its sleep, means the
+    /// soft-signal byte is enqueued from a thread that's guaranteed to
+    /// outlive the grace period below, rather than depending on
+    /// `WriterWrapper`'s own background thread (which could in principle
+    /// be torn down independently) to still be around by the time the
+    /// pty/writer are actually dropped.
     ///
     /// That signal only does any good if the pty sticks around long
     /// enough for conhost to actually read and process the byte, so this
@@ -398,17 +402,16 @@ impl Pane for LocalPane {
                     //
                     // `kill()` is called synchronously from the GUI
                     // thread in several real paths (window close, render
-                    // -hang recovery, lost-context recovery), and
-                    // `self.writer` is a thin, unbuffered pass-through
-                    // over the real ConPTY stdin pipe (see
-                    // `WriterWrapper` in `crates/mux/src/domain.rs`): if
-                    // the child isn't reading its stdin, a synchronous
-                    // `write_all` here can block forever and freeze every
-                    // window in the process. Moving the write onto this
-                    // same detached thread keeps the byte reaching the
-                    // pty well within the grace period (writing one byte
-                    // takes microseconds next to `PTY_DROP_GRACE_MS`)
-                    // without ever risking the caller's thread.
+                    // -hang recovery, lost-context recovery). `self.writer`
+                    // (see `WriterWrapper` in `crates/mux/src/domain.rs`)
+                    // is itself non-blocking now -- `write_all`/`flush`
+                    // just enqueue onto `WriterWrapper`'s own background
+                    // thread -- so this can't block on the real pty write
+                    // either way. Doing it here regardless keeps the
+                    // soft-signal enqueue on a thread whose lifetime is
+                    // tied to the grace period itself, rather than
+                    // depending on `WriterWrapper`'s independent
+                    // background thread outliving that period.
                     //
                     // Detached, not joined -- mirrors
                     // `RenderThreadHandle::spawn` in
@@ -1896,6 +1899,130 @@ mod tests {
             "the soft-signal write must still happen on the background \
              thread once it's able to proceed"
         );
+    }
+
+    /// Like `make_pane_with_blocking_writer`, but wraps the `BlockingWriter`
+    /// in a real `crate::domain::WriterWrapper` -- the type actually
+    /// returned by `Pane::writer()` in production (see
+    /// `LocalDomain::spawn_pane` / `TmuxDomain`'s pane spawn, both of which
+    /// hand a `WriterWrapper` clone into `LocalPane::new`). The other
+    /// `make_pane_*` helpers above put a plain, un-wrapped writer straight
+    /// into `self.writer`, which is fine for exercising `kill()`'s own
+    /// deferred-write mechanism, but doesn't exercise `WriterWrapper`
+    /// itself, which is the type this test's regression is actually about.
+    fn make_pane_with_writer_wrapper() -> (
+        Arc<LocalPane>,
+        Arc<Mutex<()>>,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let size = TerminalSize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: COLS * 8,
+            pixel_height: ROWS * 16,
+            dpi: 0,
+        };
+        let gate = Arc::new(Mutex::new(()));
+        let wrote = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = crate::domain::WriterWrapper::new(Box::new(BlockingWriter {
+            gate: Arc::clone(&gate),
+            wrote: Arc::clone(&wrote),
+        }));
+        let terminal = Terminal::new_with_nonblocking_writer(
+            size,
+            Arc::new(TestConfig),
+            "WezTerm",
+            "0.0.0",
+            Box::new(writer.clone()),
+        );
+        let pty = Box::new(FakeMasterPty {
+            size: Mutex::new(PtySize {
+                rows: ROWS as u16,
+                cols: COLS as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+            dropped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+        let pane = Arc::new(LocalPane::new(
+            1,
+            terminal,
+            Box::new(NeverExitChild),
+            pty,
+            Box::new(writer),
+            1,
+            "test".to_string(),
+        ));
+        (pane, gate, wrote)
+    }
+
+    /// Regression test for the bug this task fixes: `WriterWrapper`
+    /// (`crate::domain::WriterWrapper`, the concrete type behind
+    /// `Pane::writer()`) used to be a direct, blocking pass-through over
+    /// the real pty writer (`self.writer.lock().write(buf)`). Roughly a
+    /// dozen call sites in `wezterm-gui` call
+    /// `pane.writer().write_all(...)` synchronously from the GUI thread
+    /// (paste, `SendString`, IME composition, character-picker insertion,
+    /// ...); if the target process wasn't reading its stdin, any of those
+    /// calls could block the GUI thread -- and with it every window in
+    /// the process -- forever. Confirms `pane.writer().write_all()` (the
+    /// exact call shape used by those call sites) now returns promptly
+    /// even when the real underlying write would block forever, and that
+    /// the bytes still reach the real writer once it's able to proceed,
+    /// proving the write moved to `WriterWrapper`'s own background thread
+    /// instead of being silently dropped.
+    #[test]
+    fn pane_writer_does_not_block_on_a_stuck_underlying_writer() {
+        // `Pane::writer()` calls `Mux::get().record_input_for_current_identity()`,
+        // so this test needs the process-global `Mux` singleton installed
+        // (see the doc comment on `crate::test::MUX_TEST_GUARD` for why
+        // this has to be serialized against every other test that also
+        // installs one).
+        let _mux_guard = crate::test::MUX_TEST_GUARD.lock();
+        let mux = Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+
+        let (pane, gate, wrote) = make_pane_with_writer_wrapper();
+
+        // Hold the gate so any write performed by the real background
+        // thread blocks, as it would on a real pipe whose reader has
+        // stopped reading.
+        let guard = gate.lock();
+
+        let start = Instant::now();
+        pane.writer()
+            .write_all(b"hello")
+            .expect("write_all must succeed (it only enqueues)");
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "pane.writer().write_all() must not block on a stuck \
+             underlying writer; took {:?}",
+            elapsed
+        );
+        assert!(
+            !wrote.load(std::sync::atomic::Ordering::SeqCst),
+            "the write is still blocked behind the gate, so it must not \
+             have reached the underlying writer yet"
+        );
+
+        // Release the gate so the background thread's blocked write can
+        // complete, then give it a moment to actually run.
+        drop(guard);
+        let mut waited = Duration::ZERO;
+        while !wrote.load(std::sync::atomic::Ordering::SeqCst)
+            && waited < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+            waited += Duration::from_millis(10);
+        }
+        assert!(
+            wrote.load(std::sync::atomic::Ordering::SeqCst),
+            "the write must still reach the underlying writer on \
+             WriterWrapper's background thread once it's able to proceed"
+        );
+
+        Mux::shutdown();
     }
 
     /// Regression test for the GUI-freeze bug fixed alongside this test:
