@@ -9,12 +9,21 @@
 //! one, and gives `submit_one_frame` real `SurfaceError::Lost`/`Outdated`
 //! recovery via `WebGpuState::reconfigure`.
 //!
+//! Task 221.7 adds window-teardown safety and hang visibility on top of
+//! that: a `window_destroyed` flag so a `Frame`/`Resize` message that was
+//! already queued before `Shutdown` don't reach into a dead HWND's GPU
+//! resources, and a `submit_started_at` timestamp so a future per-window
+//! supervisor (task #223) can ask "is this window's render thread currently
+//! stuck inside a submit/reconfigure call".
+//!
 //! Only used behind `config::webgpu_render_thread`, which defaults to
 //! `false`, so none of this changes behavior until a later task flips the
 //! default (221.8).
 
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use ::window::WindowOps;
 
 /// A message sent from the GUI thread to a window's dedicated render
@@ -50,6 +59,26 @@ pub struct RenderThreadSeed {
     /// at which point it calls `window.invalidate()` to ask for a fresh
     /// repaint (the dropped frame's content is now stale).
     pub repaint_pending: Arc<AtomicBool>,
+    /// Set (before `Shutdown` is even sent) by `RenderThreadHandle::shutdown`
+    /// once the window's HWND is being/has been destroyed. Checked by the
+    /// render thread before any GPU call so a `Frame`/`Resize` message that
+    /// was already sitting in the channel ahead of `Shutdown` (the channel
+    /// is FIFO; `dispatch_loop` only stops once it actually dequeues and
+    /// matches `Shutdown`) doesn't reach into a dead window's GPU resources.
+    ///
+    /// This only helps for calls that haven't *started* yet: a thread
+    /// already blocked inside a stuck `present()`/`configure()` call when
+    /// `Destroyed` fires is not rescued by this flag. Full protection
+    /// against that belongs to future process-level isolation (task #224);
+    /// out of scope here.
+    pub window_destroyed: Arc<AtomicBool>,
+    /// `Some(when the currently in-flight submit/reconfigure call started)`,
+    /// or `None` when no such call is in flight right now. Set/cleared
+    /// around `webgpu.submit_frame` (see `submit_one_frame`) so
+    /// `RenderThreadHandle::render_thread_is_hung` can tell a future
+    /// per-window supervisor (task #223) whether this window's render
+    /// thread is currently stuck.
+    pub submit_started_at: Arc<Mutex<Option<Instant>>>,
 }
 
 /// A handle to a window's dedicated render thread, owned by `TermWindow`.
@@ -70,6 +99,19 @@ pub struct RenderThreadHandle {
     in_flight: Arc<AtomicBool>,
     /// Same `Arc<AtomicBool>` as `RenderThreadSeed::repaint_pending`.
     repaint_pending: Arc<AtomicBool>,
+    /// Same `Arc<AtomicBool>` as `RenderThreadSeed::window_destroyed`; set by
+    /// `shutdown()`.
+    window_destroyed: Arc<AtomicBool>,
+    /// Same `Arc<Mutex<Option<Instant>>>` as `RenderThreadSeed::submit_started_at`;
+    /// read by `render_thread_is_hung()`.
+    ///
+    /// `#[allow(dead_code)]`-adjacent: nothing calls `render_thread_is_hung`
+    /// yet (task #223, blocked on this task, is expected to be the first
+    /// caller), so this field currently has no reader either. Mirrors
+    /// `window::os::windows::watchdog::gui_thread_is_hung`'s own
+    /// `#[allow(dead_code)]` for the same reason.
+    #[allow(dead_code)]
+    submit_started_at: Arc<Mutex<Option<Instant>>>,
 }
 
 impl RenderThreadHandle {
@@ -103,6 +145,8 @@ impl RenderThreadHandle {
     ) -> Option<Self> {
         let in_flight = Arc::clone(&seed.in_flight);
         let repaint_pending = Arc::clone(&seed.repaint_pending);
+        let window_destroyed = Arc::clone(&seed.window_destroyed);
+        let submit_started_at = Arc::clone(&seed.submit_started_at);
         let name = format!("render-{window_id}");
         let builder = std::thread::Builder::new().name(name);
         match builder.spawn(move || render_thread_loop(seed)) {
@@ -116,6 +160,8 @@ impl RenderThreadHandle {
                     tx,
                     in_flight,
                     repaint_pending,
+                    window_destroyed,
+                    submit_started_at,
                 })
             }
             Err(err) => {
@@ -194,8 +240,47 @@ impl RenderThreadHandle {
     /// Ask the render thread to stop. This does not wait for it to actually
     /// exit (no `.join()` - see the struct doc comment). A send error here
     /// just means the thread is already gone, which is fine.
+    ///
+    /// Sets `window_destroyed` first, before sending `Shutdown`, so it's
+    /// visible as early as possible -- though the two don't need to be
+    /// perfectly synchronized, since the render thread re-checks the flag
+    /// per-message anyway (see `submit_one_frame`'s guard). This covers a
+    /// `Frame`/`Resize` that was already queued ahead of `Shutdown` in the
+    /// channel: `dispatch_loop` will still dequeue and run it before it ever
+    /// sees `Shutdown` (the channel is FIFO), so the flag is what actually
+    /// prevents a stale GPU call, not the `Shutdown` message itself.
     pub fn shutdown(&self) {
+        self.window_destroyed.store(true, Ordering::Release);
         let _ = self.tx.send(RenderMsg::Shutdown);
+    }
+
+    /// Returns true if this window's render thread appears to be currently
+    /// stuck inside a single submit/reconfigure GPU call for longer than
+    /// `render_thread_hang_threshold_ms` (read live from config, same
+    /// "re-read every check, no restart needed" pattern as
+    /// `window::watchdog::gui_thread_is_hung`'s backing thread).
+    ///
+    /// Unlike that watchdog, this is a stateless, side-effect-free predicate
+    /// with no logging/metrics of its own -- there is no background poller
+    /// for render threads yet (task #223 is expected to add one, and should
+    /// do its own edge-detection/logging on top of this call).
+    #[allow(dead_code)]
+    pub fn render_thread_is_hung(&self) -> bool {
+        let threshold =
+            Duration::from_millis(config::configuration().render_thread_hang_threshold_ms);
+        is_hung_given(&self.submit_started_at, threshold)
+    }
+}
+
+/// The actual "is a call that's been running since `submit_started_at` older
+/// than `threshold`" predicate, split out from `render_thread_is_hung` so it
+/// can be unit tested with a synthetic threshold instead of depending on
+/// live global config state.
+#[allow(dead_code)]
+fn is_hung_given(submit_started_at: &Mutex<Option<Instant>>, threshold: Duration) -> bool {
+    match *submit_started_at.lock() {
+        Some(start) => start.elapsed() >= threshold,
+        None => false,
     }
 }
 
@@ -211,15 +296,34 @@ impl RenderThreadHandle {
 fn render_thread_loop(seed: RenderThreadSeed) {
     let in_flight = Arc::clone(&seed.in_flight);
     let repaint_pending = Arc::clone(&seed.repaint_pending);
+    let window_destroyed = Arc::clone(&seed.window_destroyed);
+    let submit_started_at = Arc::clone(&seed.submit_started_at);
     let webgpu = Arc::clone(&seed.webgpu);
     let window = seed.window.clone();
     let resize_webgpu = Arc::clone(&seed.webgpu);
+    let resize_window_destroyed = Arc::clone(&seed.window_destroyed);
     dispatch_loop(
         &seed.rx,
         &mut |frame| {
-            submit_one_frame(&webgpu, &window, frame, &in_flight, &repaint_pending);
+            submit_one_frame(
+                &webgpu,
+                &window,
+                frame,
+                &in_flight,
+                &repaint_pending,
+                &window_destroyed,
+                &submit_started_at,
+            );
         },
         &mut |dims| {
+            if resize_window_destroyed.load(Ordering::Acquire) {
+                // The window is gone (or on its way out); a Resize that was
+                // queued before Shutdown must not reach into a dead HWND's
+                // surface. Nothing else to do here: resize has no
+                // in_flight/repaint_pending bookkeeping of its own.
+                log::debug!("render thread: skipping stale resize after window destruction");
+                return;
+            }
             resize_webgpu.resize(dims);
         },
     );
@@ -230,19 +334,49 @@ fn render_thread_loop(seed: RenderThreadSeed) {
 /// of `render_thread_loop` so the "what does a Frame message actually do"
 /// logic is easy to read on its own; `dispatch_loop` remains agnostic to
 /// what the closure does with a `Frame`.
+///
+/// Checks `window_destroyed` before touching the GPU at all: this only
+/// rescues calls that haven't *started* yet (a message queued ahead of
+/// `Shutdown` in the channel -- see `RenderThreadHandle::shutdown`). A call
+/// already blocked inside `submit_frame`/`reconfigure` when the window gets
+/// destroyed is not interrupted by this check; that residual risk is
+/// accepted for now and belongs to future process-level isolation
+/// (task #224), not this task.
 fn submit_one_frame(
     webgpu: &crate::termwindow::webgpu::WebGpuState,
     window: &::window::Window,
     frame: crate::termwindow::webgpu::GpuFrame,
     in_flight: &AtomicBool,
     repaint_pending: &AtomicBool,
+    window_destroyed: &AtomicBool,
+    submit_started_at: &Mutex<Option<Instant>>,
 ) {
+    if window_destroyed.load(Ordering::Acquire) {
+        // The window is gone (or on its way out): don't touch the GPU
+        // surface at all. We still clear `in_flight` -- that bookkeeping is
+        // always safe/necessary regardless of whether the frame was
+        // actually submitted, since a future (impossible, since the window
+        // is dying, but cheap to keep correct) `send_frame` call must not
+        // wedge against a `true` that will never be cleared otherwise. We
+        // deliberately do NOT consult/clear `repaint_pending` or call
+        // `window.invalidate()`: both exist purely to ask the GUI thread for
+        // another repaint, which is meaningless (and possibly unsafe, since
+        // the window's data may already be torn down) once the window is
+        // being destroyed.
+        log::debug!("render thread: skipping stale frame after window destruction");
+        drop(frame);
+        in_flight.store(false, Ordering::Release);
+        return;
+    }
     let stall_ms = config::configuration().debug_render_thread_stall_ms;
     if stall_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(stall_ms));
     }
     let start = std::time::Instant::now();
-    if let Err(err) = webgpu.submit_frame(frame) {
+    *submit_started_at.lock() = Some(start);
+    let result = webgpu.submit_frame(frame);
+    *submit_started_at.lock() = None;
+    if let Err(err) = result {
         match err {
             // `Lost`/`Outdated` mean the swapchain itself needs recreating,
             // not a real draw failure. This is an intentional behavior
@@ -257,10 +391,22 @@ fn submit_one_frame(
             // (one dropped frame, then a fresh full repaint) just decoupled
             // across the thread boundary instead of happening inline.
             wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
-                log::warn!("render thread: surface {:?}, reconfiguring", err);
-                webgpu.reconfigure();
-                metrics::counter!("gui.render_thread.surface_reconfigured").increment(1);
-                window.invalidate();
+                if window_destroyed.load(Ordering::Acquire) {
+                    // The window was destroyed while submit_frame was
+                    // running (or the flag simply wasn't visible until
+                    // now). Reconfiguring a dead surface and invalidating a
+                    // dead window are both pointless (and the latter could
+                    // touch torn-down state), so skip straight past them.
+                    log::debug!(
+                        "render thread: surface {:?} after window destruction, skipping reconfigure",
+                        err
+                    );
+                } else {
+                    log::warn!("render thread: surface {:?}, reconfiguring", err);
+                    webgpu.reconfigure();
+                    metrics::counter!("gui.render_thread.surface_reconfigured").increment(1);
+                    window.invalidate();
+                }
             }
             other => {
                 log::error!("render thread: submit_frame failed: {:#}", other);
@@ -624,6 +770,43 @@ mod tests {
         assert!(
             !in_flight.load(Ordering::Acquire),
             "in_flight must be reset when the send fails, or back-pressure wedges forever"
+        );
+    }
+
+    /// Exercises `is_hung_given` (the config-free core of
+    /// `RenderThreadHandle::render_thread_is_hung`) directly against a
+    /// synthetic, short threshold and a real `Instant`/`sleep`, mirroring
+    /// `window::os::windows::watchdog`'s `TestWatchdog` style: fast, no fake
+    /// clock, no dependency on global `config::configuration()` state (which
+    /// `render_thread_is_hung` itself reads, but this lower-level helper
+    /// does not).
+    #[test]
+    fn is_hung_given_detects_a_long_running_call() {
+        let submit_started_at: Mutex<Option<Instant>> = Mutex::new(None);
+        let threshold = Duration::from_millis(50);
+
+        // Nothing in flight: never hung.
+        assert!(!is_hung_given(&submit_started_at, threshold));
+
+        // Something starts running, but hasn't been running long: not hung
+        // yet.
+        *submit_started_at.lock() = Some(Instant::now());
+        assert!(!is_hung_given(&submit_started_at, threshold));
+
+        // Let the short threshold elapse for real.
+        std::thread::sleep(threshold + Duration::from_millis(20));
+        assert!(
+            is_hung_given(&submit_started_at, threshold),
+            "a call running longer than the threshold should be reported as hung"
+        );
+
+        // Clearing submit_started_at (as submit_one_frame does once the
+        // call returns) goes back to not-hung, even though the elapsed time
+        // since the (now-forgotten) start would still exceed the threshold.
+        *submit_started_at.lock() = None;
+        assert!(
+            !is_hung_given(&submit_started_at, threshold),
+            "clearing submit_started_at back to None should report not-hung again"
         );
     }
 }
