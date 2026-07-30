@@ -173,6 +173,60 @@ fn lock_terminal_timed<R>(
     body(&mut term)
 }
 
+/// Task #246: how long a GUI-thread-reachable accessor (`get_title()`,
+/// `get_progress()`, `copy_user_vars()`, the cache-lookup half of
+/// `get_current_working_dir()`) is willing to wait for `terminal.lock()`
+/// before giving up and falling back to the last known-good cached value.
+///
+/// `get_tab_information()` (`wezterm-gui/src/termwindow/mod.rs`) calls
+/// these for the *active* pane of *every* tab in the window, and it's
+/// invoked from `update_title_impl` on essentially every key/mouse event
+/// on the GUI thread. That means a single background tab whose terminal
+/// mutex is wedged (or just held a little too long by the pty parser
+/// thread applying a large output batch, see `perform_actions_chunked`
+/// above) can stall the *whole* window's message loop once per polled
+/// tab, not just the one tab that's slow.
+///
+/// 8ms was chosen to sit clearly on the "imperceptible" side of input
+/// latency (commonly-cited UI responsiveness budgets put "instantaneous"
+/// around 100ms and "avoid perceptible lag" around 16ms/one frame at
+/// 60Hz) while still being generous compared to how long the parser
+/// thread normally holds the lock for a single chunk of actions -- chunks
+/// are capped (see `perform_actions_chunked`) specifically so that a
+/// single critical section is short, on the order of microseconds to a
+/// couple of milliseconds, not tens of milliseconds. A few polled
+/// background tabs each spending up to 8ms here in the worst case still
+/// keeps total added latency for one GUI event to a low single-digit
+/// number of milliseconds, while genuinely wedged/stuck panes (the
+/// motivating case) are bounded rather than blocking forever.
+const TERMINAL_ACCESSOR_LOCK_TIMEOUT: Duration = Duration::from_millis(8);
+
+/// Attempts to acquire `terminal.lock()` within `TERMINAL_ACCESSOR_LOCK_TIMEOUT`
+/// and run `body` against it, returning `None` on timeout instead of
+/// blocking indefinitely. See `TERMINAL_ACCESSOR_LOCK_TIMEOUT` for why a
+/// bounded wait matters here. `metric_name` is incremented via
+/// `metrics::counter!` whenever the timeout is hit, so a wedged pane
+/// shows up in metrics rather than only as an unexplained (bounded, but
+/// still real) latency blip.
+fn try_lock_terminal_for<R>(
+    terminal: &Mutex<Terminal>,
+    metric_name: &'static str,
+    body: impl FnOnce(&mut Terminal) -> R,
+) -> Option<R> {
+    match terminal.try_lock_for(TERMINAL_ACCESSOR_LOCK_TIMEOUT) {
+        Some(mut term) => Some(body(&mut term)),
+        None => {
+            metrics::counter!(metric_name).increment(1);
+            log::debug!(
+                "{metric_name}: gave up waiting {:?} for terminal.lock(); \
+                 falling back to last known-good cached value",
+                TERMINAL_ACCESSOR_LOCK_TIMEOUT
+            );
+            None
+        }
+    }
+}
+
 pub struct LocalPane {
     pane_id: PaneId,
     terminal: Mutex<Terminal>,
@@ -200,6 +254,27 @@ pub struct LocalPane {
     /// not be able to block the GUI thread (and thus the whole
     /// process's message loop).
     unseen_output: Arc<AtomicBool>,
+    /// Task #246: last known-good values for the other GUI-thread-polled
+    /// accessors (`get_title()`, `get_progress()`, `copy_user_vars()`, and
+    /// the terminal-cache half of `get_current_working_dir()`). Each is
+    /// updated whenever a bounded `terminal.lock()` attempt (see
+    /// `try_lock_terminal_for`) actually succeeds, and served back as a
+    /// stale-but-safe fallback whenever the lock can't be acquired within
+    /// `TERMINAL_ACCESSOR_LOCK_TIMEOUT` -- e.g. because a *different*
+    /// background tab's terminal is wedged. This is a separate, small
+    /// mutex rather than `terminal`'s own lock, so reading/writing the
+    /// cache never itself contends with the pty parser thread's much
+    /// more frequent, longer-held locking of `terminal`.
+    last_known_good: Mutex<CachedTerminalInfo>,
+}
+
+/// See `LocalPane::last_known_good`.
+#[derive(Clone, Default)]
+struct CachedTerminalInfo {
+    title: String,
+    progress: Progress,
+    user_vars: HashMap<String, String>,
+    cwd: Option<Url>,
 }
 
 #[async_trait(?Send)]
@@ -291,7 +366,17 @@ impl Pane for LocalPane {
     }
 
     fn copy_user_vars(&self) -> HashMap<String, String> {
-        self.terminal.lock().user_vars().clone()
+        match try_lock_terminal_for(
+            &self.terminal,
+            "localpane.terminal_lock.timeout.copy_user_vars",
+            |term| term.user_vars().clone(),
+        ) {
+            Some(user_vars) => {
+                self.last_known_good.lock().user_vars = user_vars.clone();
+                user_vars
+            }
+            None => self.last_known_good.lock().user_vars.clone(),
+        }
     }
 
     fn exit_behavior(&self) -> Option<ExitBehavior> {
@@ -679,7 +764,18 @@ impl Pane for LocalPane {
     }
 
     fn get_title(&self) -> String {
-        let title = self.terminal.lock().get_title().to_string();
+        let title = match try_lock_terminal_for(
+            &self.terminal,
+            "localpane.terminal_lock.timeout.get_title",
+            |term| term.get_title().to_string(),
+        ) {
+            Some(title) => {
+                self.last_known_good.lock().title = title.clone();
+                title
+            }
+            None => self.last_known_good.lock().title.clone(),
+        };
+
         // If the title is the default pane title, then try to spice
         // things up a bit by returning the process basename instead
         if title == "wezterm" {
@@ -695,7 +791,17 @@ impl Pane for LocalPane {
     }
 
     fn get_progress(&self) -> Progress {
-        self.terminal.lock().get_progress()
+        match try_lock_terminal_for(
+            &self.terminal,
+            "localpane.terminal_lock.timeout.get_progress",
+            |term| term.get_progress(),
+        ) {
+            Some(progress) => {
+                self.last_known_good.lock().progress = progress.clone();
+                progress
+            }
+            None => self.last_known_good.lock().progress.clone(),
+        }
     }
 
     fn palette(&self) -> ColorPalette {
@@ -742,11 +848,21 @@ impl Pane for LocalPane {
     }
 
     fn get_current_working_dir(&self, policy: CachePolicy) -> Option<Url> {
-        self.terminal
-            .lock()
-            .get_current_dir()
-            .cloned()
-            .or_else(|| self.divine_current_working_dir(policy))
+        // Only the `terminal.lock()` half of this is in scope for task
+        // #246's bounded-wait treatment; `divine_current_working_dir()`
+        // (the cache-miss fallback below) is a separate, already-tracked
+        // problem (task #247) and is deliberately left as-is here.
+        match try_lock_terminal_for(
+            &self.terminal,
+            "localpane.terminal_lock.timeout.get_current_working_dir",
+            |term| term.get_current_dir().cloned(),
+        ) {
+            Some(cwd) => {
+                self.last_known_good.lock().cwd = cwd.clone();
+                cwd.or_else(|| self.divine_current_working_dir(policy))
+            }
+            None => self.last_known_good.lock().cwd.clone(),
+        }
     }
 
     fn tty_name(&self) -> Option<String> {
@@ -1283,6 +1399,7 @@ impl LocalPane {
             leader: Arc::new(Mutex::new(None)),
             command_description,
             unseen_output,
+            last_known_good: Mutex::new(CachedTerminalInfo::default()),
         }
     }
 
@@ -2086,6 +2203,96 @@ mod tests {
             elapsed < Duration::from_secs(1),
             "has_unseen_output() must not block on a locked terminal; took {:?}",
             elapsed
+        );
+
+        // Let the blocker release the lock and join cleanly.
+        release.store(true, std::sync::atomic::Ordering::SeqCst);
+        handle.join().expect("blocker thread panicked");
+    }
+
+    /// Regression test for task #246: `get_title()` used to take
+    /// `terminal.lock()` unconditionally, with no timeout. Like
+    /// `has_unseen_output()` before it (task #244), `get_title()` is
+    /// called for the active pane of *every* tab from
+    /// `get_tab_information()`/`update_title_impl` on the GUI thread on
+    /// essentially every key/mouse event, so a single background pane
+    /// whose terminal mutex is wedged (held by another thread and never
+    /// released) could block the whole window's message loop forever.
+    /// Confirms that `get_title()` now gives up after a bounded wait
+    /// (`TERMINAL_ACCESSOR_LOCK_TIMEOUT`) and returns the last
+    /// known-good cached title instead of blocking, while still
+    /// reflecting real title changes once the lock is free.
+    #[test]
+    fn get_title_does_not_block_on_a_locked_terminal() {
+        let (pane, _dropped) = make_pane();
+
+        // `Terminal::perform_actions` on a `SetWindowTitle` OSC would
+        // otherwise fire `LocalPaneNotifHandler::alert`, which calls
+        // `promise::spawn::spawn_into_main_thread` -- that needs a
+        // process-global scheduler installed (see
+        // `promise::spawn::set_schedulers`), which is orthogonal to what
+        // this test is about. Swap in a no-op handler so the title change
+        // below is observable through `get_title()` without dragging in
+        // the whole scheduler/Mux-singleton setup.
+        struct NoopAlertHandler;
+        impl AlertHandler for NoopAlertHandler {
+            fn alert(&mut self, _alert: Alert) {}
+        }
+        pane.terminal
+            .lock()
+            .set_notification_handler(Box::new(NoopAlertHandler));
+
+        // --- Correctness (no contention): a real title change is
+        // observed once the lock is available. ---
+        pane.terminal
+            .lock()
+            .perform_actions(vec![Action::OperatingSystemCommand(Box::new(
+                termwiz::escape::OperatingSystemCommand::SetWindowTitle(
+                    "known-good-title".to_string(),
+                ),
+            ))]);
+        assert_eq!(pane.get_title(), "known-good-title");
+
+        // --- Non-blocking under contention ---
+        // Hold `terminal.lock()` on another thread, simulating a
+        // wedged/held mutex. Under the old code the `get_title()` call
+        // below would block for as long as the lock was held.
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let blocker_pane = Arc::clone(&pane);
+        let blocker_started = Arc::clone(&started);
+        let blocker_release = Arc::clone(&release);
+        let handle = std::thread::spawn(move || {
+            // Hold the terminal mutex for the whole lifetime of this
+            // guard, releasing it only once the main thread is done.
+            let _guard = blocker_pane.terminal.lock();
+            blocker_started.store(true, std::sync::atomic::Ordering::SeqCst);
+            while !blocker_release.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        // Wait until the blocker has actually acquired the lock.
+        while !started.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // This call must return promptly (bounded by
+        // `TERMINAL_ACCESSOR_LOCK_TIMEOUT`) despite the lock being held,
+        // and must serve the cached title from before contention began
+        // rather than blocking until the lock is released.
+        let call_start = Instant::now();
+        let title = pane.get_title();
+        let elapsed = call_start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "get_title() must not block on a locked terminal; took {:?}",
+            elapsed
+        );
+        assert_eq!(
+            title, "known-good-title",
+            "get_title() must fall back to the last known-good cached \
+             title when the terminal lock can't be acquired in time"
         );
 
         // Let the blocker release the lock and join cleanly.
