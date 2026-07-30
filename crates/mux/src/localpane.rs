@@ -37,6 +37,30 @@ use wezterm_term::{
 
 const PROC_INFO_CACHE_TTL: Duration = Duration::from_millis(300);
 
+/// Grace period between `kill()` sending the soft-interrupt byte (`\x03`,
+/// the same byte the user's physical Ctrl+C writes -- see the doc comment
+/// on `kill()`) and actually dropping the pane's pty.
+///
+/// Dropping the pty tears down the underlying pty/ConPTY immediately, which
+/// on Windows would very likely race the soft signal: conhost/OpenConsole
+/// needs to actually read and process the `\x03` byte and raise
+/// `CTRL_C_EVENT` for the whole attached process tree before the pty goes
+/// away, and that doesn't happen synchronously with the write. Deferring
+/// the drop by this same duration means the pty teardown lands at roughly
+/// the same moment the hard-kill path (`pty::win::mod::kill_gracefully_then_forcefully`)
+/// gives up waiting and escalates to `TerminateProcess`, rather than
+/// racing ahead of the soft signal it's supposed to precede.
+///
+/// Intentionally kept equal to `pty::win::mod::GRACEFUL_KILL_TIMEOUT_MS`
+/// (5000ms): that's the existing constant governing how long the
+/// hard-kill path waits for the child to exit on its own before
+/// force-terminating it, and there's no reason for this mux-level grace
+/// period to differ from it. It's duplicated here (rather than imported)
+/// because it lives in a `#[cfg(windows)]`-only, private module of the
+/// `pty` crate, while this deferred-drop mechanism is deliberately
+/// cross-platform (see `kill()`'s doc comment).
+const PTY_DROP_GRACE_MS: u64 = 5000;
+
 #[derive(Debug)]
 enum ProcessState {
     Running {
@@ -152,7 +176,13 @@ pub struct LocalPane {
     pane_id: PaneId,
     terminal: Mutex<Terminal>,
     process: Mutex<ProcessState>,
-    pty: Mutex<Box<dyn MasterPty>>,
+    // `None` once `kill()` has taken the pty out in order to defer its
+    // `Drop` (see `kill()` and `PTY_DROP_GRACE_MS` for why): a killed pane's
+    // pty is intentionally kept alive for a short grace period on a
+    // detached background thread rather than being torn down the instant
+    // the last `Arc<LocalPane>` goes away, so every call site below has to
+    // treat "pty already gone" as a normal, silent case rather than a bug.
+    pty: Mutex<Option<Box<dyn MasterPty>>>,
     writer: Mutex<Box<dyn Write + Send>>,
     domain_id: DomainId,
     tmux_domain: Mutex<Option<Arc<TmuxDomainState>>>,
@@ -173,7 +203,7 @@ impl Pane for LocalPane {
         let mut map: BTreeMap<Value, Value> = BTreeMap::new();
 
         #[cfg(unix)]
-        if let Some(tio) = self.pty.lock().get_termios() {
+        if let Some(tio) = self.pty.lock().as_ref().and_then(|pty| pty.get_termios()) {
             use nix::sys::termios::LocalFlags;
             // Detect whether we might be in password input mode.
             // If local echo is disabled and canonical input mode
@@ -255,8 +285,16 @@ impl Pane for LocalPane {
     }
 
     fn exit_behavior(&self) -> Option<ExitBehavior> {
-        let pty = self.pty.lock();
-        let is_failed_spawn = pty.is::<crate::domain::FailedSpawnPty>();
+        // `None` here means the pty has already been taken by `kill()`
+        // pending its deferred drop; there's nothing left to inspect, so
+        // just fall through to the default behavior rather than treating
+        // this as the `FailedSpawnPty` case.
+        let is_failed_spawn = self
+            .pty
+            .lock()
+            .as_ref()
+            .map(|pty| pty.is::<crate::domain::FailedSpawnPty>())
+            .unwrap_or(false);
 
         if is_failed_spawn {
             Some(ExitBehavior::CloseOnCleanExit)
@@ -265,6 +303,31 @@ impl Pane for LocalPane {
         }
     }
 
+    /// Kills the process (tree) running in this pane.
+    ///
+    /// Before actually terminating anything, this sends a "soft" interrupt:
+    /// the same `\x03` byte that the user's physical Ctrl+C writes into the
+    /// pane (see `crates/term/src/terminalstate/keyboard.rs` and
+    /// `CopySelectionOrInterrupt` in `wezterm-gui`). On Windows, ConPTY's
+    /// hosted conhost/OpenConsole reads that byte and raises
+    /// `CTRL_C_EVENT` for every process attached to the pseudoconsole (the
+    /// whole tree), giving well-behaved processes a chance to shut down
+    /// cleanly.
+    ///
+    /// That signal only does any good if the pty sticks around long
+    /// enough for conhost to actually read and process the byte, so this
+    /// takes `self.pty` out (leaving `None` behind) and moves it onto a
+    /// detached background thread that drops it only after
+    /// `PTY_DROP_GRACE_MS` has elapsed, instead of letting it drop
+    /// immediately when this `LocalPane` itself is dropped moments later.
+    /// See `PTY_DROP_GRACE_MS`'s doc comment for why that duration was
+    /// chosen.
+    ///
+    /// The existing hard-kill machinery (`signaller.kill()`, which on
+    /// Windows waits up to `pty::win::mod::GRACEFUL_KILL_TIMEOUT_MS` for
+    /// the child to exit before force-terminating it and closing the Job
+    /// Object) is unchanged and still runs synchronously from here, on its
+    /// own independent background thread; this method never blocks.
     fn kill(&self) {
         let mut proc = self.process.lock();
         log::debug!(
@@ -276,6 +339,45 @@ impl Pane for LocalPane {
             ProcessState::Running {
                 signaller, killed, ..
             } => {
+                if !*killed {
+                    // Best-effort soft signal; the pty may already be
+                    // broken or gone, and that's fine -- this must never
+                    // panic or propagate an error out of `kill()`.
+                    {
+                        let mut writer = self.writer.lock();
+                        let _ = writer.write_all(b"\x03");
+                        let _ = writer.flush();
+                    }
+
+                    // Take the pty out without dropping it yet, so that
+                    // `LocalPane::drop()` (which will run shortly after
+                    // the last `Arc<LocalPane>` goes away) finds `None`
+                    // here and has nothing left to tear down.
+                    if let Some(pty) = self.pty.lock().take() {
+                        // Detached, not joined -- mirrors
+                        // `RenderThreadHandle::spawn` in
+                        // `wezterm-gui/src/renderthread.rs`. Moving `pty`
+                        // into the closure and letting it fall out of
+                        // scope at the end is what actually drops (and
+                        // so tears down) it, just deferred past the
+                        // grace period.
+                        let builder = std::thread::Builder::new().name("pty-drop-grace".into());
+                        match builder.spawn(move || {
+                            std::thread::sleep(Duration::from_millis(PTY_DROP_GRACE_MS));
+                            drop(pty);
+                        }) {
+                            Ok(join_handle) => drop(join_handle),
+                            Err(err) => {
+                                log::error!(
+                                    "Failed to spawn pty-drop-grace thread, \
+                                     dropping pty immediately: {:#}",
+                                    err
+                                );
+                            }
+                        }
+                    }
+                }
+
                 let _ = signaller.kill();
                 *killed = true;
             }
@@ -455,12 +557,19 @@ impl Pane for LocalPane {
     }
 
     fn resize(&self, size: TerminalSize) -> Result<(), Error> {
-        self.pty.lock().resize(PtySize {
-            rows: size.rows.try_into()?,
-            cols: size.cols.try_into()?,
-            pixel_width: size.pixel_width.try_into()?,
-            pixel_height: size.pixel_height.try_into()?,
-        })?;
+        // If the pty is already gone (pane killed, teardown deferred --
+        // see `kill()`), there's nowhere for a resize to go; silently
+        // skip the pty resize but still update the terminal model, since
+        // a killed pane may still be rendered briefly (e.g. while
+        // `DeadPendingClose`) and its dimensions should stay coherent.
+        if let Some(pty) = self.pty.lock().as_ref() {
+            pty.resize(PtySize {
+                rows: size.rows.try_into()?,
+                cols: size.cols.try_into()?,
+                pixel_width: size.pixel_width.try_into()?,
+                pixel_height: size.pixel_height.try_into()?,
+            })?;
+        }
         self.terminal.lock().resize(size);
         Ok(())
     }
@@ -474,7 +583,12 @@ impl Pane for LocalPane {
     }
 
     fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
-        Ok(Some(self.pty.lock().try_clone_reader()?))
+        // `None` pty (already taken by `kill()`, pending deferred drop):
+        // there's nothing left to read from.
+        match self.pty.lock().as_ref() {
+            Some(pty) => Ok(Some(pty.try_clone_reader()?)),
+            None => Ok(None),
+        }
     }
 
     fn send_paste(&self, text: &str) -> Result<(), Error> {
@@ -560,7 +674,8 @@ impl Pane for LocalPane {
     fn tty_name(&self) -> Option<String> {
         #[cfg(unix)]
         {
-            let name = self.pty.lock().tty_name()?;
+            // `None` pty (already taken by `kill()`): nothing to name.
+            let name = self.pty.lock().as_ref()?.tty_name()?;
             Some(name.to_string_lossy().into_owned())
         }
 
@@ -572,7 +687,12 @@ impl Pane for LocalPane {
 
     fn get_foreground_process_info(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
         #[cfg(unix)]
-        if let Some(pid) = self.pty.lock().process_group_leader() {
+        if let Some(pid) = self
+            .pty
+            .lock()
+            .as_ref()
+            .and_then(|pty| pty.process_group_leader())
+        {
             return LocalProcessInfo::with_root_pid(pid as u32);
         }
 
@@ -671,7 +791,15 @@ impl Pane for LocalPane {
                 // If the process is dead but exit_behavior is holding the
                 // window, we don't need to prompt to confirm closing.
                 // That is detectable as no longer having a process group leader.
-                if self.pty.lock().process_group_leader().is_none() {
+                // A `None` pty (already taken by `kill()`) counts the same
+                // way: there's definitely no leader left to speak of.
+                let has_leader = self
+                    .pty
+                    .lock()
+                    .as_ref()
+                    .and_then(|pty| pty.process_group_leader())
+                    .is_some();
+                if !has_leader {
                     return true;
                 }
             }
@@ -1063,7 +1191,7 @@ impl LocalPane {
                 signaller,
                 killed: false,
             }),
-            pty: Mutex::new(pty),
+            pty: Mutex::new(Some(pty)),
             writer: Mutex::new(writer),
             domain_id,
             tmux_domain: Mutex::new(None),
@@ -1120,7 +1248,12 @@ impl LocalPane {
         let mut leader = self.leader.lock();
 
         if policy == CachePolicy::FetchImmediate {
-            leader.replace(CachedLeaderInfo::new(self.pty.lock().as_raw_fd()));
+            // `None` pty (already taken by `kill()`) has no fd to offer;
+            // `CachedLeaderInfo::new(None)` degrades to fd `-1`, which
+            // `can_update()` already treats as "nothing to query".
+            leader.replace(CachedLeaderInfo::new(
+                self.pty.lock().as_ref().and_then(|pty| pty.as_raw_fd()),
+            ));
         } else if let Some(info) = leader.as_mut() {
             // If stale, queue up some work in another thread to update.
             // Right now, we'll return the stale data.
@@ -1135,7 +1268,12 @@ impl LocalPane {
                 });
             }
         } else {
-            leader.replace(CachedLeaderInfo::new(self.pty.lock().as_raw_fd()));
+            // `None` pty (already taken by `kill()`) has no fd to offer;
+            // `CachedLeaderInfo::new(None)` degrades to fd `-1`, which
+            // `can_update()` already treats as "nothing to query".
+            leader.replace(CachedLeaderInfo::new(
+                self.pty.lock().as_ref().and_then(|pty| pty.as_raw_fd()),
+            ));
         }
 
         (*leader).clone().unwrap()
@@ -1321,6 +1459,238 @@ impl Drop for LocalPane {
         // <https://github.com/wezterm/wezterm/issues/558>
         if let ProcessState::Running { signaller, .. } = &mut *self.process.lock() {
             let _ = signaller.kill();
+        }
+    }
+}
+
+/// Task #237: `kill()` sends a soft `\x03` interrupt (the same byte the
+/// user's physical Ctrl+C writes) and then takes `self.pty` out to
+/// `None`, deferring the actual pty drop to a background thread so
+/// conhost/OpenConsole has time to read that byte before the pty goes
+/// away. These tests confirm the `Option`-aware call sites added for
+/// that change behave sanely (no panics, sensible degraded results) once
+/// `kill()` has run and `self.pty` is `None`, without needing a real OS
+/// process or waiting out `PTY_DROP_GRACE_MS` -- the `take()` itself
+/// happens synchronously on the calling thread inside `kill()`, so its
+/// effect on `self.pty` is observable immediately after `kill()` returns.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
+    use std::io::{Read, Result as IoResult};
+    use wezterm_term::color::ColorPalette;
+    use wezterm_term::{TerminalConfiguration, TerminalSize};
+
+    /// A `Child` double that never exits on its own, mirroring
+    /// `test::terminal_lock_contention::NeverExitChild`: `LocalPane` only
+    /// needs something implementing the trait to track process state,
+    /// and these tests never let it actually run to completion.
+    #[derive(Debug)]
+    struct NeverExitChild;
+
+    impl Child for NeverExitChild {
+        fn try_wait(&mut self) -> IoResult<Option<ExitStatus>> {
+            Ok(None)
+        }
+        fn wait(&mut self) -> IoResult<ExitStatus> {
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct NeverExitKiller;
+    impl ChildKiller for NeverExitKiller {
+        fn kill(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(self.clone())
+        }
+    }
+    impl ChildKiller for NeverExitChild {
+        fn kill(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(NeverExitKiller)
+        }
+    }
+
+    /// A `MasterPty` double that records whether it has been dropped, so
+    /// tests can confirm `kill()` doesn't drop it inline (the whole point
+    /// of the deferred-drop mechanism).
+    struct FakeMasterPty {
+        size: Mutex<PtySize>,
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Drop for FakeMasterPty {
+        fn drop(&mut self) {
+            self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl MasterPty for FakeMasterPty {
+        fn resize(&self, size: PtySize) -> anyhow::Result<()> {
+            *self.size.lock() = size;
+            Ok(())
+        }
+        fn get_size(&self) -> anyhow::Result<PtySize> {
+            Ok(*self.size.lock())
+        }
+        fn try_clone_reader(&self) -> anyhow::Result<Box<dyn Read + Send>> {
+            Ok(Box::new(std::io::empty()))
+        }
+        fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send>> {
+            Ok(Box::new(Vec::new()))
+        }
+        #[cfg(unix)]
+        fn process_group_leader(&self) -> Option<libc::pid_t> {
+            None
+        }
+        #[cfg(unix)]
+        fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+            None
+        }
+        #[cfg(unix)]
+        fn tty_name(&self) -> Option<std::path::PathBuf> {
+            None
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestConfig;
+    impl TerminalConfiguration for TestConfig {
+        fn color_palette(&self) -> ColorPalette {
+            ColorPalette::default()
+        }
+    }
+
+    const ROWS: usize = 24;
+    const COLS: usize = 80;
+
+    fn make_pane() -> (Arc<LocalPane>, Arc<std::sync::atomic::AtomicBool>) {
+        let size = TerminalSize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: COLS * 8,
+            pixel_height: ROWS * 16,
+            dpi: 0,
+        };
+        let terminal = Terminal::new(
+            size,
+            Arc::new(TestConfig),
+            "WezTerm",
+            "0.0.0",
+            Box::new(Vec::new()),
+        );
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pty = Box::new(FakeMasterPty {
+            size: Mutex::new(PtySize {
+                rows: ROWS as u16,
+                cols: COLS as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+            dropped: Arc::clone(&dropped),
+        });
+        let writer = Box::new(Vec::new());
+        let pane = Arc::new(LocalPane::new(
+            1,
+            terminal,
+            Box::new(NeverExitChild),
+            pty,
+            writer,
+            1,
+            "test".to_string(),
+        ));
+        (pane, dropped)
+    }
+
+    /// After `kill()`, `self.pty` must be `None` (taken, not yet
+    /// dropped): this is the mechanism that lets `LocalPane::drop()` run
+    /// moments later without tearing down the pty inline.
+    #[test]
+    fn kill_takes_pty_leaving_none() {
+        let (pane, dropped) = make_pane();
+        assert!(pane.pty.lock().is_some());
+        pane.kill();
+        assert!(pane.pty.lock().is_none());
+        // The deferred-drop thread hasn't had time to run yet (it sleeps
+        // for PTY_DROP_GRACE_MS before dropping), so the pty is still
+        // alive, just no longer reachable through `self.pty`.
+        assert!(!dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Calling `kill()` twice must not panic or double-fire the
+    /// signal-and-defer sequence; the second call should see `killed ==
+    /// true` and skip straight past it.
+    #[test]
+    fn kill_is_idempotent() {
+        let (pane, _dropped) = make_pane();
+        pane.kill();
+        pane.kill();
+        assert!(pane.pty.lock().is_none());
+    }
+
+    /// Every `Option`-aware call site added for task #237 must degrade
+    /// gracefully (no panic, sensible default) once `self.pty` is `None`
+    /// after `kill()`.
+    #[test]
+    fn pty_dependent_calls_dont_panic_after_kill() {
+        let (pane, _dropped) = make_pane();
+        pane.kill();
+
+        // exit_behavior(): falls through to `None` rather than treating
+        // a gone pty as `FailedSpawnPty`.
+        assert_eq!(pane.exit_behavior(), None);
+
+        // resize(): silently skips the pty resize, still updates the
+        // terminal model, and must not error.
+        let new_size = TerminalSize {
+            rows: ROWS + 1,
+            cols: COLS + 1,
+            pixel_width: (COLS + 1) * 8,
+            pixel_height: (ROWS + 1) * 16,
+            dpi: 0,
+        };
+        assert!(pane.resize(new_size).is_ok());
+
+        // reader(): nothing left to read from.
+        assert!(pane.reader().unwrap().is_none());
+
+        // get_metadata(): must not panic digging for termios on a gone pty.
+        let _ = pane.get_metadata();
+
+        #[cfg(unix)]
+        {
+            assert_eq!(pane.tty_name(), None);
+            assert_eq!(pane.get_foreground_process_info(CachePolicy::FetchImmediate), None);
+
+            // can_close_without_prompting()'s pty-derived "no leader"
+            // check only exists on unix (see the `#[cfg(unix)]` block in
+            // its `else` branch); a gone pty has no leader, so this
+            // should report "safe to close without prompting".
+            assert!(pane.can_close_without_prompting(CloseReason::Tab));
+        }
+
+        // On non-unix platforms `can_close_without_prompting` has no
+        // pty-derived fallback at all (it falls through to `false`
+        // regardless of pty state once `divine_process_list` finds no
+        // pid), so the only thing this call must do post-kill is *not
+        // panic* digging through a gone pty.
+        #[cfg(not(unix))]
+        {
+            let _ = pane.can_close_without_prompting(CloseReason::Tab);
         }
     }
 }
