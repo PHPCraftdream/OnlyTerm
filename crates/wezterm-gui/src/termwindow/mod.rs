@@ -882,19 +882,38 @@ impl TermWindow {
             }
         });
 
-        let gl = match config.front_end {
-            FrontEndSelection::WebGpu => None,
-            _ => Some(window.enable_opengl().await?),
+        // Attempt WebGpu first (if requested) so that we can fall back to
+        // OpenGL when adapter/device creation fails, rather than hard-failing
+        // window creation. Only construct `gl` afterwards, and only if
+        // WebGpu wasn't requested or just failed.
+        let mut webgpu = None;
+        if config.front_end == FrontEndSelection::WebGpu {
+            match WebGpuState::new(&window, dimensions, &config).await {
+                Ok(state) => {
+                    webgpu.replace(Arc::new(state));
+                }
+                Err(err) => {
+                    // WebGpu adapter/device creation can fail in RDP
+                    // sessions, on old/software-only GPUs, in VMs without
+                    // GPU passthrough, or due to driver mismatches. Rather
+                    // than failing to open the window at all, fall back to
+                    // OpenGL below.
+                    log::error!(
+                        "Failed to initialize WebGpu ({:#}); falling back to OpenGL rendering",
+                        err
+                    );
+                }
+            }
+        }
+
+        let gl = if webgpu.is_none() {
+            Some(window.enable_opengl().await?)
+        } else {
+            None
         };
 
         {
             let mut myself = tw.borrow_mut();
-            let webgpu = match config.front_end {
-                FrontEndSelection::WebGpu => Some(Arc::new(
-                    WebGpuState::new(&window, dimensions, &config).await?,
-                )),
-                _ => None,
-            };
             myself.config_subscription.replace(config_subscription);
             if config.use_resize_increments {
                 window.set_resize_increments(

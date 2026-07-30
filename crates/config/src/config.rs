@@ -352,7 +352,7 @@ pub struct Config {
     #[dynamic(default = "default_harfbuzz_features")]
     pub harfbuzz_features: Vec<String>,
 
-    #[dynamic(default)]
+    #[dynamic(default = "default_front_end")]
     pub front_end: FrontEndSelection,
 
     /// Whether to select the higher powered discrete GPU when
@@ -891,13 +891,12 @@ pub struct Config {
     #[dynamic(default = "default_gui_watchdog_threshold_ms")]
     pub gui_watchdog_threshold_ms: u64,
 
-    /// When true, WebGPU frame submission (present/swapchain) runs on a
-    /// dedicated per-window thread instead of the shared GUI message loop, so
-    /// a stuck GPU driver call can't freeze every window in the process.
-    /// Currently only implemented on Windows; ignored elsewhere. Off by
-    /// default until the full render-thread pipeline (tasks 221.1-221.8) is
-    /// complete end to end.
-    #[dynamic(default)]
+    /// When true (the default), WebGPU frame submission (present/swapchain)
+    /// runs on a dedicated per-window thread instead of the shared GUI
+    /// message loop, so a stuck GPU driver call can't freeze every window in
+    /// the process. Currently only implemented on Windows; ignored
+    /// elsewhere.
+    #[dynamic(default = "default_true")]
     pub webgpu_render_thread: bool,
 
     /// Debug-only: sleep this many milliseconds inside the render thread
@@ -2085,6 +2084,34 @@ fn default_max_fps() -> u64 {
 
 fn default_gui_watchdog_threshold_ms() -> u64 {
     4_000
+}
+
+#[cfg(windows)]
+fn default_front_end() -> FrontEndSelection {
+    FrontEndSelection::WebGpu
+}
+
+#[cfg(not(windows))]
+fn default_front_end() -> FrontEndSelection {
+    FrontEndSelection::default()
+}
+
+#[cfg(test)]
+mod default_front_end_test {
+    use super::*;
+
+    /// WebGpu (with its OpenGL fallback and dedicated render thread) is only
+    /// the default on Windows; other platforms keep their historical
+    /// `FrontEndSelection::default()` (`OpenGL`), per the
+    /// execution-decoupling plan (task 221.8).
+    #[test]
+    fn matches_platform_expectation() {
+        #[cfg(windows)]
+        assert_eq!(default_front_end(), FrontEndSelection::WebGpu);
+
+        #[cfg(not(windows))]
+        assert_eq!(default_front_end(), FrontEndSelection::default());
+    }
 }
 
 fn default_debug_render_thread_stall_ms() -> u64 {

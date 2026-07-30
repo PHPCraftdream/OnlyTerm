@@ -231,6 +231,12 @@ As features stabilize some brief notes about them will accumulate here.
   lock-free snapshot of the UI's clickable regions instead of the buffer
   the render pass is actively rebuilding. Moving the actual GPU rendering
   off the shared message loop onto a per-window thread is still pending.
+* WebGpu is now the default rendering backend on Windows, with automatic
+  fallback to OpenGL if adapter/device initialization fails (e.g. in RDP
+  sessions, old/software-only GPUs, or VMs without GPU passthrough). Its
+  dedicated per-window render thread (`webgpu_render_thread`) is also now
+  enabled by default, so a stuck GPU driver call on Windows no longer
+  freezes the whole process's message loop.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
