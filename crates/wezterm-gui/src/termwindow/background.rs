@@ -421,7 +421,11 @@ impl crate::TermWindow {
     ) -> anyhow::Result<bool> {
         let render_layer = gl_state.layer_for_zindex(layer_index)?;
         let vbs = render_layer.vb.borrow();
-        let mut layer0 = vbs[0].map();
+        // `map` borrows the buffers we hand it, so the guard has to stay
+        // alive alongside the returned view -- both are ordinary locals
+        // here, checked normally by the borrow checker.
+        let mut bufs0 = vbs[0].bufs.borrow_mut();
+        let mut layer0 = vbs[0].map(&mut bufs0);
 
         let color = bg_color.mul_alpha(layer.def.opacity);
 
