@@ -29,12 +29,30 @@ impl crate::TermWindow {
         self.render_element(&computed, gl_state, None)
     }
 
+    /// Paint a single pane's content.
+    ///
+    /// `frame_deadline` is the shared wall-clock deadline (task #251,
+    /// `tab_frame_build_budget_ms`) for finishing the *whole* active tab's
+    /// content this frame, computed once by `paint_tab_content` -- not a
+    /// fresh per-pane budget -- so that a split layout with several panes
+    /// can't each consume a full budget's worth of time (which would make
+    /// the total unbounded again). `None` means the budget is disabled.
+    /// Rows are only ever skipped between whole-row iterations (see
+    /// `render_lines`), never partway through shaping a row.
     pub fn paint_pane(
         &mut self,
         pos: &PositionedPane,
         layers: &mut TripleLayerQuadAllocator,
+        frame_deadline: Option<Instant>,
     ) -> anyhow::Result<()> {
         if self.config.use_box_model_render {
+            // The box-model render path doesn't go through
+            // `LineQuadCacheKey`/`LineQuadCacheValue` or any other
+            // per-row cache, so there's no existing "reuse last good
+            // frame" mechanism to lean on here without inventing a new
+            // one from scratch. `tab_frame_build_budget_ms` is therefore
+            // not enforced in this legacy/alternate path; it only
+            // protects the default row-based renderer below.
             return self.paint_pane_box_model(pos);
         }
 
@@ -335,11 +353,27 @@ impl crate::TermWindow {
                 window_is_transparent: bool,
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
                 error: Option<anyhow::Error>,
+                /// Task #251: wall-clock deadline for finishing this
+                /// pane's row-building loop, derived from
+                /// `tab_frame_build_budget_ms`. `None` when the budget is
+                /// disabled (config value 0), in which case every row is
+                /// always fully (re)built exactly as before this task.
+                deadline: Option<Instant>,
+                /// Set once `deadline` is observed to have passed between
+                /// two row iterations. Sticky for the remainder of this
+                /// pane's rows so that once we fall back to the cheap
+                /// path we don't keep re-checking `Instant::now()` (and
+                /// so a single slow row can't un-trip it): every
+                /// subsequent row in this same paint_pane call also takes
+                /// the cheap path this frame.
+                budget_exceeded: bool,
             }
 
             let left_pixel_x = padding_left
                 + border.left.get() as f32
                 + (pos.left as f32 * self.render_metrics.cell_size.width as f32);
+
+            let deadline = frame_deadline;
 
             let mut render = LineRender {
                 term_window: self,
@@ -365,6 +399,8 @@ impl crate::TermWindow {
                 window_is_transparent,
                 layers,
                 error: None,
+                deadline,
+                budget_exceeded: false,
             };
 
             impl<'a, 'b> LineRender<'a, 'b> {
@@ -467,6 +503,25 @@ impl crate::TermWindow {
                             self.term_window.update_next_frame_time(cached_quad.expires);
                             return Ok(());
                         }
+                    } else if self.budget_exceeded {
+                        // Task #251: the per-frame content-build budget
+                        // (`tab_frame_build_budget_ms`) was already
+                        // exceeded by an earlier row in this same pane
+                        // (checked between whole-row iterations in
+                        // `render_lines`, never mid-shape), and there is
+                        // no cached quad we can cheaply reuse for this
+                        // row (either it was never rendered before, or it
+                        // changed since). Shaping/rasterizing it now would
+                        // be exactly the unbounded-latency work this
+                        // budget exists to cap, so we leave this row
+                        // undrawn for this one frame rather than paying
+                        // that cost. It will be tried again -- with a
+                        // fresh budget and fresh deadline -- on the next
+                        // frame, at which point it may again be a cache
+                        // hit (nothing else changed) or, if the content
+                        // is genuinely still being produced, fall back
+                        // here again.
+                        return Ok(());
                     }
 
                     let mut buf = HeapQuadAllocator::default();
@@ -589,6 +644,31 @@ impl crate::TermWindow {
                         let is_wrap_continuation = first_cell_is_hebrew
                             && line_idx > 0
                             && lines[line_idx - 1].last_cell_was_wrapped();
+
+                        // Task #251: only check the per-frame content-build
+                        // budget BETWEEN whole rows, here at the top of the
+                        // loop -- never partway through shaping/rendering a
+                        // single row. This is the finest-grained boundary
+                        // `paint_pane` has available without reaching into
+                        // `render_screen_line`/glyph shaping itself, and
+                        // it's what actually protects the common case of a
+                        // single, unsplit pane (where the outer per-pane
+                        // loop in `paint_tab_content` only ever runs once
+                        // and so provides no protection on its own). Once
+                        // tripped, stay tripped for the rest of this pane's
+                        // rows this frame -- no need to keep sampling the
+                        // clock, and it keeps the degrade behavior
+                        // deterministic (no row after the trip point does
+                        // real shaping this frame, even if it would have
+                        // been fast).
+                        if !self.budget_exceeded {
+                            if let Some(deadline) = self.deadline {
+                                if Instant::now() >= deadline {
+                                    self.budget_exceeded = true;
+                                }
+                            }
+                        }
+
                         if let Err(err) =
                             self.render_line(stable_top, line_idx, line, is_wrap_continuation)
                         {
@@ -607,9 +687,21 @@ impl crate::TermWindow {
             // and input handling for as long as a frame took to build.
             let (stable_top, lines) = pos.pane.get_lines(stable_range.clone());
             render.render_lines(stable_top, &lines);
+            let budget_exceeded = render.budget_exceeded;
             if let Some(error) = render.error.take() {
                 return Err(error).context("error while calling get_lines");
             }
+
+            // Task #251: reflect whether this pane's content could be
+            // fully (re)built within `tab_frame_build_budget_ms` through
+            // the same `is_unresponsive()` signal that a timed-out
+            // `terminal.lock()` (task #246/#248) already uses -- set it
+            // when the budget was exceeded, and clear it back once a
+            // frame completes without exceeding it, mirroring
+            // `try_lock_terminal_for`'s set-on-timeout/clear-on-success
+            // behavior so the flag reflects only the most recent attempt
+            // rather than latching permanently after one slow frame.
+            pos.pane.set_unresponsive(budget_exceeded);
         }
 
         /*

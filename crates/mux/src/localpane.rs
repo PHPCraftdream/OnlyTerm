@@ -892,6 +892,21 @@ impl Pane for LocalPane {
         self.unresponsive.load(Ordering::Acquire)
     }
 
+    /// Task #251: same flag that `try_lock_terminal_for` (task #246/#248)
+    /// already flips on a bounded-lock timeout, but set directly by the
+    /// GUI's per-frame content-build budget when this pane's rendering
+    /// couldn't be finished within `tab_frame_build_budget_ms`. This is a
+    /// distinct trigger from a wedged `terminal.lock()` -- the lock may be
+    /// perfectly healthy, it's the shaping/rasterization work itself that
+    /// is too slow -- but it's surfaced through the same `AtomicBool` and
+    /// the same `is_unresponsive()` reader rather than adding a second
+    /// signal, since nothing downstream (tab-title formatter, Lua
+    /// `PaneInformation.is_unresponsive`) currently needs to distinguish
+    /// the two causes.
+    fn set_unresponsive(&self, unresponsive: bool) {
+        self.unresponsive.store(unresponsive, Ordering::Release);
+    }
+
     fn is_mouse_grabbed(&self) -> bool {
         if self.tmux_domain.lock().is_some() {
             false
