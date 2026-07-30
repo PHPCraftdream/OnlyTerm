@@ -528,7 +528,7 @@ pub struct TermWindow {
     connection_name: String,
 
     gl: Option<Rc<glium::backend::Context>>,
-    webgpu: Option<Rc<WebGpuState>>,
+    webgpu: Option<Arc<WebGpuState>>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 
@@ -888,7 +888,7 @@ impl TermWindow {
         {
             let mut myself = tw.borrow_mut();
             let webgpu = match config.front_end {
-                FrontEndSelection::WebGpu => Some(Rc::new(
+                FrontEndSelection::WebGpu => Some(Arc::new(
                     WebGpuState::new(&window, dimensions, &config).await?,
                 )),
                 _ => None,
@@ -915,8 +915,8 @@ impl TermWindow {
                 myself.created(RenderContext::Glium(Rc::clone(&gl)))?;
             }
             if let Some(webgpu) = webgpu {
-                myself.webgpu.replace(Rc::clone(&webgpu));
-                myself.created(RenderContext::WebGpu(Rc::clone(&webgpu)))?;
+                myself.webgpu.replace(Arc::clone(&webgpu));
+                myself.created(RenderContext::WebGpu(Arc::clone(&webgpu)))?;
             }
             myself.load_os_parameters();
             window.show();
