@@ -21,6 +21,26 @@ pub struct ShaderUniform {
     // sampler2D atlas_linear_sampler;
 }
 
+/// A single draw call's worth of GPU state, already fully detached from
+/// `TermWindow`/`RenderState`: the vertex buffer returned by
+/// `WebGpuVertexBuffer::recreate()` is the buffer that was just filled with
+/// this frame's vertex data and is no longer referenced by anything else
+/// once `recreate()` returns, so it's safe to move around freely (e.g. to
+/// hand off to a dedicated render thread in a later task).
+pub struct GpuDraw {
+    pub vertex_buffer: wgpu::Buffer,
+    pub index_buffer: wgpu::Buffer,
+    pub index_count: u32,
+}
+
+/// Everything needed to submit one frame's worth of draw calls, computed
+/// without needing further access to `TermWindow`/`RenderState`.
+pub struct GpuFrame {
+    pub draws: Vec<GpuDraw>,
+    pub atlas: wgpu::Texture,
+    pub uniform: ShaderUniform,
+}
+
 pub struct WebGpuState {
     pub adapter_info: wgpu::AdapterInfo,
     pub downlevel_caps: wgpu::DownlevelCapabilities,
@@ -135,6 +155,10 @@ impl Texture2d for WebGpuTexture {
 }
 
 impl WebGpuTexture {
+    pub fn texture(&self) -> &wgpu::Texture {
+        &self.texture
+    }
+
     pub fn new(width: u32, height: u32, state: &WebGpuState) -> anyhow::Result<Self> {
         let limit = state.device.limits().max_texture_dimension_2d;
 
@@ -566,6 +590,99 @@ impl WebGpuState {
         })
     }
 
+    /// Submit a pre-built `GpuFrame` to the GPU: acquires the current
+    /// surface texture, builds the bind groups and one render pass per
+    /// `GpuDraw`, submits the command buffer, and presents. This only
+    /// needs `&self` (no `TermWindow`/`RenderState` access), which is what
+    /// makes it callable from a dedicated render thread in a later task.
+    pub fn submit_frame(&self, frame: GpuFrame) -> Result<(), wgpu::SurfaceError> {
+        let output = self.surface.get_current_texture()?;
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+        let texture_view = frame.atlas.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let texture_linear_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.texture_linear_sampler),
+                },
+            ],
+            label: Some("linear bind group"),
+        });
+
+        let texture_nearest_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &self.texture_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.texture_nearest_sampler),
+                },
+            ],
+            label: Some("nearest bind group"),
+        });
+
+        let mut cleared = false;
+
+        for draw in &frame.draws {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: if cleared {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.,
+                                g: 0.,
+                                b: 0.,
+                                a: 0.,
+                            })
+                        },
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+            cleared = true;
+
+            let uniforms = self.create_uniform(frame.uniform);
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_bind_group(0, &uniforms, &[]);
+            render_pass.set_bind_group(1, &texture_linear_bind_group, &[]);
+            render_pass.set_bind_group(2, &texture_nearest_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
+            render_pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+        }
+
+        // submit will accept anything that implements IntoIter
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+
     #[allow(unused_mut)]
     pub fn resize(&self, mut dims: Dimensions) {
         // During a live resize on Windows, the Dimensions that we're processing may be
@@ -658,6 +775,16 @@ const _: fn() = || {
 const _: fn() = || {
     fn assert_send<T: Send>() {}
     assert_send::<std::sync::Arc<WebGpuState>>();
+};
+
+// Compile-time regression guard: `GpuFrame` bundles up everything needed to
+// submit a frame (detached `wgpu::Buffer`s, an owned `wgpu::Texture` clone,
+// and a plain `ShaderUniform` value) without holding on to anything tied to
+// `TermWindow`/`RenderState`, precisely so it can be handed across a thread
+// boundary in a later task.
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<GpuFrame>();
 };
 
 #[cfg(test)]
