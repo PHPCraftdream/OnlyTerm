@@ -305,23 +305,35 @@ impl Pane for LocalPane {
 
     /// Kills the process (tree) running in this pane.
     ///
-    /// Before actually terminating anything, this sends a "soft" interrupt:
-    /// the same `\x03` byte that the user's physical Ctrl+C writes into the
-    /// pane (see `crates/term/src/terminalstate/keyboard.rs` and
+    /// Before actually terminating anything, this arranges to send a
+    /// "soft" interrupt: the same `\x03` byte that the user's physical
+    /// Ctrl+C writes into the pane (see
+    /// `crates/term/src/terminalstate/keyboard.rs` and
     /// `CopySelectionOrInterrupt` in `wezterm-gui`). On Windows, ConPTY's
     /// hosted conhost/OpenConsole reads that byte and raises
     /// `CTRL_C_EVENT` for every process attached to the pseudoconsole (the
     /// whole tree), giving well-behaved processes a chance to shut down
     /// cleanly.
     ///
+    /// That write is **not** performed on the calling thread. `kill()` is
+    /// called synchronously from the GUI thread in several real paths
+    /// (window close, render-thread-hang recovery, lost-context
+    /// recovery), and `self.writer` is a thin, unbuffered pass-through
+    /// over the real ConPTY stdin pipe. If the target process isn't
+    /// reading its stdin (e.g. its pipe buffer is full), a synchronous
+    /// write here could block forever and freeze every window in the
+    /// process -- exactly the kind of hang this mechanism exists to avoid
+    /// causing. Instead, the write is deferred onto the same detached
+    /// background thread described below, ahead of its sleep.
+    ///
     /// That signal only does any good if the pty sticks around long
     /// enough for conhost to actually read and process the byte, so this
     /// takes `self.pty` out (leaving `None` behind) and moves it onto a
-    /// detached background thread that drops it only after
-    /// `PTY_DROP_GRACE_MS` has elapsed, instead of letting it drop
-    /// immediately when this `LocalPane` itself is dropped moments later.
-    /// See `PTY_DROP_GRACE_MS`'s doc comment for why that duration was
-    /// chosen.
+    /// detached background thread that writes the soft signal, then
+    /// drops the pty only after `PTY_DROP_GRACE_MS` has elapsed, instead
+    /// of letting it drop immediately when this `LocalPane` itself is
+    /// dropped moments later. See `PTY_DROP_GRACE_MS`'s doc comment for
+    /// why that duration was chosen.
     ///
     /// `self.writer` has to be deferred the same way: `ConPtyMasterPty`
     /// (`crates/pty/src/win/conpty.rs`, `take_writer()`) hands the pty's
@@ -350,15 +362,6 @@ impl Pane for LocalPane {
                 signaller, killed, ..
             } => {
                 if !*killed {
-                    // Best-effort soft signal; the pty may already be
-                    // broken or gone, and that's fine -- this must never
-                    // panic or propagate an error out of `kill()`.
-                    {
-                        let mut writer = self.writer.lock();
-                        let _ = writer.write_all(b"\x03");
-                        let _ = writer.flush();
-                    }
-
                     // Take the pty out without dropping it yet, so that
                     // `LocalPane::drop()` (which will run shortly after
                     // the last `Arc<LocalPane>` goes away) finds `None`
@@ -374,33 +377,68 @@ impl Pane for LocalPane {
                     // `writer()` accessor, which is part of the `Pane`
                     // trait's public surface). The real writer is moved
                     // out for deferred dropping, same as the pty.
-                    let taken_writer = std::mem::replace(
+                    let mut taken_writer = std::mem::replace(
                         &mut *self.writer.lock(),
                         Box::new(std::io::sink()),
                     );
 
-                    if taken_pty.is_some() {
-                        // Detached, not joined -- mirrors
-                        // `RenderThreadHandle::spawn` in
-                        // `wezterm-gui/src/renderthread.rs`. Moving
-                        // `taken_pty`/`taken_writer` into the closure and
-                        // letting them fall out of scope at the end is
-                        // what actually drops (and so tears down) them,
-                        // just deferred past the grace period.
-                        let builder = std::thread::Builder::new().name("pty-drop-grace".into());
-                        match builder.spawn(move || {
-                            std::thread::sleep(Duration::from_millis(PTY_DROP_GRACE_MS));
-                            drop(taken_pty);
-                            drop(taken_writer);
-                        }) {
-                            Ok(join_handle) => drop(join_handle),
-                            Err(err) => {
-                                log::error!(
-                                    "Failed to spawn pty-drop-grace thread, \
-                                     dropping pty/writer immediately: {:#}",
-                                    err
-                                );
-                            }
+                    // Send the soft signal, and drop the pty/writer once
+                    // the grace period has elapsed, all on a detached
+                    // background thread -- never on the caller's thread.
+                    //
+                    // `kill()` is called synchronously from the GUI
+                    // thread in several real paths (window close, render
+                    // -hang recovery, lost-context recovery), and
+                    // `self.writer` is a thin, unbuffered pass-through
+                    // over the real ConPTY stdin pipe (see
+                    // `WriterWrapper` in `crates/mux/src/domain.rs`): if
+                    // the child isn't reading its stdin, a synchronous
+                    // `write_all` here can block forever and freeze every
+                    // window in the process. Moving the write onto this
+                    // same detached thread keeps the byte reaching the
+                    // pty well within the grace period (writing one byte
+                    // takes microseconds next to `PTY_DROP_GRACE_MS`)
+                    // without ever risking the caller's thread.
+                    //
+                    // Detached, not joined -- mirrors
+                    // `RenderThreadHandle::spawn` in
+                    // `wezterm-gui/src/renderthread.rs`. Moving
+                    // `taken_pty`/`taken_writer` into the closure and
+                    // letting them fall out of scope at the end is what
+                    // actually drops (and so tears down) them, just
+                    // deferred past the grace period.
+                    //
+                    // Spawned unconditionally (not just when the pty is
+                    // still present): `self.writer` is guaranteed to hold
+                    // a real, usable writer at this point (the `!*killed`
+                    // guard means this whole block only ever runs once
+                    // per pane), so there's always a writer worth
+                    // signaling here even on the rare path where an
+                    // earlier caller had already taken `self.pty`,
+                    // leaving `taken_pty` as `None`. Gating this spawn on
+                    // `taken_pty.is_some()` (as an earlier version of
+                    // this code did) would silently skip the soft signal
+                    // on that path even though writing to `taken_writer`
+                    // is still meaningful.
+                    let builder = std::thread::Builder::new().name("pty-drop-grace".into());
+                    match builder.spawn(move || {
+                        // Best-effort soft signal; the pty may already be
+                        // broken or gone, and that's fine -- this must
+                        // never panic or propagate an error.
+                        let _ = taken_writer.write_all(b"\x03");
+                        let _ = taken_writer.flush();
+                        std::thread::sleep(Duration::from_millis(PTY_DROP_GRACE_MS));
+                        drop(taken_pty);
+                        drop(taken_writer);
+                    }) {
+                        Ok(join_handle) => drop(join_handle),
+                        Err(err) => {
+                            log::error!(
+                                "Failed to spawn pty-drop-grace thread, \
+                                 dropping pty/writer immediately without \
+                                 sending the soft signal: {:#}",
+                                err
+                            );
                         }
                     }
                 }
@@ -1619,6 +1657,34 @@ mod tests {
         }
     }
 
+    /// A `Write` double whose `write` call blocks until the test
+    /// explicitly releases it, standing in for a real ConPTY stdin pipe
+    /// whose reader (the child process) has stopped reading -- the
+    /// scenario that used to make `kill()` hang the GUI thread forever
+    /// (see the regression this test guards against, below). Records
+    /// whether a write was ever observed, so the test can confirm the
+    /// soft `\x03` byte does eventually get written on the background
+    /// thread once released.
+    struct BlockingWriter {
+        /// Held locked by the test until it wants to let a pending
+        /// `write` call through.
+        gate: Arc<Mutex<()>>,
+        wrote: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Write for BlockingWriter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            // Blocks for as long as the test is holding `gate` locked,
+            // mirroring a real write blocking on a full, unread pipe.
+            let _guard = self.gate.lock();
+            self.wrote.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
     #[derive(Debug)]
     struct TestConfig;
     impl TerminalConfiguration for TestConfig {
@@ -1714,6 +1780,106 @@ mod tests {
             "test".to_string(),
         ));
         (pane, pty_dropped, writer_dropped)
+    }
+
+    /// Like `make_pane`, but with a `BlockingWriter` in place of the
+    /// plain `Vec::new()` writer, so tests can prove `kill()` never
+    /// blocks on the caller's thread even when writing the soft-signal
+    /// byte would block forever.
+    fn make_pane_with_blocking_writer() -> (
+        Arc<LocalPane>,
+        Arc<Mutex<()>>,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let size = TerminalSize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: COLS * 8,
+            pixel_height: ROWS * 16,
+            dpi: 0,
+        };
+        let terminal = Terminal::new(
+            size,
+            Arc::new(TestConfig),
+            "WezTerm",
+            "0.0.0",
+            Box::new(Vec::new()),
+        );
+        let pty = Box::new(FakeMasterPty {
+            size: Mutex::new(PtySize {
+                rows: ROWS as u16,
+                cols: COLS as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+            dropped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        });
+        let gate = Arc::new(Mutex::new(()));
+        let wrote = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = Box::new(BlockingWriter {
+            gate: Arc::clone(&gate),
+            wrote: Arc::clone(&wrote),
+        });
+        let pane = Arc::new(LocalPane::new(
+            1,
+            terminal,
+            Box::new(NeverExitChild),
+            pty,
+            writer,
+            1,
+            "test".to_string(),
+        ));
+        (pane, gate, wrote)
+    }
+
+    /// Regression test for the bug fixed alongside this test: `kill()`
+    /// used to write the soft `\x03` signal synchronously on the calling
+    /// thread, via `self.writer` -- a thin, unbuffered pass-through over
+    /// the real ConPTY stdin pipe. Since `kill()` is called from the GUI
+    /// thread in several real paths, a blocked write (e.g. the child's
+    /// stdin pipe is full and it isn't reading) used to freeze every
+    /// window in the process. Confirms `kill()` now returns promptly even
+    /// when the write would block forever, and that the byte still gets
+    /// written once the write is able to proceed, proving the write moved
+    /// to the background `pty-drop-grace` thread instead of being skipped
+    /// outright.
+    #[test]
+    fn kill_does_not_block_on_a_stuck_writer() {
+        let (pane, gate, wrote) = make_pane_with_blocking_writer();
+
+        // Hold the gate so any write into `BlockingWriter` blocks, as it
+        // would on a real pipe whose reader has stopped reading.
+        let guard = gate.lock();
+
+        let start = Instant::now();
+        pane.kill();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "kill() must not block on a stuck writer; took {:?}",
+            elapsed
+        );
+        assert!(
+            !wrote.load(std::sync::atomic::Ordering::SeqCst),
+            "the write is still blocked behind the gate, so it must not \
+             have completed yet"
+        );
+
+        // Release the gate so the background thread's blocked write can
+        // complete, then give it a moment to actually run.
+        drop(guard);
+        let mut waited = Duration::ZERO;
+        while !wrote.load(std::sync::atomic::Ordering::SeqCst)
+            && waited < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(10));
+            waited += Duration::from_millis(10);
+        }
+        assert!(
+            wrote.load(std::sync::atomic::Ordering::SeqCst),
+            "the soft-signal write must still happen on the background \
+             thread once it's able to proceed"
+        );
     }
 
     /// After `kill()`, `self.pty` must be `None` (taken, not yet
