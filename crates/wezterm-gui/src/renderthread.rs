@@ -1,9 +1,13 @@
 //! Scaffolding for moving WebGpu frame submission off the GUI thread.
 //!
-//! Task 221.4 set up the channel and thread lifecycle; this module (221.5)
-//! wires `RenderMsg::Frame` up to `WebGpuState::submit_frame`, with
-//! single-slot back-pressure so at most one frame is ever in flight on the
-//! render thread at a time. `RenderMsg::Resize` is still ignored (221.6).
+//! Task 221.4 set up the channel and thread lifecycle; 221.5 wired
+//! `RenderMsg::Frame` up to `WebGpuState::submit_frame`, with single-slot
+//! back-pressure so at most one frame is ever in flight on the render thread
+//! at a time. This module (221.6) wires `RenderMsg::Resize` up to
+//! `WebGpuState::resize` (i.e. `surface.configure`), with coalescing so a
+//! flood of resize messages (e.g. a live drag) collapses to just the latest
+//! one, and gives `submit_one_frame` real `SurfaceError::Lost`/`Outdated`
+//! recovery via `WebGpuState::reconfigure`.
 //!
 //! Only used behind `config::webgpu_render_thread`, which defaults to
 //! `false`, so none of this changes behavior until a later task flips the
@@ -19,10 +23,10 @@ pub enum RenderMsg {
     /// A fully built frame ready to submit to the GPU. The render thread
     /// calls `WebGpuState::submit_frame` with this.
     Frame(crate::termwindow::webgpu::GpuFrame),
-    /// A resize/reconfigure request. 221.6 will make the render thread
-    /// actually call `WebGpuState::resize` (i.e. `surface.configure`) with
-    /// this; for now the render thread just ignores it.
-    #[allow(dead_code)]
+    /// A resize/reconfigure request. The render thread calls
+    /// `WebGpuState::resize` (i.e. `surface.configure`) with this; see
+    /// `dispatch_loop` for how a run of back-to-back `Resize` messages gets
+    /// coalesced into just the latest one.
     Resize(::window::Dimensions),
     /// Ask the render thread to stop its message loop and exit.
     Shutdown,
@@ -140,14 +144,25 @@ impl RenderThreadHandle {
     /// only ever hit once the render thread is already gone), not a hot
     /// loop where the extra stack size would matter.
     ///
-    /// This is a lower-level primitive kept around for future
-    /// `Resize`-message call sites (221.6) that won't go through the
-    /// back-pressure scheme in `send_frame`; nothing calls it yet, hence
-    /// `#[allow(dead_code)]`, matching how it was already marked in 221.4.
+    /// This is a lower-level primitive; `send_resize` and `send_frame`
+    /// are the call sites that use it (`shutdown` sends `Shutdown` directly
+    /// since it doesn't need the `Result`). Kept `pub` for potential future
+    /// direct callers.
     #[allow(dead_code)]
     #[allow(clippy::result_large_err)]
     pub fn send(&self, msg: RenderMsg) -> Result<(), std::sync::mpsc::SendError<RenderMsg>> {
         self.tx.send(msg)
+    }
+
+    /// Send a resize/reconfigure request to the render thread. Unlike
+    /// `send_frame`, this is not back-pressured -- resize messages are cheap
+    /// (just a `Dimensions` value, no GPU resources attached) and must never
+    /// be silently dropped, so every call sends. A flood of these (e.g. a
+    /// live window drag delivering many resize events in quick succession)
+    /// is instead coalesced on the receiving end, in `dispatch_loop`, into
+    /// just the latest one before `WebGpuState::resize` ever runs.
+    pub fn send_resize(&self, dims: ::window::Dimensions) {
+        let _ = self.tx.send(RenderMsg::Resize(dims));
     }
 
     /// Send a `GpuFrame` to the render thread, honoring single-slot
@@ -190,17 +205,24 @@ impl RenderThreadHandle {
 /// first.
 ///
 /// `RenderMsg::Frame` is submitted via `seed.webgpu.submit_frame(frame)`;
-/// `RenderMsg::Resize` is still ignored (221.6 wires that up to
-/// `seed.webgpu.resize(dims)`).
+/// `RenderMsg::Resize` calls `seed.webgpu.resize(dims)` (see `dispatch_loop`
+/// for the coalescing applied to a run of back-to-back resize messages).
 #[cfg_attr(not(windows), allow(dead_code))]
 fn render_thread_loop(seed: RenderThreadSeed) {
     let in_flight = Arc::clone(&seed.in_flight);
     let repaint_pending = Arc::clone(&seed.repaint_pending);
     let webgpu = Arc::clone(&seed.webgpu);
     let window = seed.window.clone();
-    dispatch_loop(&seed.rx, &mut |frame| {
-        submit_one_frame(&webgpu, &window, frame, &in_flight, &repaint_pending);
-    });
+    let resize_webgpu = Arc::clone(&seed.webgpu);
+    dispatch_loop(
+        &seed.rx,
+        &mut |frame| {
+            submit_one_frame(&webgpu, &window, frame, &in_flight, &repaint_pending);
+        },
+        &mut |dims| {
+            resize_webgpu.resize(dims);
+        },
+    );
 }
 
 /// Submits a single frame to the GPU and performs the back-pressure
@@ -221,16 +243,38 @@ fn submit_one_frame(
     }
     let start = std::time::Instant::now();
     if let Err(err) = webgpu.submit_frame(frame) {
-        // Proper SurfaceError::Lost/Outdated handling (reconfigure +
-        // drop-this-frame semantics) is task 221.6, not this one -- for
-        // now, just log and count it, matching today's crash-free
-        // fallback of "skip this frame, the next NeedRepaint will try
-        // again".
-        log::error!("render thread: submit_frame failed: {:#}", err);
-        metrics::counter!("gui.render_thread.submit_error").increment(1);
+        match err {
+            // `Lost`/`Outdated` mean the swapchain itself needs recreating,
+            // not a real draw failure. This is an intentional behavior
+            // change from the synchronous (non-render-thread) path in
+            // `TermWindow::do_paint_webgpu`, which reruns the ENTIRE
+            // `paint_impl` (rebuilding the whole frame) inline on the GUI
+            // thread when it sees this error. Here we instead reconfigure
+            // the surface and drop the failed frame; `window.invalidate()`
+            // requests a fresh `NeedRepaint`, so the GUI thread builds and
+            // sends a brand-new `GpuFrame` on its own next iteration through
+            // the normal event loop. Net effect is functionally equivalent
+            // (one dropped frame, then a fresh full repaint) just decoupled
+            // across the thread boundary instead of happening inline.
+            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                log::warn!("render thread: surface {:?}, reconfiguring", err);
+                webgpu.reconfigure();
+                metrics::counter!("gui.render_thread.surface_reconfigured").increment(1);
+                window.invalidate();
+            }
+            other => {
+                log::error!("render thread: submit_frame failed: {:#}", other);
+                metrics::counter!("gui.render_thread.submit_error").increment(1);
+            }
+        }
     }
     metrics::histogram!("gui.render_thread.submit").record(start.elapsed());
     in_flight.store(false, Ordering::Release);
+    // Note: if the reconfigure branch above already called
+    // `window.invalidate()`, and `repaint_pending` also happens to be true
+    // here, this can call `invalidate()` again. That's harmless: it just
+    // requests a repaint, and requesting one twice back-to-back doesn't
+    // double-render anything.
     if repaint_pending.swap(false, Ordering::AcqRel) {
         window.invalidate();
     }
@@ -238,21 +282,57 @@ fn submit_one_frame(
 
 /// The message-dispatch loop shared by `render_thread_loop` and its unit
 /// tests. Kept free of any `WebGpuState`/`Window` dependency directly --
-/// instead it takes an `on_frame` closure to run for each `RenderMsg::Frame`
-/// it sees, so production code can plug in the real
-/// `seed.webgpu.submit_frame(...)` path while tests can plug in a fake
-/// GPU-free closure and still exercise the shutdown/disconnect/back-pressure
-/// bookkeeping end to end.
+/// instead it takes `on_frame`/`on_resize` closures to run for each
+/// `RenderMsg::Frame`/`RenderMsg::Resize` it sees, so production code can
+/// plug in the real `seed.webgpu.submit_frame(...)`/`seed.webgpu.resize(...)`
+/// paths while tests can plug in fake GPU-free closures and still exercise
+/// the shutdown/disconnect/back-pressure/coalescing bookkeeping end to end.
+///
+/// `RenderMsg::Resize` messages are coalesced: a run of back-to-back
+/// `Resize`s already sitting in the channel (e.g. from a live-drag flood)
+/// collapses into a single `on_resize` call with just the latest one, since
+/// only the final size matters and every intermediate `surface.configure`
+/// would otherwise be wasted work on the render thread. This uses an
+/// explicit one-message look-ahead buffer (`carried_over`) rather than a
+/// naive `try_recv` drain loop, because `std::sync::mpsc::Receiver` has no
+/// peek/push-back: once `try_recv` pulls a non-`Resize` message off the
+/// channel to check it, that message is gone from the channel and MUST be
+/// remembered here, or it would be silently dropped (e.g. a `Frame` or
+/// `Shutdown` sitting right after a run of `Resize`s).
 fn dispatch_loop(
     rx: &std::sync::mpsc::Receiver<RenderMsg>,
     on_frame: &mut dyn FnMut(crate::termwindow::webgpu::GpuFrame),
+    on_resize: &mut dyn FnMut(::window::Dimensions),
 ) {
-    while let Ok(msg) = rx.recv() {
+    let mut carried_over: Option<RenderMsg> = None;
+    loop {
+        let msg = match carried_over.take() {
+            Some(m) => m,
+            None => match rx.recv() {
+                Ok(m) => m,
+                Err(_) => break,
+            },
+        };
         match msg {
-            RenderMsg::Frame(frame) => on_frame(frame),
-            RenderMsg::Resize(_) => {
-                // 221.6 will handle this.
+            RenderMsg::Resize(mut dims) => {
+                // Coalesce a run of back-to-back Resize messages already
+                // sitting in the channel into just the latest one. Stop as
+                // soon as something that ISN'T a Resize shows up, and carry
+                // that message over to the next loop iteration instead of
+                // dropping it.
+                loop {
+                    match rx.try_recv() {
+                        Ok(RenderMsg::Resize(newer)) => dims = newer,
+                        Ok(other) => {
+                            carried_over = Some(other);
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                on_resize(dims);
             }
+            RenderMsg::Frame(frame) => on_frame(frame),
             RenderMsg::Shutdown => break,
         }
     }
@@ -267,13 +347,22 @@ mod tests {
 
     /// Exercises the channel mechanics directly (no real OS thread, no
     /// `GpuFrame`/GPU dependency): a `Shutdown` message stops
-    /// `dispatch_loop`, and `Resize` messages before it are each observed
-    /// (via the `on_frame` callback never firing for them, and the loop
-    /// continuing past them) exactly as expected.
+    /// `dispatch_loop`, and a `Resize` message before it is observed (via
+    /// `on_resize` firing once, and the loop continuing past it to the
+    /// `Shutdown`) exactly as expected.
+    ///
+    /// Note: because `dispatch_loop` coalesces a `Resize` with whatever
+    /// immediately follows it in the channel, the `Resize` sent here ends up
+    /// carrying the first `Shutdown` over as `carried_over` (since it's the
+    /// very next message already sitting in the channel) rather than the
+    /// `Resize`'s own recv triggering a separate loop iteration; either way
+    /// `on_resize` fires exactly once and the loop still stops at the first
+    /// `Shutdown`, which is what this test asserts.
     #[test]
     fn dispatch_loop_stops_on_shutdown() {
         let (tx, rx) = mpsc::channel();
         let frames_seen = AtomicUsize::new(0);
+        let resizes_seen = AtomicUsize::new(0);
 
         tx.send(RenderMsg::Resize(::window::Dimensions {
             pixel_width: 100,
@@ -286,14 +375,99 @@ mod tests {
         // loop breaks as soon as it processes the Shutdown message.
         tx.send(RenderMsg::Shutdown).unwrap();
 
-        dispatch_loop(&rx, &mut |_frame| {
-            frames_seen.fetch_add(1, Ordering::SeqCst);
-        });
+        dispatch_loop(
+            &rx,
+            &mut |_frame| {
+                frames_seen.fetch_add(1, Ordering::SeqCst);
+            },
+            &mut |_dims| {
+                resizes_seen.fetch_add(1, Ordering::SeqCst);
+            },
+        );
 
         // No Frame messages were sent in this test, so the callback should
         // never have fired; the Resize/Shutdown handling is exercised by
         // the loop simply returning instead of hanging.
         assert_eq!(frames_seen.load(Ordering::SeqCst), 0);
+        assert_eq!(resizes_seen.load(Ordering::SeqCst), 1);
+    }
+
+    /// Proves `dispatch_loop`'s `Resize` coalescing: three `Resize` messages
+    /// (A, B, C) followed by `Shutdown`, all sent before `dispatch_loop`
+    /// starts consuming so they're all sitting in the channel together when
+    /// the coalescing inner loop runs. Asserts `on_resize` is called exactly
+    /// once, with C (the latest), never with A or B.
+    ///
+    /// This test intentionally uses only `Resize`/`Shutdown` messages, not a
+    /// `Frame`: `GpuFrame` holds real `wgpu::Buffer`/`wgpu::Texture` values
+    /// that need a live `wgpu::Device` to construct, which isn't available
+    /// in a unit test / CI (no GPU adapter) -- this is exactly why
+    /// `dispatch_loop`'s whole `on_frame`/`on_resize` callback design exists
+    /// in the first place (see 221.4/221.5), so tests never need to build
+    /// one. Generalizing `RenderMsg`/`dispatch_loop` further so tests could
+    /// use a placeholder payload type in a real `RenderMsg::Frame` slot would
+    /// be a bigger structural change than this task's scope.
+    ///
+    /// Instead, the "a `Frame` sitting between Resizes is still delivered,
+    /// not silently dropped by coalescing" half of the property is argued
+    /// here rather than tested directly: `carried_over` is a plain
+    /// `Option<RenderMsg>`, generic over every `RenderMsg` variant, not just
+    /// `Resize`/`Shutdown`. When the inner `try_recv` loop (coalescing a run
+    /// of `Resize`s) encounters ANY non-`Resize` message -- `Frame` just as
+    /// much as `Shutdown` -- it stores that exact message in `carried_over`
+    /// and breaks immediately, without inspecting which variant it is. The
+    /// outer loop's next iteration then takes `carried_over` first (before
+    /// ever calling `rx.recv()` again) and dispatches it through the normal
+    /// `match msg { ... }`, which sends a `Frame` to `on_frame` exactly as it
+    /// would if it had been `rx.recv()`'d directly. So a `Frame` carried over
+    /// this way is handled on the very next loop iteration, never dropped --
+    /// the mechanism doesn't special-case which message it's carrying, as
+    /// this test's `Shutdown`-not-dropped assertion below directly
+    /// demonstrates for that variant.
+    #[test]
+    fn dispatch_loop_coalesces_resize_and_preserves_next_message() {
+        let (tx, rx) = mpsc::channel();
+        let resizes_seen: Vec<::window::Dimensions> = Vec::new();
+        let resizes_seen = std::sync::Mutex::new(resizes_seen);
+
+        let dims = |w: usize| ::window::Dimensions {
+            pixel_width: w,
+            pixel_height: w,
+            dpi: 96,
+        };
+
+        tx.send(RenderMsg::Resize(dims(100))).unwrap(); // A
+        tx.send(RenderMsg::Resize(dims(200))).unwrap(); // B
+        tx.send(RenderMsg::Resize(dims(300))).unwrap(); // C
+        tx.send(RenderMsg::Shutdown).unwrap();
+
+        let mut frames_seen = 0usize;
+        dispatch_loop(
+            &rx,
+            &mut |_frame| {
+                frames_seen += 1;
+            },
+            &mut |d| {
+                resizes_seen.lock().unwrap().push(d);
+            },
+        );
+
+        let resizes_seen = resizes_seen.into_inner().unwrap();
+        assert_eq!(
+            resizes_seen.len(),
+            1,
+            "a run of back-to-back Resize messages must coalesce into a single on_resize call"
+        );
+        assert_eq!(
+            resizes_seen[0],
+            dims(300),
+            "coalescing must keep the latest Resize (C), not an earlier one (A or B)"
+        );
+        assert_eq!(frames_seen, 0, "no Frame messages were sent in this test");
+        // The loop must still have stopped at Shutdown (which was carried
+        // over rather than dropped by the coalescing loop) -- if it hadn't,
+        // dispatch_loop would still be blocked in rx.recv() and this test
+        // would hang instead of reaching this point.
     }
 
     /// Confirms `dispatch_loop` also stops when the channel disconnects
@@ -307,12 +481,20 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         drop(tx);
 
-        let mut called = false;
-        dispatch_loop(&rx, &mut |_frame| {
-            called = true;
-        });
+        let mut frame_called = false;
+        let mut resize_called = false;
+        dispatch_loop(
+            &rx,
+            &mut |_frame| {
+                frame_called = true;
+            },
+            &mut |_dims| {
+                resize_called = true;
+            },
+        );
 
-        assert!(!called);
+        assert!(!frame_called);
+        assert!(!resize_called);
     }
 
     /// End-to-end thread-lifecycle test: spawns a *real* OS thread running
@@ -331,7 +513,7 @@ mod tests {
 
         let join_handle = std::thread::Builder::new()
             .name("render-test".to_string())
-            .spawn(move || dispatch_loop(&rx, &mut |_frame| {}))
+            .spawn(move || dispatch_loop(&rx, &mut |_frame| {}, &mut |_dims| {}))
             .expect("spawn test render thread");
 
         tx.send(RenderMsg::Shutdown).unwrap();

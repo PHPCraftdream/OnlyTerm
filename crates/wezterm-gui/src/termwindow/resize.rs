@@ -53,9 +53,7 @@ impl super::TermWindow {
             self.load_os_parameters();
         }
 
-        if let Some(webgpu) = self.webgpu.as_mut() {
-            webgpu.resize(dimensions);
-        }
+        self.resize_webgpu_surface(dimensions);
 
         // For simple, user-interactive resizes where the dpi doesn't change,
         // skip our scaling recalculation. During a live resize where DPI changes,
@@ -345,6 +343,23 @@ impl super::TermWindow {
                 self.dimensions = dims;
                 self.set_inner_size(window, dims.pixel_width, dims.pixel_height);
             }
+        }
+    }
+
+    /// Resize (or, if a render thread is active for this window, request a
+    /// resize of) the WebGpu surface.
+    ///
+    /// When `self.render_thread` is `Some`, `surface.configure` must not run
+    /// on the GUI thread (that's the whole point of task 221.6), so this
+    /// hands the resize off as a `RenderMsg::Resize` instead of calling
+    /// `WebGpuState::resize` directly. With no render thread (flag off,
+    /// non-Windows, or spawn failed), this falls through to the old direct
+    /// call, so behavior there is unchanged.
+    pub(crate) fn resize_webgpu_surface(&mut self, dims: Dimensions) {
+        if let Some(rt) = self.render_thread.as_ref() {
+            rt.send_resize(dims);
+        } else if let Some(webgpu) = self.webgpu.as_mut() {
+            webgpu.resize(dims);
         }
     }
 
