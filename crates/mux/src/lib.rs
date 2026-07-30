@@ -138,7 +138,16 @@ pub struct Mux {
     pane_output_notify_pending: Mutex<HashSet<PaneId>>,
 }
 
-const BUFSIZE: usize = 1024 * 1024;
+// Used both as the reader thread's own read buffer and as the requested
+// SO_SNDBUF/SO_RCVBUF size for the reader<->parser socketpair. This read is
+// always outstanding (the reader thread blocks in it continuously), so the
+// whole buffer is resident for as long as the pane exists -- measured on
+// Windows at ~1 MB of extra resident memory per pane at 1 MiB vs. ~28 KB at
+// 8 KiB. The parser already reads from its side of the socketpair with its
+// own, independently-sized `mux_output_parser_buffer_size` (128 KiB
+// default), so a larger reader-side buffer doesn't help throughput -- even
+// an unrealistic 50 MiB/s pty flood only needs ~800 reads/sec at 64 KiB.
+const BUFSIZE: usize = 64 * 1024;
 
 /// This function applies parsed actions to the pane and notifies any
 /// mux subscribers about the output event
