@@ -47,6 +47,7 @@ mod inputmap;
 mod overlay;
 mod quad;
 mod renderstate;
+mod renderthread;
 mod resize_increment_calculator;
 mod scripting;
 mod scrollbar;
