@@ -7,12 +7,8 @@ use crate::window::{Window, WindowId};
 use anyhow::{anyhow, Context, Error};
 use config::keyassignment::{RotationDirection, SpawnTabDomain};
 use config::{configuration, ExitBehavior, GuiPosition};
+use crossbeam::channel::RecvTimeoutError;
 use domain::{Domain, DomainId, DomainState, SplitSource};
-use filedescriptor::{
-    poll, pollfd, socketpair, AsRawSocketDescriptor, Error as FdError, FileDescriptor, POLLIN,
-};
-#[cfg(unix)]
-use libc::{c_int, SOL_SOCKET, SO_RCVBUF, SO_SNDBUF};
 use log::error;
 use metrics::histogram;
 use parking_lot::{
@@ -22,9 +18,7 @@ use percent_encoding::percent_decode_str;
 use portable_pty::{CommandBuilder, ExitStatus, PtySize};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
-use std::io::{Read, Write};
-#[cfg(windows)]
-use std::os::raw::c_int;
+use std::io::Read;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Weak};
 use std::thread;
@@ -33,8 +27,6 @@ use termwiz::escape::csi::{DecPrivateMode, DecPrivateModeCode, Device, Keyboard,
 use termwiz::escape::{Action, CSI};
 use thiserror::*;
 use wezterm_term::{Clipboard, ClipboardSelection, DownloadHandler, TerminalSize};
-#[cfg(windows)]
-use winapi::um::winsock2::{SOL_SOCKET, SO_RCVBUF, SO_SNDBUF};
 
 pub mod activity;
 pub mod client;
@@ -138,16 +130,26 @@ pub struct Mux {
     pane_output_notify_pending: Mutex<HashSet<PaneId>>,
 }
 
-// Used both as the reader thread's own read buffer and as the requested
-// SO_SNDBUF/SO_RCVBUF size for the reader<->parser socketpair. This read is
-// always outstanding (the reader thread blocks in it continuously), so the
-// whole buffer is resident for as long as the pane exists -- measured on
-// Windows at ~1 MB of extra resident memory per pane at 1 MiB vs. ~28 KB at
-// 8 KiB. The parser already reads from its side of the socketpair with its
-// own, independently-sized `mux_output_parser_buffer_size` (128 KiB
-// default), so a larger reader-side buffer doesn't help throughput -- even
-// an unrealistic 50 MiB/s pty flood only needs ~800 reads/sec at 64 KiB.
+// The reader thread's own pty-read buffer size. This read is always
+// outstanding (the reader thread blocks in it continuously), so the whole
+// buffer is resident for as long as the pane exists -- measured on Windows
+// at ~1 MB of extra resident memory per pane at 1 MiB vs. ~28 KB at 8 KiB.
+// The parser already reads from its side of the reader<->parser channel
+// with its own, independently-sized `mux_output_parser_buffer_size` (128
+// KiB default), so a larger reader-side buffer doesn't help throughput --
+// even an unrealistic 50 MiB/s pty flood only needs ~800 reads/sec at 64
+// KiB.
 const BUFSIZE: usize = 64 * 1024;
+
+// Capacity (in messages, not bytes) of the bounded channel that carries pty
+// reads from the reader thread to the parser thread. Each message is at
+// most one `BUFSIZE`-sized chunk (or the startup banner). A handful of
+// slots is enough to smooth over a burst of reads landing before the
+// parser drains them, while still giving the same backpressure the old
+// SO_SNDBUF-limited socket write provided: once the channel is full,
+// `Sender::send` blocks the reader thread until the parser catches up,
+// bounding how far the pty reader can run ahead of the parser.
+const CHANNEL_CAPACITY: usize = 4;
 
 /// This function applies parsed actions to the pane and notifies any
 /// mux subscribers about the output event
@@ -209,134 +211,142 @@ fn hold_timeout_from(config: &config::ConfigHandle) -> Duration {
     )
 }
 
+/// Mutable parser state threaded through `process_chunk` across calls.
+struct ParseState {
+    hold: bool,
+    hold_deadline: Option<Instant>,
+    hold_timeout: Duration,
+    actions: Vec<Action>,
+    action_size: usize,
+}
+
+/// Feeds one chunk of pty bytes through the escape-sequence parser,
+/// applying the DEC 2026 synchronized-output hold/flush rules, and
+/// forwards any resulting action batches to the mux. Shared by both the
+/// main receive loop and the hold-timeout/coalescing branches so the
+/// hold/flush logic only lives in one place.
+fn process_chunk(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, state: &mut ParseState, parser: &mut termwiz::escape::parser::Parser, bytes: &[u8]) {
+    parser.parse(bytes, |action| {
+        if state.hold && is_passthrough_query(&action) {
+            send_actions_to_mux(pane, dead, vec![action]);
+            return;
+        }
+        let mut flush = false;
+        match &action {
+            Action::CSI(CSI::Mode(Mode::SetDecPrivateMode(DecPrivateMode::Code(
+                DecPrivateModeCode::SynchronizedOutput,
+            )))) => {
+                // Setting the mode while it is already active is
+                // idempotent: the update keeps its original
+                // deadline and the frame held so far stays held
+                if !state.hold {
+                    state.hold = true;
+                    state.hold_deadline = Some(Instant::now() + state.hold_timeout);
+
+                    // Flush prior actions
+                    flush = true;
+                }
+            }
+            Action::CSI(CSI::Mode(Mode::ResetDecPrivateMode(DecPrivateMode::Code(
+                DecPrivateModeCode::SynchronizedOutput,
+            )))) => {
+                // Synchronized output frame ended:
+                // => We flush out all pending actions to the terminal.
+                state.hold = false;
+                state.hold_deadline = None;
+                flush = true;
+            }
+            Action::CSI(CSI::Device(dev)) if matches!(**dev, Device::SoftReset) => {
+                // Soft reset requested
+                state.hold = false;
+                state.hold_deadline = None;
+                flush = true;
+            }
+            _ => {}
+        };
+        action.append_to(&mut state.actions);
+
+        if flush && !state.actions.is_empty() {
+            send_actions_to_mux(pane, dead, std::mem::take(&mut state.actions));
+            state.action_size = 0;
+        }
+    });
+    state.action_size += bytes.len();
+}
+
 /// This is the parsing loop for the given pane.
 /// It reads all data sent to `rx` (from pane PTY) and handles all terminal events for this pane.
-fn parse_buffered_data(pane: Weak<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: FileDescriptor) {
-    let mut buf = vec![0; configuration().mux_output_parser_buffer_size];
+fn parse_buffered_data(
+    pane: Weak<dyn Pane>,
+    dead: &Arc<AtomicBool>,
+    rx: crossbeam::channel::Receiver<Vec<u8>>,
+) {
     let mut parser = termwiz::escape::parser::Parser::new();
-    let mut actions = vec![];
-    let mut hold = false;
-    let mut action_size = 0;
     let mut delay = Duration::from_millis(configuration().mux_output_parser_coalesce_delay_ms);
     let mut deadline = None;
-    let mut hold_timeout = hold_timeout_from(&configuration());
-    let mut hold_deadline: Option<Instant> = None;
+    let mut state = ParseState {
+        hold: false,
+        hold_deadline: None,
+        hold_timeout: hold_timeout_from(&configuration()),
+        actions: vec![],
+        action_size: 0,
+    };
 
     loop {
-        if hold {
-            let target = *hold_deadline.get_or_insert_with(|| Instant::now() + hold_timeout);
+        if state.hold {
+            let hold_timeout = state.hold_timeout;
+            let target = *state
+                .hold_deadline
+                .get_or_insert_with(|| Instant::now() + hold_timeout);
             let expired = match target.checked_duration_since(Instant::now()) {
-                Some(remaining) => {
-                    let mut pfd = [pollfd {
-                        fd: rx.as_socket_descriptor(),
-                        events: POLLIN,
-                        revents: 0,
-                    }];
-                    match poll(&mut pfd, Some(remaining)) {
-                        Ok(0) => true,
-                        Ok(_) => false,
-                        // Interrupted before the deadline; recompute the
-                        // remaining time and poll again. The error variant
-                        // depends on the backend: poll(2) reports
-                        // FdError::Poll, while the macOS select(2) shim and
-                        // Windows WSAPoll report FdError::Io
-                        Err(FdError::Poll(err) | FdError::Io(err))
-                            if err.kind() == std::io::ErrorKind::Interrupted =>
-                        {
-                            continue;
-                        }
-                        Err(err) => {
-                            // Polling is what enforces the deadline, so if
-                            // it is broken the only way to keep the promise
-                            // that a stalled client cannot freeze the pane
-                            // is to fail open and release the hold
-                            log::error!(
-                                "error polling for pane output while a \
-                                 synchronized update is open: {err:#}; \
-                                 releasing the hold"
-                            );
-                            true
-                        }
+                Some(remaining) => match rx.recv_timeout(remaining) {
+                    Err(RecvTimeoutError::Timeout) => true,
+                    Ok(bytes) => {
+                        // Data arrived before the deadline: process it and
+                        // go back around the loop (re-checking the hold
+                        // deadline/state) rather than falling through to
+                        // the unconditional `rx.recv()` below, which would
+                        // otherwise consume a second, unrelated message.
+                        process_chunk(&pane, &dead, &mut state, &mut parser, &bytes);
+                        continue;
                     }
-                }
+                    Err(RecvTimeoutError::Disconnected) => {
+                        dead.store(true, Ordering::Relaxed);
+                        if !state.actions.is_empty() {
+                            send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
+                        }
+                        return;
+                    }
+                },
                 None => true,
             };
             if expired {
                 // The synchronized update has been open for longer than
                 // the configured timeout; release the hold so that a
                 // stalled application cannot freeze the pane indefinitely
-                hold = false;
-                hold_deadline = None;
-                if !actions.is_empty() {
-                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
-                    action_size = 0;
+                state.hold = false;
+                state.hold_deadline = None;
+                if !state.actions.is_empty() {
+                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
+                    state.action_size = 0;
                 }
                 continue;
             }
         }
 
-        match rx.read(&mut buf) {
-            Ok(size) if size == 0 => {
-                dead.store(true, Ordering::Relaxed);
-                break;
-            }
+        match rx.recv() {
             Err(_) => {
                 dead.store(true, Ordering::Relaxed);
                 break;
             }
-            Ok(size) => {
-                parser.parse(&buf[0..size], |action| {
-                    if hold && is_passthrough_query(&action) {
-                        send_actions_to_mux(&pane, &dead, vec![action]);
-                        return;
-                    }
-                    let mut flush = false;
-                    match &action {
-                        Action::CSI(CSI::Mode(Mode::SetDecPrivateMode(DecPrivateMode::Code(
-                            DecPrivateModeCode::SynchronizedOutput,
-                        )))) => {
-                            // Setting the mode while it is already active is
-                            // idempotent: the update keeps its original
-                            // deadline and the frame held so far stays held
-                            if !hold {
-                                hold = true;
-                                hold_deadline = Some(Instant::now() + hold_timeout);
-
-                                // Flush prior actions
-                                flush = true;
-                            }
-                        }
-                        Action::CSI(CSI::Mode(Mode::ResetDecPrivateMode(
-                            DecPrivateMode::Code(DecPrivateModeCode::SynchronizedOutput),
-                        ))) => {
-                            // Synchronized output frame ended:
-                            // => We flush out all pending actions to the terminal.
-                            hold = false;
-                            hold_deadline = None;
-                            flush = true;
-                        }
-                        Action::CSI(CSI::Device(dev)) if matches!(**dev, Device::SoftReset) => {
-                            // Soft reset requested
-                            hold = false;
-                            hold_deadline = None;
-                            flush = true;
-                        }
-                        _ => {}
-                    };
-                    action.append_to(&mut actions);
-
-                    if flush && !actions.is_empty() {
-                        send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
-                        action_size = 0;
-                    }
-                });
-                action_size += size;
-                if !actions.is_empty() && !hold {
+            Ok(bytes) => {
+                process_chunk(&pane, &dead, &mut state, &mut parser, &bytes);
+                if !state.actions.is_empty() && !state.hold {
                     // If we haven't accumulated too much data,
                     // pause for a short while to increase the chances
                     // that we coalesce a full "frame" from an unoptimized
                     // TUI program
-                    if action_size < buf.len() {
+                    if state.action_size < configuration().mux_output_parser_buffer_size {
                         let poll_delay = match deadline {
                             None => {
                                 deadline.replace(Instant::now() + delay);
@@ -344,32 +354,29 @@ fn parse_buffered_data(pane: Weak<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: Fil
                             }
                             Some(target) => target.checked_duration_since(Instant::now()),
                         };
-                        if poll_delay.is_some() {
-                            let mut pfd = [pollfd {
-                                fd: rx.as_socket_descriptor(),
-                                events: POLLIN,
-                                revents: 0,
-                            }];
-                            if let Ok(1) = poll(&mut pfd, poll_delay) {
+                        if let Some(poll_delay) = poll_delay {
+                            if let Ok(more) = rx.recv_timeout(poll_delay) {
                                 // We can read now without blocking, so accumulate
                                 // more data into actions
+                                process_chunk(&pane, &dead, &mut state, &mut parser, &more);
                                 continue;
                             }
 
-                            // Not readable in time: let the data we have flow into
-                            // the terminal model
+                            // Not readable in time (or the reader thread has
+                            // disconnected): let the data we have flow into
+                            // the terminal model. A disconnect will be
+                            // observed by the next `rx.recv()` above.
                         }
                     }
 
-                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
+                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
                     deadline = None;
-                    action_size = 0;
+                    state.action_size = 0;
                 }
 
                 let config = configuration();
-                buf.resize(config.mux_output_parser_buffer_size, 0);
                 delay = Duration::from_millis(config.mux_output_parser_coalesce_delay_ms);
-                hold_timeout = hold_timeout_from(&config);
+                state.hold_timeout = hold_timeout_from(&config);
             }
         }
     }
@@ -378,43 +385,9 @@ fn parse_buffered_data(pane: Weak<dyn Pane>, dead: &Arc<AtomicBool>, mut rx: Fil
     // to be displayed before we return from here; this is important
     // for very short lived commands so that we don't forget to
     // display what they displayed.
-    if !actions.is_empty() {
-        send_actions_to_mux(&pane, &dead, std::mem::take(&mut actions));
+    if !state.actions.is_empty() {
+        send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
     }
-}
-
-fn set_socket_buffer(fd: &mut FileDescriptor, option: i32, size: usize) -> anyhow::Result<()> {
-    let size = size as c_int;
-    let socklen = std::mem::size_of_val(&size);
-    // SAFETY: `fd.as_socket_descriptor()` is a valid open socket descriptor.
-    // `&size` points to a valid `c_int` that outlives the call, and `socklen`
-    // is exactly `size_of::<c_int>()`. `setsockopt` only reads `socklen` bytes
-    // from that pointer for the given SOL_SOCKET level option.
-    unsafe {
-        let res = libc::setsockopt(
-            fd.as_socket_descriptor(),
-            SOL_SOCKET,
-            option,
-            &size as *const c_int as *const _,
-            socklen as _,
-        );
-        if res == 0 {
-            Ok(())
-        } else {
-            Err(std::io::Error::last_os_error()).context("setsockopt")
-        }
-    }
-}
-
-fn allocate_socketpair() -> anyhow::Result<(FileDescriptor, FileDescriptor)> {
-    let (mut tx, mut rx) = socketpair().context("socketpair")?;
-    set_socket_buffer(&mut tx, SO_SNDBUF, BUFSIZE)
-        .context("SO_SNDBUF")
-        .ok();
-    set_socket_buffer(&mut rx, SO_RCVBUF, BUFSIZE)
-        .context("SO_RCVBUF")
-        .ok();
-    Ok((tx, rx))
 }
 
 /// This function is run in a separate thread; its purpose is to perform
@@ -437,20 +410,7 @@ fn read_from_pane_pty(
         None => return,
     };
 
-    let (mut tx, rx) = match allocate_socketpair() {
-        Ok(pair) => pair,
-        Err(err) => {
-            log::error!("read_from_pane_pty: Unable to allocate a socketpair: {err:#}");
-            localpane::emit_output_for_pane(
-                pane_id,
-                &format!(
-                    "⚠️  wezterm: read_from_pane_pty: \
-                    Unable to allocate a socketpair: {err:#}"
-                ),
-            );
-            return;
-        }
-    };
+    let (tx, rx) = crossbeam::channel::bounded::<Vec<u8>>(CHANNEL_CAPACITY);
 
     // Spawn parser thread for this pane
     std::thread::spawn({
@@ -459,7 +419,7 @@ fn read_from_pane_pty(
     });
 
     if let Some(banner) = banner {
-        tx.write_all(banner.as_bytes()).ok();
+        tx.send(banner.into_bytes()).ok();
     }
 
     // Loop until the pane or the main mux thread is dead.
@@ -477,11 +437,14 @@ fn read_from_pane_pty(
             Ok(size) => {
                 histogram!("read_from_pane_pty.bytes.rate").record(size as f64);
                 log::trace!("read_pty pane {pane_id} read {size} bytes");
-                // Send received data to this pane parser thread.
-                if let Err(err) = tx.write_all(&buf[..size]) {
+                // Send received data to this pane's parser thread. This
+                // blocks if the channel is full, which is the intended
+                // backpressure: it bounds how far the pty reader can run
+                // ahead of the parser.
+                if tx.send(buf[..size].to_vec()).is_err() {
                     error!(
-                        "read_pty failed to write to parser for pane {}: {:?}",
-                        pane_id, err
+                        "read_pty failed to send to parser for pane {}: parser thread is gone",
+                        pane_id
                     );
                     break;
                 }
