@@ -891,6 +891,15 @@ pub struct Config {
     #[dynamic(default = "default_gui_watchdog_threshold_ms")]
     pub gui_watchdog_threshold_ms: u64,
 
+    /// When true, WebGPU frame submission (present/swapchain) runs on a
+    /// dedicated per-window thread instead of the shared GUI message loop, so
+    /// a stuck GPU driver call can't freeze every window in the process.
+    /// Currently only implemented on Windows; ignored elsewhere. Off by
+    /// default until the full render-thread pipeline (tasks 221.1-221.8) is
+    /// complete end to end.
+    #[dynamic(default)]
+    pub webgpu_render_thread: bool,
+
     #[dynamic(default = "default_shape_cache_size")]
     pub shape_cache_size: usize,
     #[dynamic(default = "default_line_state_cache_size")]

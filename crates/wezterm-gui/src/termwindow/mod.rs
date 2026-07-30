@@ -529,6 +529,7 @@ pub struct TermWindow {
 
     gl: Option<Rc<glium::backend::Context>>,
     webgpu: Option<Arc<WebGpuState>>,
+    render_thread: Option<crate::renderthread::RenderThreadHandle>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 
@@ -721,6 +722,7 @@ impl TermWindow {
             os_parameters: None,
             gl: None,
             webgpu: None,
+            render_thread: None,
             window: None,
             window_background,
             config: config.clone(),
@@ -917,6 +919,20 @@ impl TermWindow {
             if let Some(webgpu) = webgpu {
                 myself.webgpu.replace(Arc::clone(&webgpu));
                 myself.created(RenderContext::WebGpu(Arc::clone(&webgpu)))?;
+
+                if config.webgpu_render_thread {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let seed = crate::renderthread::RenderThreadSeed {
+                        window: window.clone(),
+                        webgpu: Arc::clone(&webgpu),
+                        rx,
+                    };
+                    myself.render_thread = crate::renderthread::RenderThreadHandle::spawn(
+                        seed,
+                        tx,
+                        myself.mux_window_id,
+                    );
+                }
             }
             myself.load_os_parameters();
             window.show();
@@ -959,6 +975,17 @@ impl TermWindow {
                 // context itself, which does FBO/VAO/sampler cleanup).
                 self.render_state.take();
                 self.gl.take();
+                // Detach, don't join: the whole point of the render
+                // thread is that a stuck GPU driver call can't freeze the
+                // GUI thread, so blocking window-close on that same thread
+                // via .join() would defeat the purpose. Sending Shutdown
+                // (and, failing that, dropping the handle's Sender, which
+                // disconnects the channel) is enough to let the thread's
+                // recv() loop end on its own, whenever the driver call it
+                // may currently be stuck in eventually returns.
+                if let Some(rt) = self.render_thread.take() {
+                    rt.shutdown();
+                }
                 Ok(false)
             }
             WindowEvent::CloseRequested => {
@@ -3837,6 +3864,13 @@ impl Drop for TermWindow {
         // (will actually unsubscribe on the next notif from mux)
         self.mux_subscription_dead.store(true, Ordering::Relaxed);
         self.clear_all_overlays();
+        // Defensive: normally WindowEvent::Destroyed already took and shut
+        // down the render thread, but handle the case where it never
+        // fired (e.g. an early construction failure). Detach, don't join -
+        // see the comment at the Destroyed handler for why.
+        if let Some(rt) = self.render_thread.take() {
+            rt.shutdown();
+        }
         if let Some(window) = self.window.take() {
             if let Some(fe) = try_front_end() {
                 fe.forget_known_window(&window);
