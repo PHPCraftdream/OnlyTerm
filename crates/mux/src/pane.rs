@@ -275,6 +275,21 @@ pub trait Pane: Downcast + Send + Sync {
         false
     }
 
+    /// Task #248: true if a recent GUI-thread-reachable accessor
+    /// (`get_title()`, `get_progress()`, `copy_user_vars()`,
+    /// `get_current_working_dir()`) gave up waiting on this pane's
+    /// underlying terminal lock and served stale data instead (see
+    /// `try_lock_terminal_for` in `crates/mux/src/localpane.rs`, task
+    /// #246). Lets callers (tab-title formatters, future auto-recovery
+    /// logic) observe "this pane may be wedged" instead of the timeout
+    /// only showing up as a silent metrics counter. Defaults to `false`
+    /// so pane implementations that have no such lock to wedge on (e.g.
+    /// `Pane` impls that don't wrap a `Mutex<Terminal>`) never need to
+    /// think about this.
+    fn is_unresponsive(&self) -> bool {
+        false
+    }
+
     /// Certain panes are OK to be closed with impunity (no prompts)
     fn can_close_without_prompting(&self, _reason: CloseReason) -> bool {
         false

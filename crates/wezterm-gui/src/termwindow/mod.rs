@@ -272,6 +272,17 @@ pub struct PaneInformation {
     pub is_active: bool,
     pub is_zoomed: bool,
     pub has_unseen_output: bool,
+    /// Task #248: true if a recent GUI-thread-reachable accessor on this
+    /// pane (`get_title()`, `get_progress()`, `copy_user_vars()`,
+    /// `get_current_working_dir()`) gave up waiting on the pane's
+    /// terminal lock and served stale cached data instead -- see
+    /// `Pane::is_unresponsive()` and `try_lock_terminal_for` (task #246)
+    /// in `crates/mux/src/localpane.rs`. Exposed the same way as
+    /// `has_unseen_output` above so a user's own `format-tab-title`/
+    /// `format-window-title` handler can style a possibly-wedged pane
+    /// however it likes; there is no built-in visual treatment for this
+    /// in wezterm-gui itself.
+    pub is_unresponsive: bool,
     pub left: usize,
     pub top: usize,
     pub width: usize,
@@ -310,6 +321,9 @@ fn register_pane_information_rhai(engine: &mut rhai::Engine) {
     engine.register_get("is_zoomed", |this: &mut PaneInformation| this.is_zoomed);
     engine.register_get("has_unseen_output", |this: &mut PaneInformation| {
         this.has_unseen_output
+    });
+    engine.register_get("is_unresponsive", |this: &mut PaneInformation| {
+        this.is_unresponsive
     });
     engine.register_get("left", |this: &mut PaneInformation| this.left as rhai::INT);
     engine.register_get("top", |this: &mut PaneInformation| this.top as rhai::INT);
@@ -3803,6 +3817,7 @@ impl TermWindow {
             is_active: pos.is_active,
             is_zoomed: pos.is_zoomed,
             has_unseen_output: pos.pane.has_unseen_output(),
+            is_unresponsive: pos.pane.is_unresponsive(),
             left: pos.left,
             top: pos.top,
             width: pos.width,
