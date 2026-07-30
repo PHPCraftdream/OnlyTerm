@@ -21,6 +21,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
 use std::io::{Result as IoResult, Write};
 use std::ops::Range;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use termwiz::escape::csi::{Sgr, CSI};
@@ -190,6 +191,15 @@ pub struct LocalPane {
     #[cfg(unix)]
     leader: Arc<Mutex<Option<CachedLeaderInfo>>>,
     command_description: String,
+    /// Lock-free mirror of `terminal.has_unseen_output()`, kept in sync
+    /// by the terminal via the shared `Arc<AtomicBool>` whenever focus
+    /// or the sequence number changes. `has_unseen_output()` reads this
+    /// directly instead of taking `terminal.lock()`: the GUI
+    /// title-refresh path polls every pane on essentially every event,
+    /// and a single background pane whose terminal mutex is wedged must
+    /// not be able to block the GUI thread (and thus the whole
+    /// process's message loop).
+    unseen_output: Arc<AtomicBool>,
 }
 
 #[async_trait(?Send)]
@@ -709,7 +719,7 @@ impl Pane for LocalPane {
     }
 
     fn has_unseen_output(&self) -> bool {
-        self.terminal.lock().has_unseen_output()
+        self.unseen_output.load(Ordering::Acquire)
     }
 
     fn is_mouse_grabbed(&self) -> bool {
@@ -1247,6 +1257,11 @@ impl LocalPane {
         }));
         terminal.set_notification_handler(Box::new(LocalPaneNotifHandler { pane_id }));
 
+        // Clone the lock-free unseen-output handle before moving
+        // `terminal` into its mutex, so `has_unseen_output()` can read
+        // it without ever taking `terminal.lock()`.
+        let unseen_output = terminal.unseen_output_handle();
+
         Self {
             pane_id,
             terminal: Mutex::new(terminal),
@@ -1264,6 +1279,7 @@ impl LocalPane {
             #[cfg(unix)]
             leader: Arc::new(Mutex::new(None)),
             command_description,
+            unseen_output,
         }
     }
 
@@ -1880,6 +1896,74 @@ mod tests {
             "the soft-signal write must still happen on the background \
              thread once it's able to proceed"
         );
+    }
+
+    /// Regression test for the GUI-freeze bug fixed alongside this test:
+    /// `has_unseen_output()` used to take `terminal.lock()` with no
+    /// timeout. The GUI title-refresh path (`update_title_impl`) polls
+    /// every pane's `has_unseen_output()` on essentially every key/mouse
+    /// event, so a single background pane whose terminal mutex was held
+    /// (or wedged) blocked the GUI thread -- and with it the process's
+    /// single message loop -- forever. Confirms the read path is now
+    /// lock-free: it returns promptly even while another thread holds
+    /// `terminal.lock()`, and that the published flag still tracks real
+    /// focus/output state changes.
+    #[test]
+    fn has_unseen_output_does_not_block_on_a_locked_terminal() {
+        let (pane, _dropped) = make_pane();
+
+        // --- Correctness of the published flag (no contention) ---
+        // A fresh pane is focused, so there is no unseen output.
+        assert!(!pane.has_unseen_output());
+
+        // Losing focus snapshots `lost_focus_seqno = seqno`, so the two
+        // are still equal: still no unseen output.
+        pane.focus_changed(false);
+        assert!(!pane.has_unseen_output());
+
+        // New output bumps `seqno` ahead of `lost_focus_seqno`: now there
+        // is unseen output. This also exercises the publication path in
+        // `increment_seqno`, the other chokepoint alongside `focus_changed`.
+        pane.terminal.lock().increment_seqno();
+        assert!(pane.has_unseen_output());
+
+        // --- Non-blocking under contention ---
+        // Hold `terminal.lock()` on another thread, simulating a
+        // wedged/held mutex. Under the old code the `has_unseen_output()`
+        // call below would block forever here.
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let blocker_pane = Arc::clone(&pane);
+        let blocker_started = Arc::clone(&started);
+        let blocker_release = Arc::clone(&release);
+        let handle = std::thread::spawn(move || {
+            // Hold the terminal mutex for the whole lifetime of this
+            // guard, releasing it only once the main thread is done.
+            let _guard = blocker_pane.terminal.lock();
+            blocker_started.store(true, std::sync::atomic::Ordering::SeqCst);
+            while !blocker_release.load(std::sync::atomic::Ordering::SeqCst) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+
+        // Wait until the blocker has actually acquired the lock.
+        while !started.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        // This call must return immediately despite the lock being held.
+        let call_start = Instant::now();
+        let _ = pane.has_unseen_output();
+        let elapsed = call_start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "has_unseen_output() must not block on a locked terminal; took {:?}",
+            elapsed
+        );
+
+        // Let the blocker release the lock and join cleanly.
+        release.store(true, std::sync::atomic::Ordering::SeqCst);
+        handle.join().expect("blocker thread panicked");
     }
 
     /// After `kill()`, `self.pty` must be `None` (taken, not yet

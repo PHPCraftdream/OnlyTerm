@@ -9,6 +9,7 @@ use num_traits::ToPrimitive;
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
 use terminfo::{Database, Value};
@@ -386,6 +387,14 @@ pub struct TerminalState {
     /// seqno when we last emitted Alert::OutputSinceFocusLost
     lost_focus_alerted_seqno: SequenceNo,
     focused: bool,
+    /// Lock-free publication of `has_unseen_output()`
+    /// (`!focused && seqno > lost_focus_seqno`), held behind an `Arc` so
+    /// that holders of a `Terminal` -- notably `LocalPane`, polled from
+    /// the GUI title-refresh path on the GUI thread -- can observe it
+    /// without taking `terminal.lock()`. Kept in sync by
+    /// `publish_unseen_output()`, called from the only two mutators of
+    /// the condition (`increment_seqno` and `focus_changed`).
+    unseen_output_published: Arc<AtomicBool>,
 
     /// True if lines should be marked as bidi-enabled, and thus
     /// have the renderer apply the bidi algorithm.
@@ -583,6 +592,10 @@ impl TerminalState {
             lost_focus_seqno: seqno,
             lost_focus_alerted_seqno: seqno,
             focused: true,
+            // Matches `!focused && seqno > lost_focus_seqno` at
+            // construction (focused, seqno == lost_focus_seqno == 1):
+            // a freshly created terminal has no unseen output.
+            unseen_output_published: Arc::new(AtomicBool::new(false)),
             bidi_enabled: None,
             bidi_hint: None,
             progress: Progress::default(),
@@ -600,6 +613,7 @@ impl TerminalState {
 
     pub fn increment_seqno(&mut self) {
         self.seqno += 1;
+        self.publish_unseen_output();
     }
 
     pub fn set_config(&mut self, config: Arc<dyn TerminalConfiguration>) {
@@ -797,12 +811,32 @@ impl TerminalState {
         if !focused {
             self.lost_focus_seqno = self.seqno;
         }
+        self.publish_unseen_output();
     }
 
     /// Returns true if there is new output since the terminal
     /// lost focus
     pub fn has_unseen_output(&self) -> bool {
         !self.focused && self.seqno > self.lost_focus_seqno
+    }
+
+    /// Recompute and publish the lock-free mirror of
+    /// `has_unseen_output()`. Called only from the two mutators of that
+    /// condition (`increment_seqno` and `focus_changed`) so the `Arc`
+    /// seen by lock-free readers stays in sync with the in-lock state.
+    fn publish_unseen_output(&self) {
+        let value = !self.focused && self.seqno > self.lost_focus_seqno;
+        self.unseen_output_published.store(value, Ordering::Release);
+    }
+
+    /// Returns a lock-free handle that mirrors `has_unseen_output()`,
+    /// updated whenever focus or the sequence number changes. Lets
+    /// callers observe unseen-output state without taking the terminal
+    /// mutex -- important because that mutex is held by the pty output
+    /// parser under load, and `LocalPane` is polled from the GUI thread
+    /// on essentially every event.
+    pub fn unseen_output_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.unseen_output_published)
     }
 
     pub(crate) fn trigger_unseen_output_notif(&mut self) {
