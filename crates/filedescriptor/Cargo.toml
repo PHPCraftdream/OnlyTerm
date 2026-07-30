@@ -24,3 +24,4 @@ winapi = { workspace=true, features = [
     "winsock2",
     "processenv"
 ]}
+getrandom.workspace = true
