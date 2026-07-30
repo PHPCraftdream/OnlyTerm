@@ -384,7 +384,7 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
 }
 
 pub enum TripleLayerQuadAllocator<'a> {
-    Gpu(BorrowedLayers),
+    Gpu(BorrowedLayers<'a>),
     Heap(&'a mut HeapQuadAllocator),
 }
 

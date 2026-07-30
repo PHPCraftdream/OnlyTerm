@@ -182,99 +182,102 @@ impl crate::TermWindow {
         let layer = gl_state
             .layer_for_zindex(0)
             .context("layer_for_zindex(0)")?;
-        let mut layers = layer.quad_allocator();
         log::trace!("quad map elapsed {:?}", start.elapsed());
         metrics::histogram!("quad.map").record(start.elapsed());
 
-        let mut paint_terminal_background = false;
+        layer.with_quad_allocator(|layers| -> anyhow::Result<()> {
+            let mut paint_terminal_background = false;
 
-        // Render the full window background
-        match (self.window_background.is_empty(), self.allow_images) {
-            (false, AllowImage::Yes | AllowImage::Scale(_)) => {
-                let bg_color = self.palette().background.to_linear();
+            // Render the full window background
+            match (self.window_background.is_empty(), self.allow_images) {
+                (false, AllowImage::Yes | AllowImage::Scale(_)) => {
+                    let bg_color = self.palette().background.to_linear();
 
-                let top = panes
-                    .iter()
-                    .find(|p| p.is_active)
-                    .map(|p| match self.get_viewport(p.pane.pane_id()) {
-                        Some(top) => top,
-                        None => p.pane.get_dimensions().physical_top,
-                    })
-                    .unwrap_or(0);
+                    let top = panes
+                        .iter()
+                        .find(|p| p.is_active)
+                        .map(|p| match self.get_viewport(p.pane.pane_id()) {
+                            Some(top) => top,
+                            None => p.pane.get_dimensions().physical_top,
+                        })
+                        .unwrap_or(0);
 
-                let loaded_any = self
-                    .render_backgrounds(bg_color, top)
-                    .context("render_backgrounds")?;
+                    let loaded_any = self
+                        .render_backgrounds(bg_color, top)
+                        .context("render_backgrounds")?;
 
-                if !loaded_any {
-                    // Either there was a problem loading the background(s)
-                    // or they haven't finished loading yet.
-                    // Use the regular terminal background until that changes.
+                    if !loaded_any {
+                        // Either there was a problem loading the background(s)
+                        // or they haven't finished loading yet.
+                        // Use the regular terminal background until that changes.
+                        paint_terminal_background = true;
+                    }
+                }
+                _ if window_is_transparent => {
+                    // Avoid doubling up the background color: the panes
+                    // will render out through the padding so there
+                    // should be no gaps that need filling in
+                }
+                _ => {
                     paint_terminal_background = true;
                 }
             }
-            _ if window_is_transparent => {
-                // Avoid doubling up the background color: the panes
-                // will render out through the padding so there
-                // should be no gaps that need filling in
-            }
-            _ => {
-                paint_terminal_background = true;
-            }
-        }
 
-        if paint_terminal_background {
-            // Regular window background color
-            let background = if panes.len() == 1 {
-                // If we're the only pane, use the pane's palette
-                // to draw the padding background
-                panes[0].pane.palette().background
-            } else {
-                self.palette().background
+            if paint_terminal_background {
+                // Regular window background color
+                let background = if panes.len() == 1 {
+                    // If we're the only pane, use the pane's palette
+                    // to draw the padding background
+                    panes[0].pane.palette().background
+                } else {
+                    self.palette().background
+                }
+                .to_linear()
+                .mul_alpha(self.config.window_background_opacity);
+
+                self.filled_rectangle(
+                    layers,
+                    0,
+                    euclid::rect(
+                        0.,
+                        0.,
+                        self.dimensions.pixel_width as f32,
+                        self.dimensions.pixel_height as f32,
+                    ),
+                    background,
+                )
+                .context("filled_rectangle for window background")?;
             }
-            .to_linear()
-            .mul_alpha(self.config.window_background_opacity);
 
-            self.filled_rectangle(
-                &mut layers,
-                0,
-                euclid::rect(
-                    0.,
-                    0.,
-                    self.dimensions.pixel_width as f32,
-                    self.dimensions.pixel_height as f32,
-                ),
-                background,
-            )
-            .context("filled_rectangle for window background")?;
-        }
+            for pos in &panes {
+                if pos.is_active {
+                    self.update_text_cursor(pos);
+                    if focused {
+                        pos.pane.advise_focus();
+                        mux::Mux::get().record_focus_for_current_identity(pos.pane.pane_id());
+                    }
+                }
+                self.paint_pane(pos, layers).context("paint_pane")?;
+            }
 
-        for pos in panes {
-            if pos.is_active {
-                self.update_text_cursor(&pos);
-                if focused {
-                    pos.pane.advise_focus();
-                    mux::Mux::get().record_focus_for_current_identity(pos.pane.pane_id());
+            if let Some(pane) = self.get_active_pane_or_overlay() {
+                let splits = self.get_splits();
+                for split in &splits {
+                    self.paint_split(layers, split, &pane)
+                        .context("paint_split")?;
                 }
             }
-            self.paint_pane(&pos, &mut layers).context("paint_pane")?;
-        }
 
-        if let Some(pane) = self.get_active_pane_or_overlay() {
-            let splits = self.get_splits();
-            for split in &splits {
-                self.paint_split(&mut layers, split, &pane)
-                    .context("paint_split")?;
+            if self.show_tab_bar {
+                self.paint_tab_bar(layers).context("paint_tab_bar")?;
             }
-        }
 
-        if self.show_tab_bar {
-            self.paint_tab_bar(&mut layers).context("paint_tab_bar")?;
-        }
+            self.paint_window_borders(layers)
+                .context("paint_window_borders")?;
 
-        self.paint_window_borders(&mut layers)
-            .context("paint_window_borders")?;
-        drop(layers);
+            Ok(())
+        })?;
+
         self.paint_modal().context("paint_modal")?;
 
         Ok(())

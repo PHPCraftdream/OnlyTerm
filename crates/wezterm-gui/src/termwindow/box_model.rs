@@ -830,7 +830,6 @@ impl super::TermWindow {
         inherited_colors: Option<&ElementColors>,
     ) -> anyhow::Result<()> {
         let layer = gl_state.layer_for_zindex(element.zindex)?;
-        let mut layers = layer.quad_allocator();
 
         let colors = match &element.hover_colors {
             Some(hc) => {
@@ -855,7 +854,13 @@ impl super::TermWindow {
             None => &element.colors,
         };
 
-        self.render_element_background(element, colors, &mut layers, inherited_colors)?;
+        // Everything that needs the mapped quad buffers happens inside this
+        // closure. The `Children` case deliberately does its recursion
+        // *after* it returns, because recursing back into `render_element`
+        // re-borrows the same RefCell -- the previous code expressed that
+        // same constraint with an explicit `drop(layers)` before recursing.
+        layer.with_quad_allocator(|layers| -> anyhow::Result<()> {
+        self.render_element_background(element, colors, layers, inherited_colors)?;
         let left = self.dimensions.pixel_width as f32 / -2.0;
         let top = self.dimensions.pixel_height as f32 / -2.0;
         match &element.content {
@@ -919,17 +924,13 @@ impl super::TermWindow {
                     }
                 }
             }
-            ComputedElementContent::Children(kids) => {
-                drop(layers);
-
-                for kid in kids {
-                    self.render_element(kid, gl_state, Some(colors))?;
-                }
+            ComputedElementContent::Children(_) => {
+                // handled below, outside of the quad-buffer borrow
             }
             ComputedElementContent::Poly { poly, line_width } => {
                 if element.content_rect.width() >= poly.width {
                     let mut quad = self.poly_quad(
-                        &mut layers,
+                        layers,
                         1,
                         element.content_rect.origin,
                         poly.poly,
@@ -939,6 +940,15 @@ impl super::TermWindow {
                     )?;
                     self.resolve_text(colors, inherited_colors).apply(&mut quad);
                 }
+            }
+        }
+
+        Ok(())
+        })?;
+
+        if let ComputedElementContent::Children(kids) = &element.content {
+            for kid in kids {
+                self.render_element(kid, gl_state, Some(colors))?;
             }
         }
 

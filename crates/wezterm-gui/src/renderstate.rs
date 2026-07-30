@@ -5,13 +5,13 @@ use crate::termwindow::webgpu::{adapter_info_to_gpu_info, WebGpuState, WebGpuTex
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::bitmaps::Texture2d;
 use ::window::glium::backend::Context as GliumContext;
-use ::window::glium::buffer::{BufferMutSlice, Mapping};
+use ::window::glium::buffer::Mapping;
 use ::window::glium::{
     CapabilitiesSource, IndexBuffer as GliumIndexBuffer, VertexBuffer as GliumVertexBuffer,
 };
 use ::window::*;
 use anyhow::Context;
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 use std::convert::TryInto;
 use std::rc::Rc;
 use wezterm_font::FontConfiguration;
@@ -167,15 +167,15 @@ impl VertexBuffer {
     }
 }
 
-enum MappedVertexBuffer {
-    Glium(GliumMappedVertexBuffer),
-    WebGpu(WebGpuMappedVertexBuffer),
+enum MappedVertexBuffer<'a> {
+    Glium(Mapping<'a, [Vertex]>),
+    WebGpu(WebGpuMappedVertexBuffer<'a>),
 }
 
-impl MappedVertexBuffer {
+impl<'a> MappedVertexBuffer<'a> {
     fn slice_mut(&mut self, range: std::ops::Range<usize>) -> &mut [Vertex] {
         match self {
-            Self::Glium(g) => &mut g.mapping[range],
+            Self::Glium(g) => &mut g[range],
             Self::WebGpu(g) => {
                 let mapping: &mut [Vertex] = bytemuck::cast_slice_mut(&mut g.mapping);
                 &mut mapping[range]
@@ -184,16 +184,21 @@ impl MappedVertexBuffer {
     }
 }
 
-pub struct MappedQuads<'a> {
-    mapping: MappedVertexBuffer,
-    next: RefMut<'a, usize>,
+/// A safe (no `unsafe`, no lifetime erasure) replacement for the old
+/// self-referential `MappedQuads`. This is only ever used as a `&mut`
+/// borrow handed to a caller-supplied closure (see
+/// `RenderLayer::with_quad_allocator`) -- it is never returned as an
+/// owned value, so its lifetime is an ordinary borrow tied to whatever
+/// RefCell guards the caller is holding in its own stack frame, and the
+/// borrow checker verifies it exactly like any other nested borrow.
+pub struct MappedQuadsView<'a> {
+    mapping: MappedVertexBuffer<'a>,
+    next: &'a Cell<usize>,
     capacity: usize,
 }
 
-pub struct WebGpuMappedVertexBuffer {
-    mapping: wgpu::BufferViewMut<'static>,
-    // Owner mapping, must be dropped after mapping
-    _slice: wgpu::BufferSlice<'static>,
+pub struct WebGpuMappedVertexBuffer<'a> {
+    mapping: wgpu::BufferViewMut<'a>,
 }
 
 pub struct WebGpuVertexBuffer {
@@ -223,16 +228,13 @@ impl WebGpuVertexBuffer {
         }
     }
 
-    pub fn map(&self) -> WebGpuMappedVertexBuffer {
-        unsafe {
-            let slice = self.buf.slice(..).extend_lifetime();
-            let mapping = slice.get_mapped_range_mut();
-
-            WebGpuMappedVertexBuffer {
-                mapping,
-                _slice: slice,
-            }
-        }
+    pub fn map(&self) -> WebGpuMappedVertexBuffer<'_> {
+        // `get_mapped_range_mut`'s returned `BufferViewMut` carries its own
+        // internal copy of the slice descriptor (see wgpu's
+        // `BufferSlice::get_mapped_range_mut`), so there's no need to also
+        // keep the `BufferSlice` temporary around as a sibling field.
+        let mapping = self.buf.slice(..).get_mapped_range_mut();
+        WebGpuMappedVertexBuffer { mapping }
     }
 
     pub fn recreate(&mut self) -> wgpu::Buffer {
@@ -272,20 +274,10 @@ impl WebGpuIndexBuffer {
     }
 }
 
-/// This is a self-referential struct, but since those are not possible
-/// to create safely in unstable rust, we transmute the lifetimes away
-/// to static and store the owner (RefMut) and the derived Mapping object
-/// in this struct
-pub struct GliumMappedVertexBuffer {
-    mapping: Mapping<'static, [Vertex]>,
-    // Drop the owner after the mapping
-    _owner: RefMut<'static, VertexBuffer>,
-}
-
-impl<'a> QuadAllocator for MappedQuads<'a> {
+impl<'a> QuadAllocator for MappedQuadsView<'a> {
     fn allocate<'b>(&'b mut self) -> anyhow::Result<QuadImpl<'b>> {
-        let idx = *self.next;
-        *self.next += 1;
+        let idx = self.next.get();
+        self.next.set(idx + 1);
         let idx = if idx >= self.capacity {
             // We don't have enough quads, so we'll keep re-using
             // the first quad until we reach the end of the render
@@ -307,11 +299,11 @@ impl<'a> QuadAllocator for MappedQuads<'a> {
     }
 
     fn extend_with(&mut self, vertices: &[Vertex]) {
-        let idx = *self.next;
+        let idx = self.next.get();
         let len = vertices.len();
 
         // idx and next are number of quads, so divide by number of vertices
-        *self.next += len / VERTICES_PER_CELL;
+        self.next.set(idx + len / VERTICES_PER_CELL);
         // Only copy in if there is enough room.
         // We'll detect the out of space condition at the end of
         // the render pass.
@@ -326,67 +318,20 @@ impl<'a> QuadAllocator for MappedQuads<'a> {
 }
 
 pub struct TripleVertexBuffer {
-    pub index: RefCell<usize>,
+    pub index: Cell<usize>,
     pub bufs: RefCell<[VertexBuffer; 3]>,
     pub indices: IndexBuffer,
     pub capacity: usize,
-    pub next_quad: RefCell<usize>,
-}
-
-/// A trait to avoid broadly-scoped transmutes; we only want to
-/// transmute to extend a lifetime to static, and not to change
-/// the underlying type.
-/// These ExtendStatic trait impls constrain the transmutes in that way,
-/// so that the type checker can still catch issues.
-unsafe trait ExtendStatic {
-    type T;
-    unsafe fn extend_lifetime(self) -> Self::T;
-}
-
-unsafe impl<'a, T: 'static> ExtendStatic for Ref<'a, T> {
-    type T = Ref<'static, T>;
-    unsafe fn extend_lifetime(self) -> Self::T {
-        std::mem::transmute(self)
-    }
-}
-
-unsafe impl<'a, T: 'static> ExtendStatic for RefMut<'a, T> {
-    type T = RefMut<'static, T>;
-    unsafe fn extend_lifetime(self) -> Self::T {
-        std::mem::transmute(self)
-    }
-}
-
-unsafe impl<'a> ExtendStatic for wgpu::BufferSlice<'a> {
-    type T = wgpu::BufferSlice<'static>;
-    unsafe fn extend_lifetime(self) -> Self::T {
-        std::mem::transmute(self)
-    }
-}
-
-unsafe impl<'a> ExtendStatic for MappedQuads<'a> {
-    type T = MappedQuads<'static>;
-    unsafe fn extend_lifetime(self) -> Self::T {
-        std::mem::transmute(self)
-    }
-}
-
-unsafe impl<'a, T: ?Sized + ::window::glium::buffer::Content + 'static> ExtendStatic
-    for BufferMutSlice<'a, T>
-{
-    type T = BufferMutSlice<'static, T>;
-    unsafe fn extend_lifetime(self) -> Self::T {
-        std::mem::transmute(self)
-    }
+    pub next_quad: Cell<usize>,
 }
 
 impl TripleVertexBuffer {
     pub fn clear_quad_allocation(&self) {
-        *self.next_quad.borrow_mut() = 0;
+        self.next_quad.set(0);
     }
 
     pub fn need_more_quads(&self) -> Option<usize> {
-        let next = *self.next_quad.borrow();
+        let next = self.next_quad.get();
         if next > self.capacity {
             Some(next)
         } else {
@@ -395,59 +340,51 @@ impl TripleVertexBuffer {
     }
 
     pub fn vertex_index_count(&self) -> (usize, usize) {
-        let num_quads = *self.next_quad.borrow();
+        let num_quads = self.next_quad.get();
         (num_quads * VERTICES_PER_CELL, num_quads * INDICES_PER_CELL)
     }
 
-    pub fn map(&self) -> MappedQuads<'_> {
-        let mut bufs = self.current_vb_mut();
-
-        // To map the vertex buffer, we need to hold a mutable reference to
-        // the buffer and hold the mapping object alive for the duration
-        // of the access.  Rust doesn't allow us to create a struct that
-        // holds both of those things, because one references the other
-        // and it doesn't permit self-referential structs.
-        // We use the very blunt instrument "transmute" to force Rust to
-        // treat the lifetimes of both of these things as static, which
-        // we can then store in the same struct.
-        // This is "safe" because we carry them around together and ensure
-        // that the owner is dropped after the derived data.
-        let mapping = match &mut *bufs {
+    /// Maps the currently-active vertex buffer and returns a view over it,
+    /// tied to the borrow of `bufs` that the caller already holds.
+    /// Unlike the old `map()`, this doesn't return an owned, independent
+    /// value: the caller (`RenderLayer::with_quad_allocator`) keeps the
+    /// `RefMut` guard for `bufs` alive in its own stack frame for exactly
+    /// as long as the returned view is used, so this is an ordinary
+    /// nested borrow rather than a self-referential struct.
+    pub fn map<'a>(&'a self, bufs: &'a mut [VertexBuffer; 3]) -> MappedQuadsView<'a> {
+        let index = self.index.get();
+        let mapping = match &mut bufs[index] {
             VertexBuffer::Glium(vb) => {
-                let buf_slice = unsafe {
-                    vb.slice_mut(..)
-                        .expect("to map vertex buffer")
-                        .extend_lifetime()
-                };
-                let mapping = buf_slice.map();
-
-                MappedVertexBuffer::Glium(GliumMappedVertexBuffer {
-                    _owner: bufs,
-                    mapping,
-                })
+                let buf_slice = vb.slice_mut(..).expect("to map vertex buffer");
+                MappedVertexBuffer::Glium(buf_slice.map())
             }
             VertexBuffer::WebGpu(vb) => MappedVertexBuffer::WebGpu(vb.map()),
         };
 
-        MappedQuads {
+        MappedQuadsView {
             mapping,
-            next: self.next_quad.borrow_mut(),
+            next: &self.next_quad,
             capacity: self.capacity,
         }
     }
 
-    pub fn current_vb_mut(&self) -> RefMut<'static, VertexBuffer> {
-        let index = *self.index.borrow();
-        let bufs = self.bufs.borrow_mut();
-        unsafe { RefMut::map(bufs, |bufs| &mut bufs[index]).extend_lifetime() }
+    /// Borrows the currently-active vertex buffer. `RefMut::map` is a
+    /// safe std API; the old version of this only needed `unsafe` because
+    /// it additionally erased the lifetime to `'static` so the guard
+    /// could be stored in a self-referential struct. Callers now just
+    /// hold the guard for as long as they need it, like any other borrow.
+    pub fn current_vb_mut(&self) -> RefMut<'_, VertexBuffer> {
+        let index = self.index.get();
+        RefMut::map(self.bufs.borrow_mut(), |bufs| &mut bufs[index])
     }
 
     pub fn next_index(&self) {
-        let mut index = self.index.borrow_mut();
-        *index += 1;
-        if *index >= 3 {
-            *index = 0;
+        let mut index = self.index.get();
+        index += 1;
+        if index >= 3 {
+            index = 0;
         }
+        self.index.set(index);
     }
 }
 
@@ -478,21 +415,31 @@ impl RenderLayer {
         }
     }
 
-    pub fn quad_allocator(&self) -> TripleLayerQuadAllocator<'_> {
-        // We're creating a self-referential struct here to manage the lifetimes
-        // of these related items.  The transmutes are safe because we're only
-        // transmuting the lifetimes (not the types), and we're keeping hold
-        // of the owner in the returned struct.
-        unsafe {
-            let vbs = self.vb.borrow().extend_lifetime();
-            let layer0 = vbs[0].map().extend_lifetime();
-            let layer1 = vbs[1].map().extend_lifetime();
-            let layer2 = vbs[2].map().extend_lifetime();
-            TripleLayerQuadAllocator::Gpu(BorrowedLayers {
-                layers: [layer0, layer1, layer2],
-                _owner: vbs,
-            })
-        }
+    /// Maps the three per-layer vertex buffers and hands the resulting
+    /// quad allocator to `f`. This replaces the old `quad_allocator()`,
+    /// which returned an owned, `unsafe`-erased-to-`'static` value; here
+    /// the `Ref`/`RefMut` guards and the views derived from them all live
+    /// as ordinary local variables in this one function's stack frame,
+    /// for exactly as long as `f` runs, so the borrow checker verifies
+    /// the whole thing without any transmutes.
+    pub fn with_quad_allocator<R>(
+        &self,
+        f: impl FnOnce(&mut TripleLayerQuadAllocator) -> R,
+    ) -> R {
+        let vbs = self.vb.borrow();
+        let mut bufs0 = vbs[0].bufs.borrow_mut();
+        let mut bufs1 = vbs[1].bufs.borrow_mut();
+        let mut bufs2 = vbs[2].bufs.borrow_mut();
+
+        let view0 = vbs[0].map(&mut bufs0);
+        let view1 = vbs[1].map(&mut bufs1);
+        let view2 = vbs[2].map(&mut bufs2);
+
+        let mut layers = TripleLayerQuadAllocator::Gpu(BorrowedLayers {
+            layers: [view0, view1, view2],
+        });
+
+        f(&mut layers)
     }
 
     pub fn need_more_quads(&self, vb_idx: usize) -> Option<usize> {
@@ -538,7 +485,7 @@ impl RenderLayer {
         }
 
         let buffer = TripleVertexBuffer {
-            index: RefCell::new(0),
+            index: Cell::new(0),
             bufs: RefCell::new([
                 context.allocate_vertex_buffer(num_quads, &verts)?,
                 context.allocate_vertex_buffer(num_quads, &verts)?,
@@ -546,21 +493,18 @@ impl RenderLayer {
             ]),
             capacity: num_quads,
             indices: context.allocate_index_buffer(&indices)?,
-            next_quad: RefCell::new(0),
+            next_quad: Cell::new(0),
         };
 
         Ok(buffer)
     }
 }
 
-pub struct BorrowedLayers {
-    pub layers: [MappedQuads<'static>; 3],
-
-    // layers references _owner, so it must be dropped after layers.
-    _owner: Ref<'static, [TripleVertexBuffer; 3]>,
+pub struct BorrowedLayers<'a> {
+    pub layers: [MappedQuadsView<'a>; 3],
 }
 
-impl TripleLayerQuadAllocatorTrait for BorrowedLayers {
+impl<'a> TripleLayerQuadAllocatorTrait for BorrowedLayers<'a> {
     fn allocate(&mut self, layer_num: usize) -> anyhow::Result<QuadImpl<'_>> {
         self.layers[layer_num].allocate()
     }
