@@ -21,7 +21,8 @@ impl crate::TermWindow {
                 self.fancy_tab_bar.replace(tab_bar);
             }
 
-            self.ui_items.append(&mut self.paint_fancy_tab_bar()?);
+            self.ui_items_scratch
+                .append(&mut self.paint_fancy_tab_bar()?);
             return Ok(());
         }
 
@@ -37,7 +38,7 @@ impl crate::TermWindow {
         };
 
         // Register the tab bar location
-        self.ui_items.append(&mut self.tab_bar.compute_ui_items(
+        self.ui_items_scratch.append(&mut self.tab_bar.compute_ui_items(
             tab_bar_y as usize,
             self.render_metrics.cell_size.height as usize,
             self.render_metrics.cell_size.width as usize,
