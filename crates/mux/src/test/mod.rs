@@ -1,10 +1,10 @@
 //! Test support for the mux crate: a Pane implementation that records
 //! the action batches performed against it, and a harness that feeds
-//! bytes to parse_buffered_data through a socketpair.
+//! bytes to parse_buffered_data through an in-process channel.
 use crate::pane::{CachePolicy, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId, WithPaneLines};
 use crate::renderable::{RenderableDimensions, StableCursorPosition};
 use crate::{parse_buffered_data, DomainId};
-use filedescriptor::{socketpair, FileDescriptor};
+use crossbeam::channel::{unbounded, Sender};
 use parking_lot::{MappedMutexGuard, Mutex};
 use rangeset::RangeSet;
 use std::ops::Range;
@@ -139,9 +139,22 @@ impl Pane for RecordingPane {
 // run concurrently with each other.
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
+/// Test-only stand-in for the production `FileDescriptor`-based writer:
+/// wraps a `Sender<Vec<u8>>` with a `write_all`-shaped API so the
+/// existing tests (written against byte-stream semantics) don't need to
+/// be restructured message-by-message.
+pub(crate) struct TestWriter(Sender<Vec<u8>>);
+
+impl TestWriter {
+    fn write_all(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.0.send(bytes.to_vec())?;
+        Ok(())
+    }
+}
+
 fn start_parser(
     mux_synchronized_output_timeout_ms: u64,
-) -> (FileDescriptor, Arc<RecordingPane>, thread::JoinHandle<()>) {
+) -> (TestWriter, Arc<RecordingPane>, thread::JoinHandle<()>) {
     static SCHEDULER: Once = Once::new();
     SCHEDULER.call_once(|| {
         // send_actions_to_mux notifies the mux via
@@ -162,19 +175,20 @@ fn start_parser(
     config.mux_synchronized_output_timeout_ms = mux_synchronized_output_timeout_ms;
     config::use_this_configuration(config);
 
-    let (tx, rx) = socketpair().unwrap();
+    let (tx, rx) = unbounded();
     let pane = Arc::new(RecordingPane::new());
     let pane_for_parser: Weak<dyn Pane> = Arc::downgrade(&(pane.clone() as Arc<dyn Pane>));
     let parser = thread::spawn(move || {
         let dead = Arc::new(AtomicBool::new(false));
         parse_buffered_data(pane_for_parser, &dead, rx);
     });
-    (tx, pane, parser)
+    (TestWriter(tx), pane, parser)
 }
 
-// Dropping the write end closes the socketpair, which the parser
-// thread observes as EOF and exits
-fn stop_parser(tx: FileDescriptor, parser: thread::JoinHandle<()>) {
+// Dropping the sender closes the channel, which the parser thread
+// observes as a disconnect (the equivalent of the old socketpair EOF)
+// and exits.
+fn stop_parser(tx: TestWriter, parser: thread::JoinHandle<()>) {
     drop(tx);
     parser.join().unwrap();
 }

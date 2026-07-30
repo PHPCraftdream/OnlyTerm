@@ -1,6 +1,5 @@
 use super::*;
 use crate::{configuration, hold_timeout_from};
-use std::io::Write;
 use termwiz::escape::csi::{Cursor, Device, Keyboard, Mode, CSI};
 
 #[test]
