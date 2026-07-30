@@ -14,6 +14,7 @@ use anyhow::Context;
 use std::cell::{Cell, RefCell, RefMut};
 use std::convert::TryInto;
 use std::rc::Rc;
+use std::sync::Arc;
 use wezterm_font::FontConfiguration;
 use wgpu::util::DeviceExt;
 
@@ -22,7 +23,7 @@ const INDICES_PER_CELL: usize = 6;
 #[derive(Clone)]
 pub enum RenderContext {
     Glium(Rc<GliumContext>),
-    WebGpu(Rc<WebGpuState>),
+    WebGpu(Arc<WebGpuState>),
 }
 
 pub enum RenderFrame<'a> {
@@ -204,7 +205,7 @@ pub struct WebGpuMappedVertexBuffer<'a> {
 pub struct WebGpuVertexBuffer {
     buf: wgpu::Buffer,
     num_vertices: usize,
-    state: Rc<WebGpuState>,
+    state: Arc<WebGpuState>,
 }
 
 impl std::ops::Deref for WebGpuVertexBuffer {
@@ -215,7 +216,7 @@ impl std::ops::Deref for WebGpuVertexBuffer {
 }
 
 impl WebGpuVertexBuffer {
-    pub fn new(num_vertices: usize, state: &Rc<WebGpuState>) -> Self {
+    pub fn new(num_vertices: usize, state: &Arc<WebGpuState>) -> Self {
         Self {
             buf: state.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Vertex Buffer"),
@@ -224,7 +225,7 @@ impl WebGpuVertexBuffer {
                 mapped_at_creation: true,
             }),
             num_vertices,
-            state: Rc::clone(state),
+            state: Arc::clone(state),
         }
     }
 
