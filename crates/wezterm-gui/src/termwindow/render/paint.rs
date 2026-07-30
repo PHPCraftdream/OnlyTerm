@@ -254,15 +254,33 @@ impl crate::TermWindow {
 
     /// Paint the active tab's pane content: every visible pane of the
     /// active tab, plus the divider lines between split panes within that
-    /// same tab. This is the piece that a future per-tab frame-build budget
-    /// (task #251) will need to time-box and be able to abort
-    /// independently of the window chrome (background/tab bar/borders/modal).
+    /// same tab.
+    ///
+    /// Task #251: this whole call is bounded by a single wall-clock
+    /// deadline derived from `tab_frame_build_budget_ms` (disabled when
+    /// that config value is 0). The deadline is computed once here, up
+    /// front, and threaded down into every pane's `paint_pane` call rather
+    /// than each pane getting its own fresh budget -- otherwise a split
+    /// layout with N panes could take up to N times the configured budget
+    /// in total, which would defeat the point. The actual abort/skip
+    /// happens at row granularity inside `paint_pane`/`render_lines`
+    /// (checked between whole rows, never mid-shape); this per-pane loop
+    /// boundary only matters for split layouts; for the common
+    /// single-pane tab it does nothing extra, which is exactly why the
+    /// row-level check exists.
     fn paint_tab_content(
         &mut self,
         layers: &mut TripleLayerQuadAllocator,
         panes: &[PositionedPane],
     ) -> anyhow::Result<()> {
         let focused = self.focused.is_some();
+
+        let budget_ms = self.config.tab_frame_build_budget_ms;
+        let frame_deadline = if budget_ms > 0 {
+            Some(Instant::now() + Duration::from_millis(budget_ms))
+        } else {
+            None
+        };
 
         for pos in panes {
             if pos.is_active {
@@ -272,7 +290,8 @@ impl crate::TermWindow {
                     mux::Mux::get().record_focus_for_current_identity(pos.pane.pane_id());
                 }
             }
-            self.paint_pane(pos, layers).context("paint_pane")?;
+            self.paint_pane(pos, layers, frame_deadline)
+                .context("paint_pane")?;
         }
 
         if let Some(pane) = self.get_active_pane_or_overlay() {
