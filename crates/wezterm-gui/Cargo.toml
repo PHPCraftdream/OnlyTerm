@@ -41,6 +41,7 @@ embed-resource.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arc-swap.workspace = true
 bitflags.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true

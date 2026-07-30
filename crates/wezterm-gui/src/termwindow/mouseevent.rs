@@ -27,11 +27,8 @@ impl super::TermWindow {
     fn resolve_ui_item(&self, event: &MouseEvent) -> Option<UIItem> {
         let x = event.coords.x;
         let y = event.coords.y;
-        self.ui_items
-            .iter()
-            .rev()
-            .find(|item| item.hit_test(x, y))
-            .cloned()
+        let guard = self.ui_items.load();
+        guard.iter().rev().find(|item| item.hit_test(x, y)).cloned()
     }
 
     fn leave_ui_item(&mut self, item: &UIItem) {

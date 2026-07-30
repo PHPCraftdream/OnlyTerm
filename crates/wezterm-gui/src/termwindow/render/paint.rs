@@ -154,7 +154,7 @@ impl crate::TermWindow {
                 let gl_state = self.render_state.as_ref().unwrap();
                 self.render_element(&computed, gl_state, None)?;
 
-                self.ui_items.append(&mut ui_items);
+                self.ui_items_scratch.append(&mut ui_items);
             }
         }
 
@@ -170,7 +170,7 @@ impl crate::TermWindow {
         }
 
         // Clear out UI item positions; we'll rebuild these as we render
-        self.ui_items.clear();
+        self.ui_items_scratch.clear();
 
         let panes = self.get_panes_to_render();
         let focused = self.focused.is_some();
@@ -279,6 +279,13 @@ impl crate::TermWindow {
         })?;
 
         self.paint_modal().context("paint_modal")?;
+
+        // Publish the freshly-built UI items so that mouse hit-testing
+        // (which may run on a different thread once rendering is moved
+        // off the GUI thread) never has to synchronize with the render
+        // pass via a lock.
+        self.ui_items
+            .store(std::sync::Arc::new(std::mem::take(&mut self.ui_items_scratch)));
 
         Ok(())
     }

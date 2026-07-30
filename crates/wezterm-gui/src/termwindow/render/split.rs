@@ -40,7 +40,7 @@ impl crate::TermWindow {
                 ),
                 foreground,
             )?;
-            self.ui_items.push(UIItem {
+            self.ui_items_scratch.push(UIItem {
                 x: border.left.get() as usize
                     + padding_left as usize
                     + (split.left * cell_width as usize),
@@ -63,7 +63,7 @@ impl crate::TermWindow {
                 ),
                 foreground,
             )?;
-            self.ui_items.push(UIItem {
+            self.ui_items_scratch.push(UIItem {
                 x: border.left.get() as usize
                     + padding_left as usize
                     + (split.left * cell_width as usize),

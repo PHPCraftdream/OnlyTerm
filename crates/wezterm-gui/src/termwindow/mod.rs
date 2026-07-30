@@ -504,7 +504,8 @@ pub struct TermWindow {
 
     palette: Option<ColorPalette>,
 
-    ui_items: Vec<UIItem>,
+    ui_items_scratch: Vec<UIItem>,
+    ui_items: arc_swap::ArcSwap<Vec<UIItem>>,
     dragging: Option<(UIItem, MouseEvent)>,
 
     modal: RefCell<Option<Rc<dyn Modal>>>,
@@ -815,7 +816,8 @@ impl TermWindow {
             scheduled_animation: RefCell::new(None),
             allow_images: AllowImage::Yes,
             semantic_zones: HashMap::new(),
-            ui_items: vec![],
+            ui_items_scratch: vec![],
+            ui_items: arc_swap::ArcSwap::new(std::sync::Arc::new(Vec::new())),
             dragging: None,
             last_ui_item: None,
             is_click_to_focus_window: false,
