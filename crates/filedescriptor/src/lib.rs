@@ -149,6 +149,11 @@ pub enum Error {
     OnlySocketsNonBlocking,
     #[error("SetStdHandle failed")]
     SetStdHandle(#[source] std::io::Error),
+    #[error(
+        "failed to verify socketpair handshake token: exhausted retry budget \
+         without a matching connection (possible local port hijack attempt)"
+    )]
+    SocketpairHandshake,
 
     #[error("IoError")]
     Io(#[from] std::io::Error),
