@@ -683,6 +683,20 @@ impl WebGpuState {
         Ok(())
     }
 
+    /// Resize (and, if the size actually changed, reconfigure) the surface.
+    ///
+    /// Render-thread-only once a window's render thread is active (task
+    /// 221.6): the GUI thread routes through
+    /// `TermWindow::resize_webgpu_surface`, which sends a `RenderMsg::Resize`
+    /// instead of calling this directly whenever `self.render_thread` is
+    /// `Some`. What serializes this against `submit_frame`/`reconfigure`
+    /// running concurrently on the same `Arc<WebGpuState>` is that routing
+    /// (all three only ever run on the render thread once it exists), not a
+    /// lock -- there's deliberately no runtime thread-identity assertion
+    /// here, because `resize` is ALSO legitimately called directly from the
+    /// GUI thread when there's no render thread for this window (flag off,
+    /// non-Windows, or spawn failed), and a blanket assert would be wrong in
+    /// that case.
     #[allow(unused_mut)]
     pub fn resize(&self, mut dims: Dimensions) {
         // During a live resize on Windows, the Dimensions that we're processing may be
@@ -720,6 +734,18 @@ impl WebGpuState {
             // Avoid reconfiguring with a 0 sized surface, as webgpu will
             // panic in that case
             // <https://github.com/wezterm/wezterm/issues/2881>
+            self.surface.configure(&self.device, &config);
+        }
+    }
+
+    /// Re-runs `surface.configure` with the currently stored config,
+    /// unconditionally -- bypasses `resize`'s dedup-against-previous-size
+    /// check. Used to recover from `SurfaceError::Lost`/`Outdated`, where the
+    /// swapchain needs to be recreated even though the requested size hasn't
+    /// changed.
+    pub fn reconfigure(&self) {
+        let config = self.config.lock();
+        if config.width > 0 && config.height > 0 {
             self.surface.configure(&self.device, &config);
         }
     }
