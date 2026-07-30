@@ -924,12 +924,16 @@ impl TermWindow {
                     let (tx, rx) = std::sync::mpsc::channel();
                     let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let repaint_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let window_destroyed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
                     let seed = crate::renderthread::RenderThreadSeed {
                         window: window.clone(),
                         webgpu: Arc::clone(&webgpu),
                         rx,
                         in_flight,
                         repaint_pending,
+                        window_destroyed,
+                        submit_started_at,
                     };
                     myself.render_thread = crate::renderthread::RenderThreadHandle::spawn(
                         seed,
