@@ -81,6 +81,22 @@ struct CachedProcInfo {
     root: LocalProcessInfo,
     updated: Instant,
     foreground: LocalProcessInfo,
+    /// Task #247: set while a background thread (spawned by
+    /// `divine_process_list`) is busy recomputing this cache entry, so a
+    /// second caller that also observes an expired-but-present cache
+    /// doesn't spawn a duplicate concurrent refresh. Mirrors
+    /// `CachedLeaderInfo::updating` above.
+    updating: bool,
+}
+
+impl CachedProcInfo {
+    fn expired(&self) -> bool {
+        self.updated.elapsed() > PROC_INFO_CACHE_TTL
+    }
+
+    fn can_update(&self) -> bool {
+        !self.updating
+    }
 }
 
 /// This is a bit horrible; it can take 700us to tcgetpgrp, so if we have
@@ -241,7 +257,12 @@ pub struct LocalPane {
     writer: Mutex<Box<dyn Write + Send>>,
     domain_id: DomainId,
     tmux_domain: Mutex<Option<Arc<TmuxDomainState>>>,
-    proc_list: Mutex<Option<CachedProcInfo>>,
+    /// Task #247: `Arc`-wrapped (like `leader` below) so that
+    /// `divine_process_list`'s background refresh thread can clone just
+    /// this handle and update the cache in place without needing to keep
+    /// the whole `LocalPane` alive or borrow `self` across the thread
+    /// spawn.
+    proc_list: Arc<Mutex<Option<CachedProcInfo>>>,
     #[cfg(unix)]
     leader: Arc<Mutex<Option<CachedLeaderInfo>>>,
     command_description: String,
@@ -1394,7 +1415,7 @@ impl LocalPane {
             writer: Mutex::new(writer),
             domain_id,
             tmux_domain: Mutex::new(None),
-            proc_list: Mutex::new(None),
+            proc_list: Arc::new(Mutex::new(None)),
             #[cfg(unix)]
             leader: Arc::new(Mutex::new(None)),
             command_description,
@@ -1499,59 +1520,130 @@ impl LocalPane {
         None
     }
 
+    /// Does the actual, expensive work of `divine_process_list`'s refresh:
+    /// walks a fresh, live system-wide process snapshot rooted at `pid`
+    /// and picks out the "foreground" process. This is the part that's
+    /// slow (see the doc comment on `divine_process_list`) and that task
+    /// #247 moves off the caller's thread whenever there's already a
+    /// stale value it's safe to return instead.
+    fn compute_proc_info(pid: u32) -> Option<CachedProcInfo> {
+        log::trace!("CachedProcInfo expired, refresh");
+        let root = LocalProcessInfo::with_root_pid(pid)?;
+
+        // Windows doesn't have any job control or session concept,
+        // so we infer that the equivalent to the process group
+        // leader is the most recently spawned program running
+        // in the console
+        let mut youngest = &root;
+
+        // Walk the process tree with an explicit stack rather
+        // than recursion: this tree is rebuilt from a live
+        // system-wide process snapshot every time the cache
+        // expires, and its depth is not bounded by anything
+        // wezterm controls, so a recursive walk here could in
+        // principle overflow the stack for a sufficiently deep
+        // process tree.
+        let mut stack: Vec<&LocalProcessInfo> = vec![&root];
+        while let Some(proc) = stack.pop() {
+            if proc.start_time >= youngest.start_time {
+                youngest = proc;
+            }
+
+            for child in proc.children.values() {
+                #[cfg(windows)]
+                if child.console == 0 {
+                    continue;
+                }
+                stack.push(child);
+            }
+        }
+        let mut foreground = youngest.clone();
+        foreground.children.clear();
+
+        log::trace!("CachedProcInfo updated");
+        Some(CachedProcInfo {
+            root,
+            foreground,
+            updated: Instant::now(),
+            updating: false,
+        })
+    }
+
+    /// Task #247: `divine_process_list` used to call `with_root_pid`
+    /// (a `CreateToolhelp32Snapshot` walk over *every* process on the
+    /// machine, plus a `ProcHandle::new` per process on Windows)
+    /// synchronously, inline, on the calling thread whenever the cache
+    /// was expired -- even under `CachePolicy::AllowStale`. Since this is
+    /// reachable from the GUI thread on essentially every key/mouse event
+    /// (`get_tab_information` -> `get_current_working_dir(AllowStale)` ->
+    /// `divine_current_working_dir` -> `divine_foreground_process` on
+    /// Windows), that inline snapshot -- whose cost scales with total
+    /// system process count, not anything wezterm controls -- could stall
+    /// input/rendering on every cache expiry (every `PROC_INFO_CACHE_TTL`
+    /// = 300ms).
+    ///
+    /// This now mirrors `get_leader`'s already-correct pattern: when the
+    /// caller allows stale data and a cached value already exists (even
+    /// if expired), return it immediately and kick off a background
+    /// thread to refresh the cache for next time, guarded by
+    /// `CachedProcInfo::updating` against spawning a duplicate concurrent
+    /// refresh. Only two cases still do the synchronous fetch inline:
+    /// `CachePolicy::FetchImmediate` (an explicit "I need a fresh answer
+    /// right now" request, e.g. `can_close_without_prompting`'s
+    /// close-tab-time stateful-process check), and the very first call
+    /// for a pane (there's no stale value yet to return).
     fn divine_process_list(
         &self,
         policy: CachePolicy,
     ) -> Option<MappedMutexGuard<'_, CachedProcInfo>> {
         if let ProcessState::Running { pid: Some(pid), .. } = &*self.process.lock() {
+            let pid = *pid;
             let mut proc_list = self.proc_list.lock();
 
-            let expired = policy == CachePolicy::FetchImmediate
-                || proc_list
-                    .as_ref()
-                    .map(|info| info.updated.elapsed() > PROC_INFO_CACHE_TTL)
-                    .unwrap_or(true);
-
-            if expired {
-                log::trace!("CachedProcInfo expired, refresh");
-                let root = LocalProcessInfo::with_root_pid(*pid)?;
-
-                // Windows doesn't have any job control or session concept,
-                // so we infer that the equivalent to the process group
-                // leader is the most recently spawned program running
-                // in the console
-                let mut youngest = &root;
-
-                // Walk the process tree with an explicit stack rather
-                // than recursion: this tree is rebuilt from a live
-                // system-wide process snapshot every time the cache
-                // expires, and its depth is not bounded by anything
-                // wezterm controls, so a recursive walk here could in
-                // principle overflow the stack for a sufficiently deep
-                // process tree.
-                let mut stack: Vec<&LocalProcessInfo> = vec![&root];
-                while let Some(proc) = stack.pop() {
-                    if proc.start_time >= youngest.start_time {
-                        youngest = proc;
-                    }
-
-                    for child in proc.children.values() {
-                        #[cfg(windows)]
-                        if child.console == 0 {
-                            continue;
-                        }
-                        stack.push(child);
-                    }
+            match proc_list.as_mut() {
+                None => {
+                    // First call for this pane: nothing cached yet to
+                    // return, so there's no way to avoid doing this one
+                    // fetch synchronously.
+                    let info = Self::compute_proc_info(pid)?;
+                    proc_list.replace(info);
                 }
-                let mut foreground = youngest.clone();
-                foreground.children.clear();
-
-                proc_list.replace(CachedProcInfo {
-                    root,
-                    foreground,
-                    updated: Instant::now(),
-                });
-                log::trace!("CachedProcInfo updated");
+                Some(info) if policy == CachePolicy::FetchImmediate => {
+                    // Caller explicitly wants a fresh answer right now
+                    // (e.g. an explicit close-tab process check): keep
+                    // doing the synchronous refresh inline, matching the
+                    // previous behavior for this policy.
+                    let fresh = Self::compute_proc_info(pid)?;
+                    *info = fresh;
+                }
+                Some(info) if info.expired() && info.can_update() => {
+                    // Stale, but there's already something to return, and
+                    // policy allows it: hand back the stale data now and
+                    // queue up a background refresh for next time,
+                    // exactly like `get_leader` does above.
+                    info.updating = true;
+                    let proc_list_ref = Arc::clone(&self.proc_list);
+                    std::thread::spawn(move || {
+                        if let Some(fresh) = Self::compute_proc_info(pid) {
+                            let mut proc_list = proc_list_ref.lock();
+                            if let Some(info) = proc_list.as_mut() {
+                                *info = fresh;
+                            }
+                        } else if let Some(info) = proc_list_ref.lock().as_mut() {
+                            // Refresh failed (e.g. the process has since
+                            // exited): stop claiming an update is
+                            // in-flight so a later call can try again,
+                            // but keep serving the last-known-good data
+                            // in the meantime.
+                            info.updating = false;
+                        }
+                    });
+                }
+                Some(_) => {
+                    // Either still fresh, or already being refreshed by
+                    // another in-flight background thread -- either way,
+                    // just return what's cached.
+                }
             }
 
             return Some(MutexGuard::map(proc_list, |info| info.as_mut().unwrap()));
@@ -1726,6 +1818,43 @@ mod tests {
         }
     }
 
+    /// A `Child` double that, unlike `NeverExitChild`, reports the
+    /// *actual* pid of the test process itself via `process_id()`. Task
+    /// #247's `divine_process_list` background-refresh path needs a pid
+    /// that `LocalProcessInfo::with_root_pid` can genuinely resolve
+    /// against a live system process snapshot (there's no cheap way to
+    /// fake that snapshot), and the test process is guaranteed to exist
+    /// for as long as the test runs.
+    #[derive(Debug)]
+    struct RealPidChild;
+
+    impl Child for RealPidChild {
+        fn try_wait(&mut self) -> IoResult<Option<ExitStatus>> {
+            Ok(None)
+        }
+        fn wait(&mut self) -> IoResult<ExitStatus> {
+            loop {
+                std::thread::sleep(Duration::from_secs(3600));
+            }
+        }
+        fn process_id(&self) -> Option<u32> {
+            Some(std::process::id())
+        }
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    impl ChildKiller for RealPidChild {
+        fn kill(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+        fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+            Box::new(NeverExitKiller)
+        }
+    }
+
     /// A `MasterPty` double that records whether it has been dropped, so
     /// tests can confirm `kill()` doesn't drop it inline (the whole point
     /// of the deferred-drop mechanism).
@@ -1868,6 +1997,50 @@ mod tests {
             "test".to_string(),
         ));
         (pane, dropped)
+    }
+
+    /// Like `make_pane`, but backed by `RealPidChild` instead of
+    /// `NeverExitChild`, so `ProcessState::Running.pid` is
+    /// `Some(std::process::id())` -- a pid that
+    /// `LocalProcessInfo::with_root_pid` can genuinely resolve. Needed by
+    /// `divine_process_list`/`CachedProcInfo` tests (task #247): with
+    /// `NeverExitChild`'s `pid: None`, `divine_process_list` bails out
+    /// before ever touching the cache at all.
+    fn make_pane_with_real_pid() -> Arc<LocalPane> {
+        let size = TerminalSize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: COLS * 8,
+            pixel_height: ROWS * 16,
+            dpi: 0,
+        };
+        let terminal = Terminal::new(
+            size,
+            Arc::new(TestConfig),
+            "WezTerm",
+            "0.0.0",
+            Box::new(Vec::new()),
+        );
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pty = Box::new(FakeMasterPty {
+            size: Mutex::new(PtySize {
+                rows: ROWS as u16,
+                cols: COLS as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+            dropped,
+        });
+        let writer = Box::new(Vec::new());
+        Arc::new(LocalPane::new(
+            1,
+            terminal,
+            Box::new(RealPidChild),
+            pty,
+            writer,
+            1,
+            "test".to_string(),
+        ))
     }
 
     /// Like `make_pane`, but with a `TrackedWriter` in place of the plain
@@ -2414,5 +2587,120 @@ mod tests {
         {
             let _ = pane.can_close_without_prompting(CloseReason::Tab);
         }
+    }
+
+    /// Task #247: once a `CachedProcInfo` entry already exists, a
+    /// subsequent `divine_process_list(AllowStale)` call against an
+    /// *expired* entry must return immediately with the OLD (stale) data
+    /// and hand the refresh off to a background thread, rather than
+    /// recomputing inline on the caller's thread.
+    ///
+    /// Honesty note (matching this session's established practice, see
+    /// task #241's commit for the precedent): there's no cheap,
+    /// deterministic way to make a *real* `with_root_pid` system-process
+    /// snapshot artificially slow, so this cannot directly assert "the
+    /// call returned in under N milliseconds while a slow refresh was
+    /// in flight" the way the lock-timeout tests in #244/#246 do. Instead
+    /// this proves the structural property that guarantees the timing
+    /// property holds: (1) the value returned by the stale call is
+    /// bit-for-bit the same `updated` timestamp as what was cached
+    /// before the call (i.e. it did *not* wait for a fresh recompute),
+    /// and (2) `updating` is left `true` immediately after the call
+    /// returns, proving a background thread was actually queued rather
+    /// than the refresh having already happened synchronously and
+    /// finished before `divine_process_list` returned.
+    #[test]
+    fn divine_process_list_returns_stale_data_and_backgrounds_refresh() {
+        let pane = make_pane_with_real_pid();
+
+        // First call: no cache yet, so this one is unavoidably
+        // synchronous (there's nothing stale to return). This seeds
+        // `proc_list` with a real `CachedProcInfo` for our own pid.
+        let first_updated = {
+            let info = pane
+                .divine_process_list(CachePolicy::AllowStale)
+                .expect("with_root_pid(std::process::id()) must resolve for the test process");
+            assert!(
+                !info.updating,
+                "no background refresh should be in flight right after the initial synchronous fetch"
+            );
+            info.updated
+        };
+
+        // Force the cache to look expired without sleeping
+        // `PROC_INFO_CACHE_TTL` (300ms) in a test: reach into the cache
+        // directly (same module, so `proc_list` is visible) and rewind
+        // `updated`. This rewound timestamp -- not `first_updated` -- is
+        // what a correctly-behaving stale read must hand back, since
+        // that's what's actually sitting in the cache at the moment of
+        // the next call.
+        let expired_updated = {
+            let mut proc_list = pane.proc_list.lock();
+            let info = proc_list.as_mut().expect("seeded by the call above");
+            assert_eq!(info.updated, first_updated);
+            info.updated = Instant::now() - (PROC_INFO_CACHE_TTL + Duration::from_millis(50));
+            info.updated
+        };
+
+        // Second call, still `AllowStale`: must return the SAME
+        // `expired_updated` timestamp immediately (proving it did not
+        // block on a fresh synchronous recompute -- a recompute would
+        // produce a brand new `Instant::now()`, not this rewound one),
+        // and must leave `updating == true` (proving a background thread
+        // was queued rather than nothing happening at all).
+        let stale_updated = {
+            let info = pane
+                .divine_process_list(CachePolicy::AllowStale)
+                .expect("cache is populated, so this must return Some even while stale");
+            assert_eq!(
+                info.updated, expired_updated,
+                "a stale-but-present cache entry must be returned as-is, not recomputed inline"
+            );
+            assert!(
+                info.updating,
+                "an expired, allow-stale call against a fresh (non-updating) cache entry must \
+                 queue a background refresh"
+            );
+            info.updated
+        };
+        assert_eq!(stale_updated, expired_updated);
+
+        // A third call while the background refresh is (very likely)
+        // still marked in-flight must not spawn a second concurrent
+        // refresh -- `can_update()` gates on `!updating`. We can't
+        // deterministically observe "no second thread was spawned"
+        // directly, but we can at least confirm this call doesn't panic
+        // or deadlock and still hands back usable data.
+        let _ = pane.divine_process_list(CachePolicy::AllowStale);
+
+        // Give the background thread a bounded window to finish and
+        // confirm it actually does complete and clear `updating`,
+        // demonstrating the refresh is real (not a permanently stuck
+        // flag) -- this part is inherently timing-sensitive against a
+        // real OS snapshot, so it's a generous bound (well beyond any
+        // reasonable `with_root_pid` cost) rather than a tight one.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let still_updating = pane
+                .proc_list
+                .lock()
+                .as_ref()
+                .map(|info| info.updating)
+                .unwrap_or(false);
+            if !still_updating {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "background refresh never cleared `updating` within 5s"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let refreshed = pane.proc_list.lock().as_ref().unwrap().updated;
+        assert!(
+            refreshed > first_updated,
+            "background thread must have actually recomputed and stored a newer `updated` value"
+        );
     }
 }
