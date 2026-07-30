@@ -323,6 +323,16 @@ impl Pane for LocalPane {
     /// See `PTY_DROP_GRACE_MS`'s doc comment for why that duration was
     /// chosen.
     ///
+    /// `self.writer` has to be deferred the same way: `ConPtyMasterPty`
+    /// (`crates/pty/src/win/conpty.rs`, `take_writer()`) hands the pty's
+    /// stdin `FileDescriptor` to whoever calls `take_writer()` (this pane,
+    /// at construction time) and keeps no reference of its own -- so
+    /// `self.writer` is the *only* thing keeping that pipe open. Dropping
+    /// only `self.pty` while `self.writer` still dropped immediately
+    /// (as it would without this) would close the pipe right away and
+    /// defeat the grace period just as completely as not deferring
+    /// anything at all.
+    ///
     /// The existing hard-kill machinery (`signaller.kill()`, which on
     /// Windows waits up to `pty::win::mod::GRACEFUL_KILL_TIMEOUT_MS` for
     /// the child to exit before force-terminating it and closing the Job
@@ -353,24 +363,41 @@ impl Pane for LocalPane {
                     // `LocalPane::drop()` (which will run shortly after
                     // the last `Arc<LocalPane>` goes away) finds `None`
                     // here and has nothing left to tear down.
-                    if let Some(pty) = self.pty.lock().take() {
+                    let taken_pty = self.pty.lock().take();
+
+                    // Swap the real writer out for a no-op sink, so any
+                    // late write (e.g. from a caller still holding a
+                    // `writer()` guard) is harmlessly discarded instead of
+                    // erroring, and so `self.writer`'s Mutex always holds
+                    // a valid `Box<dyn Write + Send>` per its field type
+                    // (avoiding a wider `Option`-ifying change to the
+                    // `writer()` accessor, which is part of the `Pane`
+                    // trait's public surface). The real writer is moved
+                    // out for deferred dropping, same as the pty.
+                    let taken_writer = std::mem::replace(
+                        &mut *self.writer.lock(),
+                        Box::new(std::io::sink()),
+                    );
+
+                    if taken_pty.is_some() {
                         // Detached, not joined -- mirrors
                         // `RenderThreadHandle::spawn` in
-                        // `wezterm-gui/src/renderthread.rs`. Moving `pty`
-                        // into the closure and letting it fall out of
-                        // scope at the end is what actually drops (and
-                        // so tears down) it, just deferred past the
-                        // grace period.
+                        // `wezterm-gui/src/renderthread.rs`. Moving
+                        // `taken_pty`/`taken_writer` into the closure and
+                        // letting them fall out of scope at the end is
+                        // what actually drops (and so tears down) them,
+                        // just deferred past the grace period.
                         let builder = std::thread::Builder::new().name("pty-drop-grace".into());
                         match builder.spawn(move || {
                             std::thread::sleep(Duration::from_millis(PTY_DROP_GRACE_MS));
-                            drop(pty);
+                            drop(taken_pty);
+                            drop(taken_writer);
                         }) {
                             Ok(join_handle) => drop(join_handle),
                             Err(err) => {
                                 log::error!(
                                     "Failed to spawn pty-drop-grace thread, \
-                                     dropping pty immediately: {:#}",
+                                     dropping pty/writer immediately: {:#}",
                                     err
                                 );
                             }
