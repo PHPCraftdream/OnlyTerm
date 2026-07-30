@@ -913,6 +913,30 @@ pub struct Config {
     #[dynamic(default = "default_render_thread_hang_threshold_ms")]
     pub render_thread_hang_threshold_ms: u64,
 
+    /// How long, in milliseconds, building the active tab's pane content
+    /// for a single frame (shaping, rasterization, quad building -- see
+    /// `paint_tab_content`) may run before the remainder of that frame's
+    /// content is skipped in favor of reusing whatever was already drawn.
+    /// This is unrelated to `render_thread_hang_threshold_ms`/
+    /// `gui_watchdog_threshold_ms`, which guard the GPU submit call and the
+    /// message loop respectively: this one guards the CPU-side work of
+    /// building a frame's content, which today always runs synchronously
+    /// on the GUI thread for the active tab and has no time limit of its
+    /// own otherwise. 40ms was chosen as a middle ground between a 60Hz
+    /// frame budget (~16.6ms, unrealistically tight for a hard cutoff given
+    /// normal frames already legitimately exceed it under heavier-but-not-
+    /// pathological content) and "still feels responsive" (perceptible
+    /// input lag typically starts somewhere around 100ms) -- similar in
+    /// spirit to how `render_thread_hang_threshold_ms`'s 4000ms default
+    /// is picked well above any expected normal duration for the thing it
+    /// guards, just at a much smaller scale here because this budget is
+    /// meant to trip on every slow frame (not just a true hang) and
+    /// degrade gracefully rather than declare an error. Set to 0 to
+    /// disable and always build the full frame regardless of how long it
+    /// takes.
+    #[dynamic(default = "default_tab_frame_build_budget_ms")]
+    pub tab_frame_build_budget_ms: u64,
+
     #[dynamic(default = "default_shape_cache_size")]
     pub shape_cache_size: usize,
     #[dynamic(default = "default_line_state_cache_size")]
@@ -2120,6 +2144,10 @@ fn default_debug_render_thread_stall_ms() -> u64 {
 
 fn default_render_thread_hang_threshold_ms() -> u64 {
     4_000
+}
+
+fn default_tab_frame_build_budget_ms() -> u64 {
+    40
 }
 
 fn default_tiling_desktop_environments() -> Vec<String> {

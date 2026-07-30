@@ -290,6 +290,17 @@ pub trait Pane: Downcast + Send + Sync {
         false
     }
 
+    /// Task #251: lets a caller outside of this pane's own lock-timeout
+    /// machinery (specifically, the GUI's per-frame content-build budget
+    /// in `paint_tab_content`/`paint_pane`) report "this pane is currently
+    /// too slow to render fully" through the same signal as
+    /// `is_unresponsive()`, without needing its own separate flag/plumbing
+    /// down to Lua's `PaneInformation.is_unresponsive`. Defaults to a no-op
+    /// so `Pane` impls that don't back `is_unresponsive()` with a real flag
+    /// (and thus always report `false` above) aren't forced to implement
+    /// storage for a signal they never read back.
+    fn set_unresponsive(&self, _unresponsive: bool) {}
+
     /// Certain panes are OK to be closed with impunity (no prompts)
     fn can_close_without_prompting(&self, _reason: CloseReason) -> bool {
         false
