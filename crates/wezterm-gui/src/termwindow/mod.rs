@@ -1171,13 +1171,24 @@ impl TermWindow {
     }
 
     fn do_paint_webgpu(&mut self) -> anyhow::Result<bool> {
-        self.webgpu.as_mut().unwrap().resize(self.dimensions);
+        let dims = self.dimensions;
+        self.resize_webgpu_surface(dims);
         match self.do_paint_webgpu_impl() {
             Ok(ok) => Ok(ok),
             Err(err) => {
                 match err.downcast_ref::<wgpu::SurfaceError>() {
+                    // Note: with a render thread active, `do_paint_webgpu_impl`
+                    // (via `paint_impl` -> `call_draw` -> `call_draw_webgpu`,
+                    // see 221.5) never actually returns a `SurfaceError` --
+                    // frames are handed off to `send_frame` and this always
+                    // returns `Ok(())`. So this retry branch is effectively
+                    // dead code in render-thread mode; it remains the
+                    // correct/only recovery path when the render thread is
+                    // inactive (flag off, non-Windows, or spawn failed), so
+                    // it's left in place rather than removed.
                     Some(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        self.webgpu.as_mut().unwrap().resize(self.dimensions);
+                        let dims = self.dimensions;
+                        self.resize_webgpu_surface(dims);
                         return self.do_paint_webgpu_impl();
                     }
                     _ => {}
