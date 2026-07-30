@@ -900,6 +900,12 @@ pub struct Config {
     #[dynamic(default)]
     pub webgpu_render_thread: bool,
 
+    /// Debug-only: sleep this many milliseconds inside the render thread
+    /// right before submit_frame, to simulate a stuck GPU driver call for
+    /// testing hang-isolation behavior. 0 (default) disables the sleep.
+    #[dynamic(default = "default_debug_render_thread_stall_ms")]
+    pub debug_render_thread_stall_ms: u64,
+
     #[dynamic(default = "default_shape_cache_size")]
     pub shape_cache_size: usize,
     #[dynamic(default = "default_line_state_cache_size")]
@@ -2071,6 +2077,10 @@ fn default_max_fps() -> u64 {
 
 fn default_gui_watchdog_threshold_ms() -> u64 {
     4_000
+}
+
+fn default_debug_render_thread_stall_ms() -> u64 {
+    0
 }
 
 fn default_tiling_desktop_environments() -> Vec<String> {

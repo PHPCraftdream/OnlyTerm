@@ -922,10 +922,14 @@ impl TermWindow {
 
                 if config.webgpu_render_thread {
                     let (tx, rx) = std::sync::mpsc::channel();
+                    let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let repaint_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let seed = crate::renderthread::RenderThreadSeed {
                         window: window.clone(),
                         webgpu: Arc::clone(&webgpu),
                         rx,
+                        in_flight,
+                        repaint_pending,
                     };
                     myself.render_thread = crate::renderthread::RenderThreadHandle::spawn(
                         seed,
