@@ -651,6 +651,15 @@ const _: fn() = || {
     assert_send_sync::<WebGpuState>();
 };
 
+// Compile-time regression guard for this task specifically: every call site
+// now wraps `WebGpuState` in `Arc` (rather than `Rc`, which is not `Send`)
+// precisely so that a clone of the `Arc` can be handed to a dedicated render
+// thread later. Confirm that wrapping actually yields a `Send` value.
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<std::sync::Arc<WebGpuState>>();
+};
+
 #[cfg(test)]
 mod tests {
     use super::clamp_surface_dimensions;
