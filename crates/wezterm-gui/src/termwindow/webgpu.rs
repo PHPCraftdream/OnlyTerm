@@ -1,7 +1,7 @@
 use crate::quad::Vertex;
 use anyhow::anyhow;
 use config::{ConfigHandle, GpuInfo, WebGpuPowerPreference};
-use std::cell::RefCell;
+use parking_lot::Mutex;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use window::bitmaps::Texture2d;
@@ -27,14 +27,23 @@ pub struct WebGpuState {
     pub surface: wgpu::Surface<'static>,
     pub device: wgpu::Device,
     pub queue: Arc<wgpu::Queue>,
-    pub config: RefCell<wgpu::SurfaceConfiguration>,
-    pub dimensions: RefCell<Dimensions>,
+    // Lock ordering: never hold either lock across a call to
+    // `self.surface.configure(...)`; if both are needed, take `dimensions`
+    // before `config`.
+    pub config: Mutex<wgpu::SurfaceConfiguration>,
+    pub dimensions: Mutex<Dimensions>,
     pub render_pipeline: wgpu::RenderPipeline,
     shader_uniform_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_nearest_sampler: wgpu::Sampler,
     pub texture_linear_sampler: wgpu::Sampler,
-    pub handle: RawHandlePair,
+    /// The live client HWND, sampled from the `RawWindowHandle` at
+    /// construction time, used only by `resize()`'s `GetClientRect`
+    /// workaround. We deliberately don't keep the `RawHandlePair` itself
+    /// around: `raw-window-handle`'s enums are `!Send`/`!Sync` on account of
+    /// non-Windows variants, even though we only ever hold a Windows one.
+    #[cfg(windows)]
+    client_hwnd: Option<isize>,
 }
 
 pub struct RawHandlePair {
@@ -241,6 +250,18 @@ impl WebGpuState {
         // the surface's lifetime; the surface is dropped before the window.
         let surface = unsafe {
             instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&handle)?)?
+        };
+
+        // `Surface::configure`/`create_surface_unsafe` above have already
+        // copied out everything they need from `handle`, so it doesn't need
+        // to be kept alive for their sake. We do still need the raw HWND
+        // later for the `resize()` `GetClientRect` workaround, so extract
+        // just that (a plain `isize`, which is `Send`/`Sync`) rather than
+        // storing the whole `!Send`/`!Sync` `RawHandlePair`/`RawWindowHandle`.
+        #[cfg(windows)]
+        let client_hwnd = match handle.window {
+            RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
+            _ => None,
         };
 
         let mut adapter: Option<wgpu::Adapter> = None;
@@ -515,10 +536,11 @@ impl WebGpuState {
             surface,
             device,
             queue,
-            config: RefCell::new(config),
-            dimensions: RefCell::new(dimensions),
+            config: Mutex::new(config),
+            dimensions: Mutex::new(dimensions),
             render_pipeline,
-            handle,
+            #[cfg(windows)]
+            client_hwnd,
             shader_uniform_bind_group_layout,
             texture_bind_group_layout,
             texture_nearest_sampler,
@@ -550,31 +572,28 @@ impl WebGpuState {
         // lagging behind the true client size. We have to take the very latest value
         // from the window or else the underlying driver will raise an error about
         // the mismatch, so we need to sneakily read through the handle
-        match self.handle.window {
-            #[cfg(windows)]
-            RawWindowHandle::Win32(h) => {
-                // SAFETY: `RECT` is a POD with no validity invariants, so
-                // `mem::zeroed()` yields a valid all-zero value as an out-param.
-                let mut rect = unsafe { std::mem::zeroed() };
-                // SAFETY: `h.hwnd.get()` is the live HWND for this window and
-                // `&mut rect` is a valid out-pointer. `GetClientRect` only
-                // writes the client rectangle; on failure `rect` stays usable
-                // because it was zero-initialised.
-                unsafe { winapi::um::winuser::GetClientRect(h.hwnd.get() as _, &mut rect) };
-                dims.pixel_width = (rect.right - rect.left) as usize;
-                dims.pixel_height = (rect.bottom - rect.top) as usize;
-            }
-            _ => {}
+        #[cfg(windows)]
+        if let Some(hwnd) = self.client_hwnd {
+            // SAFETY: `RECT` is a POD with no validity invariants, so
+            // `mem::zeroed()` yields a valid all-zero value as an out-param.
+            let mut rect = unsafe { std::mem::zeroed() };
+            // SAFETY: `hwnd` is the live HWND for this window and
+            // `&mut rect` is a valid out-pointer. `GetClientRect` only
+            // writes the client rectangle; on failure `rect` stays usable
+            // because it was zero-initialised.
+            unsafe { winapi::um::winuser::GetClientRect(hwnd as _, &mut rect) };
+            dims.pixel_width = (rect.right - rect.left) as usize;
+            dims.pixel_height = (rect.bottom - rect.top) as usize;
         }
 
-        if dims == *self.dimensions.borrow() {
+        if dims == *self.dimensions.lock() {
             return;
         }
         // Store the unclamped dims: this field is only used to dedup resize
         // events against the size the window actually requested. Clamping is
         // applied below, only to the values handed to Surface::configure.
-        *self.dimensions.borrow_mut() = dims;
-        let mut config = self.config.borrow_mut();
+        *self.dimensions.lock() = dims;
+        let mut config = self.config.lock();
         let max = self.device.limits().max_texture_dimension_2d;
         let (clamped_width, clamped_height) =
             clamp_surface_dimensions(dims.pixel_width as u32, dims.pixel_height as u32, max);
@@ -621,6 +640,16 @@ fn clamp_surface_dimensions(width: u32, height: u32, max_texture_dimension_2d: u
     }
     (clamped_w, clamped_h)
 }
+
+// Compile-time regression guard: `WebGpuState` must be `Send + Sync` so that
+// it can eventually live behind an `Arc` on a dedicated render thread. This
+// fails to compile if that ever regresses (e.g. a `!Send`/`!Sync` field is
+// added back, such as a raw `RawWindowHandle`/`RawDisplayHandle` or a
+// `RefCell`).
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<WebGpuState>();
+};
 
 #[cfg(test)]
 mod tests {
