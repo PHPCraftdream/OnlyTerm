@@ -112,6 +112,14 @@ impl crate::TermWindow {
             self.last_frame_duration,
             self.fps
         );
+        // Note: when `webgpu_render_thread` is active, `call_draw` above
+        // only hands the built frame off to the render thread and returns
+        // immediately -- actual GPU submission happens asynchronously on
+        // that thread. So `last_frame_duration`/`fps`/this histogram no
+        // longer include GPU submission time in that mode; they measure
+        // frame-build time only, not full frame-build-and-submit time.
+        // (Submission time is tracked separately, on the render thread, as
+        // `gui.render_thread.submit`.)
         metrics::histogram!("gui.paint.impl").record(self.last_frame_duration);
         metrics::histogram!("gui.paint.impl.rate").record(1.);
 

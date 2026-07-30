@@ -19,7 +19,11 @@ impl crate::TermWindow {
 
     fn call_draw_webgpu(&mut self) -> anyhow::Result<()> {
         let frame = self.build_webgpu_frame()?;
-        self.webgpu.as_ref().unwrap().submit_frame(frame)?;
+        if let Some(rt) = self.render_thread.as_ref() {
+            rt.send_frame(frame);
+        } else {
+            self.webgpu.as_ref().unwrap().submit_frame(frame)?;
+        }
         Ok(())
     }
 
