@@ -326,6 +326,22 @@ pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
         },
     );
 
+    // Task #248: mirrors `has_unseen_output` immediately above -- reads
+    // straight from the live `Pane` trait object (see
+    // `Pane::is_unresponsive()`, defaulting to `false`; overridden on
+    // `LocalPane` in `crates/mux/src/localpane.rs` to report whether the
+    // most recent bounded `terminal.lock()` attempt, task #246, timed
+    // out) rather than through the `PaneInformation` snapshot exposed to
+    // `format-tab-title`/`format-window-title`.
+    engine.register_fn(
+        "is_unresponsive",
+        |this: &mut MuxPane| -> Result<bool, Box<rhai::EvalAltResult>> {
+            let mux = get_mux_rhai()?;
+            let pane = resolve_rhai(this, &mux)?;
+            Ok(pane.is_unresponsive())
+        },
+    );
+
     engine.register_fn(
         "is_alt_screen_active",
         |this: &mut MuxPane| -> Result<bool, Box<rhai::EvalAltResult>> {
