@@ -156,6 +156,28 @@ impl Terminal {
         }
     }
 
+    /// Like `new`, but for a `writer` that is already non-blocking on its
+    /// own (see `TerminalState::new_with_nonblocking_writer` for why this
+    /// exists and when to use it instead of `new`).
+    pub fn new_with_nonblocking_writer(
+        size: TerminalSize,
+        config: Arc<dyn TerminalConfiguration + Send + Sync>,
+        term_program: &str,
+        term_version: &str,
+        writer: Box<dyn std::io::Write + Send>,
+    ) -> Terminal {
+        Terminal {
+            state: TerminalState::new_with_nonblocking_writer(
+                size,
+                config,
+                term_program,
+                term_version,
+                writer,
+            ),
+            parser: Parser::new(),
+        }
+    }
+
     /// Feed the terminal parser a slice of bytes from the output
     /// of the associated program.
     /// The slice is not required to be a complete sequence of escape
