@@ -225,7 +225,11 @@ impl TmuxDomainState {
             active_lock: active_lock.clone(),
         };
 
-        let terminal = wezterm_term::Terminal::new(
+        // `WriterWrapper` is already non-blocking (see its doc comment in
+        // `crates/mux/src/domain.rs`), so use
+        // `new_with_nonblocking_writer` here rather than `new`, to avoid
+        // wrapping it in a second, redundant `ThreadedWriter`.
+        let terminal = wezterm_term::Terminal::new_with_nonblocking_writer(
             size,
             std::sync::Arc::new(config::TermConfig::new()),
             "WezTerm",

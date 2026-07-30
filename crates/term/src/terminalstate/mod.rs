@@ -359,7 +359,7 @@ pub struct TerminalState {
     term_program: String,
     term_version: String,
 
-    writer: BufWriter<ThreadedWriter>,
+    writer: BufWriter<Box<dyn std::io::Write + Send>>,
 
     image_cache: lru::LruCache<[u8; 32], Arc<ImageData>>,
     sixel_scrolls_right: bool,
@@ -518,7 +518,45 @@ impl TerminalState {
         term_version: &str,
         writer: Box<dyn std::io::Write + Send>,
     ) -> TerminalState {
-        let writer = BufWriter::new(ThreadedWriter::new(writer));
+        let writer: Box<dyn std::io::Write + Send> = Box::new(ThreadedWriter::new(writer));
+        Self::new_impl(size, config, term_program, term_version, writer)
+    }
+
+    /// Like `new`, but for callers who are handing in a `writer` that is
+    /// *already* non-blocking (its own `write`/`flush` enqueue onto some
+    /// background thread of its own rather than performing a real,
+    /// possibly-blocking I/O operation inline -- e.g. `mux`'s
+    /// `WriterWrapper`, which every caller of `Pane::writer()` also holds a
+    /// clone of). Wrapping such a writer in `ThreadedWriter` again would
+    /// just add a second, redundant hop -- and worse, it would mean
+    /// `Pane::writer()` writes and `Terminal`'s own internal writes (e.g.
+    /// keyboard/mouse encoding, DA/DSR answerback) end up going through two
+    /// *independent* background threads/queues instead of the same one,
+    /// making their already-best-effort relative ordering into the pty
+    /// even less predictable than it is today.
+    ///
+    /// Using this constructor with a writer that is *not* already
+    /// non-blocking would defeat the purpose of `TerminalState` never
+    /// blocking on its write side; it exists specifically for writers that
+    /// already provide that guarantee on their own.
+    pub fn new_with_nonblocking_writer(
+        size: TerminalSize,
+        config: Arc<dyn TerminalConfiguration>,
+        term_program: &str,
+        term_version: &str,
+        writer: Box<dyn std::io::Write + Send>,
+    ) -> TerminalState {
+        Self::new_impl(size, config, term_program, term_version, writer)
+    }
+
+    fn new_impl(
+        size: TerminalSize,
+        config: Arc<dyn TerminalConfiguration>,
+        term_program: &str,
+        term_version: &str,
+        writer: Box<dyn std::io::Write + Send>,
+    ) -> TerminalState {
+        let writer = BufWriter::new(writer);
         let seqno = 1;
         let screen = ScreenOrAlt::new(size, &config, seqno, config.bidi_mode());
 
