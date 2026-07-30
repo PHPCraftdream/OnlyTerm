@@ -251,6 +251,23 @@ As features stabilize some brief notes about them will accumulate here.
   unaffected. Manually verified end-to-end on real hardware using the
   `debug_render_thread_stall_ms`/`render_thread_hang_threshold_ms` debug
   config options.
+* Closing a tab/pane now sends a `Ctrl+C`-equivalent interrupt (the same
+  byte your physical Ctrl+C writes) before force-terminating its process
+  tree, and the pty is kept alive briefly afterward instead of tearing
+  down immediately, so well-behaved processes have a real window to shut
+  down cleanly first. The existing hard-kill behavior is unchanged: after
+  the grace period, the process and every descendant it spawned (not just
+  its immediate child) are still force-terminated via the same Windows Job
+  Object cleanup as before. Manually verified end-to-end with a real
+  process tree (a script and a grandchild it spawned): both were
+  previously being torn down within about a second of closing the tab,
+  well before the intended grace period, due to a bug where the pty's
+  underlying pipe closed immediately regardless of the deferral; fixed,
+  and now both processes correctly survive for the full grace period
+  before being cleaned up. Whether the interrupt itself is actually
+  observed by child processes as Ctrl+C could not be confirmed in manual
+  testing and remains an open question -- the grace-period and
+  whole-process-tree cleanup guarantees hold either way.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization

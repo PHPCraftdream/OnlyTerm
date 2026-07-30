@@ -1594,6 +1594,31 @@ mod tests {
         }
     }
 
+    /// A `Write` double that records whether it has been dropped, so
+    /// tests can confirm `kill()` defers dropping the *real* writer (not
+    /// just the pty) rather than letting it drop inline along with the
+    /// rest of `LocalPane` -- see `kill()`'s doc comment for why that
+    /// matters (`ConPtyMasterPty::take_writer()` hands out the pty's only
+    /// reference to its stdin pipe).
+    struct TrackedWriter {
+        dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Write for TrackedWriter {
+        fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> IoResult<()> {
+            Ok(())
+        }
+    }
+
+    impl Drop for TrackedWriter {
+        fn drop(&mut self) {
+            self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     #[derive(Debug)]
     struct TestConfig;
     impl TerminalConfiguration for TestConfig {
@@ -1643,6 +1668,54 @@ mod tests {
         (pane, dropped)
     }
 
+    /// Like `make_pane`, but with a `TrackedWriter` in place of the plain
+    /// `Vec::new()` writer, so tests can also observe whether the *real*
+    /// writer's drop was deferred alongside the pty's.
+    fn make_pane_with_tracked_writer() -> (
+        Arc<LocalPane>,
+        Arc<std::sync::atomic::AtomicBool>,
+        Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let size = TerminalSize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: COLS * 8,
+            pixel_height: ROWS * 16,
+            dpi: 0,
+        };
+        let terminal = Terminal::new(
+            size,
+            Arc::new(TestConfig),
+            "WezTerm",
+            "0.0.0",
+            Box::new(Vec::new()),
+        );
+        let pty_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pty = Box::new(FakeMasterPty {
+            size: Mutex::new(PtySize {
+                rows: ROWS as u16,
+                cols: COLS as u16,
+                pixel_width: 0,
+                pixel_height: 0,
+            }),
+            dropped: Arc::clone(&pty_dropped),
+        });
+        let writer_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let writer = Box::new(TrackedWriter {
+            dropped: Arc::clone(&writer_dropped),
+        });
+        let pane = Arc::new(LocalPane::new(
+            1,
+            terminal,
+            Box::new(NeverExitChild),
+            pty,
+            writer,
+            1,
+            "test".to_string(),
+        ));
+        (pane, pty_dropped, writer_dropped)
+    }
+
     /// After `kill()`, `self.pty` must be `None` (taken, not yet
     /// dropped): this is the mechanism that lets `LocalPane::drop()` run
     /// moments later without tearing down the pty inline.
@@ -1656,6 +1729,44 @@ mod tests {
         // for PTY_DROP_GRACE_MS before dropping), so the pty is still
         // alive, just no longer reachable through `self.pty`.
         assert!(!dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// Regression test for the bug fixed alongside this test: `kill()`
+    /// used to defer dropping `self.pty` but left `self.writer` dropping
+    /// immediately, which closed the pty's underlying pipe right away
+    /// regardless -- because `ConPtyMasterPty::take_writer()`
+    /// (`crates/pty/src/win/conpty.rs`) hands the pty's stdin
+    /// `FileDescriptor` to whoever calls it and keeps no reference of its
+    /// own, `self.writer` is the *only* thing keeping that pipe open.
+    /// Confirms the *real* writer's drop is now deferred the same way the
+    /// pty's is, and that `self.writer` is left holding a harmless sink in
+    /// the meantime rather than `None` (avoiding a wider `Option`-ifying
+    /// change to the `writer()` accessor, part of the `Pane` trait's
+    /// public surface).
+    #[test]
+    fn kill_defers_the_real_writer_too() {
+        let (pane, pty_dropped, writer_dropped) = make_pane_with_tracked_writer();
+        pane.kill();
+
+        // Neither the pty nor the real writer have been dropped yet (the
+        // deferred-drop thread sleeps for PTY_DROP_GRACE_MS first).
+        assert!(!pty_dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            !writer_dropped.load(std::sync::atomic::Ordering::SeqCst),
+            "the real writer must not drop immediately, or the deferred \
+             pty drop accomplishes nothing"
+        );
+
+        // `self.writer` still holds *something* usable -- the sink
+        // swapped in by `kill()` -- rather than being left in a state
+        // that would panic a caller still holding a `writer()` guard.
+        // Goes at the field directly (not the public `writer()`
+        // accessor, which also calls `Mux::get()` for unrelated
+        // bookkeeping that isn't set up in this unit test).
+        let mut writer = pane.writer.lock();
+        writer
+            .write_all(b"late write after kill")
+            .expect("writing to the post-kill sink must not error");
     }
 
     /// Calling `kill()` twice must not panic or double-fire the
