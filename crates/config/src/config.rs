@@ -906,6 +906,14 @@ pub struct Config {
     #[dynamic(default = "default_debug_render_thread_stall_ms")]
     pub debug_render_thread_stall_ms: u64,
 
+    /// How long a per-window render thread's currently in-flight
+    /// submit/reconfigure GPU call may run before
+    /// `RenderThreadHandle::render_thread_is_hung` considers that window's
+    /// render thread stuck, in milliseconds. Only meaningful when
+    /// `webgpu_render_thread` is enabled.
+    #[dynamic(default = "default_render_thread_hang_threshold_ms")]
+    pub render_thread_hang_threshold_ms: u64,
+
     #[dynamic(default = "default_shape_cache_size")]
     pub shape_cache_size: usize,
     #[dynamic(default = "default_line_state_cache_size")]
@@ -2081,6 +2089,10 @@ fn default_gui_watchdog_threshold_ms() -> u64 {
 
 fn default_debug_render_thread_stall_ms() -> u64 {
     0
+}
+
+fn default_render_thread_hang_threshold_ms() -> u64 {
+    4_000
 }
 
 fn default_tiling_desktop_environments() -> Vec<String> {
