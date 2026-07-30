@@ -6687,6 +6687,7 @@ dependencies = [
  "wezterm-gui-subcommands",
  "wezterm-mux-server-impl",
  "wezterm-open-url",
+ "wezterm-surface",
  "wezterm-term",
  "wezterm-toast-notification",
  "wgpu",

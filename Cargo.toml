@@ -33,6 +33,7 @@ debug = 2
 [workspace.dependencies]
 ahash = "0.8"
 anyhow = "1.0"
+arc-swap = "1.9"
 assert_fs = "1.0.4"
 async-channel = "2.3"
 async-executor = "1.11"
