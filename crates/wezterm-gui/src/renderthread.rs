@@ -103,14 +103,8 @@ pub struct RenderThreadHandle {
     /// `shutdown()`.
     window_destroyed: Arc<AtomicBool>,
     /// Same `Arc<Mutex<Option<Instant>>>` as `RenderThreadSeed::submit_started_at`;
-    /// read by `render_thread_is_hung()`.
-    ///
-    /// `#[allow(dead_code)]`-adjacent: nothing calls `render_thread_is_hung`
-    /// yet (task #223, blocked on this task, is expected to be the first
-    /// caller), so this field currently has no reader either. Mirrors
-    /// `window::os::windows::watchdog::gui_thread_is_hung`'s own
-    /// `#[allow(dead_code)]` for the same reason.
-    #[allow(dead_code)]
+    /// read by `render_thread_is_hung()`, which in turn is polled by
+    /// `TermWindow`'s per-window render-thread hang supervisor (task #223).
     submit_started_at: Arc<Mutex<Option<Instant>>>,
 }
 
@@ -261,10 +255,10 @@ impl RenderThreadHandle {
     /// `window::watchdog::gui_thread_is_hung`'s backing thread).
     ///
     /// Unlike that watchdog, this is a stateless, side-effect-free predicate
-    /// with no logging/metrics of its own -- there is no background poller
-    /// for render threads yet (task #223 is expected to add one, and should
-    /// do its own edge-detection/logging on top of this call).
-    #[allow(dead_code)]
+    /// with no logging/metrics of its own -- `TermWindow`'s per-window
+    /// render-thread hang supervisor (task #223,
+    /// `TermWindow::check_render_thread_hang_tick`) is the caller that does
+    /// its own edge-detection/logging on top of this call.
     pub fn render_thread_is_hung(&self) -> bool {
         let threshold =
             Duration::from_millis(config::configuration().render_thread_hang_threshold_ms);
@@ -276,7 +270,6 @@ impl RenderThreadHandle {
 /// than `threshold`" predicate, split out from `render_thread_is_hung` so it
 /// can be unit tested with a synthetic threshold instead of depending on
 /// live global config state.
-#[allow(dead_code)]
 fn is_hung_given(submit_started_at: &Mutex<Option<Instant>>, threshold: Duration) -> bool {
     match *submit_started_at.lock() {
         Some(start) => start.elapsed() >= threshold,

@@ -51,7 +51,7 @@ use mux::{Mux, MuxNotification};
 use mux_lua::MuxPane;
 use smol::channel::Sender;
 use smol::Timer;
-use std::cell::{RefCell, RefMut};
+use std::cell::{Cell, RefCell, RefMut};
 use std::collections::{HashMap, LinkedList};
 use std::ops::Add;
 use std::rc::Rc;
@@ -530,6 +530,13 @@ pub struct TermWindow {
     gl: Option<Rc<glium::backend::Context>>,
     webgpu: Option<Arc<WebGpuState>>,
     render_thread: Option<crate::renderthread::RenderThreadHandle>,
+    /// One-shot guard for the render-thread hang supervisor (see
+    /// `schedule_render_thread_hang_check`): set to `true` the moment this
+    /// window has been torn down for an observed render-thread hang, so a
+    /// supervision tick that fires after teardown was already kicked off
+    /// (a race between the scheduled timer and the close completing) is a
+    /// no-op instead of double-closing the window.
+    render_thread_hang_handled: Cell<bool>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 
@@ -723,6 +730,7 @@ impl TermWindow {
             gl: None,
             webgpu: None,
             render_thread: None,
+            render_thread_hang_handled: Cell::new(false),
             window: None,
             window_background,
             config: config.clone(),
@@ -959,6 +967,9 @@ impl TermWindow {
                         tx,
                         myself.mux_window_id,
                     );
+                    if myself.render_thread.is_some() {
+                        Self::schedule_render_thread_hang_check(&window);
+                    }
                 }
             }
             myself.load_os_parameters();
@@ -975,6 +986,81 @@ impl TermWindow {
         front_end().record_known_window(window, mux_window_id);
 
         Ok(())
+    }
+
+    /// Schedules the next tick of this window's render-thread hang
+    /// supervisor. Self-rearming: each tick either closes the window (if its
+    /// render thread is hung) or calls this again to schedule the next tick,
+    /// exactly like `scheduled_animation`'s `Timer::at` + `notify` pattern in
+    /// `paint_impl` reschedules itself.
+    ///
+    /// Only ever called (initially from `new_window`, then recursively from
+    /// `check_render_thread_hang_tick`) while running on the GUI thread --
+    /// `promise::spawn::spawn` is GUI-thread-only (it uses `spawn_local`
+    /// under the hood), which holds here since both call sites already run
+    /// on the GUI thread.
+    fn schedule_render_thread_hang_check(window: &Window) {
+        // Poll at a fraction of the hang threshold, the same style as
+        // `window::os::windows::watchdog`'s `poll_interval = (threshold /
+        // 4).max(Duration::from_millis(50))`. This check is cheaper than the
+        // GUI watchdog's (just a `Mutex<Option<Instant>>` read, no syscalls),
+        // so a smaller minimum is fine, but we still don't want a
+        // misconfigured (very low) threshold to turn into a busy-poll.
+        let threshold =
+            Duration::from_millis(config::configuration().render_thread_hang_threshold_ms);
+        let poll_interval = (threshold / 2).max(Duration::from_millis(500));
+        let next_check = Instant::now() + poll_interval;
+
+        let window = window.clone();
+        promise::spawn::spawn(async move {
+            Timer::at(next_check).await;
+            let win = window.clone();
+            window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.check_render_thread_hang_tick(&win);
+            })));
+        })
+        .detach();
+    }
+
+    /// One tick of the render-thread hang supervisor: closes this window if
+    /// its render thread appears hung, otherwise re-arms for another tick.
+    /// See `schedule_render_thread_hang_check` for the scheduling half.
+    fn check_render_thread_hang_tick(&mut self, window: &Window) {
+        if self.render_thread_hang_handled.get() {
+            // Already closed (or closing) this window for a hang on an
+            // earlier tick; a tick that fires after that (a race between the
+            // scheduled timer and the close actually completing) must be a
+            // no-op, not a double-close.
+            return;
+        }
+        let hung = match self.render_thread.as_ref() {
+            Some(rt) => rt.render_thread_is_hung(),
+            None => {
+                // Render thread is gone (e.g. window already tearing down);
+                // nothing left to supervise.
+                return;
+            }
+        };
+        if !hung {
+            Self::schedule_render_thread_hang_check(window);
+            return;
+        }
+
+        self.render_thread_hang_handled.set(true);
+        log::error!(
+            "this window's render thread appears stuck inside a GPU submit/reconfigure \
+             call (not the whole app -- just this window's GPU driver call); closing \
+             this window so the rest of the application stays responsive"
+        );
+        // Mirror close_requested's teardown (and the OpenGL context-lost
+        // path above): kill this window's panes (and their child processes)
+        // before destroying the OS window, otherwise the shells/programs
+        // running in them are orphaned with no controlling terminal left.
+        let mux = Mux::get();
+        mux.kill_window(self.mux_window_id);
+        window.close();
+        front_end().forget_known_window(window);
+        metrics::counter!("gui.render_thread.window_closed_for_hang").increment(1);
     }
 
     fn dispatch_window_event(
