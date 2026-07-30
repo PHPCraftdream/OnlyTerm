@@ -229,8 +229,9 @@ As features stabilize some brief notes about them will accumulate here.
   a quick snapshot of the visible lines, so a slow render no longer also
   stalls that pane's pty reader; and mouse hit-testing now reads a
   lock-free snapshot of the UI's clickable regions instead of the buffer
-  the render pass is actively rebuilding. Moving the actual GPU rendering
-  off the shared message loop onto a per-window thread is still pending.
+  the render pass is actively rebuilding. GPU frame submission (present/
+  swapchain) has since moved off the shared message loop onto a dedicated
+  per-window thread on Windows -- see the next bullet.
 * WebGpu is now the default rendering backend on Windows, with automatic
   fallback to OpenGL if adapter/device initialization fails (e.g. in RDP
   sessions, old/software-only GPUs, or VMs without GPU passthrough). Its
@@ -243,6 +244,13 @@ As features stabilize some brief notes about them will accumulate here.
   they stay fully synchronous on the GUI thread as before. If you fall
   back to (or intentionally select) `OpenGL`/`Software`, a hung GPU driver
   call can still freeze every window in the process.
+* If a WebGpu window's render thread does get stuck in a GPU submit call for
+  too long, that one window is now automatically closed (its panes' child
+  processes are cleaned up first) instead of leaving the process to hang
+  indefinitely -- the rest of the process and its other windows are
+  unaffected. Manually verified end-to-end on real hardware using the
+  `debug_render_thread_stall_ms`/`render_thread_hang_threshold_ms` debug
+  config options.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
