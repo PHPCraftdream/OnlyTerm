@@ -237,6 +237,12 @@ As features stabilize some brief notes about them will accumulate here.
   dedicated per-window render thread (`webgpu_render_thread`) is also now
   enabled by default, so a stuck GPU driver call on Windows no longer
   freezes the whole process's message loop.
+* The OpenGL and Software [front_end](config/reference/config/front_end.md)
+  backends do not get this isolation: a GL context is thread-affine and
+  can't be handed off to a render thread the way WebGpu's state can, so
+  they stay fully synchronous on the GUI thread as before. If you fall
+  back to (or intentionally select) `OpenGL`/`Software`, a hung GPU driver
+  call can still freeze every window in the process.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
