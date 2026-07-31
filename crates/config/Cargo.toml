@@ -21,6 +21,7 @@ colorgrad.workspace = true
 dirs-next.workspace = true
 enum-display-derive.workspace = true
 hostname.workspace = true
+ktav.workspace = true
 lazy_static.workspace = true
 libc.workspace = true
 log.workspace = true
