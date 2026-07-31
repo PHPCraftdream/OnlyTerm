@@ -310,36 +310,19 @@ pub struct DecodedPdu {
     pub pdu: Pdu,
 }
 
-/// If the serialized size is larger than this, then we'll consider compressing it
-const COMPRESS_THRESH: usize = 32;
-
 fn serialize<T: serde::Serialize>(t: &T) -> Result<(Vec<u8>, bool), Error> {
+    // Measured on a real unix-domain-socket round trip (the mux protocol's
+    // actual transport): compressing every PDU with flate2 costs more wall
+    // time than it saves, even after fixing a one-shot-vs-streaming
+    // inefficiency in the compressor call (~1.55x slower end to end for a
+    // realistic large GetLinesResponse, despite shrinking the payload by
+    // ~47x) -- for this protocol, always sending the raw bytes wins.
+    // `deserialize` below still understands compressed data, so an older
+    // peer that did compress is still readable.
     let mut uncompressed = Vec::new();
     let mut encode = varbincode::Serializer::new(&mut uncompressed);
     t.serialize(&mut encode)?;
-
-    if uncompressed.len() <= COMPRESS_THRESH {
-        return Ok((uncompressed, false));
-    }
-    // It's a little heavy; let's try compressing it
-    let mut compressed = Vec::new();
-    let mut compress = zstd::Encoder::new(&mut compressed, zstd::DEFAULT_COMPRESSION_LEVEL)?;
-    let mut encode = varbincode::Serializer::new(&mut compress);
-    t.serialize(&mut encode)?;
-    drop(encode);
-    compress.finish()?;
-
-    log::debug!(
-        "serialized+compress len {} vs {}",
-        compressed.len(),
-        uncompressed.len()
-    );
-
-    if compressed.len() < uncompressed.len() {
-        Ok((compressed, true))
-    } else {
-        Ok((uncompressed, false))
-    }
+    Ok((uncompressed, false))
 }
 
 fn deserialize<T: serde::de::DeserializeOwned, R: std::io::Read>(
@@ -347,7 +330,7 @@ fn deserialize<T: serde::de::DeserializeOwned, R: std::io::Read>(
     is_compressed: bool,
 ) -> Result<T, Error> {
     if is_compressed {
-        let mut decompress = zstd::Decoder::new(r)?;
+        let mut decompress = flate2::read::ZlibDecoder::new(r);
         let mut decode = varbincode::Deserializer::new(&mut decompress);
         serde::Deserialize::deserialize(&mut decode).map_err(Into::into)
     } else {
@@ -1497,5 +1480,94 @@ mod test {
             .encode(&mut enc_true, 0x10)
             .unwrap();
         assert_ne!(enc_false, enc_true, "attach value must influence the wire encoding");
+    }
+
+    /// End-to-end round-trip benchmark over a real Unix domain socket (the
+    /// same transport `wezterm-mux-server`/`wezterm-client` actually use),
+    /// comparing sending a `GetLinesResponse` (the PDU a scroll/redraw
+    /// fetches) always-raw versus letting it auto-compress the way
+    /// `Pdu::encode` does in production. Not a correctness test -- it just
+    /// prints timings; run with `cargo test --release -p codec
+    /// bench_socket_roundtrip -- --nocapture` to see the numbers.
+    #[test]
+    fn bench_socket_roundtrip_raw_vs_compressed() {
+        use std::time::Instant;
+        use wezterm_uds::{UnixListener, UnixStream};
+
+        let attrs = termwiz::cell::CellAttributes::default();
+        let mut lines = Vec::new();
+        for i in 0..500u32 {
+            let text = format!(
+                "{:04} drwxr-xr-x  2 user user 4096 Jan  1 00:00 some/typical/path/example-{} \
+                 -- repeated repeated repeated words words words",
+                i,
+                i % 37
+            );
+            lines.push((i as StableRowIndex, Line::from_text(&text, &attrs, 1, None)));
+        }
+        let response = GetLinesResponse {
+            pane_id: 1,
+            lines: SerializedLines::from(lines),
+        };
+
+        const ITERATIONS: u64 = 200;
+        const GET_LINES_RESPONSE_IDENT: u64 = 23;
+
+        fn run_variant(name: &str, response: &GetLinesResponse, force_raw: bool) {
+            let sock_path = std::env::temp_dir().join(format!(
+                "onlyterm-codec-bench-{}-{name}.sock",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&sock_path);
+            let listener = UnixListener::bind(&sock_path).expect("bind unix socket");
+
+            let server = std::thread::spawn(move || {
+                let (mut stream, _addr) = listener.accept().expect("accept");
+                for serial in 0..ITERATIONS {
+                    let decoded = decode_raw(&mut stream).expect("server decode");
+                    assert_eq!(decoded.serial, serial);
+                    let _resp: GetLinesResponse = deserialize(
+                        std::io::Cursor::new(&decoded.data),
+                        decoded.is_compressed,
+                    )
+                    .expect("server deserialize");
+                    encode_raw(0, serial, b"", false, &mut stream).expect("server ack");
+                }
+            });
+
+            let mut client = UnixStream::connect(&sock_path).expect("connect unix socket");
+            let mut total_bytes = 0usize;
+            let start = Instant::now();
+            for serial in 0..ITERATIONS {
+                let (data, is_compressed) = if force_raw {
+                    let mut buf = Vec::new();
+                    let mut encode = varbincode::Serializer::new(&mut buf);
+                    response.serialize(&mut encode).expect("raw serialize");
+                    (buf, false)
+                } else {
+                    serialize(response).expect("auto serialize")
+                };
+                total_bytes += data.len();
+                encode_raw(GET_LINES_RESPONSE_IDENT, serial, &data, is_compressed, &mut client)
+                    .expect("client encode");
+                let _ack = decode_raw(&mut client).expect("client decode ack");
+            }
+            let elapsed = start.elapsed();
+
+            server.join().expect("server thread");
+            let _ = std::fs::remove_file(&sock_path);
+
+            println!(
+                "{name}: {} round trips over a real unix socket in {:?} ({:?}/iter), \
+                 avg {} bytes/msg",
+                ITERATIONS,
+                elapsed,
+                elapsed / ITERATIONS as u32,
+                total_bytes / ITERATIONS as usize,
+            );
+        }
+
+        run_variant("raw", &response, true);
+        run_variant("auto-compress", &response, false);
     }
 }

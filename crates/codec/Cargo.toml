@@ -22,7 +22,8 @@ termwiz.workspace = true
 thiserror.workspace = true
 varbincode.workspace = true
 wezterm-term = { workspace=true, features=["use_serde"] }
-zstd.workspace = true
+flate2.workspace = true
 
 [dev-dependencies]
 base91.workspace = true
+wezterm-uds.workspace = true
