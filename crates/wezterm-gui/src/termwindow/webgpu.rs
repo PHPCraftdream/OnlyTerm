@@ -11,7 +11,7 @@ use window::raw_window_handle::{
 };
 #[cfg(windows)]
 use window::raw_window_handle::Win32WindowHandle;
-use window::{BitmapImage, Dimensions, Rect, Window};
+use window::{BitmapImage, Dimensions, Rect, Window, WindowOps};
 
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -317,7 +317,47 @@ impl WebGpuState {
         #[cfg(not(windows))]
         let handle = RawHandlePair::new(window);
 
-        Self::new_impl(handle, dimensions, config).await
+        let state = Self::new_impl(handle, dimensions, config).await?;
+
+        // Wire up wgpu's device-lost signal (task #254) to the same
+        // in-place-rebuild recovery path task #253 built for a hung render
+        // thread. A real Windows TDR (Timeout Detection & Recovery) resets
+        // the GPU adapter, which wgpu surfaces by invalidating the device
+        // and invoking this callback -- see wgpu-core 25.0.2's
+        // `Device::lose` (called from `Device::handle_hal_error` on
+        // `hal::DeviceError::Lost`/`ResourceCreationFailed`/`Unexpected`),
+        // which runs the callback synchronously, inline, on whatever thread
+        // happened to make the wgpu call that observed the failure. In this
+        // codebase that's always our own render thread (`submit_one_frame`
+        // et al never call into wgpu from any other thread), so this
+        // closure -- like `submit_one_frame`'s own `SurfaceError::Other`
+        // handling right below it -- runs on the render thread, never on
+        // some wgpu-internal thread, and the same `window.notify(...)` +
+        // `TermWindowNotif::Apply` bridge back to the GUI thread applies
+        // unchanged. `set_device_lost_callback` only requires the closure to
+        // be `Fn(..) + Send + 'static`, which a cloned `Window` (itself
+        // `Clone + Send`, see `RenderThreadSeed::window`'s existing use)
+        // satisfies without any unsafe/FFI.
+        let win = window.clone();
+        state.device.set_device_lost_callback(move |reason, message| {
+            log::error!(
+                "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
+                 (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
+                reason,
+                message
+            );
+            metrics::counter!("gui.render_thread.device_lost").increment(1);
+            let win2 = win.clone();
+            let reason_msg =
+                format!("this window's wgpu device was lost ({:?}): {}", reason, message);
+            win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                move |tw| {
+                    tw.handle_render_error_recovery(&win2, &reason_msg);
+                },
+            )));
+        });
+
+        Ok(state)
     }
 
     pub async fn new_impl(

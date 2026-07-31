@@ -411,6 +411,40 @@ fn submit_one_frame(
             other => {
                 log::error!("render thread: submit_frame failed: {:#}", other);
                 metrics::counter!("gui.render_thread.submit_error").increment(1);
+                if window_destroyed.load(Ordering::Acquire) {
+                    // Same rationale as the Lost/Outdated branch above: the
+                    // window is gone (or on its way out), so there is no
+                    // `TermWindow` left to rebuild and signaling one would be
+                    // pointless (and could race a torn-down window).
+                    log::debug!(
+                        "render thread: surface error after window destruction, \
+                         skipping rebuild trigger"
+                    );
+                } else {
+                    // Unlike Lost/Outdated (a merely-stale swapchain that
+                    // `WebGpuState::reconfigure` fixes), every other
+                    // `SurfaceError` variant (OutOfMemory, Timeout, etc.)
+                    // means the surface/device itself is in trouble in a way
+                    // a lightweight reconfigure won't fix. The render thread
+                    // can't call `TermWindow::begin_renderer_rebuild`
+                    // directly (GUI-thread-only state), so signal back to the
+                    // GUI thread via the same `TermWindowNotif::Apply`
+                    // mechanism `schedule_render_thread_hang_check` uses,
+                    // reusing task #253's in-place rebuild (and its circuit
+                    // breaker, so a persistently broken adapter that throws
+                    // this on every frame doesn't loop-rebuild forever).
+                    let win = window.clone();
+                    let reason = format!(
+                        "this window's render thread hit a GPU surface error ({:?}) \
+                         other than the transient Lost/Outdated case",
+                        other
+                    );
+                    window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                        move |tw| {
+                            tw.handle_render_error_recovery(&win, &reason);
+                        },
+                    )));
+                }
             }
         }
     }

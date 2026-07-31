@@ -1090,13 +1090,83 @@ impl TermWindow {
             return;
         }
 
+        self.attempt_renderer_rebuild_or_close(
+            window,
+            "this window's render thread appears stuck inside a GPU submit/reconfigure \
+             call (not the whole app -- just this window's GPU driver call)",
+            "this window's render thread has hung and been rebuilt",
+            "gui.render_thread.window_renderer_rebuilt",
+        );
+    }
+
+    /// Re-entry point (via `TermWindowNotif::Apply`) for render-error
+    /// recovery signals raised from the render thread that aren't a plain
+    /// hang: a `wgpu::SurfaceError` variant other than `Lost`/`Outdated`
+    /// (see `renderthread::submit_one_frame`'s `other` branch), or a genuine
+    /// wgpu device-lost event (see `WebGpuState::new`'s
+    /// `set_device_lost_callback` registration). Both signals mean this
+    /// window's GPU device/surface is in a broken state that a fresh
+    /// `submit_frame` call won't recover from on its own, so this reuses
+    /// exactly the same in-place rebuild (and circuit breaker) that
+    /// `check_render_thread_hang_tick` uses for a stuck render thread --
+    /// from the GUI thread's point of view, "the renderer needs rebuilding"
+    /// is the same recovery action regardless of which symptom (hang vs.
+    /// repeated surface error vs. device-lost) triggered it.
+    ///
+    /// Unlike `check_render_thread_hang_tick`, this does not check
+    /// `render_thread_is_hung()` (the render thread may not be hung at all
+    /// -- `submit_frame` returned promptly with an error, or the device-lost
+    /// callback fired inline during a call that itself returned) and does
+    /// not self-reschedule (it's not a polling loop; each call corresponds
+    /// to one observed error event). It still honors
+    /// `render_thread_hang_handled` as a one-shot-per-episode guard, exactly
+    /// like the hang path, so a burst of repeated `SurfaceError::Other`
+    /// values across several frames (or an error arriving while a
+    /// hang-triggered rebuild is already in flight) collapses into a single
+    /// rebuild attempt rather than one per event.
+    pub(crate) fn handle_render_error_recovery(&mut self, window: &Window, reason: &str) {
+        if self.render_thread_hang_handled.get() {
+            // A rebuild (or close) for an earlier episode -- hang or error --
+            // is already in flight; this event is redundant.
+            return;
+        }
+        self.attempt_renderer_rebuild_or_close(
+            window,
+            reason,
+            "this window's renderer has failed and been rebuilt",
+            "gui.render_thread.window_renderer_rebuilt_after_error",
+        );
+    }
+
+    /// Shared circuit-breaker bookkeeping + rebuild-or-close decision, used
+    /// by both the render-thread hang supervisor
+    /// (`check_render_thread_hang_tick`) and the render-error recovery entry
+    /// point (`handle_render_error_recovery`). Callers are responsible for
+    /// their own "should we even consider recovering right now" checks
+    /// (hang detection, one-shot guard) before calling this; this function
+    /// always sets the one-shot guard, records an attempt, and either
+    /// rebuilds or closes.
+    ///
+    /// `log_reason` describes what was observed (used in the "rebuilding..."
+    /// log line); `circuit_breaker_log_reason` is the shorter phrase used in
+    /// the circuit-breaker-tripped log line; `rebuilt_metric` is the counter
+    /// incremented when a rebuild is actually attempted, so the two call
+    /// sites (hang vs. error recovery) remain distinguishable in metrics
+    /// even though they now share this implementation.
+    fn attempt_renderer_rebuild_or_close(
+        &mut self,
+        window: &Window,
+        log_reason: &str,
+        circuit_breaker_log_reason: &str,
+        rebuilt_metric: &'static str,
+    ) {
         // Set the one-shot guard immediately: everything below this point
         // (the circuit breaker check, the async rebuild, the fallback close)
-        // must not race with another tick of this same supervisor. It gets
-        // reset to `false` once a rebuild actually succeeds (see
-        // `finish_renderer_rebuild`), so a *later*, separate hang can also
-        // be recovered from -- this is "one-shot per hang episode", not
-        // "one-shot ever".
+        // must not race with another recovery trigger for this same
+        // episode. It gets reset to `false` once a rebuild actually
+        // succeeds (see `finish_renderer_rebuild`), so a *later*, separate
+        // failure can also be recovered from -- this is "one-shot per
+        // episode", not "one-shot ever".
         self.render_thread_hang_handled.set(true);
 
         let now = Instant::now();
@@ -1109,10 +1179,11 @@ impl TermWindow {
 
         if attempts_in_window > Self::MAX_REBUILDS_PER_WINDOW {
             log::error!(
-                "this window's render thread has hung and been rebuilt {} times in the \
-                 last {:?}; giving up on rebuilding (the GPU/driver/adapter looks \
-                 fundamentally broken, not just transiently stuck) and closing the \
-                 window so the rest of the application stays responsive",
+                "{} {} times in the last {:?}; giving up on rebuilding (the \
+                 GPU/driver/adapter looks fundamentally broken, not just transiently \
+                 stuck) and closing the window so the rest of the application stays \
+                 responsive",
+                circuit_breaker_log_reason,
                 attempts_in_window,
                 Self::REBUILD_WINDOW,
             );
@@ -1122,15 +1193,14 @@ impl TermWindow {
         }
 
         log::error!(
-            "this window's render thread appears stuck inside a GPU submit/reconfigure \
-             call (not the whole app -- just this window's GPU driver call); rebuilding \
-             this window's renderer in place (attempt {} of {} allowed within {:?}) so \
-             its tabs/panes survive",
+            "{}; rebuilding this window's renderer in place (attempt {} of {} allowed \
+             within {:?}) so its tabs/panes survive",
+            log_reason,
             attempts_in_window,
             Self::MAX_REBUILDS_PER_WINDOW,
             Self::REBUILD_WINDOW,
         );
-        metrics::counter!("gui.render_thread.window_renderer_rebuilt").increment(1);
+        metrics::counter!(rebuilt_metric).increment(1);
 
         self.begin_renderer_rebuild(window);
     }
