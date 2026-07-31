@@ -1801,6 +1801,68 @@ impl LocalPane {
         let waited = wait_start.elapsed();
         (waited, term.mouse_event(event))
     }
+
+    /// Test-only escape hatch for `test::wedged_pane_isolation`: installs a
+    /// no-op `AlertHandler` (so a `SetWindowTitle` OSC below doesn't fire
+    /// `LocalPaneNotifHandler::alert`, which needs a process-global
+    /// scheduler installed -- see
+    /// `get_title_does_not_block_on_a_locked_terminal`'s doc comment for
+    /// the same rationale) and sets the terminal's title directly against
+    /// the model, mirroring exactly what a real `SetWindowTitle` OSC from
+    /// pty output would do.
+    #[cfg(test)]
+    pub(crate) fn set_title_for_test(&self, title: &str) {
+        struct NoopAlertHandler;
+        impl AlertHandler for NoopAlertHandler {
+            fn alert(&mut self, _alert: Alert) {}
+        }
+        let mut term = self.terminal.lock();
+        term.set_notification_handler(Box::new(NoopAlertHandler));
+        term.perform_actions(vec![termwiz::escape::Action::OperatingSystemCommand(
+            Box::new(termwiz::escape::OperatingSystemCommand::SetWindowTitle(
+                title.to_string(),
+            )),
+        )]);
+    }
+
+    /// Test-only escape hatch: bumps the terminal's sequence number so
+    /// `has_unseen_output()` observes genuine new output, mirroring
+    /// `has_unseen_output_does_not_block_on_a_locked_terminal`'s setup.
+    #[cfg(test)]
+    pub(crate) fn increment_seqno_for_test(&self) {
+        self.terminal.lock().increment_seqno();
+    }
+
+    /// Test-only escape hatch: spawns a thread that holds `terminal.lock()`
+    /// until `release` is signaled, and blocks the calling thread until the
+    /// lock has actually been acquired. Standing in for a wedged/held
+    /// terminal mutex, exactly the technique used by
+    /// `tests::has_unseen_output_does_not_block_on_a_locked_terminal` /
+    /// `tests::get_title_does_not_block_on_a_locked_terminal`, factored out
+    /// here so `test::wedged_pane_isolation` (a different module, which
+    /// cannot reach the private `terminal` field directly) can reuse it.
+    #[cfg(test)]
+    pub(crate) fn spawn_terminal_lock_blocker(
+        self: &Arc<Self>,
+        release: Arc<std::sync::atomic::AtomicBool>,
+    ) -> std::thread::JoinHandle<()> {
+        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let handle = {
+            let pane = Arc::clone(self);
+            let started = Arc::clone(&started);
+            std::thread::spawn(move || {
+                let _guard = pane.terminal.lock();
+                started.store(true, Ordering::SeqCst);
+                while !release.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })
+        };
+        while !started.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        handle
+    }
 }
 
 impl Drop for LocalPane {

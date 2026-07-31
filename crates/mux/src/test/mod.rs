@@ -22,6 +22,7 @@ mod domain_detach;
 mod notify_coalescing;
 mod sync_update;
 mod terminal_lock_contention;
+mod wedged_pane_isolation;
 
 // The mux is a process-global singleton (`Mux::set_mux`/`Mux::get`), so any
 // test in this crate that installs one must run serially with every other
