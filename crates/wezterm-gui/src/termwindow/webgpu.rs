@@ -81,6 +81,36 @@ pub struct WebGpuState {
     /// non-Windows variants, even though we only ever hold a Windows one.
     #[cfg(windows)]
     client_hwnd: Option<isize>,
+    /// Liveness flag for this specific device/surface instance, checked by
+    /// the `set_device_lost_callback` closure registered in `new` (task
+    /// #254) before it acts on a device-lost event (task #267).
+    ///
+    /// `wgpu::Device::set_device_lost_callback` fires the callback for
+    /// however long the underlying `wgpu::Device` handle is alive, with no
+    /// way to unregister it -- and, since it's invoked from
+    /// `Device::handle_hal_error`/`Device::lose` on whatever thread
+    /// happened to make the wgpu call that observed the failure (see the
+    /// call site in `new` below), a device that this window has already
+    /// abandoned (superseded by an in-place rebuild, task #253, or replaced
+    /// entirely by a permanent OpenGL fallback, task #255) can still fire a
+    /// *late* device-lost event -- exactly what a real TDR produces on the
+    /// very device this whole recovery machinery exists to escape from.
+    /// Without this flag, that late event would reach
+    /// `TermWindow::handle_render_error_recovery` and either charge a
+    /// spurious rebuild attempt against a perfectly healthy *new* WebGpu
+    /// device (rebuild case) or, worse, drag a window that has permanently
+    /// moved to OpenGL back into the WebGpu rebuild dance (fallback case).
+    ///
+    /// Set to `true` for the lifetime of this instance; the `TermWindow`
+    /// call sites that abandon this `WebGpuState` (`begin_renderer_rebuild`
+    /// and `begin_opengl_fallback`, both in `termwindow/mod.rs`) flip it to
+    /// `false` at the moment they take/drop it, *before* the replacement
+    /// device (if any) exists -- so the callback's check can never
+    /// race-observe stale-but-not-yet-marked-stale state from the GUI
+    /// thread's perspective (both the flip and the `notify()` re-entry that
+    /// reads it are serialized through the GUI thread's `TermWindowNotif`
+    /// dispatch).
+    is_current: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct RawHandlePair {
@@ -338,8 +368,36 @@ impl WebGpuState {
         // be `Fn(..) + Send + 'static`, which a cloned `Window` (itself
         // `Clone + Send`, see `RenderThreadSeed::window`'s existing use)
         // satisfies without any unsafe/FFI.
+        //
+        // Also capture `state.is_current` (task #267): `set_device_lost_callback`
+        // has no way to unregister itself, so this same closure keeps living
+        // for as long as `state.device` does, including after this
+        // `WebGpuState` has been abandoned by an in-place rebuild
+        // (`begin_renderer_rebuild`) or a permanent OpenGL fallback
+        // (`begin_opengl_fallback`) -- both of which call `mark_stale()` on
+        // the outgoing `WebGpuState` before dropping it. A device-lost event
+        // that fires after that point is a *late* signal from a device this
+        // window has already moved on from, and must not trigger recovery:
+        // mirrors `submit_one_frame`'s existing `window_destroyed` check in
+        // `renderthread.rs`, just gated on "is this device still the current
+        // one" instead of "is the window still alive".
         let win = window.clone();
+        let is_current = Arc::clone(&state.is_current);
         state.device.set_device_lost_callback(move |reason, message| {
+            if !is_current.load(std::sync::atomic::Ordering::Acquire) {
+                // Stale event from an abandoned device (already superseded
+                // by a rebuild, or this window has already permanently
+                // fallen back to OpenGL): the recovery machinery this event
+                // would otherwise trigger no longer applies to this device,
+                // so just log and drop it.
+                log::debug!(
+                    "wgpu device lost ({:?}): {}; ignoring -- this device was already \
+                     abandoned (superseded by a rebuild or a permanent OpenGL fallback)",
+                    reason,
+                    message
+                );
+                return;
+            }
             log::error!(
                 "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
                  (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
@@ -672,7 +730,19 @@ impl WebGpuState {
             texture_bind_group_layout,
             texture_nearest_sampler,
             texture_linear_sampler,
+            is_current: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         })
+    }
+
+    /// Marks this device/surface as abandoned: a device-lost event that
+    /// arrives after this point (see the `set_device_lost_callback` closure
+    /// registered in `new`) is stale and must not trigger recovery. Called
+    /// by `TermWindow` (`begin_renderer_rebuild`/`begin_opengl_fallback` in
+    /// `termwindow/mod.rs`, task #267) at the moment it takes/drops this
+    /// `WebGpuState`, before any replacement device exists.
+    pub fn mark_stale(&self) {
+        self.is_current
+            .store(false, std::sync::atomic::Ordering::Release);
     }
 
     pub fn create_uniform(&self, uniform: ShaderUniform) -> wgpu::BindGroup {

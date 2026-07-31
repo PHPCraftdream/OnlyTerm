@@ -605,6 +605,25 @@ pub struct TermWindow {
     /// ensures `begin_opengl_fallback` isn't re-entered for a given window
     /// while a previous attempt's result hasn't been consumed yet.
     opengl_fallback_relay: Rc<RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>>>,
+    /// Set once (task #267) by `finish_opengl_fallback` the moment this
+    /// window has *successfully* completed its one-shot OpenGL fallback
+    /// (task #255): this window is done trying WebGpu again, permanently,
+    /// for the rest of its lifetime -- by design, not as a transient state.
+    ///
+    /// Checked at the very top of `handle_render_error_recovery` (and
+    /// `check_render_thread_hang_tick`, which reaches the same shared
+    /// `attempt_renderer_rebuild_or_close`): once set, no recovery-triggering
+    /// event (hang, surface error, device-lost) may begin a renderer rebuild
+    /// for this window ever again. Without this flag, a stale/late
+    /// device-lost event from the old, now-abandoned WebGpu device (see
+    /// `WebGpuState::mark_stale`'s doc comment) that arrives more than
+    /// `REBUILD_WINDOW` after the fallback completed would find
+    /// `rebuild_attempts` pruned back down to nothing, pass the circuit
+    /// breaker's count check, and tear down this window's healthy, currently
+    /// in-use OpenGL `render_state`/`gl` to restart the WebGpu rebuild dance
+    /// on a window that has permanently moved off WebGpu -- exactly the
+    /// failure task #255's fallback exists to avoid.
+    permanently_on_opengl: Cell<bool>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 
@@ -801,6 +820,7 @@ impl TermWindow {
             render_thread_hang_handled: Cell::new(false),
             rebuild_attempts: RefCell::new(Vec::new()),
             opengl_fallback_relay: Rc::new(RefCell::new(None)),
+            permanently_on_opengl: Cell::new(false),
             window: None,
             window_background,
             config: config.clone(),
@@ -1204,6 +1224,25 @@ impl TermWindow {
         circuit_breaker_log_reason: &str,
         rebuilt_metric: &'static str,
     ) {
+        if self.permanently_on_opengl.get() {
+            // This window has already successfully, permanently fallen back
+            // to OpenGL (task #255/#267): it is done trying WebGpu again by
+            // design, so no recovery-triggering event -- including a late
+            // device-lost callback from the old, now-abandoned WebGpu device
+            // (see `WebGpuState::mark_stale`) that arrives well after the
+            // fallback completed, once `rebuild_attempts` has been pruned
+            // back down and would otherwise pass the circuit breaker's count
+            // check -- may begin a new renderer rebuild attempt and tear
+            // down this window's healthy, currently in-use OpenGL
+            // `render_state`/`gl`. Just log and drop it.
+            log::debug!(
+                "{}; ignoring -- this window has already permanently fallen back to \
+                 OpenGL rendering and will not attempt a WebGpu rebuild again",
+                log_reason,
+            );
+            return;
+        }
+
         // Set the one-shot guard immediately: everything below this point
         // (the circuit breaker check, the async rebuild, the fallback close)
         // must not race with another recovery trigger for this same
@@ -1304,7 +1343,15 @@ impl TermWindow {
         }
         self.render_state.take();
         self.gl.take();
-        self.webgpu.take();
+        // Mark the outgoing device stale (task #267) before dropping it: its
+        // `set_device_lost_callback` closure can't be unregistered, so a
+        // late device-lost event firing after this window has moved to
+        // OpenGL must be able to tell it's no longer current and no-op
+        // instead of dragging this window back into the WebGpu rebuild
+        // dance. See `WebGpuState::mark_stale`'s doc comment.
+        if let Some(webgpu) = self.webgpu.take() {
+            webgpu.mark_stale();
+        }
 
         let window_for_async = window.clone();
         // Clone this window's own relay slot (not a process-global one --
@@ -1403,6 +1450,15 @@ impl TermWindow {
         // `schedule_render_thread_hang_check` call here.
         self.render_thread_hang_handled.set(false);
 
+        // This window has genuinely, successfully moved to OpenGL for good
+        // (task #267): from this point on, no recovery-triggering event --
+        // including a late device-lost callback from the old, now-abandoned
+        // WebGpu device (see `WebGpuState::mark_stale`) -- may start a new
+        // WebGpu rebuild attempt for this window. See
+        // `attempt_renderer_rebuild_or_close`'s guard and this flag's own
+        // doc comment.
+        self.permanently_on_opengl.set(true);
+
         window.invalidate();
 
         log::warn!(
@@ -1450,7 +1506,17 @@ impl TermWindow {
         // is set (see `RenderThreadHandle::shutdown`'s doc comment).
         self.render_state.take();
         self.gl.take();
-        self.webgpu.take();
+        // Mark the outgoing device stale (task #267) before dropping it, for
+        // the same reason `begin_opengl_fallback` does: its
+        // `set_device_lost_callback` closure keeps living (wgpu gives no way
+        // to unregister it) for as long as the underlying `wgpu::Device`
+        // handle does, so a *late* device-lost event from this now-abandoned
+        // device must be able to tell it's stale and no-op, instead of
+        // charging a spurious rebuild attempt against the freshly-rebuilt,
+        // perfectly healthy device that replaces it below.
+        if let Some(webgpu) = self.webgpu.take() {
+            webgpu.mark_stale();
+        }
 
         let window_for_async = window.clone();
         let dimensions = self.dimensions;
