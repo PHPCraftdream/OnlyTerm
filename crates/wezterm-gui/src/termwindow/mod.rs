@@ -111,41 +111,6 @@ pub enum MouseCapture {
     TerminalPane(PaneId),
 }
 
-thread_local! {
-    /// GUI-thread-only relay for `begin_opengl_fallback` /
-    /// `finish_opengl_fallback` (task #255): carries the
-    /// `anyhow::Result<Rc<glium::backend::Context>>` produced by
-    /// `Window::enable_opengl()` across the `TermWindowNotif::Apply`
-    /// re-entry boundary.
-    ///
-    /// `Rc<glium::backend::Context>` is not `Send`/`Sync` (it wraps
-    /// thread-affine GL context state), so it cannot be captured directly
-    /// in an `Apply` closure, which `notify()` requires to be `Send + Sync`
-    /// (that bound exists because `notify()` is a generic API callable from
-    /// any thread, e.g. a background render thread posting back to the GUI
-    /// thread). In this specific call chain the value never actually
-    /// leaves the GUI thread -- `promise::spawn::spawn` is `spawn_local`,
-    /// so both the write (in `begin_opengl_fallback`'s spawned task) and
-    /// the read (in `finish_opengl_fallback`, reached via the `notify()`
-    /// dispatch) happen on this same thread, one executor tick apart. A
-    /// `thread_local!` expresses and enforces that "GUI-thread-only"
-    /// property directly (attempting to use it from another thread would
-    /// simply see an empty cell, not unsound behavior), which is why this
-    /// is used instead of an `unsafe impl Send` wrapper around the `Rc`.
-    ///
-    /// Single-slot `RefCell<Option<...>>` is sufficient: only one OpenGL
-    /// fallback attempt is ever in flight per window (each window's
-    /// `render_thread_hang_handled` one-shot guard ensures
-    /// `begin_opengl_fallback` isn't re-entered while a previous attempt's
-    /// result hasn't been consumed yet), and multiple windows never
-    /// interleave a write and a read of this cell without the intervening
-    /// `notify()` round-trip draining it first (`spawn_local` tasks and
-    /// `Apply` closures both run to completion, one at a time, on the GUI
-    /// thread's executor).
-    static OPENGL_FALLBACK_RELAY: RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>> =
-        const { RefCell::new(None) };
-}
-
 /// Type used together with Window::notify to do something in the
 /// context of the window-specific event loop
 pub enum TermWindowNotif {
@@ -597,6 +562,49 @@ pub struct TermWindow {
     /// than `REBUILD_WINDOW` are pruned on every check, so this never grows
     /// unbounded across a long-lived window's lifetime.
     rebuild_attempts: RefCell<Vec<Instant>>,
+    /// Per-window relay for `begin_opengl_fallback` / `finish_opengl_fallback`
+    /// (task #255, race fixed in task #265): carries the
+    /// `anyhow::Result<Rc<glium::backend::Context>>` produced by
+    /// `Window::enable_opengl()` across the `TermWindowNotif::Apply`
+    /// re-entry boundary.
+    ///
+    /// `Rc<glium::backend::Context>` is not `Send`/`Sync` (it wraps
+    /// thread-affine GL context state), so it cannot be captured directly
+    /// in an `Apply` closure, which `notify()` requires to be `Send + Sync`
+    /// (that bound exists because `notify()` is a generic API callable from
+    /// any thread, e.g. a background render thread posting back to the GUI
+    /// thread). In this specific call chain the value never actually
+    /// leaves the GUI thread -- `promise::spawn::spawn` is `spawn_local`
+    /// (see `crates/promise/src/spawn.rs`), so both the write (in
+    /// `begin_opengl_fallback`'s spawned task) and the read (in
+    /// `finish_opengl_fallback`, reached via the `notify()` dispatch)
+    /// happen on this same thread.
+    ///
+    /// This used to be a single process-wide `thread_local!` slot, keyed by
+    /// nothing at all. That was a real bug (task #265): if two *different*
+    /// windows both trip the render-rebuild circuit breaker around the same
+    /// time (the expected case for a process-wide broken GPU
+    /// adapter/driver), their `begin_opengl_fallback` spawned tasks can both
+    /// be in flight before either `finish_opengl_fallback` runs (each
+    /// `enable_opengl().await` yields the executor at least once, and
+    /// `Window::notify` merely enqueues a `spawn_into_main_thread` task
+    /// rather than dispatching synchronously), so window B's write could
+    /// silently clobber window A's result in the shared cell, handing
+    /// window A a `glium::backend::Context` that belongs to window B's
+    /// HWND/device context and leaving window B's slot empty (which then
+    /// reads back a spurious "relay was empty" error and destroys window
+    /// B's tabs/panes even though B's own OpenGL init never failed).
+    ///
+    /// Scoping this to an `Rc<RefCell<...>>` owned by (and captured from)
+    /// this specific `TermWindow`/`Window` eliminates the cross-window
+    /// aliasing entirely: each window's spawned fallback task closes over
+    /// its own `Rc` clone, so N windows falling back concurrently each get
+    /// their own slot with no possibility of clobbering or starving each
+    /// other. A single slot (rather than a queue) remains sufficient
+    /// *per window*: `render_thread_hang_handled`'s one-shot guard still
+    /// ensures `begin_opengl_fallback` isn't re-entered for a given window
+    /// while a previous attempt's result hasn't been consumed yet.
+    opengl_fallback_relay: Rc<RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>>>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 
@@ -792,6 +800,7 @@ impl TermWindow {
             render_thread: None,
             render_thread_hang_handled: Cell::new(false),
             rebuild_attempts: RefCell::new(Vec::new()),
+            opengl_fallback_relay: Rc::new(RefCell::new(None)),
             window: None,
             window_background,
             config: config.clone(),
@@ -1298,6 +1307,12 @@ impl TermWindow {
         self.webgpu.take();
 
         let window_for_async = window.clone();
+        // Clone this window's own relay slot (not a process-global one --
+        // see the field's doc comment and task #265) so the spawned task
+        // below can hand the result back to *this* window specifically,
+        // with no risk of a concurrently-falling-back sibling window
+        // clobbering or stealing it.
+        let relay = Rc::clone(&self.opengl_fallback_relay);
 
         promise::spawn::spawn(async move {
             let result = window_for_async.enable_opengl().await;
@@ -1311,12 +1326,11 @@ impl TermWindow {
             // same GUI thread. Rather than reach for `unsafe impl Send`
             // (unsound in general, and unjustifiable here since
             // `glium::backend::Context` is genuinely thread-affine GL
-            // state), relay the `Rc` itself through a GUI-thread-only
-            // `thread_local!` slot (see `OPENGL_FALLBACK_RELAY` below) and
-            // send only a `Send`-safe ok/err signal through `notify`.
-            OPENGL_FALLBACK_RELAY.with(|cell| {
-                cell.borrow_mut().replace(result);
-            });
+            // state), relay the `Rc` itself through this window's own
+            // GUI-thread-only relay slot (see `opengl_fallback_relay`'s doc
+            // comment) and send only a `Send`-safe ok/err signal through
+            // `notify`.
+            relay.borrow_mut().replace(result);
             window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                 tw.finish_opengl_fallback(&win);
             })));
@@ -1343,19 +1357,18 @@ impl TermWindow {
     /// fall back to the destructive close.
     ///
     /// Takes no `result` parameter: the actual `Rc<GliumContext>` (or
-    /// error) was stashed in `OPENGL_FALLBACK_RELAY` by
+    /// error) was stashed in this window's own `opengl_fallback_relay` by
     /// `begin_opengl_fallback`'s spawned task just before this was
     /// `notify()`-ed, since a non-`Send` `Rc` cannot ride along in the
     /// `TermWindowNotif::Apply` closure itself. See that relay's doc
-    /// comment for why this is safe (GUI-thread-only, not `unsafe impl
-    /// Send`).
+    /// comment for why this is safe (GUI-thread-only, and -- since task
+    /// #265 -- per-window, so a concurrently-falling-back sibling window
+    /// can never clobber or empty this window's slot).
     fn finish_opengl_fallback(&mut self, window: &Window) {
-        let result = OPENGL_FALLBACK_RELAY.with(|cell| {
-            cell.borrow_mut().take().unwrap_or_else(|| {
-                Err(anyhow::anyhow!(
-                    "internal error: OPENGL_FALLBACK_RELAY was empty in finish_opengl_fallback"
-                ))
-            })
+        let result = self.opengl_fallback_relay.borrow_mut().take().unwrap_or_else(|| {
+            Err(anyhow::anyhow!(
+                "internal error: opengl_fallback_relay was empty in finish_opengl_fallback"
+            ))
         });
         let gl = match result {
             Ok(gl) => gl,
