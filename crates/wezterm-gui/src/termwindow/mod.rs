@@ -551,6 +551,17 @@ pub struct TermWindow {
     /// (a race between the scheduled timer and the close completing) is a
     /// no-op instead of double-closing the window.
     render_thread_hang_handled: Cell<bool>,
+    /// Timestamps of recent in-place renderer rebuilds performed by
+    /// `check_render_thread_hang_tick` in response to an observed hang, most
+    /// recent last. This is the circuit breaker: `MAX_REBUILDS_PER_WINDOW`
+    /// rebuilds within `REBUILD_WINDOW` of each other means the renderer
+    /// keeps re-hanging immediately after every rebuild (a fundamentally
+    /// broken adapter/driver/device, not a one-off transient stall), so we
+    /// give up on rebuilding and fall back to the old destructive
+    /// close-the-window behavior instead of looping forever. Entries older
+    /// than `REBUILD_WINDOW` are pruned on every check, so this never grows
+    /// unbounded across a long-lived window's lifetime.
+    rebuild_attempts: RefCell<Vec<Instant>>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 
@@ -745,6 +756,7 @@ impl TermWindow {
             webgpu: None,
             render_thread: None,
             render_thread_hang_handled: Cell::new(false),
+            rebuild_attempts: RefCell::new(Vec::new()),
             window: None,
             window_background,
             config: config.clone(),
@@ -1036,15 +1048,33 @@ impl TermWindow {
         .detach();
     }
 
-    /// One tick of the render-thread hang supervisor: closes this window if
-    /// its render thread appears hung, otherwise re-arms for another tick.
-    /// See `schedule_render_thread_hang_check` for the scheduling half.
+    /// Circuit breaker thresholds for the in-place renderer rebuild
+    /// performed by `check_render_thread_hang_tick`. If rebuilding the
+    /// renderer doesn't actually fix things -- the GPU/driver/adapter is
+    /// fundamentally broken rather than having suffered a one-off transient
+    /// stall -- the render thread will simply hang again almost
+    /// immediately after each rebuild. `3` rebuilds within `30` seconds is
+    /// enough slack for a couple of unlucky-but-unrelated stalls (e.g. two
+    /// independent brief driver hiccups minutes apart would never trip
+    /// this), while still catching an immediate re-hang loop quickly: three
+    /// full rebuild-and-rehang cycles within half a minute is well outside
+    /// what a real transient stall looks like.
+    const MAX_REBUILDS_PER_WINDOW: usize = 3;
+    const REBUILD_WINDOW: Duration = Duration::from_secs(30);
+
+    /// One tick of the render-thread hang supervisor: if this window's
+    /// render thread appears hung, rebuild the renderer in place (new
+    /// WebGpu device/surface, new render thread) so the window and all its
+    /// tabs/panes survive -- unless the circuit breaker has tripped, in
+    /// which case fall back to the old destructive close. Otherwise re-arms
+    /// for another tick. See `schedule_render_thread_hang_check` for the
+    /// scheduling half.
     fn check_render_thread_hang_tick(&mut self, window: &Window) {
         if self.render_thread_hang_handled.get() {
-            // Already closed (or closing) this window for a hang on an
-            // earlier tick; a tick that fires after that (a race between the
-            // scheduled timer and the close actually completing) must be a
-            // no-op, not a double-close.
+            // Already rebuilding/closing this window for a hang detected on
+            // an earlier tick; a tick that fires after that (a race between
+            // the scheduled timer and the rebuild/close actually completing)
+            // must be a no-op, not a double-rebuild or double-close.
             return;
         }
         let hung = match self.render_thread.as_ref() {
@@ -1060,21 +1090,231 @@ impl TermWindow {
             return;
         }
 
+        // Set the one-shot guard immediately: everything below this point
+        // (the circuit breaker check, the async rebuild, the fallback close)
+        // must not race with another tick of this same supervisor. It gets
+        // reset to `false` once a rebuild actually succeeds (see
+        // `finish_renderer_rebuild`), so a *later*, separate hang can also
+        // be recovered from -- this is "one-shot per hang episode", not
+        // "one-shot ever".
         self.render_thread_hang_handled.set(true);
+
+        let now = Instant::now();
+        {
+            let mut attempts = self.rebuild_attempts.borrow_mut();
+            attempts.retain(|t| now.duration_since(*t) < Self::REBUILD_WINDOW);
+            attempts.push(now);
+        }
+        let attempts_in_window = self.rebuild_attempts.borrow().len();
+
+        if attempts_in_window > Self::MAX_REBUILDS_PER_WINDOW {
+            log::error!(
+                "this window's render thread has hung and been rebuilt {} times in the \
+                 last {:?}; giving up on rebuilding (the GPU/driver/adapter looks \
+                 fundamentally broken, not just transiently stuck) and closing the \
+                 window so the rest of the application stays responsive",
+                attempts_in_window,
+                Self::REBUILD_WINDOW,
+            );
+            metrics::counter!("gui.render_thread.rebuild_circuit_breaker_tripped").increment(1);
+            self.close_window_for_unrecoverable_render_hang(window);
+            return;
+        }
+
         log::error!(
             "this window's render thread appears stuck inside a GPU submit/reconfigure \
-             call (not the whole app -- just this window's GPU driver call); closing \
-             this window so the rest of the application stays responsive"
+             call (not the whole app -- just this window's GPU driver call); rebuilding \
+             this window's renderer in place (attempt {} of {} allowed within {:?}) so \
+             its tabs/panes survive",
+            attempts_in_window,
+            Self::MAX_REBUILDS_PER_WINDOW,
+            Self::REBUILD_WINDOW,
         );
-        // Mirror close_requested's teardown (and the OpenGL context-lost
-        // path above): kill this window's panes (and their child processes)
-        // before destroying the OS window, otherwise the shells/programs
-        // running in them are orphaned with no controlling terminal left.
+        metrics::counter!("gui.render_thread.window_renderer_rebuilt").increment(1);
+
+        self.begin_renderer_rebuild(window);
+    }
+
+    /// The destructive fallback: kill this window's panes (and their child
+    /// processes) before destroying the OS window, otherwise the
+    /// shells/programs running in them are orphaned with no controlling
+    /// terminal left. This is the same sequence `close_requested` and the
+    /// original (pre-#253) hang handler used; it's now reached only when
+    /// the in-place rebuild's circuit breaker trips, or when the rebuild
+    /// itself fails (e.g. `WebGpuState::new` erroring the same way it can
+    /// at startup: RDP session, no GPU passthrough, driver issue).
+    fn close_window_for_unrecoverable_render_hang(&mut self, window: &Window) {
         let mux = Mux::get();
         mux.kill_window(self.mux_window_id);
         window.close();
         front_end().forget_known_window(window);
         metrics::counter!("gui.render_thread.window_closed_for_hang").increment(1);
+    }
+
+    /// Kick off the async half of the in-place renderer rebuild (abandoning
+    /// the old render thread and dropping the old GPU resources are cheap
+    /// and synchronous, so they happen here; `WebGpuState::new` is `async`,
+    /// so the rest is done in a spawned task, mirroring the established
+    /// pattern in `schedule_render_thread_hang_check` for bridging sync
+    /// code -> async GUI-thread-only work -> re-entry via
+    /// `TermWindowNotif::Apply`).
+    fn begin_renderer_rebuild(&mut self, window: &Window) {
+        // Step 1: abandon the old render thread. Detach, don't join --
+        // exactly like the `Destroyed` handler: a stuck GPU driver call
+        // can't freeze the GUI thread, so blocking here via `.join()` would
+        // defeat the whole purpose of having a separate render thread.
+        // Sending `Shutdown` (which also sets `window_destroyed` on the
+        // shared flag) is enough to let the thread's `recv()` loop end on
+        // its own, whenever the driver call it may currently be stuck in
+        // eventually returns.
+        if let Some(rt) = self.render_thread.take() {
+            rt.shutdown();
+        }
+
+        // Step 2: drop the old GPU resources in the same order the
+        // `Destroyed` handler documents: render_state first (its Drop
+        // deletes programs/buffers/textures/glyph atlas via the context),
+        // then the context itself (gl) / device+surface (webgpu). The old
+        // `webgpu` Arc may still be referenced by the just-shutdown render
+        // thread until its `recv()` loop actually observes the disconnect,
+        // but that's fine -- `Arc` keeps it alive until the last reference
+        // (here, or on that thread) drops it, and the render thread will
+        // never issue another GPU call against it once `window_destroyed`
+        // is set (see `RenderThreadHandle::shutdown`'s doc comment).
+        self.render_state.take();
+        self.gl.take();
+        self.webgpu.take();
+
+        let window_for_async = window.clone();
+        let dimensions = self.dimensions;
+        let config = self.config.clone();
+
+        promise::spawn::spawn(async move {
+            // Step 3: destroy the old WebGpu child HWND and create a fresh
+            // one, *before* rebuilding `WebGpuState` below. This has to
+            // happen ahead of the `WebGpuState::new` call, not after it:
+            // `WebGpuState::new` picks whichever child HWND
+            // `window.webgpu_child_hwnd()` currently returns, so rebuilding
+            // the surface against the *old* child HWND (the one whose
+            // swapchain may itself be the thing that's wedged) would defeat
+            // the entire point of task #252's dedicated child HWND.
+            //
+            // This can't run synchronously back in `begin_renderer_rebuild`
+            // (unlike steps 1-2 above): `Window::recreate_webgpu_child_window`
+            // needs to borrow this window's `WindowInner`, but
+            // `begin_renderer_rebuild` is always reached synchronously from
+            // inside `notify()`'s dispatch, which is itself invoked from
+            // `Connection::with_window_inner` while that exact `WindowInner`
+            // is already mutably borrowed -- a synchronous re-borrow here
+            // panics with "already mutably borrowed" (hit in this task's own
+            // manual verification). `recreate_webgpu_child_window` is
+            // `async` and internally defers its borrow via
+            // `promise::spawn::spawn` for exactly this reason (see its doc
+            // comment), so awaiting it here, one spawned task removed from
+            // the original `notify()` call, is what actually avoids the
+            // re-entrant borrow.
+            #[cfg(windows)]
+            if let Err(err) = window_for_async.recreate_webgpu_child_window().await {
+                let win = window_for_async.clone();
+                window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                    tw.finish_renderer_rebuild(&win, Err(err));
+                })));
+                return;
+            }
+
+            let result = WebGpuState::new(&window_for_async, dimensions, &config).await;
+            let win = window_for_async.clone();
+            window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.finish_renderer_rebuild(&win, result);
+            })));
+        })
+        .detach();
+    }
+
+    /// Re-entry point (via `TermWindowNotif::Apply`) once the async half of
+    /// the rebuild (`WebGpuState::new`) has resolved. On success, rebuilds
+    /// `RenderState` against the new device and spawns a fresh render
+    /// thread, mirroring `new_window`'s original setup sequence. On
+    /// failure, falls back to the destructive close rather than leaving the
+    /// window in a broken, renderer-less state.
+    fn finish_renderer_rebuild(
+        &mut self,
+        window: &Window,
+        result: anyhow::Result<WebGpuState>,
+    ) {
+        let webgpu = match result {
+            Ok(state) => Arc::new(state),
+            Err(err) => {
+                // Same failure modes `WebGpuState::new` can hit at initial
+                // window creation: RDP session, no GPU passthrough in a VM,
+                // a driver mismatch, etc. There's no renderer to fall back
+                // to in-place here (WebGpu->OpenGL runtime fallback is task
+                // #255's job), so close the window rather than leave it
+                // renderer-less and permanently unpainted.
+                log::error!(
+                    "failed to rebuild WebGpu renderer after a render-thread hang ({:#}); \
+                     closing this window",
+                    err
+                );
+                metrics::counter!("gui.render_thread.rebuild_failed").increment(1);
+                self.close_window_for_unrecoverable_render_hang(window);
+                return;
+            }
+        };
+
+        // The WebGpu child HWND was already destroyed and recreated
+        // synchronously in `begin_renderer_rebuild`, before `WebGpuState::new`
+        // was even called, so the surface/device just resolved above already
+        // targets the fresh child HWND. Nothing left to do for the HWND here.
+        self.webgpu.replace(Arc::clone(&webgpu));
+        if let Err(err) = self.created(RenderContext::WebGpu(Arc::clone(&webgpu))) {
+            log::error!(
+                "failed to rebuild RenderState after a render-thread hang ({:#}); \
+                 closing this window",
+                err
+            );
+            metrics::counter!("gui.render_thread.rebuild_failed").increment(1);
+            self.close_window_for_unrecoverable_render_hang(window);
+            return;
+        }
+
+        let config = config::configuration();
+        if config.webgpu_render_thread {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let in_flight = Arc::new(AtomicBool::new(false));
+            let repaint_pending = Arc::new(AtomicBool::new(false));
+            let window_destroyed = Arc::new(AtomicBool::new(false));
+            let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
+            let seed = crate::renderthread::RenderThreadSeed {
+                window: window.clone(),
+                webgpu: Arc::clone(&webgpu),
+                rx,
+                in_flight,
+                repaint_pending,
+                window_destroyed,
+                submit_started_at,
+            };
+            self.render_thread =
+                crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id);
+            if self.render_thread.is_some() {
+                Self::schedule_render_thread_hang_check(window);
+            }
+        }
+
+        // The rebuild succeeded and a fresh render thread (if configured)
+        // is running: re-arm the one-shot guard so a later, separate hang
+        // on this same window can also be recovered from.
+        self.render_thread_hang_handled.set(false);
+
+        // The old frame's content is gone (new device, new/blank surface);
+        // force a full repaint rather than waiting for the next organic
+        // invalidate.
+        window.invalidate();
+
+        log::info!(
+            "successfully rebuilt this window's WebGpu renderer in place after a \
+             render-thread hang; window and all its tabs/panes survived"
+        );
     }
 
     fn dispatch_window_event(
