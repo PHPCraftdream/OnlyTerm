@@ -1587,25 +1587,27 @@ impl TermWindow {
     /// `RenderState` against the new device and spawns a fresh render
     /// thread, mirroring `new_window`'s original setup sequence.
     ///
-    /// On failure, this re-enters the same circuit-breaker-gated path
-    /// (`attempt_renderer_rebuild_or_close`) that got us here, rather than
-    /// closing the window immediately. Rationale (task #255): a single
-    /// `WebGpuState::new` failure during a rebuild is, from the circuit
+    /// There are two sequential failure points here -- `WebGpuState::new`
+    /// itself failing, and (task #272) `self.created` (i.e. `RenderState::new`:
+    /// shader compilation, glyph atlas allocation, etc.) failing even though
+    /// `WebGpuState::new` just succeeded -- and both re-enter the same
+    /// circuit-breaker-gated path (`attempt_renderer_rebuild_or_close`) that
+    /// got us here, rather than closing the window immediately. Rationale
+    /// (task #255, extended by #272): either failure is, from the circuit
     /// breaker's point of view, just another WebGpu rebuild attempt that
     /// didn't pan out -- exactly like a rebuild that "succeeds" (returns a
     /// device) but then immediately re-hangs, which the breaker already
-    /// tolerates up to `MAX_REBUILDS_PER_WINDOW` times. Treating a
-    /// same-call synchronous failure differently (skip straight to close,
-    /// bypassing the retry budget entirely) would be an inconsistency with
-    /// no real justification: both symptoms mean "this WebGpu attempt
-    /// didn't produce a working renderer", and the breaker's 3-attempts/30s
-    /// budget is exactly the mechanism designed to decide when to stop
-    /// retrying and fall back. So a failure here counts as one attempt
-    /// against that same budget, and re-calling
-    /// `attempt_renderer_rebuild_or_close` naturally either retries WebGpu
-    /// again (if attempts remain) or, once the breaker trips, falls back to
-    /// OpenGL (see that function) before ever reaching the destructive
-    /// close.
+    /// tolerates up to `MAX_REBUILDS_PER_WINDOW` times. Treating either of
+    /// these failures differently (skip straight to close, bypassing the
+    /// retry budget entirely) would be an inconsistency with no real
+    /// justification: all three symptoms mean "this WebGpu attempt didn't
+    /// produce a working renderer", and the breaker's 3-attempts/30s budget
+    /// is exactly the mechanism designed to decide when to stop retrying and
+    /// fall back. So a failure at either point counts as one attempt against
+    /// that same budget, and re-calling `attempt_renderer_rebuild_or_close`
+    /// naturally either retries WebGpu again (if attempts remain) or, once
+    /// the breaker trips, falls back to OpenGL (see that function) before
+    /// ever reaching the destructive close.
     fn finish_renderer_rebuild(
         &mut self,
         window: &Window,
@@ -1644,13 +1646,33 @@ impl TermWindow {
         // targets the fresh child HWND. Nothing left to do for the HWND here.
         self.webgpu.replace(Arc::clone(&webgpu));
         if let Err(err) = self.created(RenderContext::WebGpu(Arc::clone(&webgpu))) {
+            // Same reasoning as the `WebGpuState::new` failure arm above
+            // (task #272): the device/surface rebuild itself just
+            // succeeded, so this is a `RenderState::new` failure (shader
+            // compilation, glyph atlas allocation, etc.) on top of a
+            // healthy device -- still just another WebGpu rebuild attempt
+            // that didn't pan out, from the circuit breaker's point of
+            // view. Retry through it instead of closing immediately, so a
+            // transient failure right after a device rebuild gets the same
+            // retry/OpenGL-fallback chance as any other rebuild hiccup.
+            // `self.created` already reset `self.render_state` to `None` on
+            // this failure, and the next `begin_renderer_rebuild` (if the
+            // breaker allows another attempt) will mark this `self.webgpu`
+            // stale and clear it before creating a fresh one, so no stale
+            // partial state is left around for a subsequent attempt to trip
+            // over.
             log::error!(
-                "failed to rebuild RenderState after a render-thread hang ({:#}); \
-                 closing this window",
+                "failed to rebuild RenderState after a successful WebGpu device/surface \
+                 rebuild ({:#}); retrying through the rebuild circuit breaker",
                 err
             );
             metrics::counter!("gui.render_thread.rebuild_failed").increment(1);
-            self.close_window_for_unrecoverable_render_hang(window);
+            self.attempt_renderer_rebuild_or_close(
+                window,
+                "RenderState build failed after a successful device/surface rebuild",
+                "the WebGpu rebuild attempt has failed",
+                "gui.render_thread.window_renderer_rebuilt",
+            );
             return;
         }
 
