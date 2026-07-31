@@ -221,20 +221,26 @@ impl CellCluster {
     ///
     /// `is_wrap_continuation`/`continues_next` describe whether the FIRST/
     /// LAST cell respectively belongs to a phrase that actually started on
-    /// a previous physical row, or continues onto the next one, because
-    /// the line wrapped. A physical row only ever sees its own cells, so a
+    /// a previous physical row, or continues onto the next one, because the
+    /// line wrapped. A physical row only ever sees its own cells, so a
     /// Hebrew span touching that edge might be an incomplete fragment of a
-    /// longer phrase -- reversing a fragment we can't confirm is complete
-    /// produces worse results (eg: a bracket ending up on the wrong side)
-    /// than leaving it as typed, so such edge-touching spans are left
-    /// unreversed instead.
+    /// longer phrase -- but a terminal's fixed per-cell grid can't move a
+    /// word across a row boundary either way, so every visual row still has
+    /// to reverse its own Hebrew content independently of wrap topology
+    /// (this is also what standard bidi text layout does: each visual line
+    /// is reordered on its own). Leaving an edge-touching span unreversed
+    /// "as a precaution" used to mean a multi-word phrase that happened to
+    /// wrap between two of its words left BOTH rows entirely in typed
+    /// order, not just the seam between them -- so these parameters no
+    /// longer change how a span reverses; they are retained for callers
+    /// that may need wrap-aware behavior for other purposes in the future.
     ///
     /// Returns, for each position in the returned order, the source cell
     /// index.
     fn reorder_hebrew_phrases(
         cells: &[CellRef<'_>],
-        is_wrap_continuation: bool,
-        continues_next: bool,
+        _is_wrap_continuation: bool,
+        _continues_next: bool,
     ) -> Vec<usize> {
         let n = cells.len();
         let mut is_heb: Vec<bool> = cells.iter().map(|c| Self::is_hebrew_cell(c.str())).collect();
@@ -310,12 +316,6 @@ impl CellCluster {
                     idx += 1;
                 }
                 let end = idx - 1;
-                let touches_unconfirmed_edge =
-                    (start == 0 && is_wrap_continuation) || (end == n - 1 && continues_next);
-                if touches_unconfirmed_edge {
-                    idx = end + 1;
-                    continue;
-                }
                 order[start..=end].reverse();
             } else {
                 idx += 1;
