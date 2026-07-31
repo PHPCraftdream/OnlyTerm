@@ -520,7 +520,12 @@ impl crate::TermWindow {
                         // frame, at which point it may again be a cache
                         // hit (nothing else changed) or, if the content
                         // is genuinely still being produced, fall back
-                        // here again.
+                        // here again. Task #268: that next frame is not
+                        // automatic on an otherwise-idle window -- see the
+                        // `update_next_frame_time` call where
+                        // `budget_exceeded` is first set to `true` in
+                        // `render_lines`, which is what actually schedules
+                        // it.
                         return Ok(());
                     }
 
@@ -665,6 +670,29 @@ impl crate::TermWindow {
                             if let Some(deadline) = self.deadline {
                                 if Instant::now() >= deadline {
                                     self.budget_exceeded = true;
+                                    // Task #268: rows skipped below because of
+                                    // `budget_exceeded` (cache-miss branch in
+                                    // `render_line`) are left undrawn for
+                                    // *this* frame only -- the comment there
+                                    // promises they'll be tried again "on the
+                                    // next frame", but nothing else in this
+                                    // otherwise-idle-window path (no new
+                                    // input/output, no animation) actually
+                                    // asks for a next frame. Ask for one here,
+                                    // exactly once per pane per frame (this
+                                    // `if !self.budget_exceeded` guard only
+                                    // ever fires on the single row where the
+                                    // deadline is first observed to have
+                                    // passed), via the same
+                                    // has_animation/update_next_frame_time
+                                    // mechanism `paint_impl` already uses to
+                                    // schedule a follow-up repaint -- this
+                                    // reuses the existing "please repaint
+                                    // again soon" primitive instead of
+                                    // invalidating per skipped row, which
+                                    // would turn the budget into a busy loop.
+                                    self.term_window
+                                        .update_next_frame_time(Some(Instant::now()));
                                 }
                             }
                         }
