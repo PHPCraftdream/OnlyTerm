@@ -31,6 +31,7 @@ mod font;
 mod frontend;
 pub mod keyassignment;
 mod keys;
+pub mod ktav_value;
 pub mod meta;
 pub mod rhai_bridge;
 pub mod rhai_engine;
@@ -340,15 +341,15 @@ where
 }
 
 fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
-    // Cause the default config to be re-evaluated with the overrides applied
-    let rhai_engine =
-        rhai_engine::make_rhai_engine(Path::new("override")).context("make_rhai_engine")?;
-    let table = rhai::Dynamic::from_map(rhai::Map::new());
-    let config =
-        Config::apply_overrides_to_rhai(&rhai_engine, table).context("apply_overrides_to_rhai")?;
-
+    // Cause the default config to be re-evaluated with the overrides applied.
+    // There is no config file in this path (this backs `Config::try_default`,
+    // used when no `.ktav` config file was found at all), so we start from
+    // an empty object and let `apply_overrides_to_ktav` (see `config.rs`)
+    // splice in any `--config key=value` command line overrides, the same
+    // way `Config::try_load` does for a real config file.
+    let table = wezterm_dynamic::Value::Object(Default::default());
     let dyn_config =
-        rhai_value::rhai_dynamic_to_dynamic(&config).map_err(|e| anyhow!("{e}"))?;
+        Config::apply_overrides_to_ktav(table).context("apply_overrides_to_ktav")?;
 
     let cfg: Config = Config::from_dynamic(
         &dyn_config,
@@ -357,7 +358,7 @@ fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
             deprecated_fields: UnknownFieldAction::Warn,
         },
     )
-    .context("Error converting rhai value from overrides to Config struct")?;
+    .context("Error converting overrides to Config struct")?;
     // Compute but discard the key bindings here so that we raise any
     // problems earlier than we use them.
     let _ = cfg.key_bindings();

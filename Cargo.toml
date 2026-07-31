@@ -119,6 +119,7 @@ image = "0.25"
 image-webp = "0.2"
 intrusive-collections = "0.9"
 k9 = "0.12.0"
+ktav = "0.6.1"
 lazy_static = "1.4"
 leb128 = "0.2"
 lfucache = { path = "crates/lfucache" }

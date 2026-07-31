@@ -74,6 +74,15 @@ fn load_rhai_config(path: &std::path::Path) -> config::LoadedConfig {
 /// writes a marker file, and emitting that event from the Rust side (mirroring
 /// what `config::rhai_bridge::emit_event` callers do) really invokes it.
 #[test]
+#[ignore = "task #275: Config::try_load no longer evaluates .rhai files (config \
+            loading now goes through ktav; see config::ktav_value/Config::from_ktav_dynamic), \
+            so writing a .rhai fixture and loading it via Config::load() can no longer produce \
+            an event_script. This test exercises the rhai event-callback bridge itself \
+            (register/emit/dispatch), which is still present and still correct in isolation \
+            -- only its `Config::load()`-based fixture setup is now stale. Task #280 \
+            (\"Удалить/переписать rhai-специфичные тесты в crates/config\") owns rewriting \
+            or removing this test as part of retiring the rhai event-hook machinery \
+            (task #276/#278)."]
 fn window_config_reloaded_handler_fires_end_to_end() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -173,6 +182,9 @@ fn window_config_reloaded_handler_fires_end_to_end() {
 /// `format-tab-title` call sites) via the same real `try_load` ->
 /// `RhaiConfigState::from_script` path.
 #[test]
+#[ignore = "task #275: Config::try_load no longer evaluates .rhai files, see the \
+            #[ignore] reason on window_config_reloaded_handler_fires_end_to_end above; \
+            task #280 owns this test's rewrite/removal."]
 fn emit_sync_callback_returns_first_handler_result_end_to_end() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -214,6 +226,9 @@ fn emit_sync_callback_returns_first_handler_result_end_to_end() {
 /// action proceeds) and must not error, mirroring the Lua path's behavior for
 /// an event nobody subscribed to.
 #[test]
+#[ignore = "task #275: Config::try_load no longer evaluates .rhai files, see the \
+            #[ignore] reason on window_config_reloaded_handler_fires_end_to_end above; \
+            task #280 owns this test's rewrite/removal."]
 fn emit_event_with_no_handler_returns_true() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
