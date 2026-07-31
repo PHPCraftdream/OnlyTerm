@@ -361,12 +361,19 @@ fn submit_one_frame(
         in_flight.store(false, Ordering::Release);
         return;
     }
+    // `submit_started_at` must cover the debug stall too, not just the real
+    // `submit_frame` call below: this is what task #253's manual hang/rebuild
+    // verification (and anyone else exercising `debug_render_thread_stall_ms`)
+    // relies on to simulate a stuck GPU driver call. Setting it only around
+    // `submit_frame` (which is fast) would mean `render_thread_is_hung()`
+    // never observes the artificial stall as a hang at all, defeating the
+    // point of the debug knob.
+    let start = std::time::Instant::now();
+    *submit_started_at.lock() = Some(start);
     let stall_ms = config::configuration().debug_render_thread_stall_ms;
     if stall_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(stall_ms));
     }
-    let start = std::time::Instant::now();
-    *submit_started_at.lock() = Some(start);
     let result = webgpu.submit_frame(frame);
     *submit_started_at.lock() = None;
     if let Err(err) = result {
