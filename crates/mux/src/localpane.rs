@@ -290,8 +290,9 @@ pub struct LocalPane {
     /// attempt (`try_lock_terminal_for`, task #246) times out for *any*
     /// of the four GUI-thread-reachable accessors below, and cleared
     /// back to `false` the moment any subsequent bounded attempt
-    /// succeeds. `is_unresponsive()` reads this directly, with no lock
-    /// of its own, mirroring `unseen_output` above and for the same
+    /// succeeds. `is_unresponsive()` reads this (OR'd with
+    /// `render_budget_exceeded` below, see task #269) directly, with no
+    /// lock of its own, mirroring `unseen_output` above and for the same
     /// reason: this needs to be safely pollable from the GUI thread for
     /// *every* pane, including ones whose terminal mutex is currently
     /// wedged.
@@ -307,7 +308,27 @@ pub struct LocalPane {
     /// epoch to fit in an `AtomicU64`, adding complexity for a signal
     /// nothing yet reads). If a future consumer needs "how long has this
     /// been stuck" this field can be upgraded then.
+    ///
+    /// Task #269: this is written ONLY by `try_lock_terminal_for` (the
+    /// real hang-detection signal). It used to also be written directly
+    /// by the GUI's per-frame render-budget path (task #251), which
+    /// clobbered this signal back to `false` on almost every frame for
+    /// whichever pane the user was actively looking at, since the
+    /// render-budget write ran ~60 times/second and was `false` far more
+    /// often than not. That producer now has its own cell,
+    /// `render_budget_exceeded` below, and the two are combined only at
+    /// the `is_unresponsive()` read site.
     unresponsive: Arc<AtomicBool>,
+    /// Task #269: companion to `unresponsive` above, written ONLY by the
+    /// GUI's per-frame content-build budget (`set_render_budget_exceeded`,
+    /// task #251) in `crates/wezterm-gui/src/termwindow/render/pane.rs`.
+    /// Kept as a separate cell rather than sharing `unresponsive` so that
+    /// this producer -- which legitimately writes both `true` and `false`
+    /// every single frame for every painted pane -- can never race with
+    /// and overwrite a still-active lock-timeout `true` written
+    /// concurrently by `try_lock_terminal_for` for the same pane.
+    /// `is_unresponsive()` reports the OR of both cells.
+    render_budget_exceeded: Arc<AtomicBool>,
     /// Task #246: last known-good values for the other GUI-thread-polled
     /// accessors (`get_title()`, `get_progress()`, `copy_user_vars()`, and
     /// the terminal-cache half of `get_current_working_dir()`). Each is
@@ -888,23 +909,36 @@ impl Pane for LocalPane {
         self.unseen_output.load(Ordering::Acquire)
     }
 
+    /// Task #269: OR of two independently-written signals -- a genuine
+    /// `terminal.lock()` timeout (`unresponsive`, written only by
+    /// `try_lock_terminal_for`) and the GUI's per-frame render-budget
+    /// signal (`render_budget_exceeded`, written only by
+    /// `set_render_budget_exceeded`). These used to share a single cell,
+    /// which let the render-budget path's frequent `false` writes
+    /// silently clobber a real lock-timeout `true` for whichever pane was
+    /// actively being painted (i.e. exactly the pane the user is looking
+    /// at). Combining them only here, at the read site, means a real
+    /// lock-timeout stays visible regardless of what the render-budget
+    /// path is concurrently doing.
     fn is_unresponsive(&self) -> bool {
         self.unresponsive.load(Ordering::Acquire)
+            || self.render_budget_exceeded.load(Ordering::Acquire)
     }
 
-    /// Task #251: same flag that `try_lock_terminal_for` (task #246/#248)
-    /// already flips on a bounded-lock timeout, but set directly by the
-    /// GUI's per-frame content-build budget when this pane's rendering
-    /// couldn't be finished within `tab_frame_build_budget_ms`. This is a
-    /// distinct trigger from a wedged `terminal.lock()` -- the lock may be
-    /// perfectly healthy, it's the shaping/rasterization work itself that
-    /// is too slow -- but it's surfaced through the same `AtomicBool` and
-    /// the same `is_unresponsive()` reader rather than adding a second
-    /// signal, since nothing downstream (tab-title formatter, Lua
-    /// `PaneInformation.is_unresponsive`) currently needs to distinguish
-    /// the two causes.
-    fn set_unresponsive(&self, unresponsive: bool) {
-        self.unresponsive.store(unresponsive, Ordering::Release);
+    /// Task #251/#269: set directly by the GUI's per-frame content-build
+    /// budget when this pane's rendering couldn't be finished within
+    /// `tab_frame_build_budget_ms`. This is a distinct trigger from a
+    /// wedged `terminal.lock()` -- the lock may be perfectly healthy,
+    /// it's the shaping/rasterization work itself that is too slow --
+    /// and, since task #269, it is stored in its own
+    /// `render_budget_exceeded` cell rather than sharing `unresponsive`
+    /// with `try_lock_terminal_for`: this setter runs on essentially
+    /// every frame for every painted pane and writes `false` far more
+    /// often than `true`, which would otherwise race with and overwrite a
+    /// still-active lock-timeout signal for the same pane.
+    /// `is_unresponsive()` reports the OR of both cells.
+    fn set_render_budget_exceeded(&self, exceeded: bool) {
+        self.render_budget_exceeded.store(exceeded, Ordering::Release);
     }
 
     fn is_mouse_grabbed(&self) -> bool {
@@ -1477,6 +1511,7 @@ impl LocalPane {
             command_description,
             unseen_output,
             unresponsive: Arc::new(AtomicBool::new(false)),
+            render_budget_exceeded: Arc::new(AtomicBool::new(false)),
             last_known_good: Mutex::new(CachedTerminalInfo::default()),
         }
     }
