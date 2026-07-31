@@ -205,6 +205,7 @@ pub struct PaneState {
 }
 
 /// Data used when synchronously formatting pane and window titles
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TabInformation {
     pub tab_id: TabId,
@@ -216,55 +217,8 @@ pub struct TabInformation {
     pub tab_title: String,
 }
 
-/// L4.6 rhai binding for `TabInformation`, mirroring the `impl UserData` block
-/// above field-by-field. Every field here is either a plain stored value or a
-/// synchronous `Mux::get()`/`Mux::try_get()` lookup -- unlike `GuiWin` (see the
-/// doc comment on its `register_rhai` in `wezterm-gui/src/scripting/guiwin.rs`),
-/// none of these touch a `TermWindowNotif`/channel round-trip back into the GUI
-/// event loop, so there is no async-vs-sync hazard here: the full field set binds
-/// safely.
-fn register_tab_information_rhai(engine: &mut rhai::Engine) {
-    engine.register_type_with_name::<TabInformation>("TabInformation");
-    engine.register_get("tab_id", |this: &mut TabInformation| this.tab_id as rhai::INT);
-    engine.register_get("tab_index", |this: &mut TabInformation| this.tab_index as rhai::INT);
-    engine.register_get("is_active", |this: &mut TabInformation| this.is_active);
-    engine.register_get("is_last_active", |this: &mut TabInformation| this.is_last_active);
-    engine.register_get("active_pane", |this: &mut TabInformation| -> rhai::Dynamic {
-        match &this.active_pane {
-            Some(pane) => rhai::Dynamic::from(pane.clone()),
-            None => rhai::Dynamic::UNIT,
-        }
-    });
-    engine.register_get("panes", |this: &mut TabInformation| -> rhai::Array {
-        let mut panes = rhai::Array::new();
-        if let Some(mux) = Mux::try_get() {
-            if let Some(tab) = mux.get_tab(this.tab_id) {
-                for pos_pane in tab.iter_panes() {
-                    panes.push(rhai::Dynamic::from(TermWindow::pos_pane_to_pane_info(
-                        &pos_pane,
-                    )));
-                }
-            }
-        }
-        panes
-    });
-    engine.register_get("window_id", |this: &mut TabInformation| this.window_id as rhai::INT);
-    engine.register_get("tab_title", |this: &mut TabInformation| this.tab_title.clone());
-    engine.register_get(
-        "window_title",
-        |this: &mut TabInformation| -> Result<String, Box<rhai::EvalAltResult>> {
-            let mux = Mux::try_get().ok_or_else(|| -> Box<rhai::EvalAltResult> { "no mux?".into() })?;
-            let window = mux.get_window(this.window_id).ok_or_else(
-                || -> Box<rhai::EvalAltResult> {
-                    format!("window {} not found", this.window_id).into()
-                },
-            )?;
-            Ok(window.get_title().to_string())
-        },
-    );
-}
-
 /// Data used when synchronously formatting pane and window titles
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PaneInformation {
     pub pane_id: PaneId,
@@ -303,111 +257,6 @@ pub struct PaneInformation {
     /// `current_working_dir` getter registered below), rendered as a
     /// plain string. `None` if the pane hasn't reported a cwd yet.
     pub current_working_dir: Option<String>,
-}
-
-/// L4.6 rhai binding for `PaneInformation`, mirroring the `impl UserData` block
-/// above field-by-field. As with `TabInformation`'s binding above, every field
-/// here is either plain stored data or a synchronous `Mux::try_get()` lookup, so
-/// the full field set binds safely (see the `GuiWin`/`register_rhai` doc comment
-/// in `wezterm-gui/src/scripting/guiwin.rs` for the contrasting case where that
-/// isn't true).
-///
-/// Two fields get a slightly different representation than their mlua
-/// counterpart because the underlying type has no `rhai`-side binding of its own
-/// (adding one is out of scope for this bridge; a script that specifically needs
-/// the richer type can still fall back to the equivalent Lua-side handler):
-/// `progress` (`wezterm_term::Progress`, an enum with no `FromDynamic`/`ToDynamic`
-/// derive) becomes an object map `#{ kind: "...", value: ... }`; `current_working_dir`
-/// (`Option<url_funcs::Url>`) becomes a plain URL string (or unit).
-fn register_pane_information_rhai(engine: &mut rhai::Engine) {
-    engine.register_type_with_name::<PaneInformation>("PaneInformation");
-    engine.register_get("pane_id", |this: &mut PaneInformation| this.pane_id as rhai::INT);
-    engine.register_get("pane_index", |this: &mut PaneInformation| this.pane_index as rhai::INT);
-    engine.register_get("is_active", |this: &mut PaneInformation| this.is_active);
-    engine.register_get("is_zoomed", |this: &mut PaneInformation| this.is_zoomed);
-    engine.register_get("has_unseen_output", |this: &mut PaneInformation| {
-        this.has_unseen_output
-    });
-    engine.register_get("is_unresponsive", |this: &mut PaneInformation| {
-        this.is_unresponsive
-    });
-    engine.register_get("left", |this: &mut PaneInformation| this.left as rhai::INT);
-    engine.register_get("top", |this: &mut PaneInformation| this.top as rhai::INT);
-    engine.register_get("width", |this: &mut PaneInformation| this.width as rhai::INT);
-    engine.register_get("height", |this: &mut PaneInformation| this.height as rhai::INT);
-    engine.register_get("pixel_width", |this: &mut PaneInformation| {
-        this.pixel_width as rhai::INT
-    });
-    engine.register_get("pixel_height", |this: &mut PaneInformation| {
-        this.pixel_height as rhai::INT
-    });
-    engine.register_get("progress", |this: &mut PaneInformation| -> rhai::Map {
-        let mut map = rhai::Map::new();
-        match &this.progress {
-            wezterm_term::Progress::None => {
-                map.insert("kind".into(), "None".into());
-            }
-            wezterm_term::Progress::Percentage(p) => {
-                map.insert("kind".into(), "Percentage".into());
-                map.insert("value".into(), (*p as rhai::INT).into());
-            }
-            wezterm_term::Progress::Error(p) => {
-                map.insert("kind".into(), "Error".into());
-                map.insert("value".into(), (*p as rhai::INT).into());
-            }
-            wezterm_term::Progress::Indeterminate => {
-                map.insert("kind".into(), "Indeterminate".into());
-            }
-        }
-        map
-    });
-    engine.register_get("title", |this: &mut PaneInformation| this.title.clone());
-    engine.register_get("user_vars", |this: &mut PaneInformation| -> rhai::Map {
-        this.user_vars
-            .iter()
-            .map(|(k, v)| (k.into(), rhai::Dynamic::from(v.clone())))
-            .collect()
-    });
-    engine.register_get("foreground_process_name", |this: &mut PaneInformation| -> String {
-        Mux::try_get()
-            .and_then(|mux| mux.get_pane(this.pane_id))
-            .and_then(|pane| pane.get_foreground_process_name(CachePolicy::AllowStale))
-            .unwrap_or_default()
-    });
-    engine.register_get("tty_name", |this: &mut PaneInformation| -> rhai::Dynamic {
-        match Mux::try_get().and_then(|mux| mux.get_pane(this.pane_id)).and_then(|pane| pane.tty_name()) {
-            Some(name) => rhai::Dynamic::from(name),
-            None => rhai::Dynamic::UNIT,
-        }
-    });
-    engine.register_get("current_working_dir", |this: &mut PaneInformation| -> rhai::Dynamic {
-        let cwd = Mux::try_get()
-            .and_then(|mux| mux.get_pane(this.pane_id))
-            .and_then(|pane| pane.get_current_working_dir(CachePolicy::AllowStale));
-        match cwd {
-            Some(url) => rhai::Dynamic::from(url.to_string()),
-            None => rhai::Dynamic::UNIT,
-        }
-    });
-    engine.register_get("domain_name", |this: &mut PaneInformation| -> String {
-        Mux::try_get()
-            .and_then(|mux| {
-                let pane = mux.get_pane(this.pane_id)?;
-                let domain_id = pane.domain_id();
-                mux.get_domain(domain_id)
-            })
-            .map(|dom| dom.domain_name().to_string())
-            .unwrap_or_default()
-    });
-}
-
-/// L4.6: registers this module's rhai-side types (`TabInformation`,
-/// `PaneInformation`) with the event-callback bridge's engine. Wired up via
-/// `config::rhai_engine::add_rhai_setup_func` in `wezterm-gui/src/main.rs`.
-pub fn register_rhai(engine: &mut rhai::Engine) -> anyhow::Result<()> {
-    register_tab_information_rhai(engine);
-    register_pane_information_rhai(engine);
-    Ok(())
 }
 
 #[derive(Default)]
@@ -695,7 +544,6 @@ impl TermWindow {
         }
 
         self.update_title();
-        self.emit_window_event("window-focus-changed", None);
     }
 
     fn created(&mut self, ctx: RenderContext) -> anyhow::Result<()> {
@@ -1086,8 +934,6 @@ impl TermWindow {
                 window.maximize();
             }
             myself.subscribe_to_pane_updates();
-            myself.emit_window_event("window-config-reloaded", None);
-            myself.emit_status_event();
         }
 
         crate::update::start_update_checker();
@@ -2099,7 +1945,6 @@ impl TermWindow {
                     }
 
                     log::trace!("Ding! (this is the bell) in pane {}", pane_id);
-                    self.emit_window_event("bell", Some(pane_id));
 
                     let mut per_pane = self.pane_state(pane_id);
                     per_pane.bell_start.replace(Instant::now());
@@ -2415,8 +2260,8 @@ impl TermWindow {
     }
 
     fn emit_status_event(&mut self) {
-        self.emit_window_event("update-right-status", None);
-        self.emit_window_event("update-status", None);
+        // update-right-status/update-status events were dispatched to rhai
+        // handlers; with the scripting layer removed they have no consumers.
     }
 
     fn schedule_window_event(&mut self, name: &str, pane_id: Option<PaneId>) {
@@ -2693,7 +2538,6 @@ impl TermWindow {
         );
 
         self.invalidate_modal();
-        self.emit_window_event("window-config-reloaded", None);
     }
 
     fn invalidate_modal(&mut self) {
@@ -2764,52 +2608,11 @@ impl TermWindow {
         return window_id == self.mux_window_id;
     }
 
-    fn emit_user_var_event(&mut self, pane_id: PaneId, name: String, value: String) {
+    fn emit_user_var_event(&mut self, pane_id: PaneId, _name: String, _value: String) {
         if !self.window_contains_pane(pane_id) {
             return;
         }
-
-        let mux = Mux::get();
-        let window = GuiWin::new(self);
-        let pane = match mux.get_pane(pane_id) {
-            Some(pane) => mux_lua::MuxPane(pane.pane_id()),
-            None => return,
-        };
-
-        async fn do_event(
-            state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-            name: String,
-            value: String,
-            window: GuiWin,
-            pane: MuxPane,
-        ) -> anyhow::Result<()> {
-            if let Some(state) = state {
-                let args = vec![
-                    rhai::Dynamic::from(window.clone()),
-                    rhai::Dynamic::from(pane),
-                    rhai::Dynamic::from(name),
-                    rhai::Dynamic::from(value),
-                ];
-                if let Err(err) =
-                    config::rhai_bridge::emit_event(&state, "user-var-changed", args).await
-                {
-                    log::error!("while processing user-var-changed event: {:#}", err);
-                }
-            }
-
-            window
-                .window
-                .notify(TermWindowNotif::Apply(Box::new(move |term_window| {
-                    term_window.update_title();
-                })));
-
-            Ok(())
-        }
-
-        promise::spawn::spawn(config::with_rhai_config_on_main_thread(move |state| {
-            do_event(state, name, value, window, pane)
-        }))
-        .detach();
+        self.update_title();
     }
 
     /// Called by window:set_right_status after the status has
@@ -2879,91 +2682,39 @@ impl TermWindow {
         }
         drop(window);
 
-        let title = match config::run_immediate_with_rhai_config(|state| {
-            if let Some(state) = state {
-                let tabs_arg: rhai::Array =
-                    tabs.iter().cloned().map(rhai::Dynamic::from).collect();
-                let panes_arg: rhai::Array =
-                    panes.iter().cloned().map(rhai::Dynamic::from).collect();
-                let active_tab_arg = match &active_tab {
-                    Some(tab) => rhai::Dynamic::from(tab.clone()),
-                    None => rhai::Dynamic::UNIT,
-                };
-                let active_pane_arg = match &active_pane {
-                    Some(pane) => rhai::Dynamic::from(pane.clone()),
-                    None => rhai::Dynamic::UNIT,
-                };
-
-                let v = config::rhai_bridge::emit_sync_callback(
-                    &state,
-                    "format-window-title",
-                    vec![
-                        active_tab_arg,
-                        active_pane_arg,
-                        rhai::Dynamic::from(tabs_arg),
-                        rhai::Dynamic::from(panes_arg),
-                        config::rhai_value::dynamic_to_rhai_dynamic(
-                            &wezterm_dynamic::ToDynamic::to_dynamic(&*self.config),
-                        ),
-                    ],
-                )?;
-                if v.is_unit() {
-                    Ok(None)
-                } else {
-                    let s = v.into_string().map_err(|ty| {
-                        anyhow::anyhow!("format-window-title: expected string, got `{ty}`")
-                    })?;
-                    Ok(Some(s))
+        let title = if let (Some(pos), Some(tab)) = (active_pane, active_tab) {
+            // Mirrors compute_tab_title's fallback (crate::tabbar):
+            // prefer the cwd basename over the pane's own title (the
+            // running program's name) when configured to do so, so
+            // the window title tracks `cd` the same way the tab
+            // title does.
+            let pane_title = if self.config.use_cwd_basename_as_tab_title {
+                match &pos.current_working_dir {
+                    Some(cwd) if !cwd.is_empty() => {
+                        crate::tabbar::basename_of_path(cwd)
+                    }
+                    _ => pos.title.clone(),
                 }
             } else {
-                Ok(None)
+                pos.title.clone()
+            };
+            if num_tabs == 1 {
+                format!(
+                    "{}{}",
+                    if pos.is_zoomed { "[Z] " } else { "" },
+                    pane_title
+                )
+            } else {
+                format!(
+                    "{}[{}/{}] {}",
+                    if pos.is_zoomed { "[Z] " } else { "" },
+                    tab.tab_index + 1,
+                    num_tabs,
+                    pane_title
+                )
             }
-        }) {
-            Ok(s) => s,
-            Err(err) => {
-                log::warn!("format-window-title: {}", err);
-                None
-            }
-        };
-
-        let title = match title {
-            Some(title) => title,
-            None => {
-                if let (Some(pos), Some(tab)) = (active_pane, active_tab) {
-                    // Mirrors compute_tab_title's fallback (crate::tabbar):
-                    // prefer the cwd basename over the pane's own title (the
-                    // running program's name) when configured to do so, so
-                    // the window title tracks `cd` the same way the tab
-                    // title does.
-                    let pane_title = if self.config.use_cwd_basename_as_tab_title {
-                        match &pos.current_working_dir {
-                            Some(cwd) if !cwd.is_empty() => {
-                                crate::tabbar::basename_of_path(cwd)
-                            }
-                            _ => pos.title.clone(),
-                        }
-                    } else {
-                        pos.title.clone()
-                    };
-                    if num_tabs == 1 {
-                        format!(
-                            "{}{}",
-                            if pos.is_zoomed { "[Z] " } else { "" },
-                            pane_title
-                        )
-                    } else {
-                        format!(
-                            "{}[{}/{}] {}",
-                            if pos.is_zoomed { "[Z] " } else { "" },
-                            tab.tab_index + 1,
-                            num_tabs,
-                            pane_title
-                        )
-                    }
-                } else {
-                    "".to_string()
-                }
-            }
+        } else {
+            "".to_string()
         };
 
         if let Some(window) = self.window.as_ref() {
@@ -4195,50 +3946,17 @@ impl TermWindow {
         Ok(PerformAssignmentResult::Handled)
     }
 
-    fn do_open_link_at_mouse_cursor(&self, pane: &Arc<dyn Pane>) {
+    fn do_open_link_at_mouse_cursor(&self, _pane: &Arc<dyn Pane>) {
         // They clicked on a link, so let's open it!
         // We need to ensure that we spawn the `open` call outside of the context
         // of our window loop; on Windows it can cause a panic due to
         // triggering our WndProc recursively.
-        // We get that assurance for free as part of the async dispatch that we
-        // perform below; here we allow the user to define an `open-uri` event
-        // handler that can bypass the normal `open_url` functionality.
         if let Some(link) = self.current_highlight.as_ref().cloned() {
-            let window = GuiWin::new(self);
-            let pane = MuxPane(pane.pane_id());
-
-            async fn open_uri(
-                state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-                window: GuiWin,
-                pane: MuxPane,
-                link: String,
-            ) -> anyhow::Result<()> {
-                let default_click = match state {
-                    Some(state) => {
-                        let args = vec![
-                            rhai::Dynamic::from(window),
-                            rhai::Dynamic::from(pane),
-                            rhai::Dynamic::from(link.clone()),
-                        ];
-                        config::rhai_bridge::emit_event(&state, "open-uri", args)
-                            .await
-                            .map_err(|e| {
-                                log::error!("while processing open-uri event: {:#}", e);
-                                e
-                            })?
-                    }
-                    None => true,
-                };
-                if default_click {
-                    log::info!("clicking {}", link);
-                    wezterm_open_url::open_url(&link);
-                }
-                Ok(())
-            }
-
-            promise::spawn::spawn(config::with_rhai_config_on_main_thread(move |state| {
-                open_uri(state, window, pane, link.uri().to_string())
-            }))
+            let link = link.uri().to_string();
+            promise::spawn::spawn(async move {
+                log::info!("clicking {}", link);
+                wezterm_open_url::open_url(&link);
+            })
             .detach();
         }
     }
