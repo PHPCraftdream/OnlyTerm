@@ -720,16 +720,22 @@ impl crate::TermWindow {
                 return Err(error).context("error while calling get_lines");
             }
 
-            // Task #251: reflect whether this pane's content could be
+            // Task #251/#269: reflect whether this pane's content could be
             // fully (re)built within `tab_frame_build_budget_ms` through
-            // the same `is_unresponsive()` signal that a timed-out
-            // `terminal.lock()` (task #246/#248) already uses -- set it
-            // when the budget was exceeded, and clear it back once a
-            // frame completes without exceeding it, mirroring
-            // `try_lock_terminal_for`'s set-on-timeout/clear-on-success
-            // behavior so the flag reflects only the most recent attempt
-            // rather than latching permanently after one slow frame.
-            pos.pane.set_unresponsive(budget_exceeded);
+            // the render-budget half of `is_unresponsive()` (OR'd with the
+            // unrelated `terminal.lock()` timeout signal from task
+            // #246/#248 at the read site) -- set it when the budget was
+            // exceeded, and clear it back once a frame completes without
+            // exceeding it, mirroring `try_lock_terminal_for`'s
+            // set-on-timeout/clear-on-success behavior so this half of the
+            // flag reflects only the most recent attempt rather than
+            // latching permanently after one slow frame. This writes a
+            // dedicated `render_budget_exceeded` cell, not the lock-timeout
+            // one, precisely so this per-frame write (unconditional, ~60
+            // times/second, `false` far more often than `true`) can never
+            // clobber a genuine concurrent lock-timeout `true` for this
+            // same pane (see task #269).
+            pos.pane.set_render_budget_exceeded(budget_exceeded);
         }
 
         /*

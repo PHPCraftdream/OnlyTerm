@@ -286,20 +286,36 @@ pub trait Pane: Downcast + Send + Sync {
     /// so pane implementations that have no such lock to wedge on (e.g.
     /// `Pane` impls that don't wrap a `Mutex<Terminal>`) never need to
     /// think about this.
+    ///
+    /// Task #269: this reflects ONLY the lock-timeout signal above, OR'd
+    /// together (by implementations such as `LocalPane`) with the
+    /// separate, independently-written `render_budget_exceeded` signal
+    /// (see `set_render_budget_exceeded()`). The two are tracked in
+    /// separate cells precisely so that the per-frame render-budget
+    /// producer -- which writes `false` far more often than `true`, once
+    /// per painted pane per frame -- can never clobber a genuine,
+    /// still-active lock-timeout `true` written by the unrelated
+    /// producer in `try_lock_terminal_for`.
     fn is_unresponsive(&self) -> bool {
         false
     }
 
-    /// Task #251: lets a caller outside of this pane's own lock-timeout
-    /// machinery (specifically, the GUI's per-frame content-build budget
-    /// in `paint_tab_content`/`paint_pane`) report "this pane is currently
-    /// too slow to render fully" through the same signal as
-    /// `is_unresponsive()`, without needing its own separate flag/plumbing
-    /// down to Lua's `PaneInformation.is_unresponsive`. Defaults to a no-op
-    /// so `Pane` impls that don't back `is_unresponsive()` with a real flag
-    /// (and thus always report `false` above) aren't forced to implement
+    /// Task #251/#269: lets a caller outside of this pane's own
+    /// lock-timeout machinery (specifically, the GUI's per-frame
+    /// content-build budget in `paint_tab_content`/`paint_pane`) report
+    /// "this pane is currently too slow to render fully". This is
+    /// deliberately a SEPARATE signal from the one `is_unresponsive()`'s
+    /// lock-timeout half is built on: the render-budget path writes here
+    /// unconditionally every frame (both `true` and `false`), which would
+    /// otherwise race with and clobber a wedged-lock `true` written
+    /// concurrently by `try_lock_terminal_for` for the same pane (task
+    /// #269). `is_unresponsive()` reports the OR of both signals, so
+    /// implementations should combine this cell with their own
+    /// lock-timeout cell rather than reusing a single shared flag.
+    /// Defaults to a no-op so `Pane` impls that don't back
+    /// `is_unresponsive()` with real storage aren't forced to implement
     /// storage for a signal they never read back.
-    fn set_unresponsive(&self, _unresponsive: bool) {}
+    fn set_render_budget_exceeded(&self, _exceeded: bool) {}
 
     /// Certain panes are OK to be closed with impunity (no prompts)
     fn can_close_without_prompting(&self, _reason: CloseReason) -> bool {
