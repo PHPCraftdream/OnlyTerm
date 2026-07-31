@@ -1446,15 +1446,71 @@ mod test {
     }
 
     #[test]
-    fn hebrew_phrase_touching_wrap_boundary_is_left_unreversed() {
+    fn multiword_hebrew_phrase_reverses_as_one_block() {
+        // Regression test for a reported bug: within a multi-word Hebrew
+        // phrase, letters inside each word read right-to-left correctly,
+        // but the words themselves stayed in typed (left-to-right) order.
+        // Consecutive Hebrew words glued by spaces/punctuation must
+        // reverse together as a single block, exactly like a single word.
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let text = "равные, без !חמש באב ו״ט";
+        let line = Line::from_text(text, &CellAttributes::default(), 0, None);
+        let hint = Some(ParagraphDirectionHint::AutoLeftToRight);
+        let joined: String = line.cluster(hint).iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(joined, "равные, без !ט״ו באב שמח");
+    }
+
+    #[test]
+    fn multiword_hebrew_phrase_split_by_wrap_still_reverses_each_row() {
+        // The reported bug above turned out to be exactly this: the wrap
+        // happened to split the multi-word phrase between two of its
+        // words, and the old "leave an edge-touching run unreversed"
+        // wrap-boundary precaution then left BOTH rows completely
+        // untouched (typed order), not just the seam between them. Each
+        // row must still reverse its own Hebrew content regardless of
+        // wrap topology.
+        use termwiz::cell::CellAttributes;
+        use termwiz::surface::Line;
+        use wezterm_bidi::ParagraphDirectionHint;
+
+        let hint = Some(ParagraphDirectionHint::AutoLeftToRight);
+
+        let mut row1 = Line::from_text("равные, без !חמש", &CellAttributes::default(), 0, None);
+        row1.set_last_cell_was_wrapped(true, 1);
+        let row1_out: String = row1
+            .cluster_with_wrap_context(hint, false)
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect();
+        assert_eq!(row1_out, "равные, без !שמח");
+
+        let row2 = Line::from_text("באב ו״ט", &CellAttributes::default(), 0, None);
+        let row2_out: String = row2
+            .cluster_with_wrap_context(hint, true)
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect();
+        assert_eq!(row2_out, "ט״ו באב");
+    }
+
+    #[test]
+    fn hebrew_phrase_touching_wrap_boundary_still_reverses() {
         // Regression test: a physical row only ever sees its own cells,
         // so a Hebrew phrase touching the first/last cell might actually
-        // be an incomplete fragment of a longer phrase that continues on
-        // the row before/after it (the line wrapped there). Reversing an
-        // incomplete fragment produces worse results (a bracket ending up
-        // on the wrong side) than leaving it as typed, so
-        // `cluster_with_wrap_context` must leave an edge-touching phrase
-        // untouched when the wrap topology says it might be incomplete.
+        // be a fragment of a longer phrase continuing on the row before/
+        // after it (the line wrapped there). `cluster_with_wrap_context`
+        // used to leave such an edge-touching phrase completely
+        // unreversed as a precaution -- but that left a multi-word
+        // phrase wrapped between two of its words with BOTH halves in
+        // typed (wrong) order, not just at the seam. Standard bidi text
+        // layout reverses each visual line independently regardless of
+        // wrap topology, which is also the closest a terminal's fixed
+        // per-cell grid can get (it can't move a word across a row
+        // boundary either way) -- so wrap context must NOT change how
+        // this phrase reverses.
         use termwiz::cell::CellAttributes;
         use termwiz::surface::Line;
         use wezterm_bidi::ParagraphDirectionHint;
@@ -1463,7 +1519,6 @@ mod test {
         let line = Line::from_text(text, &CellAttributes::default(), 0, None);
         let hint = Some(ParagraphDirectionHint::AutoLeftToRight);
 
-        // Baseline: with no wrap context, the whole phrase reverses.
         let normal: String = line
             .cluster(hint)
             .iter()
@@ -1473,15 +1528,15 @@ mod test {
         assert_eq!(normal, "םלוע םולש");
 
         // This row is the tail of a wrapped phrase (its first cell might
-        // continue a run from the row above) -- since the phrase touches
-        // cell 0, it must be left exactly as typed.
+        // continue a run from the row above) -- it must still reverse
+        // exactly the same as the no-wrap-context baseline above.
         let as_continuation: String = line
             .cluster_with_wrap_context(hint, true)
             .iter()
             .map(|c| c.text.as_str())
             .collect::<Vec<_>>()
             .join("");
-        assert_eq!(as_continuation, text);
+        assert_eq!(as_continuation, normal);
     }
 
     #[test]
