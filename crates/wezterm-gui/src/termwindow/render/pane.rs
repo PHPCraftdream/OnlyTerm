@@ -683,16 +683,29 @@ impl crate::TermWindow {
                                     // `if !self.budget_exceeded` guard only
                                     // ever fires on the single row where the
                                     // deadline is first observed to have
-                                    // passed), via the same
-                                    // has_animation/update_next_frame_time
-                                    // mechanism `paint_impl` already uses to
-                                    // schedule a follow-up repaint -- this
-                                    // reuses the existing "please repaint
-                                    // again soon" primitive instead of
-                                    // invalidating per skipped row, which
-                                    // would turn the budget into a busy loop.
-                                    self.term_window
-                                        .update_next_frame_time(Some(Instant::now()));
+                                    // passed).
+                                    //
+                                    // Task #271: task #268's original fix only
+                                    // wrote into has_animation/
+                                    // update_next_frame_time, which
+                                    // `paint_impl` only consumes when
+                                    // `self.focused.is_some()` -- so on an
+                                    // unfocused window (e.g. a second-monitor
+                                    // window that isn't focused) that
+                                    // follow-up repaint was silently dropped
+                                    // and the skipped rows stayed blank until
+                                    // the window was focused again. Keep the
+                                    // has_animation write for the focused
+                                    // path (cheap, and harmless if redundant),
+                                    // but also schedule an unconditional,
+                                    // focus-independent repaint via
+                                    // `schedule_budget_repaint`, which dedups
+                                    // internally so this can't turn into a
+                                    // busy loop even though it runs on every
+                                    // frame where the budget trips.
+                                    let now = Instant::now();
+                                    self.term_window.update_next_frame_time(Some(now));
+                                    self.term_window.schedule_budget_repaint(now);
                                 }
                             }
                         }

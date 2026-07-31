@@ -242,6 +242,56 @@ impl crate::TermWindow {
         }
     }
 
+    /// Task #271: unconditionally (i.e. regardless of window focus) ask for
+    /// a follow-up repaint at `next_due`. This exists specifically for the
+    /// per-tab frame-build budget (`tab_frame_build_budget_ms`, task #251):
+    /// when that budget trips partway through a pane's rows, the remaining
+    /// rows are left undrawn for this frame (see the `budget_exceeded`
+    /// skip in `render/pane.rs`'s cache-miss branch) and need a follow-up
+    /// frame to have a chance to draw them. Task #268 originally wired that
+    /// follow-up through `update_next_frame_time`/`has_animation`, but
+    /// `paint_impl` only ever consumes `has_animation` inside `if
+    /// self.focused.is_some()`, so that fix silently did nothing for an
+    /// unfocused window. This method instead schedules the repaint
+    /// directly via `promise::spawn::spawn` + `Timer::at` +
+    /// `window.notify`, the same focus-independent pattern already used by
+    /// `schedule_render_thread_hang_check`.
+    ///
+    /// `scheduled_budget_repaint` dedups/coalesces: if a repaint is already
+    /// pending for a time at or before `next_due`, this is a no-op, so a
+    /// budget trip that repeats every frame (e.g. content still streaming
+    /// in) schedules at most one pending timer at a time rather than
+    /// stacking one per frame.
+    pub fn schedule_budget_repaint(&self, next_due: Instant) {
+        let prior = self.scheduled_budget_repaint.borrow_mut().take();
+        match prior {
+            Some(prior) if prior <= next_due => {
+                // Already due before that time; put it back and do nothing else.
+                self.scheduled_budget_repaint.borrow_mut().replace(prior);
+                return;
+            }
+            _ => {
+                self.scheduled_budget_repaint
+                    .borrow_mut()
+                    .replace(next_due);
+            }
+        }
+
+        let window = match self.window.clone() {
+            Some(window) => window,
+            None => return,
+        };
+        promise::spawn::spawn(async move {
+            smol::Timer::at(next_due).await;
+            let win = window.clone();
+            window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.scheduled_budget_repaint.borrow_mut().take();
+                win.invalidate();
+            })));
+        })
+        .detach();
+    }
+
     fn get_intensity_if_bell_target_ringing(
         &self,
         pane: &Arc<dyn Pane>,
