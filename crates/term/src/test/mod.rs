@@ -771,6 +771,18 @@ fn test_dec_double_width() {
     assert!(lines[3].is_single_width());
 }
 
+#[test]
+fn hebrew_niqqud_and_cantillation_are_stripped() {
+    let mut term = TestTerm::new(1, 20, 0);
+    // A Hebrew consonant followed by a cantillation mark (U+0591) and
+    // niqqud (U+05B8, U+05C1, U+05B9) should print as just the bare
+    // consonants -- font coverage of these combining marks is
+    // inconsistent and produces visible rendering glitches, so they are
+    // dropped rather than rendered.
+    term.print("\u{05e9}\u{0591}\u{05b8}\u{05c1}\u{05dc}\u{05d5}\u{05b9}\u{05dd}");
+    assert_visible_contents(&term, file!(), line!(), &["\u{05e9}\u{05dc}\u{05d5}\u{05dd}"]);
+}
+
 /// This test skips over an edge case with cursor positioning,
 /// while sizing down, but tries to trip over the same edge
 /// case while sizing back up again
