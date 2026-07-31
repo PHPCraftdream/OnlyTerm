@@ -9,6 +9,8 @@ use window::raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WindowHandle,
 };
+#[cfg(windows)]
+use window::raw_window_handle::Win32WindowHandle;
 use window::{BitmapImage, Dimensions, Rect, Window};
 
 #[repr(C)]
@@ -57,9 +59,24 @@ pub struct WebGpuState {
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_nearest_sampler: wgpu::Sampler,
     pub texture_linear_sampler: wgpu::Sampler,
-    /// The live client HWND, sampled from the `RawWindowHandle` at
-    /// construction time, used only by `resize()`'s `GetClientRect`
-    /// workaround. We deliberately don't keep the `RawHandlePair` itself
+    /// The live HWND that the WebGpu surface actually targets, sampled from
+    /// the `RawWindowHandle` at construction time.
+    ///
+    /// This used to be (and still is) used by `resize()`'s `GetClientRect`
+    /// workaround, but its role has expanded: since task #252, the surface
+    /// is no longer created against the application's own top-level HWND
+    /// directly -- it targets a dedicated `WS_CHILD` window (see
+    /// `window::os::windows::Window::webgpu_child_hwnd` /
+    /// `create_webgpu_child_window`) that exactly overlays the top-level
+    /// window's client area and is input-transparent
+    /// (`WM_NCHITTEST`->`HTTRANSPARENT`). This exists because DXGI only
+    /// allows one swapchain per HWND: putting the surface on its own child
+    /// HWND is what will let a future in-place renderer rebuild (task #253,
+    /// not yet implemented) tear down and recreate the surface without
+    /// fighting the top-level window's swapchain lifetime. So this field is
+    /// now simultaneously "the resize workaround's HWND" AND "the actual
+    /// surface target HWND" -- they're the same child HWND, not the
+    /// top-level one. We deliberately don't keep the `RawHandlePair` itself
     /// around: `raw-window-handle`'s enums are `!Send`/`!Sync` on account of
     /// non-Windows variants, even though we only ever hold a Windows one.
     #[cfg(windows)]
@@ -75,6 +92,37 @@ impl RawHandlePair {
     fn new(window: &Window) -> Self {
         Self {
             window: window.window_handle().expect("window handle").as_raw(),
+            display: window.display_handle().expect("display handle").as_raw(),
+        }
+    }
+
+    /// Build a handle pair that targets a specific child HWND directly,
+    /// rather than `window`'s own top-level HWND.
+    ///
+    /// Used to point the WebGpu surface at the dedicated `WS_CHILD` window
+    /// created alongside the top-level window (see
+    /// `window::os::windows::Window::webgpu_child_hwnd`) instead of the
+    /// top-level HWND, so that DXGI's one-swapchain-per-HWND rule doesn't
+    /// get in the way of a future in-place renderer rebuild (task #253).
+    /// The display handle is still taken from `window`, since
+    /// `WindowsDisplayHandle` is a zero-sized marker with no HWND of its own
+    /// (see `HasDisplayHandle for Window`/`WindowInner`, which construct the
+    /// exact same marker regardless of which HWND is involved).
+    #[cfg(windows)]
+    fn from_child_hwnd(hwnd: isize, window: &Window) -> Self {
+        use std::num::NonZeroIsize;
+
+        let mut handle = Win32WindowHandle::new(NonZeroIsize::new(hwnd).expect("non-zero hwnd"));
+        // SAFETY: passing `null()` for the module name returns the handle of
+        // the current process's exe, which is always valid and non-null; the
+        // child window was created (via `CreateWindowExW`) with that same
+        // HINSTANCE, so this mirrors the top-level window's own
+        // `HasWindowHandle` impl.
+        let hinstance = unsafe { winapi::um::libloaderapi::GetModuleHandleW(std::ptr::null()) };
+        handle.hinstance = NonZeroIsize::new(hinstance as isize);
+
+        Self {
+            window: RawWindowHandle::Win32(handle),
             display: window.display_handle().expect("display handle").as_raw(),
         }
     }
@@ -253,7 +301,22 @@ impl WebGpuState {
         dimensions: Dimensions,
         config: &ConfigHandle,
     ) -> anyhow::Result<Self> {
+        // On Windows, target the dedicated WebGpu child HWND (see
+        // `Window::webgpu_child_hwnd`/task #252) instead of the top-level
+        // window's own HWND, so a future in-place renderer rebuild (task
+        // #253) has a swapchain-free HWND to recreate against rather than
+        // fighting DXGI's one-swapchain-per-HWND rule on the app's own
+        // top-level window. If the child window couldn't be created for some
+        // reason, fall back to the top-level window directly so WebGpu still
+        // works (just without the future rebuild capability).
+        #[cfg(windows)]
+        let handle = match window.webgpu_child_hwnd() {
+            Some(child_hwnd) => RawHandlePair::from_child_hwnd(child_hwnd, window),
+            None => RawHandlePair::new(window),
+        };
+        #[cfg(not(windows))]
         let handle = RawHandlePair::new(window);
+
         Self::new_impl(handle, dimensions, config).await
     }
 
