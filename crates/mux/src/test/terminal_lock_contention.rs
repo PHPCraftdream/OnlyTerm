@@ -527,25 +527,68 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
     );
 
     // The core claim of task #147: chunking bounds the *per-acquisition*
-    // hold time to a small fraction of the unchunked baseline. 10ms is a
-    // generous ceiling (the task's own target range was 5-10ms/chunk);
-    // what actually matters is that it is far below the tens-of-ms
-    // baseline, so also assert that relationship directly rather than
-    // relying on the absolute threshold alone.
+    // hold time to a small fraction of the unchunked baseline. This used
+    // to be asserted against a fixed absolute ceiling ("max_hold < 10ms"),
+    // calibrated on an idle machine. Under CI/dev-box load (other tests
+    // or builds competing for CPU), OS scheduler noise inflates *both*
+    // `whole_hold` and `max_hold` by roughly the same wall-clock factor
+    // (they're measured back-to-back, moments apart, under the same
+    // momentary contention), so an absolute threshold false-positives
+    // under load even though the chunking logic itself is unchanged --
+    // this was observed directly (task #261): the same code produced
+    // max_hold anywhere from ~3ms (idle-ish) to ~58ms (machine pinned at
+    // 100% CPU by an unrelated process) in back-to-back runs.
+    //
+    // Comparing `max_hold` to `whole_hold` measured in the *same run*
+    // self-calibrates against however fast/slow the machine happens to
+    // be at test time. The ratio is what actually matters: healthy
+    // chunking (chunk_size=256, ~488 chunks for a 128KiB batch) reduces
+    // max single-hold time by a large factor regardless of ambient load,
+    // because each chunk does ~1/488th of the work. Real measurements
+    // taken for task #261 across a range of machine load (idle through
+    // the machine pinned at 100% CPU by an unrelated process) show the
+    // ratio (whole_hold / max_hold) for healthy chunking stays in the
+    // 33x-264x range across 6 runs:
+    //   unchunked=837ms    max_hold=3.2ms    ratio=264x  (idle-ish)
+    //   unchunked=1222ms   max_hold=18.7ms   ratio=65x
+    //   unchunked=1198ms   max_hold=35.4ms   ratio=34x
+    //   unchunked=1239ms   max_hold=29.7ms   ratio=42x
+    //   unchunked=1294ms   max_hold=27.2ms   ratio=48x
+    //   unchunked=2062ms   max_hold=58.0ms   ratio=36x   (CPU pinned 100%)
+    //
+    // To confirm the ratio still has teeth (i.e. it would catch a real
+    // regression, not just a tighter constant that stops testing
+    // anything), the chunking was deliberately broken by setting
+    // CHUNK_SIZE to ~60x its real value (15600 instead of 256, still
+    // producing multiple chunks so the "more than one chunk" sanity
+    // check still passes) and re-measured 4 times:
+    //   unchunked=792ms    max_hold=106.6ms  ratio=7.4x  (broken chunking)
+    //   unchunked=1242ms   max_hold=162.4ms  ratio=7.7x
+    //   unchunked=1036ms   max_hold=184.7ms  ratio=5.6x
+    //   unchunked=788ms    max_hold=108.1ms  ratio=7.3x
+    //
+    // That's a clean separation: healthy chunking never dropped below
+    // 33x even under heavy ambient load, broken chunking never rose
+    // above 7.7x even though the ratio measurement is itself sensitive
+    // to load. Requiring at least an 8x reduction sits in the gap
+    // between those two clusters, with >4x of headroom below the worst
+    // healthy-case ratio actually observed, while still failing on the
+    // broken-chunking case with margin to spare.
+    const MIN_HOLD_TIME_REDUCTION_RATIO: u32 = 8;
     assert!(
-        max_hold < Duration::from_millis(10),
-        "expected chunked application (chunk_size={}) to hold the lock for \
-         well under 10ms per chunk, but max was {:?}",
+        max_hold.saturating_mul(MIN_HOLD_TIME_REDUCTION_RATIO) < whole_hold,
+        "expected chunked application (chunk_size={}) to reduce max per-acquisition \
+         hold time by at least {}x versus the unchunked baseline measured in this \
+         same run, but max_hold={:?} and unchunked={:?} (ratio={:.1}x); this compares \
+         against the unchunked baseline measured moments earlier in the same run \
+         specifically so it self-calibrates against ambient machine load -- see the \
+         comment above for the real measured ratios (healthy: 33x-264x, deliberately \
+         broken chunking: 5.6x-7.7x) that this threshold was calibrated against",
         CHUNK_SIZE,
-        max_hold,
-    );
-    assert!(
-        max_hold * 3 < whole_hold,
-        "expected max per-chunk hold time ({:?}) to be at least 3x smaller than \
-         the unchunked hold time ({:?}); chunking should provide a large, not \
-         marginal, reduction",
+        MIN_HOLD_TIME_REDUCTION_RATIO,
         max_hold,
         whole_hold,
+        whole_hold.as_secs_f64() / max_hold.as_secs_f64(),
     );
 
     // Correctness: chunked and unchunked application of the same batch
