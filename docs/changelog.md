@@ -217,11 +217,11 @@ As features stabilize some brief notes about them will accumulate here.
 * windows: Improve detection of running in WSL. Thanks to @bew! #7137
 * [QuickSelect](quickselect.md) mode now hides non-matching labels as you type, making it
   easier to spot the remaining candidates. Thanks to @mr-felixoid and @bew! #7752
-* Started work on decoupling execution so one hung tab/window can't take
-  down the rest of the process (previously a single stuck GPU present call
-  would freeze every window's message loop, since all windows in a process
-  share one, and rendering runs synchronously inside it). So far: a
-  background watchdog thread now detects when the GUI message loop's
+* Decoupled execution so one hung tab/window can no longer take down the
+  rest of the process (previously a single stuck GPU present call would
+  freeze every window's message loop, since all windows in a process share
+  one, and rendering ran synchronously inside it). A background watchdog
+  thread now detects when the GUI message loop's
   heartbeat stalls past a configurable threshold
   (`gui_watchdog_enabled`/`gui_watchdog_threshold_ms`) and exposes that
   state for future use; the per-frame line-shaping/quad-building pass no
@@ -244,13 +244,72 @@ As features stabilize some brief notes about them will accumulate here.
   they stay fully synchronous on the GUI thread as before. If you fall
   back to (or intentionally select) `OpenGL`/`Software`, a hung GPU driver
   call can still freeze every window in the process.
-* If a WebGpu window's render thread does get stuck in a GPU submit call for
-  too long, that one window is now automatically closed (its panes' child
-  processes are cleaned up first) instead of leaving the process to hang
-  indefinitely -- the rest of the process and its other windows are
-  unaffected. Manually verified end-to-end on real hardware using the
+* If a WebGpu window's render thread does get stuck in a GPU submit,
+  reconfigure, or surface-error call for too long (or the GPU device itself
+  is lost, e.g. a driver reset), that window's entire WebGpu renderer
+  (device, surface and render thread) is now torn down and rebuilt in place
+  automatically -- the window and every one of its tabs/panes and their
+  child processes survive, at the cost of one dropped frame. This replaces
+  the previous behavior of closing the window outright. If the renderer
+  keeps failing to recover (3 rebuild attempts within 30 seconds), the
+  window falls back to the OpenGL backend instead of continuing to retry
+  WebGpu; only if that fallback also fails does the window close, as a last
+  resort, with its panes' child processes cleaned up first as before.
+  Manually verified end-to-end on real hardware, reproduced identically
+  across multiple independent runs, using the
   `debug_render_thread_stall_ms`/`render_thread_hang_threshold_ms` debug
   config options.
+* A background pane whose terminal is genuinely wedged (a full/unread pty
+  pipe, a stuck escape-sequence handler, or similar) can no longer stall
+  the GUI thread -- and by extension every window in the process -- while
+  its tab bar entry, title, or working-directory are being refreshed.
+  Reading a pane's unseen-output/title/progress/user-vars/cwd, writing to
+  its pty (paste, sent text, etc.), and refreshing its foreground-process
+  info now either complete immediately or fall back to the last known-good
+  value within a bounded, short timeout instead of blocking. A background
+  tab in this state is now marked as unresponsive (available to
+  `format-tab-title`/`format-window-title` scripts). Verified with a
+  regression test driving two real panes side by side: a wedged pane's own
+  recovery and a healthy, unrelated pane's normal operation, proving the
+  two don't contend with each other.
+* Building the currently-active tab's on-screen content now has a time
+  budget; if an unusually large or slow-to-shape amount of visible content
+  would otherwise take too long on a single frame, the remainder degrades
+  to the previous frame's already-rendered content (or is skipped for that
+  one frame) instead of stalling the window.
+* A stuck GUI message loop (detected by the existing watchdog thread) now
+  shows a toast notification instead of only being logged silently.
+* Documented a supported configuration for running OnlyTerm's GUI against a
+  separate, headless `onlyterm-mux-server` daemon instead of each GUI
+  window embedding its own multiplexer: killing or crashing a GUI window
+  process no longer kills the programs running in its panes, since they
+  keep running in the daemon and reattach the next time any GUI process
+  connects. See [Surviving a crashed or killed GUI
+  process](multiplexing.md#surviving-a-crashed-or-killed-gui-process) for
+  the recipe and its known limitations (e.g. tab titles that depend on the
+  foreground process name don't work across this boundary yet).
+* A hung/wedged child process invoked by a config script (`run_child_process`,
+  used e.g. by status-bar scripts that shell out to `git`/`kubectl`/etc.) can
+  no longer block the GUI thread forever; it's now bounded by
+  [child_process_timeout_ms](config/reference/config/child_process_timeout_ms.md)
+  (default 3 seconds), after which the child is killed and the script call
+  returns an error instead of hanging.
+* Reduced the pty reader thread's read buffer (and the socket buffer sizes
+  it requested) from 1 MiB to 64 KiB per pane, saving roughly 1 MB of
+  resident memory per pane on Windows with no measurable effect on
+  throughput.
+* On Windows, the pty reader and output-parser threads now hand output to
+  each other via an in-process channel instead of a loopback TCP socket
+  pair (which `socketpair()` falls back to on Windows, since there's no
+  true anonymous socketpair primitive) -- lower latency, and one fewer OS
+  socket per pane.
+* Fixed a local privilege/race issue in the Windows `socketpair()`
+  emulation (used internally for pty plumbing): the loopback TCP port it
+  briefly listens on could, in principle, be connected to by another local
+  process racing to get there first (the same class of issue as Python's
+  historical `socket.socketpair()` emulation on Windows). The accepted
+  connection is now verified with a random handshake token before it's
+  trusted.
 * Closing a tab/pane now sends a `Ctrl+C`-equivalent interrupt (the same
   byte your physical Ctrl+C writes) before force-terminating its process
   tree, and the pty is kept alive briefly afterward instead of tearing
