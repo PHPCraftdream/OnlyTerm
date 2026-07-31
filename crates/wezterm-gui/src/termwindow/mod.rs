@@ -537,6 +537,17 @@ pub struct TermWindow {
     /// if we run out of texture space
     allow_images: AllowImage,
     scheduled_animation: RefCell<Option<Instant>>,
+    /// Task #271: dedup/coalesce state for the unconditional (focus-independent)
+    /// follow-up repaint scheduled when the per-tab frame-build budget
+    /// (`tab_frame_build_budget_ms`) trips for a pane. `has_animation`/
+    /// `scheduled_animation` above only get consumed by `paint_impl` when
+    /// `self.focused.is_some()`, so a budget-trip on an unfocused window
+    /// would otherwise never get a follow-up frame and the skipped rows
+    /// would stay blank until the window is focused again. This field lets
+    /// `schedule_budget_repaint` avoid stacking a redundant timer/notify
+    /// when one is already pending, the same way `scheduled_animation`
+    /// dedups for the focused/animation case.
+    scheduled_budget_repaint: RefCell<Option<Instant>>,
 
     created: Instant,
 
@@ -920,6 +931,7 @@ impl TermWindow {
             current_event: None,
             has_animation: RefCell::new(None),
             scheduled_animation: RefCell::new(None),
+            scheduled_budget_repaint: RefCell::new(None),
             allow_images: AllowImage::Yes,
             semantic_zones: HashMap::new(),
             ui_items_scratch: vec![],
