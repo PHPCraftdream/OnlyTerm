@@ -1166,12 +1166,6 @@ fn run() -> anyhow::Result<()> {
     };
 
     env_bootstrap::bootstrap();
-    // L4.6: register wezterm-gui's rhai-side types (`GuiWin` via
-    // `crate::scripting::register_rhai`, `TabInformation`/`PaneInformation` via
-    // `crate::termwindow::register_rhai`) so the runtime event-callback bridge
-    // (`wezterm.on`/`emit`, see `config::rhai_bridge`) has them available.
-    config::rhai_engine::add_rhai_setup_func(crate::scripting::register_rhai);
-    config::rhai_engine::add_rhai_setup_func(crate::termwindow::register_rhai);
 
     stats::Stats::init()?;
     let _saver = umask::UmaskSaver::new();

@@ -10,7 +10,6 @@ use termwiz::escape::parser::Parser;
 use termwiz::escape::{Action, ControlCode, CSI};
 use termwiz::surface::SEQ_ZERO;
 use termwiz_funcs::{format_as_escapes, FormatColor, FormatItem};
-use wezterm_dynamic::ToDynamic;
 use wezterm_term::{Line, Progress};
 use window::parameters::Parameters;
 use window::{IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle};
@@ -52,68 +51,7 @@ struct TitleText {
     has_indeterminate: bool,
 }
 
-fn call_format_tab_title(
-    tab: &TabInformation,
-    tab_info: &[TabInformation],
-    pane_info: &[PaneInformation],
-    config: &ConfigHandle,
-    hover: bool,
-    tab_max_width: usize,
-) -> Option<TitleText> {
-    match config::run_immediate_with_rhai_config(|state| {
-        if let Some(state) = state {
-            let tabs: rhai::Array = tab_info.iter().cloned().map(rhai::Dynamic::from).collect();
-            let panes: rhai::Array = pane_info.iter().cloned().map(rhai::Dynamic::from).collect();
 
-            let v = config::rhai_bridge::emit_sync_callback(
-                &state,
-                "format-tab-title",
-                vec![
-                    rhai::Dynamic::from(tab.clone()),
-                    rhai::Dynamic::from(tabs),
-                    rhai::Dynamic::from(panes),
-                    config::rhai_value::dynamic_to_rhai_dynamic(&(**config).to_dynamic()),
-                    rhai::Dynamic::from(hover),
-                    rhai::Dynamic::from(tab_max_width as rhai::INT),
-                ],
-            )?;
-            if v.is_unit() {
-                return Ok(None);
-            }
-            if v.is_array() || v.is_map() {
-                let items: Vec<FormatItem> = config::rhai_value::rhai_dynamic_to_value(&v)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-                let esc = format_as_escapes(items.clone())?;
-                let line = parse_status_text(&esc, CellAttributes::default());
-
-                Ok(Some(TitleText {
-                    items,
-                    len: line.len(),
-                    has_indeterminate: false,
-                }))
-            } else {
-                let s = v
-                    .into_string()
-                    .map_err(|ty| anyhow::anyhow!("format-tab-title: expected string, got `{ty}`"))?;
-                let line = parse_status_text(&s, CellAttributes::default());
-                Ok(Some(TitleText {
-                    len: line.len(),
-                    items: vec![FormatItem::Text(s)],
-                    has_indeterminate: false,
-                }))
-            }
-        } else {
-            Ok(None)
-        }
-    }) {
-        Ok(s) => s,
-        Err(err) => {
-            log::warn!("format-tab-title: {}", err);
-            None
-        }
-    }
-}
 
 /// pct is a percentage in the range 0-100.
 /// We want to map it to one of the nerdfonts:
@@ -245,108 +183,97 @@ pub(crate) fn basename_of_path(path: &str) -> String {
 
 fn compute_tab_title(
     tab: &TabInformation,
-    tab_info: &[TabInformation],
-    pane_info: &[PaneInformation],
     config: &ConfigHandle,
-    hover: bool,
-    tab_max_width: usize,
 ) -> TitleText {
-    let title = call_format_tab_title(tab, tab_info, pane_info, config, hover, tab_max_width);
+    let mut items = vec![];
+    let mut len = 0;
+    let mut has_indeterminate = false;
 
-    match title {
-        Some(title) => title,
-        None => {
-            let mut items = vec![];
-            let mut len = 0;
-            let mut has_indeterminate = false;
+    if let Some(pane) = &tab.active_pane {
+        let mut title = if !tab.tab_title.is_empty() {
+            // An explicitly assigned tab title (via `wezterm cli
+            // set-tab-title` or similar) always wins.
+            tab.tab_title.clone()
+        } else if config.use_cwd_basename_as_tab_title {
+            // Fall back to the cwd basename when requested and
+            // available; otherwise fall back further to the pane's
+            // own title (usually the foreground process name).
+            match &pane.current_working_dir {
+                Some(cwd) if !cwd.is_empty() => basename_of_path(cwd),
+                _ => pane.title.clone(),
+            }
+        } else {
+            pane.title.clone()
+        };
 
-            if let Some(pane) = &tab.active_pane {
-                let mut title = if !tab.tab_title.is_empty() {
-                    // An explicitly assigned tab title (via `wezterm cli
-                    // set-tab-title` or similar) always wins.
-                    tab.tab_title.clone()
-                } else if config.use_cwd_basename_as_tab_title {
-                    // Fall back to the cwd basename when requested and
-                    // available; otherwise fall back further to the pane's
-                    // own title (usually the foreground process name).
-                    match &pane.current_working_dir {
-                        Some(cwd) if !cwd.is_empty() => basename_of_path(cwd),
-                        _ => pane.title.clone(),
+        let classic_spacing = if config.use_fancy_tab_bar { "" } else { " " };
+        if config.show_tab_index_in_tab_bar {
+            let index = format!(
+                "{classic_spacing}{}: ",
+                tab.tab_index
+                    + if config.tab_and_split_indices_are_zero_based {
+                        0
+                    } else {
+                        1
                     }
+            );
+            len += unicode_column_width(&index, None);
+            items.push(FormatItem::Text(index));
+
+            title = format!("{}{classic_spacing}", title);
+        }
+
+        match pane.progress {
+            Progress::None => {}
+            Progress::Percentage(pct) | Progress::Error(pct) => {
+                let graphic = format!("{} ", pct_to_glyph(pct));
+                len += unicode_column_width(&graphic, None);
+                let color = if matches!(pane.progress, Progress::Percentage(_)) {
+                    FormatItem::Foreground(FormatColor::AnsiColor(AnsiColor::Green))
                 } else {
-                    pane.title.clone()
+                    FormatItem::Foreground(FormatColor::AnsiColor(AnsiColor::Red))
                 };
-
-                let classic_spacing = if config.use_fancy_tab_bar { "" } else { " " };
-                if config.show_tab_index_in_tab_bar {
-                    let index = format!(
-                        "{classic_spacing}{}: ",
-                        tab.tab_index
-                            + if config.tab_and_split_indices_are_zero_based {
-                                0
-                            } else {
-                                1
-                            }
-                    );
-                    len += unicode_column_width(&index, None);
-                    items.push(FormatItem::Text(index));
-
-                    title = format!("{}{classic_spacing}", title);
-                }
-
-                match pane.progress {
-                    Progress::None => {}
-                    Progress::Percentage(pct) | Progress::Error(pct) => {
-                        let graphic = format!("{} ", pct_to_glyph(pct));
-                        len += unicode_column_width(&graphic, None);
-                        let color = if matches!(pane.progress, Progress::Percentage(_)) {
-                            FormatItem::Foreground(FormatColor::AnsiColor(AnsiColor::Green))
-                        } else {
-                            FormatItem::Foreground(FormatColor::AnsiColor(AnsiColor::Red))
-                        };
-                        items.push(color);
-                        items.push(FormatItem::Text(graphic));
-                        items.push(FormatItem::Foreground(FormatColor::Default));
-                    }
-                    Progress::Indeterminate => {
-                        has_indeterminate = true;
-                        let graphic = format!(
-                            "{} ",
-                            indeterminate_spinner_glyph(spinner_phase(tab.tab_id))
-                        );
-                        len += unicode_column_width(&graphic, None);
-                        items.push(FormatItem::Foreground(FormatColor::AnsiColor(
-                            AnsiColor::Green,
-                        )));
-                        items.push(FormatItem::Text(graphic));
-                        items.push(FormatItem::Foreground(FormatColor::Default));
-                    }
-                }
-
-                // We have a preferred soft minimum on tab width to make it
-                // easier to click on tab titles, but we'll still go below
-                // this if there are too many tabs to fit the window at
-                // this width.
-                if !config.use_fancy_tab_bar {
-                    while len + unicode_column_width(&title, None) < 5 {
-                        title.push(' ');
-                    }
-                }
-
-                len += unicode_column_width(&title, None);
-                items.push(FormatItem::Text(title));
-            } else {
-                let title = " no pane ".to_string();
-                len += unicode_column_width(&title, None);
-                items.push(FormatItem::Text(title));
-            };
-
-            TitleText {
-                len,
-                items,
-                has_indeterminate,
+                items.push(color);
+                items.push(FormatItem::Text(graphic));
+                items.push(FormatItem::Foreground(FormatColor::Default));
+            }
+            Progress::Indeterminate => {
+                has_indeterminate = true;
+                let graphic = format!(
+                    "{} ",
+                    indeterminate_spinner_glyph(spinner_phase(tab.tab_id))
+                );
+                len += unicode_column_width(&graphic, None);
+                items.push(FormatItem::Foreground(FormatColor::AnsiColor(
+                    AnsiColor::Green,
+                )));
+                items.push(FormatItem::Text(graphic));
+                items.push(FormatItem::Foreground(FormatColor::Default));
             }
         }
+
+        // We have a preferred soft minimum on tab width to make it
+        // easier to click on tab titles, but we'll still go below
+        // this if there are too many tabs to fit the window at
+        // this width.
+        if !config.use_fancy_tab_bar {
+            while len + unicode_column_width(&title, None) < 5 {
+                title.push(' ');
+            }
+        }
+
+        len += unicode_column_width(&title, None);
+        items.push(FormatItem::Text(title));
+    } else {
+        let title = " no pane ".to_string();
+        len += unicode_column_width(&title, None);
+        items.push(FormatItem::Text(title));
+    };
+
+    TitleText {
+        len,
+        items,
+        has_indeterminate,
     }
 }
 
@@ -477,7 +404,7 @@ impl TabBarState {
         title_width: usize,
         mouse_x: Option<usize>,
         tab_info: &[TabInformation],
-        pane_info: &[PaneInformation],
+        _pane_info: &[PaneInformation],
         colors: Option<&TabBarColors>,
         config: &ConfigHandle,
         left_status: &str,
@@ -529,14 +456,7 @@ impl TabBarState {
                     if tab.is_active {
                         active_tab_no = tab.tab_index;
                     }
-                    compute_tab_title(
-                        tab,
-                        tab_info,
-                        pane_info,
-                        config,
-                        false,
-                        config.tab_max_width,
-                    )
+                    compute_tab_title(tab, config)
                 })
                 .collect()
         } else {
@@ -604,16 +524,8 @@ impl TabBarState {
             let active = tab_idx == active_tab_no;
             let hover = !active && is_tab_hover(mouse_x, x, tab_title_len);
 
-            // Recompute the title so that it factors in both the hover state
-            // and the adjusted maximum tab width based on available space.
-            let tab_title = compute_tab_title(
-                &tab_info[tab_idx],
-                tab_info,
-                pane_info,
-                config,
-                hover,
-                tab_title_len,
-            );
+            // Recompute the title for this tab.
+            let tab_title = compute_tab_title(&tab_info[tab_idx], config);
 
             let cell_attrs = if active {
                 &active_cell_attrs
