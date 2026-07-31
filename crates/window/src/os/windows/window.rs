@@ -814,6 +814,61 @@ impl Window {
             Some(inner.webgpu_child_hwnd.0 as isize)
         }
     }
+
+    /// Destroy the existing WebGpu child window (if any) and create a fresh
+    /// one in its place, parented to this window and sized to its current
+    /// client area. Used by task #253's in-place renderer rebuild: when a
+    /// window's render thread is found stuck inside a GPU submit call, we
+    /// tear down and recreate the whole WebGpu stack (instance/adapter/
+    /// device/surface) rather than the whole top-level OS window, and this
+    /// child HWND is the reason that's possible at all -- DXGI only allows
+    /// one swapchain per HWND, so recreating a surface on the *same* HWND
+    /// that already has a (possibly wedged) swapchain on it doesn't work,
+    /// but destroying and recreating a plain child window is safe and fast.
+    ///
+    /// `async` and deferred via `promise::spawn::spawn`, mirroring
+    /// `enable_opengl` just below: the caller (`TermWindow`'s render-thread
+    /// hang supervisor) always reaches this synchronously from inside
+    /// `notify()`'s `WindowEvent::Notification` dispatch, which is itself
+    /// invoked from `Connection::with_window_inner` while it still holds
+    /// this exact window's `WindowInner` `RefCell` mutably borrowed (see
+    /// `notify`). Borrowing it again *synchronously* here would panic with
+    /// "already mutably borrowed" -- this bit the first version of this
+    /// method in manual testing. Deferring the actual `get_window`/`borrow`
+    /// to a freshly spawned task lets that outer borrow finish and drop
+    /// first, exactly like `enable_opengl` already has to for the same
+    /// reason during `new_window`.
+    pub async fn recreate_webgpu_child_window(&self) -> anyhow::Result<()> {
+        let window = self.0;
+        promise::spawn::spawn(async move {
+            let conn = Connection::get().ok_or_else(|| anyhow::anyhow!("no Connection"))?;
+            let handle = conn
+                .get_window(window)
+                .ok_or_else(|| anyhow::anyhow!("window handle invalid!?"))?;
+
+            let parent = handle.borrow().hwnd.0;
+            let old_child = handle.borrow().webgpu_child_hwnd.0;
+            if !old_child.is_null() {
+                // SAFETY: `old_child` is a live `WS_CHILD` window handle
+                // created by an earlier `create_webgpu_child_window` call
+                // (or a previous `recreate_webgpu_child_window` call);
+                // destroying it here, on the window's own owning/connection
+                // thread, is the same operation `WindowInner::close`
+                // performs on the top-level HWND. Its child WebGpu surface
+                // (if any) is expected to have already been dropped by the
+                // caller before calling this, since the surface borrows the
+                // HWND.
+                unsafe {
+                    DestroyWindow(old_child);
+                }
+            }
+
+            let new_child = Self::create_webgpu_child_window(parent)?;
+            handle.borrow_mut().webgpu_child_hwnd = HWindow(new_child);
+            Ok(())
+        })
+        .await
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
