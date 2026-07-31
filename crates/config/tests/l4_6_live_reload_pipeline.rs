@@ -20,6 +20,15 @@ use std::sync::Mutex;
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
+#[ignore = "task #275: Config::try_load no longer evaluates .rhai files (config loading \
+            now goes through ktav; see config::ktav_value/Config::from_ktav_dynamic), so \
+            writing a .rhai fixture and loading it via config::reload() can no longer \
+            populate font_size or produce a RHAI_PIPE event_script. The pipe/event-bridge \
+            mechanism this test exercises is still present and unchanged in isolation -- \
+            only its .rhai-based fixture setup is now stale. Task #280 \
+            (\"Удалить/переписать rhai-специфичные тесты в crates/config\") owns rewriting \
+            or removing this test as part of retiring the rhai event-hook machinery \
+            (task #276/#278)."]
 fn background_reload_handoff_reaches_main_thread_event_bridge() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 

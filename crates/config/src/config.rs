@@ -15,7 +15,8 @@ use crate::keyassignment::{
     KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger, SpawnCommand,
 };
 use crate::keys::{Key, LeaderKey, Mouse};
-use crate::rhai_engine::{self, make_rhai_engine, RhaiConfigEngine};
+use crate::rhai_engine;
+use ktav::value::Value as KtavValue;
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
 use crate::wsl::WslDomain;
@@ -1132,9 +1133,9 @@ impl Config {
         // multiple.  In addition, it spawns a lot of subprocesses,
         // so we do this bit "by-hand"
 
-        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".onlyterm.rhai"))];
+        let mut paths = vec![PathPossibility::optional(HOME_DIR.join(".onlyterm.ktav"))];
         for dir in CONFIG_DIRS.iter() {
-            paths.push(PathPossibility::optional(dir.join("onlyterm.rhai")))
+            paths.push(PathPossibility::optional(dir.join("onlyterm.ktav")))
         }
 
         if cfg!(windows) {
@@ -1148,7 +1149,7 @@ impl Config {
             // dir as the executable that will take precedence.
             if let Ok(exe_name) = std::env::current_exe() {
                 if let Some(exe_dir) = exe_name.parent() {
-                    paths.insert(0, PathPossibility::optional(exe_dir.join("onlyterm.rhai")));
+                    paths.insert(0, PathPossibility::optional(exe_dir.join("onlyterm.ktav")));
                 }
             }
         }
@@ -1222,34 +1223,37 @@ impl Config {
         })
     }
 
-    /// If `p` (a `.rhai` candidate path) doesn't exist, but a legacy
-    /// `.lua`-suffixed sibling does, produce a clear, actionable error
-    /// explaining that Lua configs are no longer supported at runtime:
-    /// mlua has been retired from the live config-loading path and users
-    /// must migrate their config to rhai syntax and rename the file.
+    /// If `p` (a `.ktav` candidate path) doesn't exist, but a legacy
+    /// `.rhai`- or `.lua`-suffixed sibling does, produce a clear, actionable
+    /// error explaining that scripted configs are no longer supported at
+    /// runtime: the rhai/mlua config-scripting engines have been retired
+    /// from the live config-loading path (task #275 onward) in favor of the
+    /// static `ktav` format, and users must migrate their config and rename
+    /// the file.
     ///
-    /// This is purely a diagnostic: we never parse the `.lua` file with
-    /// mlua here, we only check for its existence on disk so that the
-    /// error message can point the user at the specific file that needs
+    /// This is purely a diagnostic: we never evaluate the `.rhai`/`.lua`
+    /// file here, we only check for its existence on disk so that the error
+    /// message can point the user at the specific file that needs
     /// migrating instead of a generic "file not found".
-    fn legacy_lua_sibling(p: &Path) -> Option<PathBuf> {
+    fn legacy_script_sibling(p: &Path) -> Option<PathBuf> {
         let file_name = p.file_name()?.to_str()?;
-        let lua_name = if file_name == "onlyterm.rhai" {
-            "onlyterm.lua".to_string()
-        } else if file_name == ".onlyterm.rhai" {
-            ".onlyterm.lua".to_string()
-        } else if let Some(stripped) = file_name.strip_suffix(".rhai") {
-            format!("{stripped}.lua")
+        let stem = if file_name == "onlyterm.ktav" {
+            "onlyterm"
+        } else if file_name == ".onlyterm.ktav" {
+            ".onlyterm"
+        } else if let Some(stripped) = file_name.strip_suffix(".ktav") {
+            stripped
         } else {
             return None;
         };
 
-        let lua_path = p.with_file_name(lua_name);
-        if lua_path.is_file() {
-            Some(lua_path)
-        } else {
-            None
+        for ext in ["rhai", "lua"] {
+            let candidate = p.with_file_name(format!("{stem}.{ext}"));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
+        None
     }
 
     fn try_load(
@@ -1262,16 +1266,17 @@ impl Config {
             Ok(file) => file,
             Err(err) => match err.kind() {
                 std::io::ErrorKind::NotFound if !path_item.is_required => {
-                    if let Some(lua_path) = Self::legacy_lua_sibling(p) {
+                    if let Some(script_path) = Self::legacy_script_sibling(p) {
                         anyhow::bail!(
-                            "Found a legacy Lua configuration file at {} but Lua \
-                             configs are no longer supported: mlua has been removed \
-                             from wezterm's live config-loading path. Please rename \
-                             {} to {} and adapt its syntax to rhai. See the migration \
-                             guide for details on translating a onlyterm.lua config to \
-                             onlyterm.rhai.",
-                            lua_path.display(),
-                            lua_path.display(),
+                            "Found a legacy scripted configuration file at {} but \
+                             scripted configs (rhai/Lua) are no longer supported: \
+                             the config-scripting engine has been removed from \
+                             wezterm's live config-loading path in favor of the \
+                             static `ktav` format. Please migrate {} to the ktav \
+                             format and save it as {}. See the migration guide for \
+                             details.",
+                            script_path.display(),
+                            script_path.display(),
                             p.display()
                         );
                     }
@@ -1283,30 +1288,25 @@ impl Config {
 
         let mut s = String::new();
         file.read_to_string(&mut s)?;
-        let rhai_engine = make_rhai_engine(p)?;
 
         // Skip a potential BOM that Windows software may have placed in the
-        // file. Stripped once up front (rather than inside the closure below)
-        // so that `script` is also available afterwards to build the
-        // `RhaiEventScript` event-callback descriptor.
-        let script = s.trim_start_matches('\u{FEFF}');
+        // file.
+        let text = s.trim_start_matches('\u{FEFF}');
 
         let (config, warnings) =
             wezterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
                 let cfg: Config;
 
-                let (_ast, config_value) = rhai_engine.compile_and_eval(script).map_err(|e| {
-                    anyhow::anyhow!("Error evaluating {}: {}", p.display(), e)
-                })?;
+                let parsed = ktav::parse(text)
+                    .map_err(|e| anyhow::anyhow!("Error parsing {}: {}", p.display(), e))?;
+                let config_value = crate::ktav_value::ktav_value_to_dynamic(&parsed);
 
-                let config_value =
-                    Config::apply_overrides_to_rhai(&rhai_engine, config_value)?;
-                let config_value =
-                    Config::apply_overrides_obj_to_rhai(config_value, overrides)?;
+                let config_value = Config::apply_overrides_to_ktav(config_value)?;
+                let config_value = Config::apply_overrides_obj_to(config_value, overrides)?;
 
-                cfg = Config::from_rhai_dynamic(config_value).with_context(|| {
+                cfg = Config::from_ktav_dynamic(config_value).with_context(|| {
                     format!(
-                        "Error converting rhai value returned by script {} to Config struct",
+                        "Error converting ktav value parsed from {} to Config struct",
                         p.display()
                     )
                 })?;
@@ -1324,39 +1324,29 @@ impl Config {
             });
         let cfg = config?;
 
-        // Grab any paths that the .rhai script added to its reload watch
-        // list (via `add_to_config_reload_watch_list`) before the engine
-        // that owns them goes out of scope; see `LoadedConfig::rhai_watch_paths`.
-        let rhai_watch_paths = rhai_engine.watch_list.paths();
-
-        // Event-callback bridge descriptor (see `RhaiEventScript`'s doc comment
-        // in `config/src/rhai_engine.rs`): carries the script's own source text
-        // (the same `script` string just parsed above, BOM already stripped) so
-        // that whichever thread ends up building the live `RhaiConfigState` (the
-        // main thread, via `RhaiPipe`/`with_rhai_config_on_main_thread` in
-        // `config/src/lib.rs`) re-evaluates the *actual* config script rather
-        // than an empty stand-in. Any top-level `on(...)` calls the user's
-        // script makes are therefore registered for real, unlike the pre-L4.6
-        // companion mlua context (which was built from `p` but never executed
-        // the script's text at all).
-        let event_script = rhai_engine::RhaiEventScript::for_script(script.to_string(), p.to_path_buf());
-
         Ok(Some(LoadedConfig {
             config: Ok(cfg.compute_extra_defaults(Some(p))),
             file_name: Some(p.to_path_buf()),
-            event_script: Some(event_script),
+            // The rhai event-callback bridge descriptor no longer has
+            // anything to build from now that config loading goes through
+            // ktav (a static data format with no `on(...)`-style callback
+            // surface). Left as `None` rather than deleting the field/type
+            // outright, since `RhaiEventScript` and its consumers in
+            // `mux`/`wezterm-gui` are cleaned up by later tasks (#276/#278)
+            // in this removal sequence, not this one.
+            event_script: None,
             warnings,
-            rhai_watch_paths,
+            // Likewise, there is no rhai engine instance to have
+            // accumulated `add_to_config_reload_watch_list` paths into.
+            rhai_watch_paths: vec![],
         }))
     }
 
-    /// Convert a `rhai::Dynamic` (the result of evaluating a `.rhai` config
-    /// script) into a `Config`, in the same "strict: deny unknown fields"
-    /// mode that the mlua config-builder path enforced via
-    /// `config_builder_new_index` (see `config/src/lua.rs`).
-    fn from_rhai_dynamic(value: rhai::Dynamic) -> anyhow::Result<Config> {
-        let dyn_value = crate::rhai_value::rhai_dynamic_to_dynamic(&value)
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+    /// Convert a `wezterm_dynamic::Value` (the result of parsing a `.ktav`
+    /// config document, see `crate::ktav_value::ktav_value_to_dynamic`) into
+    /// a `Config`, in the same "strict: deny unknown fields" mode that the
+    /// rhai and (before it) mlua config-builder paths enforced.
+    fn from_ktav_dynamic(dyn_value: wezterm_dynamic::Value) -> anyhow::Result<Config> {
         Config::from_dynamic(
             &dyn_value,
             wezterm_dynamic::FromDynamicOptions {
@@ -1367,83 +1357,90 @@ impl Config {
         .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    /// rhai analogue of `apply_overrides_obj_to`: apply an overrides object
-    /// (as used by `overridden_config`/palette previews) directly onto the
-    /// value returned by the config script, without needing a running
-    /// engine (the values are plain data, no callbacks are involved).
-    pub(crate) fn apply_overrides_obj_to_rhai(
-        mut config: rhai::Dynamic,
+    /// Apply an overrides object (as used by `overridden_config`/palette
+    /// previews) directly onto the `wezterm_dynamic::Value` parsed from the
+    /// `.ktav` config document. Ktav is a static data format with no
+    /// running engine/callbacks involved, so this is a plain structural
+    /// merge (one level deep, matching the previous rhai/mlua behavior).
+    pub(crate) fn apply_overrides_obj_to(
+        mut config: wezterm_dynamic::Value,
         overrides: &wezterm_dynamic::Value,
-    ) -> anyhow::Result<rhai::Dynamic> {
+    ) -> anyhow::Result<wezterm_dynamic::Value> {
         match overrides {
             wezterm_dynamic::Value::Object(obj) => {
                 if obj.is_empty() {
                     return Ok(config);
                 }
-                let mut map = config.try_cast::<rhai::Map>().ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "expected the config script to evaluate to an object/map, \
+                let map = match &mut config {
+                    wezterm_dynamic::Value::Object(map) => map,
+                    _ => anyhow::bail!(
+                        "expected the config document to be an object, \
                          so that overrides could be applied"
-                    )
-                })?;
+                    ),
+                };
                 for (key, value) in obj {
-                    let key = match key {
-                        wezterm_dynamic::Value::String(s) => s.clone(),
-                        other => format!("{other:?}"),
-                    };
-                    let value = crate::rhai_value::dynamic_to_rhai_dynamic(value);
-                    map.insert(key.into(), value);
+                    map.insert(key.clone(), value.clone());
                 }
-                config = rhai::Dynamic::from_map(map);
                 Ok(config)
             }
             _ => Ok(config),
         }
     }
 
-    /// rhai analogue of `apply_overrides_to`: apply the `--config key=value`
-    /// command line overrides by evaluating each `value` as a rhai
-    /// expression against `rhai_engine`, then setting `config[key] = value`.
-    pub(crate) fn apply_overrides_to_rhai(
-        rhai_engine: &RhaiConfigEngine,
-        mut config: rhai::Dynamic,
-    ) -> anyhow::Result<rhai::Dynamic> {
+    /// Apply the `--config key=value` command line overrides on top of the
+    /// `wezterm_dynamic::Value` parsed from the `.ktav` config document.
+    ///
+    /// Each `value` is itself parsed as a standalone ktav scalar/value
+    /// fragment (via `ktav::parse`, wrapped in a single-key document so that
+    /// the existing ktav grammar -- which always parses to a top-level
+    /// object -- can parse a bare scalar/compound the same way it would
+    /// inside a real config file), then spliced into `config[key]`. This
+    /// replaces the previous rhai-expression-evaluation behavior
+    /// (`apply_overrides_to_rhai`) now that config values are plain,
+    /// engine-free data.
+    pub(crate) fn apply_overrides_to_ktav(
+        mut config: wezterm_dynamic::Value,
+    ) -> anyhow::Result<wezterm_dynamic::Value> {
         let overrides = CONFIG_OVERRIDES.lock().unwrap();
         for (key, value) in &*overrides {
-            if value == "nil" || value == "()" {
-                // Literal nil/unit as the value is the same as not specifying
-                // the value.  We special case this here as we want to
-                // explicitly check for the value evaluating as unit, as can
-                // happen in the case where the user specifies something like:
-                // `--config term=xterm`.
-                // The RHS references a global that doesn't exist and
-                // evaluates as unit. We want to raise this as an error.
+            if value == "nil" || value == "()" || value == "null" {
+                // Literal nil/unit/null as the value is the same as not
+                // specifying the value: skip it rather than trying to parse
+                // it as a document fragment.
                 continue;
             }
 
-            let evaluated = rhai_engine.eval(value).map_err(|e| {
-                anyhow::anyhow!("--config {}={}: error evaluating value: {}", key, value, e)
+            // Wrap `value` as the RHS of a single synthetic key so ktav's
+            // "document is always a top-level object" parser can be reused
+            // to parse a single bare scalar/compound value.
+            let wrapped = format!("v: {value}\n");
+            let parsed = ktav::parse(&wrapped).map_err(|e| {
+                anyhow::anyhow!("--config {}={}: error parsing value: {}", key, value, e)
             })?;
-            if evaluated.is_unit() {
-                anyhow::bail!(
-                    "--config {}={}: value evaluated as (). Check for missing \
-                     quotes or other syntax issues",
+            let evaluated = match &parsed {
+                KtavValue::Object(obj) => obj
+                    .get("v")
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("--config {}={}: internal parse error", key, value))?,
+                other => anyhow::bail!(
+                    "--config {}={}: internal parse error (unexpected top-level {other:?})",
                     key,
                     value
-                );
-            }
+                ),
+            };
+            let evaluated = crate::ktav_value::ktav_value_to_dynamic(&evaluated);
 
-            let mut map = config.try_cast::<rhai::Map>().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "expected the config script to evaluate to an object/map, \
+            let map = match &mut config {
+                wezterm_dynamic::Value::Object(map) => map,
+                _ => anyhow::bail!(
+                    "expected the config document to be an object, \
                      so that --config {}={} could be applied",
                     key,
                     value
-                )
-            })?;
+                ),
+            };
             log::debug!("Apply {}={} to config", key, value);
-            map.insert(key.as_str().into(), evaluated);
-            config = rhai::Dynamic::from_map(map);
+            map.insert(wezterm_dynamic::Value::String(key.clone()), evaluated);
         }
         Ok(config)
     }
@@ -2571,7 +2568,7 @@ fn default_colr_rasterizer() -> FontRasterizerSelection {
 }
 
 #[cfg(test)]
-mod rhai_config_load_test {
+mod ktav_config_load_test {
     use super::*;
     use std::io::Write;
 
@@ -2580,38 +2577,46 @@ mod rhai_config_load_test {
     /// that reads or writes `CONFIG_OVERRIDES` must serialize against every other
     /// such test via this mutex, or a test elsewhere in this module can observe
     /// another test's overrides mid-flight (which is exactly what happened before
-    /// this guard existed: `loads_a_rhai_config_file`, which never touches
+    /// this guard existed: `loads_a_ktav_config_file`, which never touches
     /// `CONFIG_OVERRIDES` itself, intermittently failed with `font_size=22.5`
-    /// leaking in from `applies_config_overrides_as_rhai_expressions` running
+    /// leaking in from `applies_config_overrides_to_ktav_config` running
     /// concurrently on another thread).
     static CONFIG_OVERRIDES_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// End to end proof that the real, public config-loading path (`Config::load`,
-    /// via `Config::try_load`) parses a `.rhai` config file: previously this
-    /// exercised `onlyterm.lua`/`.onlyterm.lua` text through `make_lua_context`; this
-    /// is the rhai-side equivalent, confirming the switch described in
-    /// `docs/plans/2026-07-23-lua-rhai-migration.md`'s L4.5 phase actually takes
-    /// effect for the production loader, not just the standalone `rhai_engine`
-    /// unit tests.
+    /// via `Config::try_load`) parses a `.ktav` config file: this is the
+    /// keystone task (#275) of the rhai -> ktav config-format migration,
+    /// replacing the previous rhai-script-evaluation loading path with a
+    /// direct `ktav::parse` -> `wezterm_dynamic::Value` ->
+    /// `Config::from_dynamic` pipeline (see `ktav_value::ktav_value_to_dynamic`
+    /// and `Config::from_ktav_dynamic`). Exercises a font size override, a
+    /// color scheme name, and a keybinding, so this proves the new load path
+    /// actually populates real `Config` fields end-to-end, not just compiles.
     #[test]
-    fn loads_a_rhai_config_file() {
+    fn loads_a_ktav_config_file() {
         // See `CONFIG_OVERRIDES_TEST_LOCK`: this test doesn't set any
         // overrides itself, but must still serialize against
-        // `applies_config_overrides_as_rhai_expressions` (which does), since
-        // both call through `Config::try_load` -> `apply_overrides_to_rhai`,
+        // `applies_config_overrides_to_ktav_config` (which does), since both
+        // call through `Config::try_load` -> `apply_overrides_to_ktav`,
         // which reads the same global `CONFIG_OVERRIDES`.
         let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("onlyterm.rhai");
+        let config_path = dir.path().join("onlyterm.ktav");
         std::fs::write(
             &config_path,
-            r#"
-                #{
-                    font_size: 14.0,
-                    term: "screen-256color",
-                }
-            "#,
+            "\
+font_size: 14
+term: screen-256color
+color_scheme: Builtin Solarized Dark
+keys: [
+    {
+        key: t
+        mods: CTRL|SHIFT
+        action: ToggleFullScreen
+    }
+]
+",
         )
         .unwrap();
 
@@ -2623,26 +2628,33 @@ mod rhai_config_load_test {
         let cfg = loaded.config.expect("config should parse");
         assert_eq!(cfg.font_size, 14.0);
         assert_eq!(cfg.term, "screen-256color");
+        assert_eq!(cfg.color_scheme.as_deref(), Some("Builtin Solarized Dark"));
+        assert_eq!(cfg.keys.len(), 1);
+        let key = &cfg.keys[0];
+        assert_eq!(key.key.mods, Modifiers::CTRL | Modifiers::SHIFT);
+        assert!(matches!(key.action, KeyAssignment::ToggleFullScreen));
         assert_eq!(loaded.file_name.as_deref(), Some(config_path.as_path()));
-        // The event-callback bridge descriptor (see `RhaiEventScript`, L4.6)
-        // should be present and carry the script's own source, since
-        // mux/wezterm-gui's runtime event bridge (`wezterm.on`/`emit`) is
-        // rebuilt from it on the main thread.
-        let event_script = loaded.event_script.expect("event_script should be present");
-        assert!(event_script.source.is_some());
+        // The rhai event-callback bridge descriptor no longer has anything
+        // to build from now that config loading goes through ktav (a
+        // static data format, no `on(...)`-style callback surface); it's
+        // `None` here rather than deleted outright because `RhaiEventScript`
+        // itself is cleaned up by a later task (#276/#278) in this removal
+        // sequence, not this one.
+        assert!(loaded.event_script.is_none());
     }
 
     /// `--config key=value`-style overrides (see `CONFIG_OVERRIDES`) are
-    /// evaluated as rhai expressions and applied on top of the parsed config,
-    /// exactly like the old `apply_overrides_to` did for Lua expressions.
+    /// parsed as standalone ktav value fragments and spliced on top of the
+    /// parsed config, replacing the previous rhai-expression-evaluation
+    /// behavior now that config values are plain, engine-free data.
     #[test]
-    fn applies_config_overrides_as_rhai_expressions() {
+    fn applies_config_overrides_to_ktav_config() {
         // See `CONFIG_OVERRIDES_TEST_LOCK`.
         let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
 
         let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("onlyterm.rhai");
-        std::fs::write(&config_path, "#{ font_size: 10.0 }").unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        std::fs::write(&config_path, "font_size: 10\n").unwrap();
 
         *CONFIG_OVERRIDES.lock().unwrap() = vec![("font_size".to_string(), "22.5".to_string())];
 
@@ -2657,24 +2669,24 @@ mod rhai_config_load_test {
         CONFIG_OVERRIDES.lock().unwrap().clear();
     }
 
-    /// If a legacy `onlyterm.lua`/`.onlyterm.lua` file exists but there is no
-    /// `.rhai` sibling, `try_load` must not silently ignore it (which would
+    /// If a legacy `onlyterm.rhai`/`onlyterm.lua` file exists but there is no
+    /// `.ktav` sibling, `try_load` must not silently ignore it (which would
     /// look to the user like "wezterm forgot my config"); it must fail with
-    /// an actionable message telling them Lua configs are no longer
+    /// an actionable message telling them scripted configs are no longer
     /// supported and pointing at the specific file to rename/migrate.
     #[test]
-    fn legacy_lua_only_config_produces_actionable_error() {
+    fn legacy_rhai_only_config_produces_actionable_error() {
         let dir = tempfile::tempdir().unwrap();
-        let lua_path = dir.path().join("onlyterm.lua");
-        let mut f = std::fs::File::create(&lua_path).unwrap();
-        writeln!(f, "return {{}}").unwrap();
+        let rhai_path = dir.path().join("onlyterm.rhai");
+        let mut f = std::fs::File::create(&rhai_path).unwrap();
+        writeln!(f, "#{{}}").unwrap();
         drop(f);
 
-        let rhai_path = dir.path().join("onlyterm.rhai");
-        let path_item = PathPossibility::optional(rhai_path);
+        let ktav_path = dir.path().join("onlyterm.ktav");
+        let path_item = PathPossibility::optional(ktav_path);
         let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
             Err(err) => err,
-            Ok(_) => panic!("a legacy .lua-only directory must error, not silently skip"),
+            Ok(_) => panic!("a legacy .rhai-only directory must error, not silently skip"),
         };
         let message = format!("{err:#}");
         assert!(
@@ -2683,34 +2695,35 @@ mod rhai_config_load_test {
             message
         );
         assert!(
-            message.contains("onlyterm.rhai"),
+            message.contains("onlyterm.ktav"),
             "error should mention the expected new filename: {}",
             message
         );
     }
 
     /// Sanity check for the pure path-diagnostics helper itself: only exact
-    /// `<stem>.rhai` -> `<stem>.lua` siblings are detected, and only when the
-    /// `.lua` file actually exists on disk (we must never claim a legacy file
-    /// exists when it doesn't, else every fresh/no-config user would see the
-    /// migration error instead of falling through to defaults).
+    /// `<stem>.ktav` -> `<stem>.rhai`/`<stem>.lua` siblings are detected, and
+    /// only when the legacy file actually exists on disk (we must never
+    /// claim a legacy file exists when it doesn't, else every fresh/no-config
+    /// user would see the migration error instead of falling through to
+    /// defaults).
     #[test]
-    fn legacy_lua_sibling_detection() {
+    fn legacy_script_sibling_detection() {
         let dir = tempfile::tempdir().unwrap();
-        let rhai_path = dir.path().join("onlyterm.rhai");
-        assert_eq!(Config::legacy_lua_sibling(&rhai_path), None);
+        let ktav_path = dir.path().join("onlyterm.ktav");
+        assert_eq!(Config::legacy_script_sibling(&ktav_path), None);
 
-        std::fs::write(dir.path().join("onlyterm.lua"), "return {}").unwrap();
+        std::fs::write(dir.path().join("onlyterm.rhai"), "#{}").unwrap();
         assert_eq!(
-            Config::legacy_lua_sibling(&rhai_path),
-            Some(dir.path().join("onlyterm.lua"))
+            Config::legacy_script_sibling(&ktav_path),
+            Some(dir.path().join("onlyterm.rhai"))
         );
 
-        let dot_rhai_path = dir.path().join(".onlyterm.rhai");
-        assert_eq!(Config::legacy_lua_sibling(&dot_rhai_path), None);
+        let dot_ktav_path = dir.path().join(".onlyterm.ktav");
+        assert_eq!(Config::legacy_script_sibling(&dot_ktav_path), None);
         std::fs::write(dir.path().join(".onlyterm.lua"), "return {}").unwrap();
         assert_eq!(
-            Config::legacy_lua_sibling(&dot_rhai_path),
+            Config::legacy_script_sibling(&dot_ktav_path),
             Some(dir.path().join(".onlyterm.lua"))
         );
     }
