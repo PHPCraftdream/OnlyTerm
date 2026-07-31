@@ -217,6 +217,31 @@ fn lock_terminal_timed<R>(
 /// motivating case) are bounded rather than blocking forever.
 const TERMINAL_ACCESSOR_LOCK_TIMEOUT: Duration = Duration::from_millis(8);
 
+/// Task #273: how long a `set_render_budget_exceeded(true)` observation
+/// (see `LocalPane::render_budget_exceeded`) is allowed to keep
+/// contributing a `true` to `is_unresponsive()` after it was last
+/// refreshed, before it's treated as stale and ignored.
+///
+/// The producer of this signal (the render loop in
+/// `crates/wezterm-gui/src/termwindow/render/pane.rs`) only runs for
+/// panes that are actually painted *this frame*, which for the active,
+/// focused window happens at up to the display's refresh rate --
+/// commonly 60Hz, i.e. a fresh observation (`true` or `false`) roughly
+/// every 16ms for as long as the pane keeps being painted. A window
+/// needs to be comfortably wider than that cadence (so ordinary frame-
+/// to-frame jitter, a briefly-minimized/occluded window, or a couple of
+/// dropped frames can't make a *currently* budget-exceeded pane flicker
+/// back to "responsive" between refreshes) while still being short in
+/// absolute terms, so that a pane whose tab stops being painted
+/// altogether (e.g. the user switches to a different tab) "goes quiet"
+/// within a bounded, human-imperceptible-as-a-hang delay rather than
+/// staying flagged forever. One second comfortably clears both bars: it
+/// is tens of frame-intervals even at a sluggish ~10fps, yet is short
+/// enough that nothing external (the tab bar, `pane:is_unresponsive()`
+/// from Lua/rhai, `PaneInformation.is_unresponsive`) could mistake it for
+/// a permanent, sticky flag.
+const RENDER_BUDGET_EXCEEDED_EXPIRY: Duration = Duration::from_secs(1);
+
 /// Attempts to acquire `terminal.lock()` within `TERMINAL_ACCESSOR_LOCK_TIMEOUT`
 /// and run `body` against it, returning `None` on timeout instead of
 /// blocking indefinitely. See `TERMINAL_ACCESSOR_LOCK_TIMEOUT` for why a
@@ -328,7 +353,25 @@ pub struct LocalPane {
     /// and overwrite a still-active lock-timeout `true` written
     /// concurrently by `try_lock_terminal_for` for the same pane.
     /// `is_unresponsive()` reports the OR of both cells.
-    render_budget_exceeded: Arc<AtomicBool>,
+    ///
+    /// Task #273: this stores the `Instant` of the most recent
+    /// budget-exceeded observation (`None` once a frame completes within
+    /// budget) rather than a plain sticky `bool`. A plain `bool` only gets
+    /// cleared back to `false` by a subsequent `set_render_budget_exceeded
+    /// (false)` call, and that call only ever happens from the render
+    /// loop in `crates/wezterm-gui/src/termwindow/render/pane.rs`, which
+    /// only runs for panes that are actually painted this frame --
+    /// panes belonging to a tab that isn't the active tab (e.g. after the
+    /// user switches away) simply stop being painted at all, so a `bool`
+    /// would latch `true` forever the moment its tab is backgrounded
+    /// right after a slow frame. Storing "when was this last observed"
+    /// instead lets the read side (`is_unresponsive()`) treat the signal
+    /// as expiring on its own: see `RENDER_BUDGET_EXCEEDED_EXPIRY` for the
+    /// window and rationale. The currently-active, currently-painted case
+    /// is unaffected, since that path keeps refreshing this `Instant`
+    /// every frame (well within the expiry window) for as long as the
+    /// condition is genuinely ongoing.
+    render_budget_exceeded: Arc<Mutex<Option<Instant>>>,
     /// Task #246: last known-good values for the other GUI-thread-polled
     /// accessors (`get_title()`, `get_progress()`, `copy_user_vars()`, and
     /// the terminal-cache half of `get_current_working_dir()`). Each is
@@ -920,9 +963,19 @@ impl Pane for LocalPane {
     /// at). Combining them only here, at the read site, means a real
     /// lock-timeout stays visible regardless of what the render-budget
     /// path is concurrently doing.
+    ///
+    /// Task #273: `render_budget_exceeded` only counts if it was observed
+    /// within `RENDER_BUDGET_EXCEEDED_EXPIRY` -- see that constant and the
+    /// field's doc comment for why a plain sticky `bool` isn't enough
+    /// (panes that stop being painted, e.g. because their tab is no
+    /// longer active, never get another `set_render_budget_exceeded`
+    /// call at all, so a plain `bool` could latch `true` forever).
     fn is_unresponsive(&self) -> bool {
-        self.unresponsive.load(Ordering::Acquire)
-            || self.render_budget_exceeded.load(Ordering::Acquire)
+        let render_budget_exceeded = match *self.render_budget_exceeded.lock() {
+            Some(when) => when.elapsed() < RENDER_BUDGET_EXCEEDED_EXPIRY,
+            None => false,
+        };
+        self.unresponsive.load(Ordering::Acquire) || render_budget_exceeded
     }
 
     /// Task #251/#269: set directly by the GUI's per-frame content-build
@@ -937,8 +990,17 @@ impl Pane for LocalPane {
     /// often than `true`, which would otherwise race with and overwrite a
     /// still-active lock-timeout signal for the same pane.
     /// `is_unresponsive()` reports the OR of both cells.
+    ///
+    /// Task #273: records `Instant::now()` on `true` and clears back to
+    /// `None` on `false`, rather than storing the `bool` directly, so that
+    /// `is_unresponsive()` can let a stale `true` expire on its own (see
+    /// `RENDER_BUDGET_EXCEEDED_EXPIRY`) for a pane that simply stops
+    /// being painted, instead of relying on this setter -- which won't be
+    /// called again at all once painting stops -- to ever run a clearing
+    /// `false` call for it.
     fn set_render_budget_exceeded(&self, exceeded: bool) {
-        self.render_budget_exceeded.store(exceeded, Ordering::Release);
+        let mut slot = self.render_budget_exceeded.lock();
+        *slot = if exceeded { Some(Instant::now()) } else { None };
     }
 
     fn is_mouse_grabbed(&self) -> bool {
@@ -1511,7 +1573,7 @@ impl LocalPane {
             command_description,
             unseen_output,
             unresponsive: Arc::new(AtomicBool::new(false)),
-            render_budget_exceeded: Arc::new(AtomicBool::new(false)),
+            render_budget_exceeded: Arc::new(Mutex::new(None)),
             last_known_good: Mutex::new(CachedTerminalInfo::default()),
         }
     }
@@ -2684,6 +2746,55 @@ mod tests {
             !pane.is_unresponsive(),
             "is_unresponsive() must clear back to false once a bounded \
              terminal.lock() attempt succeeds again"
+        );
+    }
+
+    /// Task #273 regression test: a pane that trips the render-budget
+    /// signal and then simply stops being painted (e.g. its tab is
+    /// switched away from) must eventually stop reporting
+    /// `is_unresponsive() == true` on its own, rather than latching
+    /// `true` forever. Before this fix, `render_budget_exceeded` was a
+    /// plain sticky `bool` that only `set_render_budget_exceeded(false)`
+    /// -- called exclusively from the per-frame render loop, which never
+    /// runs again for an unpainted pane -- could clear.
+    ///
+    /// This test doesn't wait for the real `RENDER_BUDGET_EXCEEDED_EXPIRY`
+    /// (1 second) in real time; instead it reaches into the pane's
+    /// internal `render_budget_exceeded` cell and backdates the stored
+    /// `Instant` past the expiry window, which is equivalent to letting
+    /// that much wall-clock time actually pass without depending on a
+    /// slow, real-time sleep in the test suite.
+    #[test]
+    fn render_budget_exceeded_expires_once_painting_stops() {
+        let (pane, _dropped) = make_pane();
+
+        // A fresh pane has never tripped the render budget: not
+        // unresponsive.
+        assert!(!pane.is_unresponsive());
+
+        // Simulate a frame that exceeded the render budget for this pane
+        // (what `crates/wezterm-gui/src/termwindow/render/pane.rs` does
+        // once per painted pane per frame).
+        pane.set_render_budget_exceeded(true);
+        assert!(
+            pane.is_unresponsive(),
+            "is_unresponsive() must become true immediately after \
+             set_render_budget_exceeded(true), mirroring a real, \
+             currently-ongoing budget-exceeded frame on the active tab"
+        );
+
+        // Backdate the observation past the expiry window, simulating
+        // the pane's tab having been switched away from (and thus never
+        // painted, and never getting another set_render_budget_exceeded
+        // call at all) for at least that long.
+        *pane.render_budget_exceeded.lock() =
+            Some(Instant::now() - RENDER_BUDGET_EXCEEDED_EXPIRY - Duration::from_millis(1));
+
+        assert!(
+            !pane.is_unresponsive(),
+            "a render-budget-exceeded observation older than \
+             RENDER_BUDGET_EXCEEDED_EXPIRY must not keep is_unresponsive() \
+             true forever for a pane that has stopped being painted"
         );
     }
 
