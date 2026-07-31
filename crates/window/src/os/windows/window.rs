@@ -117,6 +117,12 @@ unsafe impl Sync for HWindow {}
 pub(crate) struct WindowInner {
     /// Non-owning reference to the window handle
     hwnd: HWindow,
+    /// The `WS_CHILD` window that the WebGpu swapchain surface targets
+    /// instead of `hwnd` directly (see `Window::create_webgpu_child_window`).
+    /// Non-owning: Windows destroys it automatically as a child when `hwnd`
+    /// is destroyed. Kept sized/positioned to exactly cover `hwnd`'s client
+    /// area by `check_and_call_resize_if_needed`.
+    webgpu_child_hwnd: HWindow,
     events: WindowEventSender,
     gl_state: Option<Rc<glium::backend::Context>>,
     /// Fraction of mouse scroll
@@ -362,6 +368,33 @@ impl WindowInner {
         let pixel_width = rect_width(&rect) as usize;
         let pixel_height = rect_height(&rect) as usize;
 
+        // Keep the WebGpu child window (see `create_webgpu_child_window`)
+        // sized/positioned to exactly cover the parent's client area. This
+        // runs on every resize/move/DPI-change notification (this function
+        // is reached from both `wm_size` and `wm_windowposchanged`, which is
+        // also how DPI-driven geometry changes are observed since there is
+        // no separate `WM_DPICHANGED` handler), so the child never lags
+        // behind, even during live interactive resizing.
+        if !self.webgpu_child_hwnd.0.is_null() {
+            // SAFETY: `webgpu_child_hwnd.0` is a valid child window handle
+            // owned by `self.hwnd.0`; `rect.left`/`rect.top` are always 0
+            // (client-relative origin) so the child exactly overlays the
+            // parent's client area. `SWP_NOACTIVATE|SWP_NOZORDER` avoid
+            // disturbing focus/z-order, which are otherwise unrelated to a
+            // pure resize/reposition.
+            unsafe {
+                SetWindowPos(
+                    self.webgpu_child_hwnd.0,
+                    null_mut(),
+                    rect.left,
+                    rect.top,
+                    rect_width(&rect),
+                    rect_height(&rect),
+                    SWP_NOACTIVATE | SWP_NOZORDER,
+                );
+            }
+        }
+
         let current_dims = Dimensions {
             pixel_width,
             pixel_height,
@@ -579,6 +612,95 @@ impl Window {
         Ok(hwnd)
     }
 
+    /// Create the child `WS_CHILD` window that the WebGpu swapchain surface
+    /// targets, parented to `parent` and sized to exactly cover its current
+    /// client area.
+    ///
+    /// This exists because DXGI only permits one swapchain per HWND: putting
+    /// the surface on a dedicated child HWND (rather than directly on the
+    /// application's own top-level HWND) means a future in-place renderer
+    /// rebuild (task #253, not yet implemented) can tear down and recreate
+    /// the child HWND/surface without fighting the top-level window's own
+    /// swapchain lifetime. Today this child window is purely structural: it
+    /// is kept perfectly in sync with the parent's client area and made
+    /// input-transparent (see `child_wnd_proc`'s `WM_NCHITTEST` handling), so
+    /// behavior is externally identical to rendering directly on the
+    /// top-level HWND.
+    fn create_webgpu_child_window(parent: HWND) -> anyhow::Result<HWND> {
+        let class_name = wide_string("OnlyTermWebGpuChild");
+        // SAFETY: null module name returns the current process's exe handle,
+        // which is always valid and non-null on Windows.
+        let h_inst = unsafe { GetModuleHandleW(null()) };
+        let class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(child_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: h_inst,
+            hIcon: null_mut(),
+            hCursor: null_mut(),
+            hbrBackground: null_mut(),
+            lpszMenuName: null(),
+            lpszClassName: class_name.as_ptr(),
+        };
+
+        // SAFETY: `class` is a fully-initialized `WNDCLASSW` with valid string
+        // pointers and a registered `child_wnd_proc`; the failure case (return
+        // 0) is handled below, including the benign CLASS_ALREADY_EXISTS case
+        // (multiple top-level windows in the same process share this class).
+        if unsafe { RegisterClassW(&class) } == 0 {
+            let err = IoError::last_os_error();
+            match err.raw_os_error() {
+                Some(code)
+                    if code == winapi::shared::winerror::ERROR_CLASS_ALREADY_EXISTS as i32 => {}
+                _ => return Err(err.into()),
+            }
+        }
+
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: `rect` is a live stack `RECT` and `parent` is a valid,
+        // just-created window handle; `GetClientRect` only writes into `rect`.
+        unsafe {
+            GetClientRect(parent, &mut rect);
+        }
+
+        let name = wide_string("OnlyTermWebGpuChild");
+        // SAFETY: `class_name`/`name` are live null-terminated UTF-16 buffers.
+        // `parent` is the valid, just-created top-level HWND, so passing it
+        // makes this a `WS_CHILD` window owned by it (destroyed automatically
+        // when `parent` is destroyed). No menu/custom instance/create-params
+        // are needed since this window has no `WindowInner` of its own. A
+        // null result is reported as an error below.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class_name.as_ptr(),
+                name.as_ptr(),
+                WS_CHILD | WS_VISIBLE,
+                rect.left,
+                rect.top,
+                rect_width(&rect),
+                rect_height(&rect),
+                parent,
+                null_mut(),
+                h_inst,
+                null_mut(),
+            )
+        };
+
+        if hwnd.is_null() {
+            let err = IoError::last_os_error();
+            bail!("CreateWindowExW (webgpu child): {}", err);
+        }
+
+        Ok(hwnd)
+    }
+
     pub async fn new_window<F>(
         class_name: &str,
         name: &str,
@@ -600,6 +722,7 @@ impl Window {
 
         let inner = Rc::new(RefCell::new(WindowInner {
             hwnd: HWindow(null_mut()),
+            webgpu_child_hwnd: HWindow(null_mut()),
             appearance,
             events,
             gl_state: None,
@@ -636,11 +759,25 @@ impl Window {
                 return Err(err);
             }
         };
+
+        let webgpu_child_hwnd = match Self::create_webgpu_child_window(hwnd.0) {
+            Ok(child) => HWindow(child),
+            Err(err) => {
+                log::error!(
+                    "Failed to create WebGpu child window ({:#}); WebGpu surface \
+                     creation will fall back to the top-level window",
+                    err
+                );
+                HWindow(null_mut())
+            }
+        };
+
         let window_handle = Window(hwnd);
-        inner
-            .borrow_mut()
-            .events
-            .assign_window(window_handle.clone());
+        {
+            let mut inner_mut = inner.borrow_mut();
+            inner_mut.webgpu_child_hwnd = webgpu_child_hwnd;
+            inner_mut.events.assign_window(window_handle.clone());
+        }
 
         apply_theme(hwnd.0);
         enable_blur_behind(hwnd.0);
@@ -656,6 +793,26 @@ impl Window {
             .insert(hwnd.clone(), Rc::clone(&inner));
 
         Ok(window_handle)
+    }
+
+    /// Returns the raw HWND of the `WS_CHILD` window that the WebGpu
+    /// swapchain surface should target (see `create_webgpu_child_window`),
+    /// or `None` if it doesn't exist (e.g. its creation failed and we fell
+    /// back to targeting the top-level window directly).
+    ///
+    /// Callable synchronously because this is only ever used from the GUI's
+    /// main/connection thread during window/surface setup, matching
+    /// `HasWindowHandle for Window`'s synchronous `Connection::get_window`
+    /// access pattern just above.
+    pub fn webgpu_child_hwnd(&self) -> Option<isize> {
+        let conn = Connection::get()?;
+        let handle = conn.get_window(self.0)?;
+        let inner = handle.borrow();
+        if inner.webgpu_child_hwnd.0.is_null() {
+            None
+        } else {
+            Some(inner.webgpu_child_hwnd.0 as isize)
+        }
     }
 }
 
@@ -3273,6 +3430,45 @@ unsafe extern "system" fn wnd_proc(
     match std::panic::catch_unwind(|| {
         do_wnd_proc(hwnd, msg, wparam, lparam)
             .unwrap_or_else(|| DefWindowProcW(hwnd, msg, wparam, lparam))
+    }) {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("caught {:?}", e);
+            std::process::exit(1)
+        }
+    }
+}
+
+/// Window procedure for the small `WS_CHILD` window that hosts the WebGpu
+/// swapchain surface (see `Window::create_webgpu_child_window`).
+///
+/// This window has no `WindowInner`/`GWLP_USERDATA` of its own -- it is pure
+/// plumbing that exists only so DXGI has a dedicated HWND to attach a
+/// swapchain to. The only message we care about is `WM_NCHITTEST`: returning
+/// `HTTRANSPARENT` makes Windows route all mouse input (clicks, drags,
+/// hover, wheel) through to whatever is beneath this window in Z-order --
+/// i.e. the parent top-level window -- exactly as if this child window
+/// didn't exist from an input-routing perspective. Keyboard input is
+/// unaffected by hit-testing and already reaches the parent, since this
+/// child window is never focused (nothing ever calls `SetFocus` on it).
+///
+/// # Safety
+/// This is the `WNDCLASSW::lpfnWndProc` callback: Win32 supplies a valid
+/// `hwnd` and the raw message arguments.
+unsafe extern "system" fn child_wnd_proc(
+    hwnd: HWND,
+    msg: UINT,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match std::panic::catch_unwind(|| {
+        if msg == WM_NCHITTEST {
+            return HTTRANSPARENT as LRESULT;
+        }
+        // SAFETY: `hwnd`/`msg`/`wparam`/`lparam` are the values Win32 just
+        // supplied to this wndproc; `DefWindowProcW` is always valid to call
+        // with them.
+        DefWindowProcW(hwnd, msg, wparam, lparam)
     }) {
         Ok(result) => result,
         Err(e) => {
