@@ -679,11 +679,11 @@ impl TermWindow {
             }
             Err(err) => {
                 log::error!("failed to create RenderState: {}", err);
+                return Err(err).context(format!(
+                    "failed to create RenderState for {}",
+                    render_info
+                ));
             }
-        }
-
-        if self.render_state.is_none() {
-            panic!("No OpenGL");
         }
 
         Ok(())
