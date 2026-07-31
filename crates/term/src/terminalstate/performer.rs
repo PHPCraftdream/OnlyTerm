@@ -28,6 +28,25 @@ use wezterm_escape_parser::{
     Action, ControlCode, DeviceControlMode, Esc, EscCode, OperatingSystemCommand, CSI,
 };
 
+/// Hebrew cantillation marks and niqqud (vowel points): combining marks
+/// meant to be drawn on top of a preceding Hebrew consonant. Font coverage
+/// of these is inconsistent (Cascadia Mono, the Hebrew fallback font,
+/// doesn't cover cantillation and only some niqqud), which produces
+/// visible rendering glitches, so we drop them rather than render them.
+/// Maqaf (0x05BE), paseq (0x05C0), sof pasuq (0x05C3), nun hafukha
+/// (0x05C6) and geresh/gershayim (0x05F3/0x05F4) are punctuation, not
+/// diacritics, and are deliberately excluded so they keep rendering.
+fn is_hebrew_diacritic(c: char) -> bool {
+    matches!(c as u32,
+        0x0591..=0x05AF // cantillation marks
+        | 0x05B0..=0x05BD // niqqud (vowel points)
+        | 0x05BF // HEBREW POINT RAFE
+        | 0x05C1 | 0x05C2 // HEBREW POINT SHIN/SIN DOT
+        | 0x05C4 | 0x05C5 // HEBREW MARK UPPER/LOWER DOT
+        | 0x05C7 // HEBREW POINT QAMATS QATAN
+    )
+}
+
 /// A helper struct for implementing `vtparse::VTActor` while compartmentalizing
 /// the terminal state and the embedding/host terminal interface
 pub(crate) struct Performer<'a> {
@@ -133,6 +152,23 @@ impl<'a> Performer<'a> {
 
         for g in Graphemes::new(text) {
             let g = self.remap_grapheme(g);
+
+            // Hebrew niqqud (vowel points) and cantillation marks render
+            // inconsistently across fonts (a base letter's glyph may
+            // resolve while its combining mark doesn't, or vice versa,
+            // and different fonts cover different subsets of them), which
+            // shows up as visual glitching. Drop them outright rather
+            // than trying to render them: this only ever removes
+            // zero-width combining marks, so it can't change the base
+            // letter(s) that remain or how much column width this
+            // grapheme occupies.
+            let stripped: String;
+            let g: &str = if g.chars().any(is_hebrew_diacritic) {
+                stripped = g.chars().filter(|c| !is_hebrew_diacritic(*c)).collect();
+                &stripped
+            } else {
+                g
+            };
 
             let mut print_width = grapheme_column_width(g, Some(&self.unicode_version));
             if print_width == 0 {
