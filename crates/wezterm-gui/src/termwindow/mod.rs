@@ -111,6 +111,41 @@ pub enum MouseCapture {
     TerminalPane(PaneId),
 }
 
+thread_local! {
+    /// GUI-thread-only relay for `begin_opengl_fallback` /
+    /// `finish_opengl_fallback` (task #255): carries the
+    /// `anyhow::Result<Rc<glium::backend::Context>>` produced by
+    /// `Window::enable_opengl()` across the `TermWindowNotif::Apply`
+    /// re-entry boundary.
+    ///
+    /// `Rc<glium::backend::Context>` is not `Send`/`Sync` (it wraps
+    /// thread-affine GL context state), so it cannot be captured directly
+    /// in an `Apply` closure, which `notify()` requires to be `Send + Sync`
+    /// (that bound exists because `notify()` is a generic API callable from
+    /// any thread, e.g. a background render thread posting back to the GUI
+    /// thread). In this specific call chain the value never actually
+    /// leaves the GUI thread -- `promise::spawn::spawn` is `spawn_local`,
+    /// so both the write (in `begin_opengl_fallback`'s spawned task) and
+    /// the read (in `finish_opengl_fallback`, reached via the `notify()`
+    /// dispatch) happen on this same thread, one executor tick apart. A
+    /// `thread_local!` expresses and enforces that "GUI-thread-only"
+    /// property directly (attempting to use it from another thread would
+    /// simply see an empty cell, not unsound behavior), which is why this
+    /// is used instead of an `unsafe impl Send` wrapper around the `Rc`.
+    ///
+    /// Single-slot `RefCell<Option<...>>` is sufficient: only one OpenGL
+    /// fallback attempt is ever in flight per window (each window's
+    /// `render_thread_hang_handled` one-shot guard ensures
+    /// `begin_opengl_fallback` isn't re-entered while a previous attempt's
+    /// result hasn't been consumed yet), and multiple windows never
+    /// interleave a write and a read of this cell without the intervening
+    /// `notify()` round-trip draining it first (`spawn_local` tasks and
+    /// `Apply` closures both run to completion, one at a time, on the GUI
+    /// thread's executor).
+    static OPENGL_FALLBACK_RELAY: RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>> =
+        const { RefCell::new(None) };
+}
+
 /// Type used together with Window::notify to do something in the
 /// context of the window-specific event loop
 pub enum TermWindowNotif {
@@ -1179,16 +1214,26 @@ impl TermWindow {
 
         if attempts_in_window > Self::MAX_REBUILDS_PER_WINDOW {
             log::error!(
-                "{} {} times in the last {:?}; giving up on rebuilding (the \
+                "{} {} times in the last {:?}; giving up on rebuilding WebGpu (the \
                  GPU/driver/adapter looks fundamentally broken, not just transiently \
-                 stuck) and closing the window so the rest of the application stays \
-                 responsive",
+                 stuck); attempting a one-time fallback to OpenGL for this window \
+                 before resorting to closing it",
                 circuit_breaker_log_reason,
                 attempts_in_window,
                 Self::REBUILD_WINDOW,
             );
             metrics::counter!("gui.render_thread.rebuild_circuit_breaker_tripped").increment(1);
-            self.close_window_for_unrecoverable_render_hang(window);
+            // No additional explicit backoff/delay is inserted here on
+            // purpose: the circuit breaker already spaces out WebGpu
+            // rebuild attempts by however long each rebuild-then-rehang
+            // cycle actually takes in practice (observed ~2.3-2.9s per
+            // cycle during task #253's manual testing, driven by real
+            // HWND recreation + WebGpuState::new work, not a busy loop).
+            // A synthetic sleep here would only add user-visible lag to a
+            // window that's already visibly degraded, with no reliability
+            // benefit -- the OpenGL fallback below is a one-shot attempt,
+            // not something that benefits from spacing against itself.
+            self.begin_opengl_fallback(window);
             return;
         }
 
@@ -1209,16 +1254,155 @@ impl TermWindow {
     /// processes) before destroying the OS window, otherwise the
     /// shells/programs running in them are orphaned with no controlling
     /// terminal left. This is the same sequence `close_requested` and the
-    /// original (pre-#253) hang handler used; it's now reached only when
-    /// the in-place rebuild's circuit breaker trips, or when the rebuild
-    /// itself fails (e.g. `WebGpuState::new` erroring the same way it can
-    /// at startup: RDP session, no GPU passthrough, driver issue).
+    /// original (pre-#253) hang handler used; it's now the true last resort,
+    /// reached only when the in-place WebGpu rebuild's circuit breaker trips
+    /// *and* the OpenGL fallback (`begin_opengl_fallback`, task #255) also
+    /// fails.
     fn close_window_for_unrecoverable_render_hang(&mut self, window: &Window) {
         let mux = Mux::get();
         mux.kill_window(self.mux_window_id);
         window.close();
         front_end().forget_known_window(window);
         metrics::counter!("gui.render_thread.window_closed_for_hang").increment(1);
+    }
+
+    /// Last-resort renderer fallback (task #255), tried once the WebGpu
+    /// in-place rebuild circuit breaker has tripped (`MAX_REBUILDS_PER_WINDOW`
+    /// rebuilds within `REBUILD_WINDOW` all failed to produce a
+    /// working/stable renderer): abandon WebGpu entirely for this window and
+    /// switch it to OpenGL, exactly like the startup-time
+    /// WebGpu->OpenGL fallback in `new_window` (task #221.8) does when
+    /// `WebGpuState::new` fails on initial window creation. The difference
+    /// here is that this window already has a live `RenderState`/render
+    /// thread built on WebGpu that must be torn down first, and success
+    /// permanently downgrades the window for the rest of its lifetime
+    /// (there's no further attempt to go back to WebGpu).
+    ///
+    /// `enable_opengl` is `async`, so -- exactly like `begin_renderer_rebuild`
+    /// bridges the async `WebGpuState::new` call -- the rest of the work
+    /// happens in a spawned task that re-enters via `TermWindowNotif::Apply`
+    /// (see `finish_opengl_fallback`). Unlike the WebGpu rebuild, no
+    /// WebGpu-child-HWND recreation dance is needed first: `enable_opengl`
+    /// (all platforms) operates on the main window/surface directly and
+    /// doesn't touch `webgpu_child_hwnd` at all.
+    fn begin_opengl_fallback(&mut self, window: &Window) {
+        // Abandon the old WebGpu render thread and GPU resources, the same
+        // careful way `begin_renderer_rebuild` does: shutdown (detach, don't
+        // join -- a stuck driver call must not block the GUI thread), then
+        // drop render_state before the device/surface it was built from.
+        if let Some(rt) = self.render_thread.take() {
+            rt.shutdown();
+        }
+        self.render_state.take();
+        self.gl.take();
+        self.webgpu.take();
+
+        let window_for_async = window.clone();
+
+        promise::spawn::spawn(async move {
+            let result = window_for_async.enable_opengl().await;
+            let win = window_for_async.clone();
+            // `Rc<glium::backend::Context>` is not `Send`/`Sync` (unlike
+            // `Arc<WebGpuState>` in the WebGpu rebuild path), but
+            // `TermWindowNotif::Apply` requires its closure to be
+            // `Send + Sync` -- `notify()`'s signature is generic over any
+            // caller thread, even though in practice `promise::spawn::spawn`
+            // is `spawn_local` and this closure only ever runs back on this
+            // same GUI thread. Rather than reach for `unsafe impl Send`
+            // (unsound in general, and unjustifiable here since
+            // `glium::backend::Context` is genuinely thread-affine GL
+            // state), relay the `Rc` itself through a GUI-thread-only
+            // `thread_local!` slot (see `OPENGL_FALLBACK_RELAY` below) and
+            // send only a `Send`-safe ok/err signal through `notify`.
+            OPENGL_FALLBACK_RELAY.with(|cell| {
+                cell.borrow_mut().replace(result);
+            });
+            window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.finish_opengl_fallback(&win);
+            })));
+        })
+        .detach();
+    }
+
+    /// Re-entry point (via `TermWindowNotif::Apply`) once the async half of
+    /// the OpenGL fallback (`enable_opengl`) has resolved.
+    ///
+    /// On success: rebuild `RenderState` against the new OpenGL context and
+    /// log clearly that this window has permanently downgraded away from
+    /// WebGpu, since -- per task #222's documented architectural decision --
+    /// OpenGL rendering on this window is now synchronous on the GUI thread
+    /// with none of WebGpu's render-thread/hang-detection/rebuild isolation.
+    /// No render thread is (re-)armed and `schedule_render_thread_hang_check`
+    /// is never scheduled again for this window: there's no render thread
+    /// left to supervise. This is a deliberate, accepted tradeoff (a
+    /// strictly less resilient renderer, chosen over closing the window and
+    /// losing its tabs' child processes).
+    ///
+    /// On failure: this really is the end of the road -- both WebGpu and
+    /// OpenGL failed to produce a working renderer for this window -- so
+    /// fall back to the destructive close.
+    ///
+    /// Takes no `result` parameter: the actual `Rc<GliumContext>` (or
+    /// error) was stashed in `OPENGL_FALLBACK_RELAY` by
+    /// `begin_opengl_fallback`'s spawned task just before this was
+    /// `notify()`-ed, since a non-`Send` `Rc` cannot ride along in the
+    /// `TermWindowNotif::Apply` closure itself. See that relay's doc
+    /// comment for why this is safe (GUI-thread-only, not `unsafe impl
+    /// Send`).
+    fn finish_opengl_fallback(&mut self, window: &Window) {
+        let result = OPENGL_FALLBACK_RELAY.with(|cell| {
+            cell.borrow_mut().take().unwrap_or_else(|| {
+                Err(anyhow::anyhow!(
+                    "internal error: OPENGL_FALLBACK_RELAY was empty in finish_opengl_fallback"
+                ))
+            })
+        });
+        let gl = match result {
+            Ok(gl) => gl,
+            Err(err) => {
+                log::error!(
+                    "OpenGL fallback also failed for this window after the WebGpu rebuild \
+                     circuit breaker tripped ({:#}); no renderer is available, closing this \
+                     window",
+                    err
+                );
+                metrics::counter!("gui.render_thread.opengl_fallback_failed").increment(1);
+                self.close_window_for_unrecoverable_render_hang(window);
+                return;
+            }
+        };
+
+        self.gl.replace(Rc::clone(&gl));
+        if let Err(err) = self.created(RenderContext::Glium(Rc::clone(&gl))) {
+            log::error!(
+                "OpenGL fallback's RenderState build failed for this window ({:#}); no \
+                 renderer is available, closing this window",
+                err
+            );
+            metrics::counter!("gui.render_thread.opengl_fallback_failed").increment(1);
+            self.close_window_for_unrecoverable_render_hang(window);
+            return;
+        }
+
+        // Success: this window is now permanently on OpenGL. No render
+        // thread to spawn/supervise for it any more (WebGpu-only
+        // machinery), so -- unlike `finish_renderer_rebuild` -- there is no
+        // `schedule_render_thread_hang_check` call here.
+        self.render_thread_hang_handled.set(false);
+
+        window.invalidate();
+
+        log::warn!(
+            "this window has permanently fallen back to OpenGL rendering after repeated \
+             WebGpu renderer rebuild failures (circuit breaker tripped {} times within \
+             {:?}); OpenGL rendering on this window is synchronous on the GUI thread with \
+             none of WebGpu's render-thread isolation/hang-detection/rebuild machinery \
+             (see task #222) -- this is an accepted resilience tradeoff to keep the window \
+             and its tabs' processes alive rather than closing it",
+            Self::MAX_REBUILDS_PER_WINDOW,
+            Self::REBUILD_WINDOW,
+        );
+        metrics::counter!("gui.render_thread.window_fallen_back_to_opengl").increment(1);
     }
 
     /// Kick off the async half of the in-place renderer rebuild (abandoning
@@ -1304,9 +1488,27 @@ impl TermWindow {
     /// Re-entry point (via `TermWindowNotif::Apply`) once the async half of
     /// the rebuild (`WebGpuState::new`) has resolved. On success, rebuilds
     /// `RenderState` against the new device and spawns a fresh render
-    /// thread, mirroring `new_window`'s original setup sequence. On
-    /// failure, falls back to the destructive close rather than leaving the
-    /// window in a broken, renderer-less state.
+    /// thread, mirroring `new_window`'s original setup sequence.
+    ///
+    /// On failure, this re-enters the same circuit-breaker-gated path
+    /// (`attempt_renderer_rebuild_or_close`) that got us here, rather than
+    /// closing the window immediately. Rationale (task #255): a single
+    /// `WebGpuState::new` failure during a rebuild is, from the circuit
+    /// breaker's point of view, just another WebGpu rebuild attempt that
+    /// didn't pan out -- exactly like a rebuild that "succeeds" (returns a
+    /// device) but then immediately re-hangs, which the breaker already
+    /// tolerates up to `MAX_REBUILDS_PER_WINDOW` times. Treating a
+    /// same-call synchronous failure differently (skip straight to close,
+    /// bypassing the retry budget entirely) would be an inconsistency with
+    /// no real justification: both symptoms mean "this WebGpu attempt
+    /// didn't produce a working renderer", and the breaker's 3-attempts/30s
+    /// budget is exactly the mechanism designed to decide when to stop
+    /// retrying and fall back. So a failure here counts as one attempt
+    /// against that same budget, and re-calling
+    /// `attempt_renderer_rebuild_or_close` naturally either retries WebGpu
+    /// again (if attempts remain) or, once the breaker trips, falls back to
+    /// OpenGL (see that function) before ever reaching the destructive
+    /// close.
     fn finish_renderer_rebuild(
         &mut self,
         window: &Window,
@@ -1317,17 +1519,24 @@ impl TermWindow {
             Err(err) => {
                 // Same failure modes `WebGpuState::new` can hit at initial
                 // window creation: RDP session, no GPU passthrough in a VM,
-                // a driver mismatch, etc. There's no renderer to fall back
-                // to in-place here (WebGpu->OpenGL runtime fallback is task
-                // #255's job), so close the window rather than leave it
-                // renderer-less and permanently unpainted.
+                // a driver mismatch, etc. Retry through the circuit
+                // breaker (see doc comment above) instead of closing
+                // immediately; `render_thread_hang_handled` is still `true`
+                // from the original `attempt_renderer_rebuild_or_close`
+                // call that led here, so this is safe to re-enter directly
+                // without re-checking it.
                 log::error!(
                     "failed to rebuild WebGpu renderer after a render-thread hang ({:#}); \
-                     closing this window",
+                     retrying through the rebuild circuit breaker",
                     err
                 );
                 metrics::counter!("gui.render_thread.rebuild_failed").increment(1);
-                self.close_window_for_unrecoverable_render_hang(window);
+                self.attempt_renderer_rebuild_or_close(
+                    window,
+                    "the previous WebGpu rebuild attempt itself failed to create a device/surface",
+                    "the WebGpu rebuild attempt has failed",
+                    "gui.render_thread.window_renderer_rebuilt",
+                );
                 return;
             }
         };
