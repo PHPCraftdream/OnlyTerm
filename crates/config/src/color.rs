@@ -1,4 +1,3 @@
-use crate::impl_rhai_conversion_dynamic;
 use crate::*;
 use std::convert::{TryFrom, TryInto};
 use std::str::FromStr;
@@ -34,9 +33,6 @@ pub struct RgbaColor {
     #[dynamic(flatten)]
     color: SrgbaTuple,
 }
-// L4a (lua-api-crates/color-funcs rhai port): needed so that e.g.
-// `color::parse(...)`'s rhai binding can hand back a `RgbaColor`-backed value.
-impl_rhai_conversion_dynamic!(RgbaColor);
 
 impl From<RgbColor> for RgbaColor {
     fn from(color: RgbColor) -> Self {
@@ -180,9 +176,6 @@ pub struct Palette {
     pub launcher_label_fg: Option<ColorSpec>,
     pub launcher_label_bg: Option<ColorSpec>,
 }
-// L4a: needed by lua-api-crates/color-funcs's rhai port (get_default_colors,
-// get_builtin_schemes, load_scheme/save_scheme, etc all pass a Palette through).
-impl_rhai_conversion_dynamic!(Palette);
 
 impl Palette {
     pub fn overlay_with(&self, other: &Self) -> Self {
@@ -699,7 +692,6 @@ pub struct ColorSchemeMetaData {
     #[dynamic(default)]
     pub aliases: Vec<String>,
 }
-impl_rhai_conversion_dynamic!(ColorSchemeMetaData);
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
 pub struct ColorSchemeFile {
@@ -709,11 +701,6 @@ pub struct ColorSchemeFile {
     #[dynamic(default)]
     pub metadata: ColorSchemeMetaData,
 }
-// L4a: color-funcs's rhai `load_scheme`/`load_terminal_sexy_scheme`/
-// `load_base16_scheme` bindings return this as a single value (see the doc
-// comment on `register_rhai` in lua-api-crates/color-funcs/src/lib.rs for why
-// that differs from the mlua path's `(colors, metadata)` tuple return).
-impl_rhai_conversion_dynamic!(ColorSchemeFile);
 
 fn dynamic_to_toml(value: Value) -> anyhow::Result<toml::Value> {
     Ok(match value {

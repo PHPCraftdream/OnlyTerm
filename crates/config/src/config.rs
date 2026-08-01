@@ -15,7 +15,6 @@ use crate::keyassignment::{
     KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger, SpawnCommand,
 };
 use crate::keys::{Key, LeaderKey, Mouse};
-use crate::rhai_engine;
 use ktav::value::Value as KtavValue;
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
@@ -1173,9 +1172,7 @@ impl Config {
                     return LoadedConfig {
                         config: Err(err),
                         file_name: Some(path_item.path.clone()),
-                        event_script: None,
                         warnings: vec![],
-                        rhai_watch_paths: vec![],
                     }
                 }
                 Ok(None) => continue,
@@ -1193,9 +1190,7 @@ impl Config {
             Err(err) => LoadedConfig {
                 config: Err(err),
                 file_name: None,
-                event_script: None,
                 warnings: vec![],
-                rhai_watch_paths: vec![],
             },
             Ok(cfg) => cfg,
         }
@@ -1210,16 +1205,7 @@ impl Config {
         Ok(LoadedConfig {
             config: Ok(config?),
             file_name: None,
-            // No config file: there is no script source to give the
-            // event-callback bridge an `on(...)` handler to run against, but we
-            // still hand back a (handler-less) `RhaiEventScript` descriptor so
-            // that `config::with_rhai_config_on_main_thread`/
-            // `run_immediate_with_rhai_config` always have *something* to build
-            // a `RhaiConfigState` from (mirroring the pre-L4.6 companion mlua
-            // context, which likewise always existed even with no config file).
-            event_script: Some(rhai_engine::RhaiEventScript::for_default()),
             warnings,
-            rhai_watch_paths: vec![],
         })
     }
 
@@ -1327,18 +1313,7 @@ impl Config {
         Ok(Some(LoadedConfig {
             config: Ok(cfg.compute_extra_defaults(Some(p))),
             file_name: Some(p.to_path_buf()),
-            // The rhai event-callback bridge descriptor no longer has
-            // anything to build from now that config loading goes through
-            // ktav (a static data format with no `on(...)`-style callback
-            // surface). Left as `None` rather than deleting the field/type
-            // outright, since `RhaiEventScript` and its consumers in
-            // `mux`/`wezterm-gui` are cleaned up by later tasks (#276/#278)
-            // in this removal sequence, not this one.
-            event_script: None,
             warnings,
-            // Likewise, there is no rhai engine instance to have
-            // accumulated `add_to_config_reload_watch_list` paths into.
-            rhai_watch_paths: vec![],
         }))
     }
 
@@ -2634,13 +2609,6 @@ keys: [
         assert_eq!(key.key.mods, Modifiers::CTRL | Modifiers::SHIFT);
         assert!(matches!(key.action, KeyAssignment::ToggleFullScreen));
         assert_eq!(loaded.file_name.as_deref(), Some(config_path.as_path()));
-        // The rhai event-callback bridge descriptor no longer has anything
-        // to build from now that config loading goes through ktav (a
-        // static data format, no `on(...)`-style callback surface); it's
-        // `None` here rather than deleted outright because `RhaiEventScript`
-        // itself is cleaned up by a later task (#276/#278) in this removal
-        // sequence, not this one.
-        assert!(loaded.event_script.is_none());
     }
 
     /// `--config key=value`-style overrides (see `CONFIG_OVERRIDES`) are
