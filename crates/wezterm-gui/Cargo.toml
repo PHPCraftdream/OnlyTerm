@@ -97,7 +97,6 @@ tiny-skia.workspace = true
 umask.workspace = true
 unicode-normalization.workspace = true
 unicode-segmentation.workspace = true
-url-funcs.workspace = true
 url.workspace = true
 walkdir.workspace = true
 wezterm-bidi.workspace = true
@@ -112,7 +111,6 @@ wezterm-surface.workspace = true
 wezterm-term.workspace = true
 wezterm-toast-notification.workspace = true
 wgpu.workspace = true
-window-funcs.workspace = true
 window.workspace = true
 
 [target.'cfg(windows)'.dependencies]
