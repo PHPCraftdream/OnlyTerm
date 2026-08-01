@@ -12,7 +12,6 @@
 //! The results are cached to avoid recomputing on each
 //! evaluation of the config file.
 use crate::ColorWrap;
-use config::impl_rhai_conversion_dynamic;
 use config::SrgbaTuple;
 use deltae::LabValue;
 use image::Pixel;
@@ -42,7 +41,6 @@ pub struct ExtractColorParams {
     #[dynamic(default = "default_min_contrast")]
     min_contrast: f32,
 }
-impl_rhai_conversion_dynamic!(ExtractColorParams);
 
 impl PartialEq for ExtractColorParams {
     fn eq(&self, rhs: &Self) -> bool {

@@ -4,16 +4,12 @@
 use anyhow::{anyhow, bail, Context, Error};
 use lazy_static::lazy_static;
 use ordered_float::NotNan;
-use smol::channel::{Receiver, Sender};
-use smol::prelude::*;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::OsString;
 use std::fs::DirBuilder;
 #[cfg(unix)]
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -33,9 +29,6 @@ pub mod keyassignment;
 mod keys;
 pub mod ktav_value;
 pub mod meta;
-pub mod rhai_bridge;
-pub mod rhai_engine;
-pub mod rhai_value;
 mod scheme_data;
 mod serial;
 mod terminal;
@@ -76,12 +69,7 @@ lazy_static! {
     static ref CONFIG_OVERRIDES: Mutex<Vec<(String, String)>> = Mutex::new(vec![]);
     static ref SHOW_ERROR: Mutex<Option<ErrorCallback>> =
         Mutex::new(Some(|e| log::error!("{}", e)));
-    static ref RHAI_PIPE: RhaiPipe = RhaiPipe::new();
     pub static ref COLOR_SCHEMES: HashMap<String, Palette> = build_default_schemes();
-}
-
-thread_local! {
-    static RHAI_CONFIG: RefCell<Option<RhaiConfigCell>> = RefCell::new(None);
 }
 
 fn toml_table_has_numeric_keys(t: &toml::value::Table) -> bool {
@@ -170,91 +158,6 @@ pub fn build_default_schemes() -> HashMap<String, Palette> {
     color_schemes
 }
 
-struct RhaiPipe {
-    sender: Sender<rhai_engine::RhaiEventScript>,
-    receiver: Receiver<rhai_engine::RhaiEventScript>,
-}
-impl RhaiPipe {
-    pub fn new() -> Self {
-        let (sender, receiver) = smol::channel::unbounded();
-        Self { sender, receiver }
-    }
-}
-
-/// The implementation is only slightly crazy...
-/// `rhai::Engine`/`rhai::AST` are neither `Send` nor `Sync` in this workspace (the
-/// `sync` cargo feature is not enabled; see `config/src/rhai_engine.rs`'s
-/// module-level doc comment and the L4.6 migration note below). We take care to
-/// build and reference the live engine only from the main thread of the
-/// application.
-/// We also need to take care to keep this engine alive if a long running
-/// future is outstanding while a config reload happens.
-/// We have to use `Rc` to manage its lifetime, but due to some issues
-/// with rust's async lifetime tracking we need to indirectly schedule
-/// some of the futures to avoid it thinking that the generated future
-/// in the async block needs to be Send.
-///
-/// A further complication is that config reloading tends to happen in
-/// a background filesystem watching thread.
-///
-/// The result of all these constraints is that the RhaiPipe struct above
-/// is used as a channel to transport newly loaded configs' *event-script
-/// descriptor* (`RhaiEventScript`, plain `Send` data: just the script source text
-/// and its path) to the main thread, which is where the actual (non-`Send`)
-/// `rhai::Engine`+`AST` gets (re)built, via `RhaiConfigState::from_script`. This
-/// replaces the pre-L4.6 design, which sent an already-built `mlua::Lua` (which
-/// *was* `Send`) across an equivalent `LuaPipe`; rhai's engine can't follow that
-/// exact shape, so the message that crosses the channel had to change from "the
-/// engine itself" to "what's needed to rebuild the engine where it will be used".
-///
-/// The main thread pops the loaded descriptors to obtain the latest one
-/// and updates RhaiConfigCell
-struct RhaiConfigCell {
-    state: Option<Rc<rhai_engine::RhaiConfigState>>,
-}
-
-impl RhaiConfigCell {
-    /// Consume any event-script descriptors sent to us via the
-    /// config loader until we end up with the most
-    /// recent one being referenced by RHAI_CONFIG.
-    fn update_to_latest(&mut self) {
-        let mut latest = None;
-        while let Ok(script) = RHAI_PIPE.receiver.try_recv() {
-            latest = Some(script);
-        }
-        if let Some(script) = latest {
-            match rhai_engine::RhaiConfigState::from_script(&script) {
-                Ok(state) => {
-                    self.state.replace(Rc::new(state));
-                }
-                Err(err) => {
-                    // Keep serving the previous generation's handlers rather than
-                    // losing the event bridge entirely on a transient rebuild
-                    // failure (e.g. a script that parsed fine on the background
-                    // thread encountering a resource limit differently here --
-                    // shouldn't normally happen, since it's the same source text
-                    // and engine construction, but fail soft rather than panic).
-                    log::error!("Failed to rebuild rhai event-callback engine: {:#}", err);
-                }
-            }
-        }
-    }
-
-    /// Take a reference on the latest generation of the rhai config state
-    fn get_state(&self) -> Option<Rc<rhai_engine::RhaiConfigState>> {
-        self.state.as_ref().map(Rc::clone)
-    }
-}
-
-pub fn designate_this_as_the_main_thread() {
-    RHAI_CONFIG.with(|lc| {
-        let mut lc = lc.borrow_mut();
-        if lc.is_none() {
-            lc.replace(RhaiConfigCell { state: None });
-        }
-    });
-}
-
 #[must_use = "Cancels the subscription when dropped"]
 pub struct ConfigSubscription(usize);
 
@@ -269,75 +172,6 @@ where
     F: Fn() -> bool + 'static + Send,
 {
     ConfigSubscription(CONFIG.subscribe(subscriber))
-}
-
-/// Spawn a future that will run with an optional rhai event-callback state from
-/// the most recently loaded configuration.
-/// The `func` argument is passed the state and must return a Future.
-///
-/// This function MUST only be called from the main thread.
-/// In exchange for the caller checking for this, the parameters to
-/// this method are not required to be Send.
-///
-/// Calling this function from a secondary thread will panic.
-/// You should use `with_rhai_config` if you are triggering a
-/// call from a secondary thread.
-pub async fn with_rhai_config_on_main_thread<F, RETF, RET>(func: F) -> anyhow::Result<RET>
-where
-    F: FnOnce(Option<Rc<rhai_engine::RhaiConfigState>>) -> RETF,
-    RETF: Future<Output = anyhow::Result<RET>>,
-{
-    let state = RHAI_CONFIG.with(|lc| {
-        let mut lc = lc.borrow_mut();
-        let lc = lc.as_mut().expect(
-            "with_rhai_config_on_main_thread not called
-             from main thread, use with_rhai_config instead!",
-        );
-        lc.update_to_latest();
-        lc.get_state()
-    });
-
-    func(state).await
-}
-
-pub fn run_immediate_with_rhai_config<F, RET>(func: F) -> anyhow::Result<RET>
-where
-    F: FnOnce(Option<Rc<rhai_engine::RhaiConfigState>>) -> anyhow::Result<RET>,
-{
-    let state = RHAI_CONFIG.with(|lc| {
-        let mut lc = lc.borrow_mut();
-        let lc = lc.as_mut().expect(
-            "with_rhai_config_on_main_thread not called
-             from main thread, use with_rhai_config instead!",
-        );
-        lc.update_to_latest();
-        lc.get_state()
-    });
-
-    func(state)
-}
-
-fn schedule_with_rhai<F, RETF, RET>(func: F) -> promise::spawn::Task<anyhow::Result<RET>>
-where
-    F: 'static,
-    RET: 'static,
-    F: Fn(Option<Rc<rhai_engine::RhaiConfigState>>) -> RETF,
-    RETF: Future<Output = anyhow::Result<RET>>,
-{
-    promise::spawn::spawn(async move { with_rhai_config_on_main_thread(func).await })
-}
-
-/// Spawn a future that will run with an optional rhai event-callback state from
-/// the most recently loaded configuration.
-/// The `func` argument is passed the state and must return a Future.
-pub async fn with_rhai_config<F, RETF, RET>(func: F) -> anyhow::Result<RET>
-where
-    F: Fn(Option<Rc<rhai_engine::RhaiConfigState>>) -> RETF,
-    RETF: Future<Output = anyhow::Result<RET>> + Send + 'static,
-    F: Send + 'static,
-    RET: Send + 'static,
-{
-    promise::spawn::spawn_into_main_thread(async move { schedule_with_rhai(func).await }).await
 }
 
 fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
@@ -609,9 +443,7 @@ impl ConfigInner {
         let LoadedConfig {
             config,
             file_name,
-            event_script,
             warnings,
-            rhai_watch_paths,
         } = loaded;
 
         self.warnings = warnings;
@@ -633,18 +465,6 @@ impl ConfigInner {
             }
             watch_paths.push(path);
         }
-        // Note: the pre-L4.6 companion mlua context also merged in a
-        // `"wezterm-watch-paths"` Lua-registry-backed watch list here
-        // (`ConfigInner::accumulate_watch_paths`), but that companion context
-        // never actually executed the user's config script (see the L4.6
-        // migration note on `RhaiEventScript`), so that registry value was
-        // always empty in practice; `rhai_watch_paths` below (populated from
-        // the rhai engine that *does* evaluate the script, in
-        // `Config::try_load`) was always the real source of watched paths
-        // added via `add_to_config_reload_watch_list`.
-        for path in rhai_watch_paths {
-            watch_paths.push(PathBuf::from(path));
-        }
 
         match config {
             Ok(config) => {
@@ -652,14 +472,6 @@ impl ConfigInner {
                 self.error.take();
                 self.generation += 1;
 
-                // If we loaded a user config, publish this latest version of
-                // the event-script descriptor to the RHAI_PIPE. This allows a
-                // subsequent call to `with_rhai_config` to reference a live rhai
-                // engine built from this script even though we are (probably)
-                // resolving this from a background reloading thread.
-                if let Some(event_script) = event_script {
-                    RHAI_PIPE.sender.try_send(event_script).ok();
-                }
                 log::debug!("Reloaded configuration! generation={}", self.generation);
             }
             Err(err) => {
@@ -785,13 +597,13 @@ impl Configuration {
     /// Reload the configuration
     pub fn reload(&self) {
         // Deliberately computed *before* taking the lock below: `Config::load()`
-        // runs arbitrary config-setup code (via rhai's `RHAI_SETUP_FUNCS`)
-        // that can call back into this `Configuration` (e.g.
-        // `time-funcs::register` -> `subscribe_to_config_reload` -> `subscribe`,
-        // below) to lock the same mutex. Since `std::sync::Mutex` is not
-        // reentrant, doing the load while holding the lock would deadlock the
-        // very first time any process loads its config. See BUG8 and the doc
-        // comment on `ConfigInner::reload`.
+        // runs arbitrary config-setup code that can call back into this
+        // `Configuration` (e.g. `time-funcs::register` ->
+        // `subscribe_to_config_reload` -> `subscribe`, below) to lock the same
+        // mutex. Since `std::sync::Mutex` is not reentrant, doing the load
+        // while holding the lock would deadlock the very first time any
+        // process loads its config. See BUG8 and the doc comment on
+        // `ConfigInner::reload`.
         let loaded = Config::load();
         let mut inner = self.inner.lock().unwrap();
         inner.reload(loaded);
@@ -866,23 +678,7 @@ impl std::ops::Deref for ConfigHandle {
 pub struct LoadedConfig {
     pub config: anyhow::Result<Config>,
     pub file_name: Option<PathBuf>,
-    /// `Send`-safe descriptor of the config script's event-callback surface
-    /// (`wezterm.on`/`emit`, consumed by `mux`/`wezterm-gui` via
-    /// `config::rhai::emit_sync_callback`/`emit_event`/`emit_async_callback`).
-    ///
-    /// Before L4.6 this field held a companion `mlua::Lua` context (`lua:
-    /// Option<mlua::Lua>`), built by `crate::lua::make_lua_context` purely to
-    /// give the runtime event bridge a `Send`-able value to pass across the
-    /// background-reload-thread -> main-thread channel (`mlua::Lua` is `Send`,
-    /// unlike `rhai::Engine`/`rhai::AST` in this workspace's non-`sync`
-    /// build). See `RhaiEventScript`'s doc comment in
-    /// `config/src/rhai_engine.rs` for why a plain-data descriptor plus a
-    /// main-thread rebuild replaces that approach.
-    pub event_script: Option<rhai_engine::RhaiEventScript>,
     pub warnings: Vec<String>,
-    /// Paths accumulated via `add_to_config_reload_watch_list` while
-    /// evaluating a `.rhai` config script (see `rhai_engine::ConfigReloadWatchList`).
-    pub rhai_watch_paths: Vec<String>,
 }
 
 #[cfg(test)]
@@ -901,9 +697,7 @@ mod reload_notify_test {
         LoadedConfig {
             config: Ok(Config::default_config()),
             file_name: None,
-            event_script: None,
             warnings: vec![],
-            rhai_watch_paths: vec![],
         }
     }
 

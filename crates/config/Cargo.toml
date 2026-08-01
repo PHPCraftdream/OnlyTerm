@@ -29,13 +29,6 @@ notify.workspace = true
 ordered-float = { workspace=true, features = ["serde"] }
 portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true
-# rhai bridge for the Lua->rhai config migration (see
-# docs/plans/2026-07-23-lua-rhai-migration.md). L1 promoted this from a
-# dev-dependency (L0 tooling only) to a real dependency: `config::rhai_value`
-# is production code implementing the `rhai::Dynamic <-> wezterm_dynamic::Value`
-# bridge that will back the rhai config engine landing in L2. mlua remains the
-# production config-parsing dependency until L5.
-rhai.workspace = true
 serde = {workspace=true, features = ["rc", "derive"]}
 serde_json.workspace = true
 shlex.workspace = true
