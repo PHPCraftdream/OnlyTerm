@@ -14,7 +14,6 @@ use mux::Mux;
 use mux_lua::MuxPane;
 use std::convert::TryInto;
 use std::ops::Sub;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use termwiz::hyperlink::Hyperlink;
@@ -430,6 +429,13 @@ impl super::TermWindow {
         context.set_cursor(Some(MouseCursor::Arrow));
     }
 
+    /// The `new-tab-button-click` event used to be dispatched to a rhai
+    /// handler registered via `wezterm.on("new-tab-button-click", ...)`,
+    /// which could return `false` to suppress `action` (the built-in
+    /// default: spawn a new tab in the same domain on left-click, show the
+    /// launcher on right-click, nothing on middle-click). With the
+    /// scripting layer removed there is no handler left to suppress it, so
+    /// the default action now always runs.
     fn do_new_tab_button_click(&mut self, button: MousePress) {
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
@@ -441,51 +447,15 @@ impl super::TermWindow {
             MousePress::Middle => None,
         };
 
-        async fn dispatch_new_tab_button(
-            state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-            window: GuiWin,
-            pane: MuxPane,
-            button: MousePress,
-            action: Option<KeyAssignment>,
-        ) -> anyhow::Result<()> {
-            let default_action = match state {
-                Some(state) => {
-                    let action_arg = match &action {
-                        Some(action) => config::rhai_value::dynamic_to_rhai_dynamic(
-                            &wezterm_dynamic::ToDynamic::to_dynamic(action),
-                        ),
-                        None => rhai::Dynamic::UNIT,
-                    };
-                    let args = vec![
-                        rhai::Dynamic::from(window.clone()),
-                        rhai::Dynamic::from(pane),
-                        rhai::Dynamic::from(format!("{button:?}")),
-                        action_arg,
-                    ];
-                    config::rhai_bridge::emit_event(&state, "new-tab-button-click", args)
-                        .await
-                        .map_err(|e| {
-                            log::error!("while processing new-tab-button-click event: {:#}", e);
-                            e
-                        })?
-                }
-                None => true,
-            };
-            if let (true, Some(assignment)) = (default_action, action) {
-                window.window.notify(TermWindowNotif::PerformAssignment {
-                    pane_id: pane.0,
-                    assignment,
-                    tx: None,
-                });
-            }
-            Ok(())
+        if let Some(assignment) = action {
+            let window = GuiWin::new(self);
+            let pane = MuxPane(pane.pane_id());
+            window.window.notify(TermWindowNotif::PerformAssignment {
+                pane_id: pane.0,
+                assignment,
+                tx: None,
+            });
         }
-        let window = GuiWin::new(self);
-        let pane = MuxPane(pane.pane_id());
-        promise::spawn::spawn(config::with_rhai_config_on_main_thread(move |state| {
-            dispatch_new_tab_button(state, window, pane, button, action)
-        }))
-        .detach();
     }
 
     pub fn mouse_event_tab_bar(
