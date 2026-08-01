@@ -12,16 +12,14 @@ use crate::window::WindowId;
 use crate::Mux;
 use anyhow::{bail, Context, Error};
 use async_trait::async_trait;
-use config::keyassignment::{RotationDirection, SpawnCommand, SpawnTabDomain};
+use config::keyassignment::RotationDirection;
 use config::{configuration, ExecDomain, SerialDomain, ValueOrFunc, WslDomain};
 use downcast_rs::{impl_downcast, Downcast};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, ExitStatus, MasterPty, PtySize, PtySystem};
-use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use wezterm_term::TerminalSize;
 
@@ -337,67 +335,14 @@ impl LocalDomain {
             cmd.clear_cwd();
             *cmd.get_argv_mut() = argv;
         } else if let Some(ed) = self.resolve_exec_domain() {
-            let mut args = vec![];
-            let mut set_environment_variables = HashMap::new();
-            for arg in cmd.get_argv() {
-                args.push(
-                    arg.to_str()
-                        .ok_or_else(|| anyhow::anyhow!("command argument is not utf8"))?
-                        .to_string(),
-                );
-            }
-            for (k, v) in cmd.iter_full_env_as_str() {
-                set_environment_variables.insert(k.to_string(), v.to_string());
-            }
-            let cwd = match cmd.get_cwd() {
-                Some(cwd) => Some(PathBuf::from(cwd)),
-                None => None,
-            };
-            let spawn_command = SpawnCommand {
-                label: None,
-                domain: SpawnTabDomain::DomainName(ed.name.clone()),
-                args: if args.is_empty() { None } else { Some(args) },
-                set_environment_variables,
-                cwd,
-                position: None,
-            };
-
-            let spawn_command = config::with_rhai_config_on_main_thread(|state| async {
-                let state = state.ok_or_else(|| anyhow::anyhow!("missing rhai config state"))?;
-                let arg: rhai::Dynamic = spawn_command.clone().into();
-                let value = config::rhai_bridge::emit_async_callback(
-                    &state,
-                    &ed.fixup_command,
-                    vec![arg],
-                )
-                .await?;
-                let cmd = SpawnCommand::try_from(value).with_context(|| {
-                    format!(
-                        "interpreting SpawnCommand result from ExecDomain {}",
-                        ed.name
-                    )
-                })?;
-                Ok(cmd)
-            })
-            .await
-            .with_context(|| format!("calling ExecDomain {} function", ed.name))?;
-
-            // Reinterpret the SpawnCommand into the builder
-
-            cmd.get_argv_mut().clear();
-            if let Some(args) = &spawn_command.args {
-                for arg in args {
-                    cmd.get_argv_mut().push(arg.into());
-                }
-            }
-            cmd.env_clear();
-            for (k, v) in &spawn_command.set_environment_variables {
-                cmd.env(k, v);
-            }
-            cmd.clear_cwd();
-            if let Some(cwd) = &spawn_command.cwd {
-                cmd.cwd(cwd);
-            }
+            // `ed.fixup_command` used to name a rhai function dispatched
+            // here (via `with_rhai_config_on_main_thread`/
+            // `emit_async_callback`) to rewrite the command being spawned
+            // in this exec domain. With the scripting layer removed there
+            // is no handler left to call, so the command built above is
+            // used unmodified -- this is the same "no handler registered"
+            // default the bridge itself already documented.
+            let _ = &ed.fixup_command;
         } else if Path::new("/.flatpak-info").exists() {
             // We're running inside a flatpak sandbox.
             // Run the command outside the sandbox via flatpak-spawn
@@ -814,37 +759,13 @@ impl Domain for LocalDomain {
         if let Some(ed) = self.resolve_exec_domain() {
             match &ed.label {
                 Some(ValueOrFunc::Value(wezterm_dynamic::Value::String(s))) => s.to_string(),
-                Some(ValueOrFunc::Func(label_func)) => {
-                    let label = config::with_rhai_config_on_main_thread(|state| async {
-                        let state = state.ok_or_else(|| anyhow::anyhow!("missing rhai config state"))?;
-                        let arg = rhai::Dynamic::from(self.name.clone());
-                        let value = config::rhai_bridge::emit_async_callback(
-                            &state,
-                            label_func,
-                            vec![arg],
-                        )
-                        .await?;
-                        let label = value.into_string().map_err(|ty| {
-                            anyhow::anyhow!(
-                                "interpreting label result from ExecDomain {} as a string: got `{}`",
-                                ed.name,
-                                ty
-                            )
-                        })?;
-                        Ok(label)
-                    })
-                    .await;
-                    match label {
-                        Ok(label) => label,
-                        Err(err) => {
-                            log::error!(
-                                "Error while calling label function for ExecDomain `{}`: {err:#}",
-                                self.name
-                            );
-                            self.name.to_string()
-                        }
-                    }
-                }
+                // `ValueOrFunc::Func` used to name a rhai function
+                // dispatched here (via `with_rhai_config_on_main_thread`/
+                // `emit_async_callback`) to compute the label. With the
+                // scripting layer removed there is no handler left to
+                // call, so this now always takes the same fallback the
+                // old code took when the call errored: the domain's name.
+                Some(ValueOrFunc::Func(_label_func)) => self.name.to_string(),
                 _ => self.name.to_string(),
             }
         } else if let Some(wsl) = self.resolve_wsl_domain() {

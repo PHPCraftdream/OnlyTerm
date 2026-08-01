@@ -708,7 +708,10 @@ fn terminate_with_error(err: anyhow::Error) -> ! {
 }
 
 fn main() {
-    config::designate_this_as_the_main_thread();
+    // `config::designate_this_as_the_main_thread()` used to be called here
+    // to initialize the rhai event-callback state for any rhai call sites
+    // in this binary. With no remaining call sites into the rhai
+    // event-callback bridge, that designation is no longer needed here.
     config::assign_error_callback(mux::connui::show_configuration_error_message);
     if let Err(e) = run() {
         terminate_with_error(e);

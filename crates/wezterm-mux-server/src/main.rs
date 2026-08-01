@@ -10,7 +10,6 @@ use mux::Mux;
 use portable_pty::cmdbuilder::CommandBuilder;
 use std::ffi::OsString;
 use std::process::Command;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
 use wezterm_gui_subcommands::*;
@@ -80,7 +79,12 @@ fn run() -> anyhow::Result<()> {
     env_bootstrap::bootstrap();
 
     //stats::Stats::init()?;
-    config::designate_this_as_the_main_thread();
+    // `config::designate_this_as_the_main_thread()` used to be called here
+    // to initialize the rhai event-callback state so that
+    // `with_rhai_config_on_main_thread` (used only by the removed
+    // `mux-startup` rhai call site) would not panic. With no remaining
+    // call sites into the rhai event-callback bridge, that designation is
+    // no longer needed here.
     let _saver = umask::UmaskSaver::new();
 
     let opts = Opt::parse();
@@ -260,14 +264,9 @@ fn run() -> anyhow::Result<()> {
     }
 }
 
-async fn trigger_mux_startup(
-    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-) -> anyhow::Result<()> {
-    if let Some(state) = state {
-        config::rhai_bridge::emit_event(&state, "mux-startup", vec![]).await?;
-    }
-    Ok(())
-}
+// `mux-startup` was a rhai event-callback hook fired here; with the
+// scripting layer removed there is nothing left to notify, so mux startup
+// no longer needs to trigger anything beyond what already happens below.
 
 async fn async_run(cmd: Option<CommandBuilder>) -> anyhow::Result<()> {
     let mux = Mux::get();
@@ -285,12 +284,6 @@ async fn async_run(cmd: Option<CommandBuilder>) -> anyhow::Result<()> {
     });
 
     let domain = mux.default_domain();
-
-    {
-        if let Err(err) = config::with_rhai_config_on_main_thread(trigger_mux_startup).await {
-            log::error!("while processing mux-startup event: {:#}", err);
-        }
-    }
 
     let have_panes_in_domain = mux
         .iter_panes()

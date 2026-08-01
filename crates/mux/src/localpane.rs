@@ -29,7 +29,7 @@ use termwiz::escape::{Action, DeviceControlMode};
 use termwiz::input::KeyboardEncoding;
 use termwiz::surface::{Line, SequenceNo};
 use url::Url;
-use wezterm_dynamic::{ToDynamic, Value};
+use wezterm_dynamic::Value;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
     Alert, AlertHandler, Clipboard, DownloadHandler, KeyCode, KeyModifiers, MouseEvent, Progress,
@@ -1092,24 +1092,11 @@ impl Pane for LocalPane {
                 info.root
             );
 
-            let hook_result = config::run_immediate_with_rhai_config(|state| {
-                let state = match state {
-                    Some(state) => state,
-                    None => return Ok(None),
-                };
-                let arg = config::rhai_value::dynamic_to_rhai_dynamic(&info.root.to_dynamic());
-                let v = config::rhai_bridge::emit_sync_callback(
-                    &state,
-                    "mux-is-process-stateful",
-                    vec![arg],
-                )?;
-                if v.is_unit() {
-                    Ok(None)
-                } else {
-                    Ok(v.as_bool().ok())
-                }
-            });
-
+            // `mux-is-process-stateful` used to be a rhai event-callback
+            // hook consulted here; with the scripting layer removed there
+            // is no handler left to ask, so this always takes the same
+            // default-behavior fallback the old code took when no rhai
+            // config was loaded.
             fn default_stateful_check(proc_list: &LocalProcessInfo) -> bool {
                 // Fig uses `figterm` a pseudo terminal for a lot of functionality, it runs between
                 // the shell and terminal. Unfortunately it is typically named `<shell> (figterm)`,
@@ -1138,18 +1125,7 @@ impl Pane for LocalPane {
                 false
             }
 
-            let is_stateful = match hook_result {
-                Ok(None) => default_stateful_check(&info.root),
-                Ok(Some(s)) => s,
-                Err(err) => {
-                    log::error!(
-                        "Error while running mux-is-process-stateful \
-                         hook: {:#}, falling back to default behavior",
-                        err
-                    );
-                    default_stateful_check(&info.root)
-                }
-            };
+            let is_stateful = default_stateful_check(&info.root);
 
             !is_stateful
         } else {
