@@ -2,7 +2,6 @@ use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{KeyAssignment, PromptInputLine};
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
-use std::rc::Rc;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::lineedit::*;
 use termwiz::surface::Change;
@@ -47,14 +46,23 @@ impl LineEditorHost for PromptHost {
     }
 }
 
+/// Shows the line-prompt overlay and waits for the user's input.
+///
+/// `args.action` used to be an `EmitEvent` name dispatched to a rhai handler
+/// registered via `wezterm.action_callback`, which received the entered line;
+/// with the scripting layer removed there is no handler registry left to
+/// receive it, so the entered text is simply discarded once the overlay
+/// resolves. The `EmitEvent` shape is still validated here so that a config
+/// still using the old `PromptInputLine { action }` shape fails the same way
+/// it used to instead of silently doing something unexpected.
 pub fn show_line_prompt_overlay(
     mut term: TermWizTerminal,
     args: PromptInputLine,
-    window: GuiWin,
-    pane: MuxPane,
+    _window: GuiWin,
+    _pane: MuxPane,
 ) -> anyhow::Result<()> {
-    let name = match *args.action {
-        KeyAssignment::EmitEvent(id) => id,
+    match *args.action {
+        KeyAssignment::EmitEvent(_) => {}
         _ => anyhow::bail!(
             "PromptInputLine requires action to be defined by wezterm.action_callback"
         ),
@@ -68,50 +76,11 @@ pub fn show_line_prompt_overlay(
     let mut host = PromptHost::new();
     let mut editor = LineEditor::new(&mut term);
     editor.set_prompt(&args.prompt);
-    let line =
+    // The entered line no longer has anywhere to go (no rhai handler registry
+    // exists to receive it), so just run the prompt to completion and drop
+    // the result.
+    let _line =
         editor.read_line_with_optional_initial_value(&mut host, args.initial_value.as_deref())?;
-
-    promise::spawn::spawn_into_main_thread(async move {
-        trampoline(name, window, pane, line);
-        anyhow::Result::<()>::Ok(())
-    })
-    .detach();
-
-    Ok(())
-}
-
-fn trampoline(name: String, window: GuiWin, pane: MuxPane, line: Option<String>) {
-    promise::spawn::spawn(async move {
-        config::with_rhai_config_on_main_thread(move |state| {
-            do_event(state, name, window, pane, line)
-        })
-        .await
-    })
-    .detach();
-}
-
-async fn do_event(
-    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-    name: String,
-    window: GuiWin,
-    pane: MuxPane,
-    line: Option<String>,
-) -> anyhow::Result<()> {
-    if let Some(state) = state {
-        let line_arg = match line {
-            Some(line) => rhai::Dynamic::from(line),
-            None => rhai::Dynamic::UNIT,
-        };
-        let args = vec![
-            rhai::Dynamic::from(window),
-            rhai::Dynamic::from(pane),
-            line_arg,
-        ];
-
-        if let Err(err) = config::rhai_bridge::emit_event(&state, &name, args).await {
-            log::error!("while processing {} event: {:#}", name, err);
-        }
-    }
 
     Ok(())
 }

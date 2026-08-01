@@ -870,7 +870,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         },
         ShowDebugOverlay => CommandDef {
             brief: "Show debug overlay".into(),
-            doc: "Activates the debug overlay and Lua REPL".into(),
+            doc: "Activates the debug overlay showing version/environment info and a live log tail".into(),
             keys: vec![(Modifiers::CTRL.union(Modifiers::SHIFT), "l".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Help"],

@@ -2,7 +2,6 @@ use crate::scripting::guiwin::GuiWin;
 use config::keyassignment::{Confirmation, KeyAssignment};
 use mux::termwiztermtab::TermWizTerminal;
 use mux_lua::MuxPane;
-use std::rc::Rc;
 use termwiz::cell::AttributeChange;
 use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, MouseButtons, MouseEvent};
@@ -145,58 +144,30 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
     Ok(false)
 }
 
+/// Shows the confirmation overlay and waits for the user to answer.
+///
+/// `args.action`/`args.cancel` used to be `EmitEvent` names dispatched to a
+/// rhai handler registered via `wezterm.action_callback`; with the scripting
+/// layer removed there is no handler registry left to receive the answer, so
+/// the result is simply discarded once the overlay resolves. The `EmitEvent`
+/// shape is still validated here (rather than accepting any `KeyAssignment`)
+/// so that a config which still uses the old `Confirmation { action, cancel }`
+/// shape fails the same way it used to instead of silently doing something
+/// unexpected.
 pub fn show_confirmation_overlay(
     mut term: TermWizTerminal,
     args: Confirmation,
-    window: GuiWin,
-    pane: MuxPane,
+    _window: GuiWin,
+    _pane: MuxPane,
 ) -> anyhow::Result<()> {
-    let name = match *args.action {
-        KeyAssignment::EmitEvent(id) => id,
+    match *args.action {
+        KeyAssignment::EmitEvent(_) => {}
         _ => anyhow::bail!("Confirmation requires action to be defined by wezterm.action_callback"),
     };
 
-    if let Ok(confirm) = run_confirmation_impl(&args.message, &mut term) {
-        if confirm {
-            promise::spawn::spawn_into_main_thread(async move {
-                trampoline(name, window, pane);
-                anyhow::Result::<()>::Ok(())
-            })
-            .detach();
-        } else if let Some(key_assignment) = args.cancel {
-            if let KeyAssignment::EmitEvent(id) = *key_assignment {
-                promise::spawn::spawn_into_main_thread(async move {
-                    trampoline(id, window, pane);
-                    anyhow::Result::<()>::Ok(())
-                })
-                .detach();
-            }
-        }
-    }
-    Ok(())
-}
-
-fn trampoline(name: String, window: GuiWin, pane: MuxPane) {
-    promise::spawn::spawn(async move {
-        config::with_rhai_config_on_main_thread(move |state| do_event(state, name, window, pane))
-            .await
-    })
-    .detach();
-}
-
-async fn do_event(
-    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-    name: String,
-    window: GuiWin,
-    pane: MuxPane,
-) -> anyhow::Result<()> {
-    if let Some(state) = state {
-        let args = vec![rhai::Dynamic::from(window), rhai::Dynamic::from(pane)];
-
-        if let Err(err) = config::rhai_bridge::emit_event(&state, &name, args).await {
-            log::error!("while processing {} event: {:#}", name, err);
-        }
-    }
-
+    // The confirm/cancel result no longer has anywhere to go (no rhai handler
+    // registry exists to receive it), so just run the prompt to completion and
+    // drop the answer.
+    let _ = run_confirmation_impl(&args.message, &mut term);
     Ok(())
 }
