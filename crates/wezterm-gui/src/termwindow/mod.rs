@@ -2264,54 +2264,22 @@ impl TermWindow {
         // handlers; with the scripting layer removed they have no consumers.
     }
 
-    fn schedule_window_event(&mut self, name: &str, pane_id: Option<PaneId>) {
-        let window = GuiWin::new(self);
-        let pane = match pane_id {
-            Some(pane_id) => Mux::get().get_pane(pane_id),
-            None => None,
-        };
-        let pane = match pane {
-            Some(pane) => pane,
-            None => match self.get_active_pane_or_overlay() {
-                Some(pane) => pane,
-                None => return,
-            },
-        };
-        let pane = MuxPane(pane.pane_id());
-        let name = name.to_string();
-
-        async fn do_event(
-            state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-            name: String,
-            window: GuiWin,
-            pane: MuxPane,
-        ) -> anyhow::Result<()> {
-            let again = if let Some(state) = state {
-                let args = vec![rhai::Dynamic::from(window.clone()), rhai::Dynamic::from(pane)];
-
-                if let Err(err) = config::rhai_bridge::emit_event(&state, &name, args).await {
-                    log::error!("while processing {} event: {:#}", name, err);
-                }
-                true
-            } else {
-                false
-            };
-
-            window
-                .window
-                .notify(TermWindowNotif::FinishWindowEvent { name, again });
-
-            Ok(())
-        }
-
-        promise::spawn::spawn(config::with_rhai_config_on_main_thread(move |state| {
-            do_event(state, name, window, pane)
-        }))
-        .detach();
+    /// Named window events (`window-resized`, the generic `EmitEvent(name)`
+    /// key assignment, etc.) used to be dispatched here to a rhai handler
+    /// registered via `wezterm.on(name, ...)`. With the scripting layer
+    /// removed there is no handler registry left to receive them, so this
+    /// just immediately marks the event as finished (`again: false`, the
+    /// same outcome `do_event` used to report when no rhai config was
+    /// loaded) without spawning anything. The `EventState`
+    /// queueing/de-duplication in [`Self::emit_window_event`] and
+    /// [`Self::finish_window_event`] is kept as-is so a queued re-entrant
+    /// call is still drained correctly.
+    fn schedule_window_event(&mut self, name: &str, _pane_id: Option<PaneId>) {
+        self.finish_window_event(name, false);
     }
 
-    /// Called as part of finishing up a callout to lua.
-    /// If again==false it means that there isn't a lua config
+    /// Called as part of finishing up a window event dispatch.
+    /// If again==false it means that there isn't a handler
     /// to execute against, so we should just mark as done.
     /// Otherwise, if there is a queued item, schedule it now.
     fn finish_window_event(&mut self, name: &str, again: bool) {

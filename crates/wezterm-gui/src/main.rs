@@ -12,12 +12,11 @@ use ::window::*;
 use anyhow::{anyhow, Context};
 use clap::builder::ValueParser;
 use clap::{Parser, ValueHint};
-use config::keyassignment::{SpawnCommand, SpawnTabDomain};
+use config::keyassignment::SpawnTabDomain;
 use config::{ConfigHandle, SerialDomain};
 use mux::activity::Activity;
 use mux::domain::{Domain, LocalDomain};
 use mux::Mux;
-use mux_lua::MuxDomain;
 use portable_pty::cmdbuilder::CommandBuilder;
 use promise::spawn::block_on;
 use std::borrow::Cow;
@@ -249,7 +248,6 @@ async fn spawn_tab_in_domain_if_mux_is_empty(
     domain.attach(Some(window_id)).await?;
 
     if have_panes_in_domain_and_ws(&domain, &workspace) {
-        trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
         return Ok(());
     }
 
@@ -272,7 +270,6 @@ async fn spawn_tab_in_domain_if_mux_is_empty(
             window_id,
         )
         .await?;
-    trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
     Ok(())
 }
 
@@ -289,51 +286,10 @@ async fn connect_to_auto_connect_domains() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn trigger_gui_startup(
-    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-    spawn: Option<SpawnCommand>,
-) -> anyhow::Result<()> {
-    if let Some(state) = state {
-        let arg: rhai::Dynamic = match spawn {
-            Some(spawn) => spawn.into(),
-            None => rhai::Dynamic::UNIT,
-        };
-        config::rhai_bridge::emit_event(&state, "gui-startup", vec![arg]).await?;
-    }
-    Ok(())
-}
-
-async fn trigger_and_log_gui_startup(spawn_command: Option<SpawnCommand>) {
-    if let Err(err) =
-        config::with_rhai_config_on_main_thread(move |state| trigger_gui_startup(state, spawn_command))
-            .await
-    {
-        let message = format!("while processing gui-startup event: {:#}", err);
-        log::error!("{}", message);
-        persistent_toast_notification("Error", &message);
-    }
-}
-
-async fn trigger_gui_attached(
-    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-    domain: MuxDomain,
-) -> anyhow::Result<()> {
-    if let Some(state) = state {
-        let arg = rhai::Dynamic::from(domain);
-        config::rhai_bridge::emit_event(&state, "gui-attached", vec![arg]).await?;
-    }
-    Ok(())
-}
-
-async fn trigger_and_log_gui_attached(domain: MuxDomain) {
-    if let Err(err) =
-        config::with_rhai_config_on_main_thread(move |state| trigger_gui_attached(state, domain)).await
-    {
-        let message = format!("while processing gui-attached event: {:#}", err);
-        log::error!("{}", message);
-        persistent_toast_notification("Error", &message);
-    }
-}
+// `gui-startup` and `gui-attached` were rhai event-callback hooks fired here;
+// with the scripting layer removed there is nothing left to notify, so
+// spawning the GUI/attaching to a domain no longer needs to trigger anything
+// beyond what already happens in their callers.
 
 fn cell_pixel_dims(config: &ConfigHandle, dpi: f64) -> anyhow::Result<(usize, usize)> {
     let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi as usize)?);
@@ -363,23 +319,6 @@ async fn async_run_terminal_gui(
         connect_to_auto_connect_domains().await?;
     }
 
-    let spawn_command = match &cmd {
-        Some(cmd) => Some(SpawnCommand::from_command_builder(cmd)?),
-        None => None,
-    };
-
-    // Apply the domain to the command
-    let spawn_command = match (spawn_command, &opts.domain) {
-        (Some(spawn), Some(name)) => Some(SpawnCommand {
-            domain: SpawnTabDomain::DomainName(name.to_string()),
-            ..spawn
-        }),
-        (None, Some(name)) => Some(SpawnCommand {
-            domain: SpawnTabDomain::DomainName(name.to_string()),
-            ..SpawnCommand::default()
-        }),
-        (spawn, None) => spawn,
-    };
     let mux = Mux::get();
 
     let domain = if let Some(name) = &opts.domain {
@@ -390,10 +329,6 @@ async fn async_run_terminal_gui(
     } else {
         None
     };
-
-    if !opts.attach {
-        trigger_and_log_gui_startup(spawn_command).await;
-    }
 
     let is_connecting = opts.attach;
 
@@ -425,7 +360,6 @@ async fn async_run_terminal_gui(
             if let Some(tab_idx) = window.idx_by_id(tab.tab_id()) {
                 window.set_active_without_saving(tab_idx);
             }
-            trigger_and_log_gui_attached(MuxDomain(domain.domain_id())).await;
         }
     }
     spawn_tab_in_domain_if_mux_is_empty(cmd, is_connecting, domain, opts.workspace).await
@@ -794,7 +728,12 @@ fn main() {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
-    config::designate_this_as_the_main_thread();
+    // `config::designate_this_as_the_main_thread()` used to be called here
+    // to initialize the rhai event-callback state so that
+    // `with_rhai_config_on_main_thread`/`run_immediate_with_rhai_config`
+    // (used only by the removed rhai call sites) would not panic. With no
+    // remaining wezterm-gui call sites into the rhai event-callback bridge,
+    // that designation is no longer needed here.
     config::assign_error_callback(mux::connui::show_configuration_error_message);
     notify_on_panic();
     #[cfg(windows)]

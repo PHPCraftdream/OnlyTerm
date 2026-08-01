@@ -8,7 +8,6 @@ use nucleo_matcher::pattern::Pattern;
 use nucleo_matcher::{Matcher, Utf32Str};
 use rayon::prelude::*;
 use std::cell::RefCell;
-use std::rc::Rc;
 use termwiz::cell::{AttributeChange, CellAttributes};
 use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent};
@@ -43,12 +42,9 @@ struct SelectorState {
     top_row: usize,
     filter_term: String,
     filtered_entries: Vec<InputSelectorEntry>,
-    pane: MuxPane,
-    window: GuiWin,
     filtering: bool,
     always_fuzzy: bool,
     args: InputSelector,
-    event_name: String,
     selection: String,
     labels: Vec<String>,
 }
@@ -204,16 +200,13 @@ impl SelectorState {
         term.render(&changes)
     }
 
-    fn trigger_event(&self, entry: Option<InputSelectorEntry>) {
-        let name = self.event_name.clone();
-        let window = self.window.clone();
-        let pane = self.pane.clone();
-
-        promise::spawn::spawn_into_main_thread(async move {
-            trampoline(name, window, pane, entry);
-            anyhow::Result::<()>::Ok(())
-        })
-        .detach();
+    fn trigger_event(&self, _entry: Option<InputSelectorEntry>) {
+        // The chosen entry (or `None` on cancel) used to be dispatched to a
+        // rhai handler registered via `wezterm.action_callback` under
+        // `self.event_name`. With the scripting layer removed there is no
+        // handler registry left to receive it, so the result is simply
+        // discarded; the caller only needs the fact that selection is
+        // finished in order to break out of `run_loop`.
     }
 
     fn launch(&self, active_idx: usize) -> bool {
@@ -383,58 +376,18 @@ impl SelectorState {
     }
 }
 
-fn trampoline(name: String, window: GuiWin, pane: MuxPane, entry: Option<InputSelectorEntry>) {
-    promise::spawn::spawn(async move {
-        config::with_rhai_config_on_main_thread(move |state| {
-            do_event(state, name, window, pane, entry)
-        })
-        .await
-    })
-    .detach();
-}
-
-async fn do_event(
-    state: Option<Rc<config::rhai_engine::RhaiConfigState>>,
-    name: String,
-    window: GuiWin,
-    pane: MuxPane,
-    entry: Option<InputSelectorEntry>,
-) -> anyhow::Result<()> {
-    if let Some(state) = state {
-        let id = entry.as_ref().map(|entry| entry.id.clone());
-        let label = entry.as_ref().map(|entry| entry.label.to_string());
-
-        let id_arg = match id {
-            Some(id) => rhai::Dynamic::from(id),
-            None => rhai::Dynamic::UNIT,
-        };
-        let label_arg = match label {
-            Some(label) => rhai::Dynamic::from(label),
-            None => rhai::Dynamic::UNIT,
-        };
-        let args = vec![
-            rhai::Dynamic::from(window),
-            rhai::Dynamic::from(pane),
-            id_arg,
-            label_arg,
-        ];
-
-        if let Err(err) = config::rhai_bridge::emit_event(&state, &name, args).await {
-            log::error!("while processing {} event: {:#}", name, err);
-        }
-    }
-
-    Ok(())
-}
-
+// `window`/`pane` are unused now that the selected entry (or cancellation)
+// is no longer dispatched to a rhai handler (see `trigger_event`), but the
+// signature is kept stable since `termwindow/mod.rs` passes them uniformly
+// alongside the other overlay entry points.
 pub fn selector(
     mut term: TermWizTerminal,
     args: InputSelector,
-    window: GuiWin,
-    pane: MuxPane,
+    _window: GuiWin,
+    _pane: MuxPane,
 ) -> anyhow::Result<()> {
-    let event_name = match *args.action {
-        KeyAssignment::EmitEvent(ref id) => id.to_string(),
+    match *args.action {
+        KeyAssignment::EmitEvent(_) => {}
         _ => {
             anyhow::bail!("InputSelector requires action to be defined by wezterm.action_callback")
         }
@@ -442,15 +395,12 @@ pub fn selector(
     let mut state = SelectorState {
         active_idx: 0,
         max_items: 0,
-        pane,
         top_row: 0,
         filter_term: String::new(),
         filtered_entries: vec![],
-        window,
         filtering: args.fuzzy,
         always_fuzzy: args.fuzzy,
         args,
-        event_name,
         selection: String::new(),
         labels: vec![],
     };

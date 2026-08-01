@@ -14,13 +14,11 @@ use frecency::Frecency;
 use mux_lua::MuxPane;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::cell::{Ref, RefCell};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use termwiz::nerdfonts::NERD_FONTS;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 use window::color::LinearRgba;
 use window::Modifiers;
@@ -78,62 +76,18 @@ fn save_recent(command: &ExpandedCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, FromDynamic, ToDynamic)]
-pub struct UserPaletteEntry {
-    pub brief: String,
-    pub doc: Option<String>,
-    pub action: KeyAssignment,
-    pub icon: Option<String>,
-}
-
+/// `augment-command-palette` used to be a rhai handler (registered via
+/// `wezterm.on("augment-command-palette", ...)`) that could inject extra
+/// user-defined entries into the command palette. With the scripting layer
+/// removed there is no handler registry left to call, so this always takes
+/// the same empty-entries fallback that used to run when no handler was
+/// registered.
 fn build_commands(
-    gui_window: GuiWin,
-    pane: Option<MuxPane>,
+    _gui_window: GuiWin,
+    _pane: Option<MuxPane>,
     filter_copy_mode: bool,
 ) -> Vec<ExpandedCommand> {
     let mut commands = CommandDef::actions_for_palette_and_menubar(&config::configuration());
-
-    match config::run_immediate_with_rhai_config(|state| {
-        let mut entries: Vec<UserPaletteEntry> = vec![];
-
-        if let Some(state) = state {
-            let pane_arg = match pane {
-                Some(pane) => rhai::Dynamic::from(pane),
-                None => rhai::Dynamic::UNIT,
-            };
-            let result = config::rhai_bridge::emit_sync_callback(
-                &state,
-                "augment-command-palette",
-                vec![rhai::Dynamic::from(gui_window.clone()), pane_arg],
-            )?;
-
-            if !result.is_unit() {
-                entries = config::rhai_value::rhai_dynamic_to_value(&result)
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
-            }
-        }
-
-        Ok(entries)
-    }) {
-        Ok(entries) => {
-            for entry in entries {
-                commands.push(ExpandedCommand {
-                    brief: entry.brief.into(),
-                    doc: match entry.doc {
-                        Some(doc) => doc.into(),
-                        None => "".into(),
-                    },
-                    action: entry.action,
-                    keys: vec![],
-                    menubar: &[],
-                    icon: entry.icon.map(Cow::Owned),
-                });
-            }
-        }
-        Err(err) => {
-            log::warn!("augment-command-palette: {err:#}");
-        }
-    }
 
     commands.retain(|cmd| {
         if filter_copy_mode {
