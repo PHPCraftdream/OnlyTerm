@@ -15,8 +15,3 @@ terminfo.workspace = true
 termwiz = { workspace=true, features=["use_serde"] }
 wezterm-dynamic.workspace = true
 wezterm-input-types.workspace = true
-# Promoted to a real dependency as of L4c (see
-# docs/plans/2026-07-23-lua-rhai-migration.md): `src/lib.rs::register_rhai`
-# registers rhai-side equivalents of every function in
-# `register(lua: &Lua)`, in parallel with the mlua path.
-rhai.workspace = true
