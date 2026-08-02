@@ -775,6 +775,15 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
     // a fully baked GUI environment running
     config::assign_error_callback(|err| eprintln!("{}", err));
 
+    // `configuration_result()` above only surfaces hard errors. Deprecated
+    // (but still parseable) fields such as the old `child_process_timeout_ms`
+    // are reported as warnings instead, and since this subcommand has no
+    // GUI to pop up `maybe_show_configuration_error_window`'s toast, print
+    // them directly so the CLI user actually sees them.
+    for warning in config::configuration_warnings_and_errors() {
+        eprintln!("{}", warning);
+    }
+
     let font_config = Rc::new(wezterm_font::FontConfiguration::new(
         Some(config.clone()),
         config.dpi.unwrap_or_else(|| ::window::default_dpi()) as usize,

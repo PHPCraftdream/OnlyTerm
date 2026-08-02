@@ -951,8 +951,13 @@ pub struct Config {
     /// `format-window-title`, `update-status` -- no longer exist), nothing
     /// in this codebase reads this field. It is kept only because the
     /// `.ktav` format still declares/defaults it; see task #315 for the
-    /// investigation that turned it up as dead.
-    #[dynamic(default = "default_child_process_timeout_ms")]
+    /// investigation that turned it up as dead. Marked deprecated (task
+    /// #320) so anyone who set it explicitly gets a warning instead of
+    /// silently believing it still guards something.
+    #[dynamic(
+        default = "default_child_process_timeout_ms",
+        deprecated = "this option no longer does anything: the event callbacks it used to guard (format-tab-title, format-window-title, update-status) were removed along with the Lua/rhai scripting layer, and will be removed in a future release"
+    )]
     pub child_process_timeout_ms: u64,
 
     #[dynamic(default = "default_shape_cache_size")]
