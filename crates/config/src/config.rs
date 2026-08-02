@@ -310,7 +310,22 @@ pub struct Config {
     #[dynamic(default)]
     pub font_shaper: FontShaperSelection,
 
-    #[dynamic(default)]
+    /// NOTE: this option currently has no effect. It told the FreeType
+    /// rasterizer (`wezterm-font/src/rasterizer/freetype.rs`, added in
+    /// `8582165ff`) which subpixel channel order to assume when unpacking
+    /// `FT_PIXEL_MODE_LCD`/`FT_PIXEL_MODE_LCD_V` bitmaps. That rasterizer
+    /// was removed in the freetype+harfbuzz -> rustybuzz+swash migration
+    /// (phase H4); the Swash-based rasterizer that replaced it always
+    /// renders grayscale alpha masks and has no LCD/subpixel mode to steer,
+    /// so `new_rasterizer` (`wezterm-font/src/rasterizer/mod.rs`) receives
+    /// this value and explicitly discards it.
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything: it selected the LCD subpixel channel \
+                      order for the FreeType rasterizer's bitmap output, and that rasterizer \
+                      backend was removed in the rustybuzz/swash migration -- the Swash \
+                      rasterizer that replaced it only ever produces grayscale alpha masks"
+    )]
     pub display_pixel_geometry: DisplayPixelGeometry,
     #[dynamic(default)]
     pub freetype_load_target: FreeTypeLoadTarget,
