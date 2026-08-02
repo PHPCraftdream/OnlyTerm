@@ -945,14 +945,38 @@ impl Window {
     ///
     /// Safe to call with no retired windows (no-op) and safe to call
     /// repeatedly (each entry is only ever destroyed once, then removed).
+    ///
+    /// Deferred via `promise::spawn::spawn`, exactly like
+    /// `recreate_webgpu_child_window` above and for the identical reason
+    /// (task #291): both call sites (`check_render_thread_hang_tick`,
+    /// `finish_renderer_rebuild`) reach this synchronously from inside
+    /// `notify()`'s `WindowEvent::Notification` dispatch, which is itself
+    /// invoked from `Connection::with_window_inner` while it still holds
+    /// this exact window's `WindowInner` `RefCell` mutably borrowed (see
+    /// `notify`). Borrowing it again *synchronously* here -- as this method
+    /// used to do -- panics with "already mutably borrowed" on literally
+    /// the first `check_render_thread_hang_tick` timer fire after a window
+    /// opens with WebGpu + the render-thread hang supervisor enabled
+    /// (defaults), since that outer borrow is still on the stack. Spawning
+    /// a fresh task lets that outer borrow finish and drop first, then
+    /// performs the sweep a moment later on the main thread -- still well
+    /// within the ~2s hang-check cadence the caller's doc comment relies on
+    /// for prompt HWND reclamation (spawned tasks run essentially
+    /// immediately once the current dispatch unwinds, not on any
+    /// significant delay), and still a plain fire-and-forget no-op if there
+    /// happen to be no retired children.
     pub fn sweep_retired_webgpu_children(&self) {
-        let Some(conn) = Connection::get() else {
-            return;
-        };
-        let Some(handle) = conn.get_window(self.0) else {
-            return;
-        };
-        handle.borrow_mut().sweep_retired_webgpu_children();
+        let window = self.0;
+        promise::spawn::spawn(async move {
+            let Some(conn) = Connection::get() else {
+                return;
+            };
+            let Some(handle) = conn.get_window(window) else {
+                return;
+            };
+            handle.borrow_mut().sweep_retired_webgpu_children();
+        })
+        .detach();
     }
 }
 
