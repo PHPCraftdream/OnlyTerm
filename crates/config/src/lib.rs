@@ -182,8 +182,7 @@ fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
     // splice in any `--config key=value` command line overrides, the same
     // way `Config::try_load` does for a real config file.
     let table = wezterm_dynamic::Value::Object(Default::default());
-    let dyn_config =
-        Config::apply_overrides_to_ktav(table).context("apply_overrides_to_ktav")?;
+    let dyn_config = Config::apply_overrides_to_ktav(table).context("apply_overrides_to_ktav")?;
 
     let cfg: Config = Config::from_dynamic(
         &dyn_config,
