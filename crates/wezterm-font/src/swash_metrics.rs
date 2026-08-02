@@ -58,7 +58,44 @@
 
 use crate::locator::FontDataSource;
 use rangeset::RangeSet;
+use std::ops::Deref;
+use std::sync::Arc;
 use swash::{Attributes, CacheKey, FontRef, Style};
+
+/// Backing storage for [`SwashFontInfo`]'s raw font bytes: either a
+/// heap-allocated owned buffer (the historical path, still used when the
+/// caller already has the bytes some other way, e.g. `BuiltIn`/`Memory`
+/// sources, or when the data needs to outlive a transient scan) or a
+/// read-only memory map of an on-disk file, shared via `Arc` so that every
+/// sub-face of a `.ttc`/`.otc` collection can reuse the same mapping
+/// without re-mapping or copying.
+///
+/// Enumerating font directories (`ls-fonts --list-system`,
+/// `FontDatabase::with_font_dirs`) only needs a handful of small tables
+/// (`name`, `head`, `OS/2`, `CPAL`, plus a cmap walk for coverage) out of
+/// each file, but large CJK system font collections routinely run into
+/// the tens of megabytes (e.g. `mingliub.ttc` at ~37MB). Reading the whole
+/// file with `std::fs::read` (the previous approach, still used via
+/// [`FontDataSource::load_data`]) forces the OS to fault in and copy every
+/// page even though the parser only ever touches a small fraction of
+/// them. Memory-mapping the file instead lets the OS demand-page only the
+/// ranges the parser actually dereferences, which is where the measured
+/// win comes from (see task #319 investigation notes on
+/// `parse_and_collect_font_info`).
+enum FontBytes {
+    Owned(Box<[u8]>),
+    Mapped(Arc<memmap2::Mmap>),
+}
+
+impl Deref for FontBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            FontBytes::Owned(b) => b,
+            FontBytes::Mapped(m) => m,
+        }
+    }
+}
 
 /// Owns the raw font bytes and a swash `FontRef` positioned at a specific
 /// sub-face (relevant for TrueType collections). Mirrors the role of
@@ -66,7 +103,7 @@ use swash::{Attributes, CacheKey, FontRef, Style};
 /// equivalent of FreeType's `FT_Library`/`FT_Face` handle lifetime here;
 /// `swash::FontRef` is just a transient borrow over `data`.
 pub struct SwashFontInfo {
-    data: Box<[u8]>,
+    data: FontBytes,
     offset: u32,
     key: CacheKey,
     /// The sub-face index passed to `from_locator` (0 for non-collection
@@ -241,6 +278,36 @@ impl SwashFontInfo {
         Self::from_data(data, index)
     }
 
+    fn from_font_bytes(data: FontBytes, index: u32) -> anyhow::Result<Self> {
+        let font = FontRef::from_index(&data, index as usize)
+            .ok_or_else(|| anyhow::anyhow!("swash failed to parse font face at index {index}"))?;
+        let offset = font.offset;
+        let key = font.key;
+        Ok(Self {
+            data,
+            offset,
+            key,
+            face_index: index,
+        })
+    }
+
+    /// Like [`SwashFontInfo::from_data`], but backed by a memory-mapped
+    /// on-disk file instead of an owned, fully-read buffer.
+    ///
+    /// This is what lets `parser::parse_and_collect_font_info` (font
+    /// directory enumeration -- `ls-fonts --list-system` and friends)
+    /// avoid reading large `.ttc`/`.otc` collections (tens of megabytes
+    /// for CJK system fonts such as `mingliub.ttc`) into memory in full
+    /// just to read a `name`/`OS-2`/`head` table's worth of metadata:
+    /// with a memory map, the OS only faults in the pages the parser
+    /// actually touches. `mmap` is shared via `Arc` so every sub-face of
+    /// a collection can reuse the same mapping (cheap `Arc::clone`, no
+    /// new syscall, no copy) instead of each sub-face mapping the file
+    /// again.
+    pub(crate) fn from_mmap(mmap: Arc<memmap2::Mmap>, index: u32) -> anyhow::Result<Self> {
+        Self::from_font_bytes(FontBytes::Mapped(mmap), index)
+    }
+
     /// Like [`SwashFontInfo::from_locator`], but takes already-loaded font
     /// file bytes instead of reading `source` itself.
     ///
@@ -260,16 +327,7 @@ impl SwashFontInfo {
     /// --list-system` being slower than the old FreeType-based path (see
     /// the PERF1 investigation notes).
     pub fn from_data(data: Box<[u8]>, index: u32) -> anyhow::Result<Self> {
-        let font = FontRef::from_index(&data, index as usize)
-            .ok_or_else(|| anyhow::anyhow!("swash failed to parse font face at index {index}"))?;
-        let offset = font.offset;
-        let key = font.key;
-        Ok(Self {
-            data,
-            offset,
-            key,
-            face_index: index,
-        })
+        Self::from_font_bytes(FontBytes::Owned(data), index)
     }
 
     /// Returns a transient `FontRef` borrowing our owned bytes. Cheap:
