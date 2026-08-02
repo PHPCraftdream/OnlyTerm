@@ -105,6 +105,63 @@ pub fn get_window_class() -> String {
     WINDOW_CLASS.lock().unwrap().clone()
 }
 
+/// Starter config written the first time someone opens their settings
+/// without having a config file yet. Every line is commented out, so the
+/// file it creates is equivalent to having no config at all -- opening
+/// your settings must never change how the terminal behaves, it just gives
+/// you somewhere to start typing.
+const STARTER_CONFIG: &str = "\
+## OnlyTerm configuration.
+##
+## This is a ktav document: `key: value` pairs, one per line, no quotes
+## around values. Lines starting with ## are comments. The file is
+## re-read automatically whenever you save it.
+##
+## Everything below is commented out, i.e. this file currently changes
+## nothing. Uncomment a line and save to try it.
+##
+## Full reference: https://wezterm.org/config/files.html
+
+## font_size: 12.0
+## color_scheme: Catppuccin Mocha
+
+## A font, plus the fallbacks to use for glyphs it doesn't cover. Note
+## that a backslash starts an escape sequence, so Windows paths need to
+## be written with forward slashes or doubled backslashes.
+## font: { font: [{ family: JetBrains Mono }, { family: Miriam Mono CLM }] }
+
+## initial_cols: 120
+## initial_rows: 28
+## enable_scroll_bar: true
+## scrollback_lines: 10000
+";
+
+/// Open the user's config file in whatever the OS associates with it,
+/// creating it from `STARTER_CONFIG` first if they don't have one yet.
+///
+/// Uses `Config::config_file_path` rather than the *loaded* config's path
+/// on purpose: a config that exists but fails to parse is exactly the one
+/// you want this to open, and in that state the running config is the
+/// built-in default, which knows nothing about the file.
+fn open_config_file() -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let path = config::Config::config_file_path();
+
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating config directory {}", parent.display()))?;
+        }
+        std::fs::write(&path, STARTER_CONFIG)
+            .with_context(|| format!("creating config file {}", path.display()))?;
+        log::info!("created a starter config at {}", path.display());
+    }
+
+    wezterm_open_url::open_text_file(&path);
+    Ok(())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MouseCapture {
     UI,
@@ -3943,6 +4000,15 @@ impl TermWindow {
             }
             OpenUri(link) => {
                 wezterm_open_url::open_url(link);
+            }
+            OpenConfigFile => {
+                if let Err(err) = open_config_file() {
+                    log::error!("OpenConfigFile: {err:#}");
+                    wezterm_toast_notification::persistent_toast_notification(
+                        "OnlyTerm",
+                        &format!("Couldn't open the config file: {err:#}"),
+                    );
+                }
             }
             ActivateCommandPalette => {
                 let modal = crate::termwindow::palette::CommandPalette::new(self);

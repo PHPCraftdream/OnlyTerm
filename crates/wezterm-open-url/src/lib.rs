@@ -55,6 +55,45 @@ pub fn open_with(url: &str, app: &str) {
     });
 }
 
+/// Open a local text file for editing.
+///
+/// Distinct from `open_url` because our config files use a `.ktav`
+/// extension that nothing registers a handler for: handing that straight
+/// to the shell's "open" verb gets you an "how do you want to open this
+/// file?" dialog (Windows) or silence (xdg-open with an unknown mime
+/// type). Naming a text editor explicitly is the only way this reliably
+/// puts the file in front of the user.
+///
+/// Fire-and-forget, like the rest of this module -- the launch happens on
+/// a background thread and there is no result to wait for.
+pub fn open_text_file(path: &std::path::Path) {
+    let path = path.to_string_lossy().to_string();
+
+    #[cfg(windows)]
+    {
+        // notepad.exe ships with every Windows install, so unlike a
+        // file-association lookup this cannot come up empty.
+        shell_execute(path, Some("notepad.exe".to_string()));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::thread::spawn(move || {
+            // `open -t` means "open in the default *text* editor",
+            // bypassing the (nonexistent) .ktav association.
+            let _ = std::process::Command::new("/usr/bin/open")
+                .arg("-t")
+                .arg(&path)
+                .status();
+        });
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        open_url(&path);
+    }
+}
+
 #[cfg(windows)]
 fn shell_execute(url: String, with: Option<String>) {
     use std::os::windows::ffi::OsStrExt;
