@@ -812,6 +812,13 @@ impl WebGpuState {
 
         let mut cleared = false;
 
+        // `frame.uniform` is a `Copy` struct that is byte-for-byte identical
+        // for every draw call within this frame (projection/viewport etc. are
+        // only ever recomputed once per `submit_frame` call, never per draw),
+        // so the uniform buffer and its bind group only need to be built once
+        // per frame rather than once per draw.
+        let uniforms = self.create_uniform(frame.uniform);
+
         for draw in &frame.draws {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -837,8 +844,6 @@ impl WebGpuState {
                 timestamp_writes: None,
             });
             cleared = true;
-
-            let uniforms = self.create_uniform(frame.uniform);
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &uniforms, &[]);
