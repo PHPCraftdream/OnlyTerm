@@ -380,6 +380,16 @@ As features stabilize some brief notes about them will accumulate here.
   observed by child processes as Ctrl+C could not be confirmed in manual
   testing and remains an open question -- the grace-period and
   whole-process-tree cleanup guarantees hold either way.
+* Fixed [colors.indexed](config/reference/config/colors.md) (and any other
+  integer-keyed map in the config surface) failing to load under **ktav**
+  with an opaque `Cannot convert String to u8` error. ktav object keys are
+  always strings (e.g. `indexed: { 136: #af8700 }` produces the string key
+  `"136"`, not the integer `136`), which the old rhai config path didn't --
+  a rhai object literal's numeric-looking keys arrived as real integers.
+  Integer-keyed maps now also accept a string key that parses cleanly as
+  the target integer type, so the documented `colors.indexed` syntax works
+  again; a key that isn't a valid integer still produces the original
+  error.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
