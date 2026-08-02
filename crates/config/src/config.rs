@@ -937,23 +937,21 @@ pub struct Config {
     #[dynamic(default = "default_tab_frame_build_budget_ms")]
     pub tab_frame_build_budget_ms: u64,
 
-    /// How long, in milliseconds, `run_child_process`/`background_child_process`
-    /// (exposed to `format-tab-title`/`format-window-title`/`update-status`
-    /// event callbacks, typically used to shell out to `git`, `kubectl`, etc.
-    /// for a status-bar/tab-title fragment) may block waiting on the child
-    /// process before giving up. These callbacks run synchronously on the
-    /// GUI thread (there is no async execution model in rhai/lua event
-    /// callbacks), so a child process that hangs -- a stuck `git` invocation
-    /// against a stalled network mount, a wedged `wsl.exe`, etc. -- would
-    /// otherwise freeze every window in the process forever, with no
-    /// recovery path. On timeout, the child process is killed (not left
-    /// running as an orphan) and the call returns an error to the calling
-    /// script instead of hanging. 3000ms was chosen as comfortably above any
-    /// legitimate status-bar refresh command's normal running time (these
-    /// are meant to be quick, sub-second checks) while still being far
-    /// short of "the user notices the window is frozen". Set to 0 to
-    /// disable the timeout and wait indefinitely (the historical
-    /// behavior).
+    /// How long, in milliseconds, a helper child process spawned to produce
+    /// a status-bar/tab-title fragment (e.g. shelling out to `git`,
+    /// `kubectl`, etc.) may block before giving up. 3000ms was chosen as
+    /// comfortably above any legitimate status-bar refresh command's normal
+    /// running time (these are meant to be quick, sub-second checks) while
+    /// still being far short of "the user notices the window is frozen".
+    /// Set to 0 to disable the timeout and wait indefinitely (the
+    /// historical behavior).
+    ///
+    /// NOTE: as of the rhai/lua config-scripting removal (the event
+    /// callbacks this timeout used to guard -- `format-tab-title`,
+    /// `format-window-title`, `update-status` -- no longer exist), nothing
+    /// in this codebase reads this field. It is kept only because the
+    /// `.ktav` format still declares/defaults it; see task #315 for the
+    /// investigation that turned it up as dead.
     #[dynamic(default = "default_child_process_timeout_ms")]
     pub child_process_timeout_ms: u64,
 
