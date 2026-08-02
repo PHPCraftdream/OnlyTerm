@@ -876,6 +876,16 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Help"],
             icon: Some("cod_debug"),
         },
+        OpenConfigFile => CommandDef {
+            brief: "Open configuration file".into(),
+            doc: "Opens your onlyterm.ktav configuration file, creating a \
+                  commented starter file first if you don't have one yet"
+                .into(),
+            keys: vec![(Modifiers::CTRL, "o".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Help"],
+            icon: Some("cod_settings_gear"),
+        },
         InputSelector(_) => CommandDef {
             brief: "Prompt the user to choose from a list".into(),
             doc: "Activates the selector overlay and wait for input".into(),
@@ -2282,6 +2292,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         OpenUri("https://github.com/wezterm/wezterm/discussions/".to_string()),
         OpenUri("https://github.com/wezterm/wezterm/issues/".to_string()),
         ShowDebugOverlay,
+        OpenConfigFile,
         // ----------------- Misc
         OpenLinkAtMouseCursor,
     ];

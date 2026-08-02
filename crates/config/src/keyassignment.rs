@@ -570,6 +570,10 @@ pub enum KeyAssignment {
     ScrollToBottom,
     ShowTabNavigator,
     ShowDebugOverlay,
+    /// Open the `.ktav` config file in whatever the OS has associated with
+    /// it, creating it from a commented starter template first if the user
+    /// doesn't have one yet.
+    OpenConfigFile,
     HideApplication,
     QuitApplication,
     SpawnCommandInNewTab(SpawnCommand),

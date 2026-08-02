@@ -1160,7 +1160,11 @@ impl Config {
         Ok(())
     }
 
-    pub fn load_with_overrides(overrides: &wezterm_dynamic::Value) -> LoadedConfig {
+    /// The `.ktav` locations we look in, in priority order. Split out of
+    /// `load_with_overrides` so that `config_file_path` can answer "which
+    /// file *is* (or would be) my config?" using the exact same search
+    /// order, rather than a second copy of it that could drift.
+    fn config_file_candidates() -> Vec<PathPossibility> {
         // Note that the directories crate has methods for locating project
         // specific config directories, but only returns one of them, not
         // multiple.  In addition, it spawns a lot of subprocesses,
@@ -1195,6 +1199,30 @@ impl Config {
             log::trace!("Note: config file override is set");
             paths.insert(0, PathPossibility::required(path.clone()));
         }
+
+        paths
+    }
+
+    /// The config file to show the user when they ask to open their
+    /// settings: the highest-priority candidate that actually exists, or --
+    /// when they have no config at all yet -- the path we recommend they
+    /// create, `$HOME/.onlyterm.ktav`.
+    ///
+    /// Deliberately independent of whether the config *loaded*: a file that
+    /// exists but fails to parse is precisely the one the user needs to
+    /// open, and at that point `configuration()` is serving built-in
+    /// defaults that know nothing about it.
+    pub fn config_file_path() -> PathBuf {
+        for candidate in Self::config_file_candidates() {
+            if candidate.path.exists() {
+                return candidate.path;
+            }
+        }
+        HOME_DIR.join(".onlyterm.ktav")
+    }
+
+    pub fn load_with_overrides(overrides: &wezterm_dynamic::Value) -> LoadedConfig {
+        let paths = Self::config_file_candidates();
 
         if let Some(found) = Self::search_paths_for_config(&paths, overrides) {
             return found;
