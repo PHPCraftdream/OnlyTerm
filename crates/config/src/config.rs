@@ -1423,6 +1423,49 @@ impl Config {
     /// Check for logical conflicts in the config
     pub fn check_consistency(&self) -> anyhow::Result<()> {
         self.check_domain_consistency()?;
+        self.check_exec_domains_are_usable()?;
+        Ok(())
+    }
+
+    /// `exec_domains` entries exist purely to wrap a spawned command --
+    /// `ExecDomain::fixup_command` used to name a rhai function
+    /// (dispatched via `with_rhai_config_on_main_thread`/
+    /// `emit_async_callback`, see `crates/mux/src/domain.rs`) that rewrote
+    /// the command before it was spawned, e.g. to route it into `docker
+    /// exec`, `ssh`, or some other wrapper. Now that the rhai/Lua scripting
+    /// engines have been removed entirely, there is no callback mechanism
+    /// left for `fixup_command` to invoke, and ktav (a static data format)
+    /// has no expression/function syntax that could express one either.
+    ///
+    /// Silently ignoring `fixup_command` and spawning the un-wrapped
+    /// command directly on the host would be actively wrong/dangerous for
+    /// anyone relying on an `ExecDomain` to sandbox or redirect spawns (see
+    /// `LocalDomain::fixup_command` in `crates/mux/src/domain.rs`), so
+    /// instead of loading quietly, refuse to load at all and explain why:
+    /// this mirrors `legacy_script_sibling` above, which does the same
+    /// "used to be scriptable, scripting is gone, tell the user clearly"
+    /// check for legacy `.rhai`/`.lua` config files.
+    fn check_exec_domains_are_usable(&self) -> anyhow::Result<()> {
+        if let Some(d) = self.exec_domains.first() {
+            anyhow::bail!(
+                "exec_domains contains an entry named \"{}\", but ExecDomain \
+                 command-wrapping relied on the (now-removed) rhai scripting \
+                 engine to implement `fixup_command`, and ktav (a static data \
+                 format) has no callback/expression mechanism that could \
+                 replace it. As a result, `exec_domains` can no longer wrap, \
+                 redirect, or sandbox spawned commands and is no longer \
+                 usable: loading it would silently spawn commands unwrapped, \
+                 directly on the host, instead of doing whatever the domain \
+                 used to do (e.g. `docker exec`, `ssh`, or similar). Please \
+                 remove the exec_domains entries from your config. If you \
+                 were using an exec domain to reach WSL, `wsl_domains` \
+                 remains fully supported (it is implemented natively, not via \
+                 scripting) and is the closest still-working alternative; \
+                 there is currently no built-in replacement for other \
+                 wrapper commands such as docker/ssh.",
+                d.name
+            );
+        }
         Ok(())
     }
 
@@ -2715,6 +2758,77 @@ colors: {
             "error should mention the expected new filename: {}",
             message
         );
+    }
+
+    /// Regression test for task #295: `ExecDomain::fixup_command` used to
+    /// name a rhai function that rewrote a spawned command (e.g. to route
+    /// it into `docker exec`, `ssh`, etc. -- see
+    /// `LocalDomain::fixup_command` in `crates/mux/src/domain.rs`). With
+    /// the rhai/Lua scripting engines removed there is no callback
+    /// mechanism left to run, and a mechanical removal of the rhai
+    /// callsite left the rest of the spawn path proceeding with the
+    /// command completely unwrapped -- silently spawning on the host
+    /// instead of erroring. A non-empty `exec_domains` must now fail to
+    /// load, loudly, rather than let that silent behavior change through.
+    #[test]
+    fn exec_domains_are_rejected_at_load_time() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        std::fs::write(
+            &config_path,
+            "\
+exec_domains: [
+    {
+        name: mydomain
+        fixup_command: wrap_in_docker
+    }
+]
+",
+        )
+        .unwrap();
+
+        let path_item = PathPossibility::required(config_path);
+        let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
+            Err(err) => err,
+            Ok(_) => panic!(
+                "a config with a non-empty exec_domains must fail to load, \
+                 not silently spawn commands unwrapped"
+            ),
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("rhai scripting engine")
+                && message.contains("fixup_command")
+                && message.contains("no longer usable"),
+            "error should clearly explain that exec_domains can no longer \
+             wrap commands now that the rhai scripting engine is gone: {}",
+            message
+        );
+    }
+
+    /// The common case -- no `exec_domains` at all -- must be completely
+    /// unaffected by the task #295 check: no new error, no behavior change.
+    #[test]
+    fn config_with_no_exec_domains_is_unaffected() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        std::fs::write(&config_path, "font_size: 12\n").unwrap();
+
+        let path_item = PathPossibility::required(config_path);
+        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            .expect("try_load should succeed")
+            .expect("a config was found");
+        let cfg = loaded
+            .config
+            .expect("config with no exec_domains should load fine");
+        assert!(cfg.exec_domains.is_empty());
+        assert_eq!(cfg.font_size, 12.0);
     }
 
     /// Sanity check for the pure path-diagnostics helper itself: only exact
