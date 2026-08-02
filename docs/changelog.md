@@ -330,11 +330,11 @@ As features stabilize some brief notes about them will accumulate here.
   it requested) from 1 MiB to 64 KiB per pane, saving roughly 1 MB of
   resident memory per pane on Windows with no measurable effect on
   throughput.
-* On Windows, the pty reader and output-parser threads now hand output to
-  each other via an in-process channel instead of a loopback TCP socket
-  pair (which `socketpair()` falls back to on Windows, since there's no
-  true anonymous socketpair primitive) -- lower latency, and one fewer OS
-  socket per pane.
+* The pty reader and output-parser threads now hand output to each other
+  via an in-process channel instead of a loopback TCP socket pair (which
+  `socketpair()` falls back to on Windows, since there's no true anonymous
+  socketpair primitive) -- lower latency, and one fewer OS socket per pane
+  on Windows.
 * Fixed a local privilege/race issue in the Windows `socketpair()`
   emulation (used internally for pty plumbing): the loopback TCP port it
   briefly listens on could, in principle, be connected to by another local
