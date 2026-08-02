@@ -1,7 +1,7 @@
-use crate::scripting::guiwin::GuiWin;
+use crate::gui_api::guiwin::GuiWin;
 use config::keyassignment::{KeyAssignment, PromptInputLine};
 use mux::termwiztermtab::TermWizTerminal;
-use mux_lua::MuxPane;
+use mux_funcs::MuxPane;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent};
 use termwiz::lineedit::*;
 use termwiz::surface::Change;
