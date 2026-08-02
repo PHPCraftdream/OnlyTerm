@@ -755,7 +755,7 @@ fn maybe_show_configuration_error_window() {
 
 fn run_show_keys(config: config::ConfigHandle, cmd: &ShowKeysCommand) -> anyhow::Result<()> {
     let map = crate::inputmap::InputMap::new(&config);
-    if cmd.lua {
+    if cmd.ktav {
         map.dump_config(cmd.key_table.as_deref());
     } else {
         map.show_keys();
@@ -914,7 +914,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
                         info.num_cells,
                         glyph_name,
                         info.glyph_pos,
-                        parsed.lua_name(),
+                        parsed.ktav_name(),
                         "",
                         parsed.handle.diagnostic_string()
                     );
@@ -970,7 +970,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
     let default_font = font_config.default_font()?;
     println!(
         "{}",
-        ParsedFont::lua_fallback(&default_font.clone_handles())
+        ParsedFont::ktav_fallback(&default_font.clone_handles())
     );
     println!();
 
@@ -1002,13 +1002,13 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
 
         println!("{}:", condition);
         let font = font_config.resolve_font(&rule.font)?;
-        println!("{}", ParsedFont::lua_fallback(&font.clone_handles()));
+        println!("{}", ParsedFont::ktav_fallback(&font.clone_handles()));
         println!();
     }
 
     println!("Title font:");
     let title_font = font_config.title_font()?;
-    println!("{}", ParsedFont::lua_fallback(&title_font.clone_handles()));
+    println!("{}", ParsedFont::ktav_fallback(&title_font.clone_handles()));
     println!();
 
     if cmd.list_system {
@@ -1025,7 +1025,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
             };
             println!(
                 "{} -- {}{}{}",
-                font.lua_name(),
+                font.ktav_name(),
                 font.aka(),
                 font.handle.diagnostic_string(),
                 pixel_sizes
@@ -1047,7 +1047,7 @@ pub fn run_ls_fonts(config: config::ConfigHandle, cmd: &LsFontsCommand) -> anyho
                     };
                     println!(
                         "{} -- {}{}{}",
-                        font.lua_name(),
+                        font.ktav_name(),
                         font.aka(),
                         font.handle.diagnostic_string(),
                         pixel_sizes

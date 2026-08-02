@@ -69,8 +69,8 @@ Additional options for configuring fonts can be found elsewhere in the docs:
 * [freetype_render_target](reference/config/freetype_render_target.md) - configure anti-aliasing
 * [cell_width](reference/config/cell_width.md) - scale the font-specified cell width
 * [line_height](reference/config/line_height.md) - scale the font-specified line height
-* [wezterm.font](reference/wezterm/font.md) - select a font based on family and style attributes
-* [wezterm.font_with_fallback](reference/wezterm/font_with_fallback.md) - select a font from a list of candidates
+* [wezterm.font](reference/wezterm/font.md) - removed scripting function; see the page for what a `{ family: ..., ... }` object replaces it with
+* [wezterm.font_with_fallback](reference/wezterm/font_with_fallback.md) - removed scripting function; see the page for what a `font: { font: [...] }` block replaces it with
 
 ## Troubleshooting Fonts
 
@@ -81,39 +81,43 @@ It shows output like this:
 ```console
 $ wezterm ls-fonts
 Primary font:
-wezterm.font_with_fallback({
-  -- /home/wez/.fonts/OperatorMonoSSmLig-Medium.otf, FontDirs
-  {family="Operator Mono SSm Lig", weight="DemiLight"},
+font: {
+    font: [
+        ## /home/wez/.fonts/OperatorMonoSSmLig-Medium.otf, FontDirs
+        { family: Operator Mono SSm Lig, weight: DemiLight }
 
-  -- /home/wez/.fonts/MaterialDesignIconsDesktop.ttf, FontDirs
-  "Material Design Icons Desktop",
+        ## /home/wez/.fonts/MaterialDesignIconsDesktop.ttf, FontDirs
+        { family: Material Design Icons Desktop }
 
-  -- /usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Regular.ttf, FontConfig
-  "JetBrains Mono",
+        ## /usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Regular.ttf, FontConfig
+        { family: JetBrains Mono }
 
-  -- /usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf, FontConfig
-  -- Assumed to have Emoji Presentation
-  -- Pixel sizes: [128]
-  "Noto Color Emoji",
-})
+        ## /usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf, FontConfig
+        ## Assumed to have Emoji Presentation
+        ## Pixel sizes: [128]
+        { family: Noto Color Emoji }
+    ]
+}
 
 
 When Intensity=Half Italic=true:
-wezterm.font_with_fallback({
-  -- /home/wez/.fonts/OperatorMonoSSmLig-BookItalic.otf, FontDirs
-  {family="Operator Mono SSm Lig", weight=325, italic=true},
+font: {
+    font: [
+        ## /home/wez/.fonts/OperatorMonoSSmLig-BookItalic.otf, FontDirs
+        { family: Operator Mono SSm Lig, weight: 325, style: Italic }
 
-  -- /home/wez/.fonts/MaterialDesignIconsDesktop.ttf, FontDirs
-  "Material Design Icons Desktop",
+        ## /home/wez/.fonts/MaterialDesignIconsDesktop.ttf, FontDirs
+        { family: Material Design Icons Desktop }
 
-  -- /usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Regular.ttf, FontConfig
-  "JetBrains Mono",
+        ## /usr/share/fonts/jetbrains-mono-fonts/JetBrainsMono-Regular.ttf, FontConfig
+        { family: JetBrains Mono }
 
-  -- /usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf, FontConfig
-  -- Assumed to have Emoji Presentation
-  -- Pixel sizes: [128]
-  "Noto Color Emoji",
-})
+        ## /usr/share/fonts/google-noto-emoji/NotoColorEmoji.ttf, FontConfig
+        ## Assumed to have Emoji Presentation
+        ## Pixel sizes: [128]
+        { family: Noto Color Emoji }
+    ]
+}
 ...
 ```
 
@@ -123,26 +127,26 @@ You can ask wezterm to including a listing of all of the fonts on the system in 
 $ wezterm ls-fonts --list-system
 <same output as above, but then:>
 112 fonts found in your font_dirs + built-in fonts:
-wezterm.font("Cascadia Code", {weight="ExtraLight", stretch="Normal", italic=false}) -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=1, FontDirs
-wezterm.font("Cascadia Code", {weight="Light", stretch="Normal", italic=false}) -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=2, FontDirs
-wezterm.font("Cascadia Code", {weight="DemiLight", stretch="Normal", italic=false}) -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=3, FontDirs
-wezterm.font("Cascadia Code", {weight="Regular", stretch="Normal", italic=false}) -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=4, FontDirs
-wezterm.font("Cascadia Code", {weight="DemiBold", stretch="Normal", italic=false}) -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=5, FontDirs
-wezterm.font("Cascadia Code", {weight="Bold", stretch="Normal", italic=false}) -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=6, FontDirs
-wezterm.font("Fira Code", {weight="Light", stretch="Normal", italic=false}) -- /home/wez/.fonts/FiraCode-Light.otf, FontDirs
-wezterm.font("Fira Code", {weight="Regular", stretch="Normal", italic=false}) -- /home/wez/.fonts/FiraCode-Regular.otf, FontDirs
-wezterm.font("Fira Code", {weight=450, stretch="Normal", italic=false}) -- /home/wez/.fonts/FiraCode-Retina.otf, FontDirs
-wezterm.font("Fira Code", {weight="Medium", stretch="Normal", italic=false}) -- /home/wez/.fonts/FiraCode-Medium.otf, FontDirs
-wezterm.font("Fira Code", {weight="Bold", stretch="Normal", italic=false}) -- /home/wez/.fonts/FiraCode-Bold.otf, FontDirs
-wezterm.font("Font Awesome 5 Free", {weight="Black", stretch="Normal", italic=false}) -- /home/wez/.fonts/Font Awesome 5 Free-Solid-900.otf, FontDirs
+{ family: Cascadia Code, weight: ExtraLight, stretch: Normal, style: Normal } -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=1, FontDirs
+{ family: Cascadia Code, weight: Light, stretch: Normal, style: Normal } -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=2, FontDirs
+{ family: Cascadia Code, weight: DemiLight, stretch: Normal, style: Normal } -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=3, FontDirs
+{ family: Cascadia Code, weight: Regular, stretch: Normal, style: Normal } -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=4, FontDirs
+{ family: Cascadia Code, weight: DemiBold, stretch: Normal, style: Normal } -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=5, FontDirs
+{ family: Cascadia Code, weight: Bold, stretch: Normal, style: Normal } -- /home/wez/.fonts/CascadiaCode.ttf index=0 variation=6, FontDirs
+{ family: Fira Code, weight: Light, stretch: Normal, style: Normal } -- /home/wez/.fonts/FiraCode-Light.otf, FontDirs
+{ family: Fira Code, weight: Regular, stretch: Normal, style: Normal } -- /home/wez/.fonts/FiraCode-Regular.otf, FontDirs
+{ family: Fira Code, weight: 450, stretch: Normal, style: Normal } -- /home/wez/.fonts/FiraCode-Retina.otf, FontDirs
+{ family: Fira Code, weight: Medium, stretch: Normal, style: Normal } -- /home/wez/.fonts/FiraCode-Medium.otf, FontDirs
+{ family: Fira Code, weight: Bold, stretch: Normal, style: Normal } -- /home/wez/.fonts/FiraCode-Bold.otf, FontDirs
+{ family: Font Awesome 5 Free, weight: Black, stretch: Normal, style: Normal } -- /home/wez/.fonts/Font Awesome 5 Free-Solid-900.otf, FontDirs
 ...
 690 system fonts found using FontConfig:
-wezterm.font("Abyssinica SIL", {weight="Regular", stretch="Normal", italic=false}) -- /usr/share/fonts/sil-abyssinica-fonts/AbyssinicaSIL-R.ttf, FontConfig
-wezterm.font("C059", {weight="Regular", stretch="Normal", italic=false}) -- /usr/share/fonts/urw-base35/C059-Bold.t1, FontConfig
-wezterm.font("C059", {weight="Regular", stretch="Normal", italic=false}) -- /usr/share/fonts/urw-base35/C059-Roman.otf, FontConfig
-wezterm.font("C059", {weight="Regular", stretch="Normal", italic=false}) -- /usr/share/fonts/urw-base35/C059-Roman.t1, FontConfig
-wezterm.font("C059", {weight="Regular", stretch="Normal", italic=true}) -- /usr/share/fonts/urw-base35/C059-BdIta.t1, FontConfig
-wezterm.font("C059", {weight="Regular", stretch="Normal", italic=true}) -- /usr/share/fonts/urw-base35/C059-Italic.otf, FontConfig
+{ family: Abyssinica SIL, weight: Regular, stretch: Normal, style: Normal } -- /usr/share/fonts/sil-abyssinica-fonts/AbyssinicaSIL-R.ttf, FontConfig
+{ family: C059, weight: Regular, stretch: Normal, style: Normal } -- /usr/share/fonts/urw-base35/C059-Bold.t1, FontConfig
+{ family: C059, weight: Regular, stretch: Normal, style: Normal } -- /usr/share/fonts/urw-base35/C059-Roman.otf, FontConfig
+{ family: C059, weight: Regular, stretch: Normal, style: Normal } -- /usr/share/fonts/urw-base35/C059-Roman.t1, FontConfig
+{ family: C059, weight: Regular, stretch: Normal, style: Italic } -- /usr/share/fonts/urw-base35/C059-BdIta.t1, FontConfig
+{ family: C059, weight: Regular, stretch: Normal, style: Italic } -- /usr/share/fonts/urw-base35/C059-Italic.otf, FontConfig
 ...
 ```
 
@@ -152,10 +156,10 @@ the main font, so we expect to see a different font used for that glyph:
 
 ```console
 $ wezterm ls-fonts --text a🞄b
-a    \u{61}       x_adv=8  glyph=29   wezterm.font("Operator Mono SSm Lig", {weight="DemiLight", stretch="Normal", italic=false})
+a    \u{61}       x_adv=8  glyph=29   { family: Operator Mono SSm Lig, weight: DemiLight, stretch: Normal, style: Normal }
                                       /home/wez/.fonts/OperatorMonoSSmLig-Medium.otf, FontDirs
-🞄    \u{1f784}    x_adv=4  glyph=9129 wezterm.font("Symbola", {weight="Regular", stretch="SemiCondensed", italic=false})
+🞄    \u{1f784}    x_adv=4  glyph=9129 { family: Symbola, weight: Regular, stretch: SemiCondensed, style: Normal }
                                       /usr/share/fonts/gdouros-symbola/Symbola.ttf, FontConfig
-b    \u{62}       x_adv=8  glyph=30   wezterm.font("Operator Mono SSm Lig", {weight="DemiLight", stretch="Normal", italic=false})
+b    \u{62}       x_adv=8  glyph=30   { family: Operator Mono SSm Lig, weight: DemiLight, stretch: Normal, style: Normal }
                                       /home/wez/.fonts/OperatorMonoSSmLig-Medium.otf, FontDirs
 ```

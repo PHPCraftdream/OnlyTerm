@@ -102,7 +102,7 @@ for more details on the syntax/possibilities.
 Turn on [debug_key_events](config/reference/config/debug_key_events.md) to log
 information about key presses.
 
-Use [onlyterm show-keys](cli/show-keys.md) or `onlyterm show-keys --lua` to show
+Use [onlyterm show-keys](cli/show-keys.md) or `onlyterm show-keys --ktav` to show
 the effective set of key and mouse assignments defined by your config.
 
 Consider changing [use_ime](config/reference/config/use_ime.md) to see that is

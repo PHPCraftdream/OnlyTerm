@@ -94,6 +94,6 @@ The default configuration at the time that these docs were built (which
 may be more recent than your version of OnlyTerm) is shown below.
 
 You can see the configuration in your version of OnlyTerm by running
-`onlyterm show-keys --lua --key-table copy_mode`.
+`onlyterm show-keys --ktav --key-table copy_mode`.
 
 {% include "examples/default-copy-mode-key-table.markdown" %}

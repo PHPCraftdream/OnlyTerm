@@ -200,10 +200,11 @@ pub struct LsFontsCommand {
 
 #[derive(Debug, Parser, Clone)]
 pub struct ShowKeysCommand {
-    /// Show the keys as lua config statements
+    /// Show the keys as ktav config statements, ready to paste into
+    /// the `keys`/`key_tables` sections of your config file
     #[arg(long)]
-    pub lua: bool,
-    /// In lua mode, show only the named key table
+    pub ktav: bool,
+    /// In ktav mode, show only the named key table
     #[arg(long)]
     pub key_table: Option<String>,
 }
