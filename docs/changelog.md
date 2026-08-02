@@ -291,6 +291,27 @@ As features stabilize some brief notes about them will accumulate here.
   across multiple independent runs, using the
   `debug_render_thread_stall_ms`/`render_thread_hang_threshold_ms` debug
   config options.
+* Hardened the above renderer-rebuild path against a handful of latent
+  bugs, none of which were observed causing a user-visible failure but
+  which weakened the recovery guarantee: a failed child-window
+  re-creation during rebuild could leave a destroyed (and
+  Windows-recyclable) window handle in place, later targeted by resize/
+  move/DPI-change calls; the old child window is now retired (hidden,
+  not destroyed) until the previous renderer state has fully dropped on
+  its own thread, instead of being destroyed out from under a
+  possibly-still-live GPU surface; and the hang-check supervisor that
+  watches for a stuck render thread could end up running two overlapping
+  timer chains for the same window under an unlucky timing window
+  between a hang being handled and the rebuilt renderer coming back
+  online (harmless in practice -- the OpenGL fallback collapses any
+  duplicates -- but no longer possible at all now that it's guarded
+  structurally instead of by timing). Also: the vertex-buffer rotation
+  scheme inherited from the OpenGL backend (three buffers per layer,
+  rotated frame to frame to avoid writing into one the GPU might still
+  be reading) bought nothing on WebGpu, where a fresh buffer is already
+  created every frame -- WebGpu windows now keep one buffer per layer
+  instead of three, saving a few MB of GPU-visible memory per window
+  with no behavior change.
 * A background pane whose terminal is genuinely wedged (a full/unread pty
   pipe, a stuck escape-sequence handler, or similar) can no longer stall
   the GUI thread -- and by extension every window in the process -- while
