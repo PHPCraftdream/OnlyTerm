@@ -320,7 +320,7 @@ impl<'a> QuadAllocator for MappedQuadsView<'a> {
 
 pub struct TripleVertexBuffer {
     pub index: Cell<usize>,
-    pub bufs: RefCell<[VertexBuffer; 3]>,
+    pub bufs: RefCell<Vec<VertexBuffer>>,
     pub indices: IndexBuffer,
     pub capacity: usize,
     pub next_quad: Cell<usize>,
@@ -352,7 +352,7 @@ impl TripleVertexBuffer {
     /// `RefMut` guard for `bufs` alive in its own stack frame for exactly
     /// as long as the returned view is used, so this is an ordinary
     /// nested borrow rather than a self-referential struct.
-    pub fn map<'a>(&'a self, bufs: &'a mut [VertexBuffer; 3]) -> MappedQuadsView<'a> {
+    pub fn map<'a>(&'a self, bufs: &'a mut [VertexBuffer]) -> MappedQuadsView<'a> {
         let index = self.index.get();
         let mapping = match &mut bufs[index] {
             VertexBuffer::Glium(vb) => {
@@ -379,10 +379,19 @@ impl TripleVertexBuffer {
         RefMut::map(self.bufs.borrow_mut(), |bufs| &mut bufs[index])
     }
 
+    /// Rotates to the next of `bufs.len()` slots. On Glium, `bufs` holds 3
+    /// buffers (unchanged legacy behavior: rotating avoids writing into a
+    /// buffer the GPU might still be reading from a prior frame, since the
+    /// same buffer objects are reused frame over frame). On WebGpu, `bufs`
+    /// holds a single buffer -- `recreate()` swaps in a brand new GPU buffer
+    /// every frame regardless of slot, so a second/third rotation slot never
+    /// holds a buffer the GPU has actually seen before and would just be
+    /// wasted resident memory. With one slot, this is a no-op: index stays 0.
     pub fn next_index(&self) {
+        let len = self.bufs.borrow().len();
         let mut index = self.index.get();
         index += 1;
-        if index >= 3 {
+        if index >= len {
             index = 0;
         }
         self.index.set(index);
@@ -485,13 +494,26 @@ impl RenderLayer {
             indices.push(idx + V_BOT_RIGHT as u32);
         }
 
+        // Glium reuses the same buffer objects frame over frame, so it needs
+        // to rotate across multiple (3) slots to avoid writing into a buffer
+        // the GPU might still be reading from a previous frame. WebGpu's
+        // `recreate()` swaps in a brand new GPU buffer every frame regardless
+        // of slot (see `call_draw_webgpu`), so a second/third slot would
+        // never actually hold a buffer the GPU has seen before -- rotation
+        // buys nothing there, so it gets a single slot to avoid keeping 3x
+        // the vertex-buffer memory resident for no benefit.
+        let num_slots = match context {
+            RenderContext::Glium(_) => 3,
+            RenderContext::WebGpu(_) => 1,
+        };
+        let mut bufs = Vec::with_capacity(num_slots);
+        for _ in 0..num_slots {
+            bufs.push(context.allocate_vertex_buffer(num_quads, &verts)?);
+        }
+
         let buffer = TripleVertexBuffer {
             index: Cell::new(0),
-            bufs: RefCell::new([
-                context.allocate_vertex_buffer(num_quads, &verts)?,
-                context.allocate_vertex_buffer(num_quads, &verts)?,
-                context.allocate_vertex_buffer(num_quads, &verts)?,
-            ]),
+            bufs: RefCell::new(bufs),
             capacity: num_quads,
             indices: context.allocate_index_buffer(&indices)?,
             next_quad: Cell::new(0),
