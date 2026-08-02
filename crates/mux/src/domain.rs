@@ -590,6 +590,46 @@ impl std::io::Write for WriterWrapper {
     }
 }
 
+/// Stand-in `MasterPty` for the case where `PtySystem::openpty()` itself
+/// failed, so there is no real pty (unlike `FailedSpawnPty`, which still
+/// wraps a genuine, successfully-created pty whose *command spawn* failed).
+/// This exists purely so `LocalPane::new` has something to hold; every
+/// operation is a harmless no-op/empty-result since nothing is ever going to
+/// read from or write through it (the pane's writer is a `std::io::sink()`
+/// and its "child" is `FailedProcessSpawn`, both wired up by the
+/// `openpty()`-failure branch in `LocalDomain::spawn_pane`).
+pub(crate) struct NoPty {}
+
+impl portable_pty::MasterPty for NoPty {
+    fn resize(&self, _new_size: PtySize) -> anyhow::Result<()> {
+        Ok(())
+    }
+    fn get_size(&self) -> anyhow::Result<PtySize> {
+        Ok(PtySize::default())
+    }
+    fn try_clone_reader(&self) -> anyhow::Result<Box<dyn std::io::Read + Send + 'static>> {
+        Ok(Box::new(std::io::empty()))
+    }
+    fn take_writer(&self) -> anyhow::Result<Box<dyn std::io::Write + Send + 'static>> {
+        Ok(Box::new(std::io::sink()))
+    }
+
+    #[cfg(unix)]
+    fn process_group_leader(&self) -> Option<i32> {
+        None
+    }
+
+    #[cfg(unix)]
+    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
+        None
+    }
+
+    #[cfg(unix)]
+    fn tty_name(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+}
+
 /// Wraps the underlying pty; we use this as a marker for when
 /// the spawn attempt failed in order to hold the pane open
 pub(crate) struct FailedSpawnPty {
@@ -672,10 +712,6 @@ impl Domain for LocalDomain {
             .build_command(command, command_dir, pane_id)
             .await
             .context("build_command")?;
-        let pair = self
-            .pty_system
-            .lock()
-            .openpty(crate::terminal_size_to_pty_size(size)?)?;
 
         let command_line = cmd
             .as_unix_command_line()
@@ -689,6 +725,68 @@ impl Domain for LocalDomain {
             },
             self.name
         );
+
+        // `openpty()` itself can fail (eg. task #326: on some Windows
+        // versions, falling back to the in-box ConPTY because a sideloaded
+        // `conpty.dll`/`OpenConsole.exe` is missing produces a pseudo-console
+        // handle that `CreateProcessW` then rejects with
+        // `ERROR_INVALID_HANDLE`). That failure used to propagate via `?`
+        // all the way up through `Domain::spawn`/`async_run_terminal_gui` to
+        // the top-level error handler in `wezterm-gui`, which tears down the
+        // whole process after a toast notification -- silently destroying
+        // whatever window had already been created, rather than showing the
+        // user anything resembling the normal failed-command-spawn pane
+        // below. Handle it the same way instead: synthesize a dead pane
+        // that has no real pty at all and just displays the error, so the
+        // user always ends up looking at an explanation instead of a
+        // vanished window or (with no window yet created) an unexplained
+        // process exit.
+        let pair = match self
+            .pty_system
+            .lock()
+            .openpty(crate::terminal_size_to_pty_size(size)?)
+        {
+            Ok(pair) => pair,
+            Err(err) => {
+                let writer = WriterWrapper::new(Box::new(std::io::sink()));
+                let mut terminal = wezterm_term::Terminal::new_with_nonblocking_writer(
+                    size,
+                    std::sync::Arc::new(config::TermConfig::new()),
+                    "WezTerm",
+                    config::wezterm_version(),
+                    Box::new(writer.clone()),
+                );
+                if self.is_conpty() {
+                    terminal.enable_conpty_quirks();
+                }
+
+                // Push the message straight into the terminal rather than
+                // through `writer`, as the failed-command-spawn branch
+                // below does. That branch's writer is the master end of a
+                // real pty, so what it writes comes back around through the
+                // pseudo console and lands on screen; here there is no pty
+                // at all and the writer is a `sink()`, so writing to it
+                // would silently discard the one thing this pane exists to
+                // say.
+                terminal.advance_bytes(format!(
+                    "failed to create a pseudo console: {err:#}\r\n"
+                ));
+
+                let pane: Arc<dyn Pane> = Arc::new(LocalPane::new(
+                    pane_id,
+                    terminal,
+                    Box::new(FailedProcessSpawn {}),
+                    Box::new(NoPty {}),
+                    Box::new(writer),
+                    self.id,
+                    command_description,
+                ));
+                let mux = Mux::get();
+                mux.add_pane(&pane)?;
+                return Ok(pane);
+            }
+        };
+
         let child_result = pair.slave.spawn_command(cmd);
         let mut writer = WriterWrapper::new(pair.master.take_writer()?);
 
