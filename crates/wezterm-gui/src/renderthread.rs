@@ -20,11 +20,11 @@
 //! `false`, so none of this changes behavior until a later task flips the
 //! default (221.8).
 
+use ::window::WindowOps;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use ::window::WindowOps;
 
 /// A message sent from the GUI thread to a window's dedicated render
 /// thread.
@@ -106,6 +106,27 @@ pub struct RenderThreadHandle {
     /// read by `render_thread_is_hung()`, which in turn is polled by
     /// `TermWindow`'s per-window render-thread hang supervisor (task #223).
     submit_started_at: Arc<Mutex<Option<Instant>>>,
+    /// `Weak` half of this render thread's teardown sentinel (task #292).
+    /// `spawn` creates a fresh, dedicated `Arc<()>` for this purpose and
+    /// moves the *only* strong reference onto the spawned thread itself,
+    /// where it is held until strictly after `render_thread_loop` (and
+    /// therefore every `Arc<WebGpuState>` clone the thread closed over:
+    /// `seed.webgpu`, and `render_thread_loop`'s own `webgpu`/
+    /// `resize_webgpu` locals) has returned -- see `spawn`'s body for the
+    /// exact ordering. Handed out (type-erased) via `teardown_sentinel()` to
+    /// `TermWindow::begin_renderer_rebuild`, which stashes it alongside the
+    /// retired WebGpu child HWND instead of a `Weak<WebGpuState>` (task
+    /// #292's fix for the use-after-free race a raw `Weak<WebGpuState>`
+    /// strong-count read left open: `Arc::drop` decrements the strong count
+    /// *before* running the value's own `drop_in_place`, so reading
+    /// `Weak<WebGpuState>::strong_count() == 0` does not prove
+    /// `WebGpuState`/its `wgpu::Surface` has actually finished tearing down
+    /// -- only that the last strong reference started being dropped. This
+    /// sentinel instead reports zero strong references only once the
+    /// spawned thread closure has itself moved past `render_thread_loop`'s
+    /// return, i.e. strictly after every `Arc<WebGpuState>` clone on that
+    /// thread has already been fully dropped.).
+    teardown_sentinel: std::sync::Weak<()>,
 }
 
 impl RenderThreadHandle {
@@ -141,9 +162,37 @@ impl RenderThreadHandle {
         let repaint_pending = Arc::clone(&seed.repaint_pending);
         let window_destroyed = Arc::clone(&seed.window_destroyed);
         let submit_started_at = Arc::clone(&seed.submit_started_at);
+        // Task #292: a dedicated, single-purpose `Arc<()>` whose only job is
+        // to prove "this render thread has fully returned from
+        // `render_thread_loop`, including dropping every `Arc<WebGpuState>`
+        // clone it held" -- see `teardown_sentinel`'s doc comment for why
+        // that's a strictly stronger guarantee than reading
+        // `Weak<WebGpuState>::strong_count() == 0` directly. The only
+        // strong reference is moved into the thread closure below and held
+        // there, past the `render_thread_loop(seed)` call, until this
+        // thread function itself returns; nothing else ever clones it, so
+        // `teardown_sentinel`'s `Weak` reports zero strong references
+        // exactly once, strictly after that point.
+        let teardown_sentinel_strong = Arc::new(());
+        let teardown_sentinel = Arc::downgrade(&teardown_sentinel_strong);
         let name = format!("render-{window_id}");
         let builder = std::thread::Builder::new().name(name);
-        match builder.spawn(move || render_thread_loop(seed)) {
+        match builder.spawn(move || {
+            render_thread_loop(seed);
+            // Drop the sentinel's only strong reference here, strictly
+            // after `render_thread_loop` has returned (and therefore after
+            // every `Arc<WebGpuState>` clone it closed over -- `seed.webgpu`
+            // moved in above, plus `render_thread_loop`'s own local
+            // `webgpu`/`resize_webgpu` clones -- has already been dropped by
+            // that function's own end-of-scope cleanup). This is what makes
+            // `teardown_sentinel().strong_count() == 0` a genuine "WebGpu
+            // teardown has fully completed on this thread" signal instead of
+            // merely "the last `Arc<WebGpuState>`'s refcount hit zero",
+            // which -- since `Arc::drop` decrements the count before running
+            // the value's `drop_in_place` -- would still leave a window
+            // where the surface/swapchain teardown is in progress.
+            drop(teardown_sentinel_strong);
+        }) {
             Ok(join_handle) => {
                 // We deliberately never join this thread; see the doc
                 // comment on `RenderThreadHandle`. Discard the
@@ -156,6 +205,7 @@ impl RenderThreadHandle {
                     repaint_pending,
                     window_destroyed,
                     submit_started_at,
+                    teardown_sentinel,
                 })
             }
             Err(err) => {
@@ -263,6 +313,28 @@ impl RenderThreadHandle {
         let threshold =
             Duration::from_millis(config::configuration().render_thread_hang_threshold_ms);
         is_hung_given(&self.submit_started_at, threshold)
+    }
+
+    /// Type-erased `Weak` handle to this render thread's teardown sentinel
+    /// (task #292), for `TermWindow::begin_renderer_rebuild` to stash
+    /// alongside the retired WebGpu child HWND via
+    /// `Window::recreate_webgpu_child_window`, in place of a
+    /// `Weak<WebGpuState>` obtained by downgrading `self.webgpu` directly.
+    ///
+    /// Returned as `Weak<dyn Any + Send + Sync>` (rather than a bare
+    /// `Weak<()>`) purely to match `recreate_webgpu_child_window`'s existing
+    /// type-erased signature -- `window` (this crate's sibling) cannot name
+    /// `WebGpuState` and was already written generically against `dyn Any`;
+    /// `()` implements `Any + Send + Sync` just as well as `WebGpuState`
+    /// did; nothing downcasts either one, only `strong_count()` is ever
+    /// read. See `teardown_sentinel`'s field doc comment for why this
+    /// `Weak`'s strong count reaching zero is the correct signal (proves
+    /// `WebGpuState`/its surface have actually finished tearing down),
+    /// unlike a `Weak<WebGpuState>` obtained from the caller's own `Arc`
+    /// (whose count can read zero while `WebGpuState::drop` is still
+    /// running on this render thread).
+    pub fn teardown_sentinel(&self) -> std::sync::Weak<dyn std::any::Any + Send + Sync> {
+        self.teardown_sentinel.clone() as std::sync::Weak<dyn std::any::Any + Send + Sync>
     }
 }
 
