@@ -2637,6 +2637,54 @@ keys: [
         CONFIG_OVERRIDES.lock().unwrap().clear();
     }
 
+    /// Regression test for task #294: ktav object keys are unconditionally
+    /// strings (see `crate::ktav_value::ktav_value_to_dynamic`), so a
+    /// numeric-looking `colors.indexed` key like `136` arrives as
+    /// `Value::String("136")`, not `Value::I64(136)`. `Palette::indexed` is
+    /// `HashMap<u8, RgbaColor>`, and before the `map_key_from_dynamic`
+    /// fallback in `wezterm_dynamic::fromdynamic` (see
+    /// `crates/wezterm-dynamic/src/fromdynamic.rs`), `u8::from_dynamic`
+    /// rejected a `Value::String` key outright with an opaque
+    /// `NoConversion { source_type: "String", dest_type: "u8" }`, so any user
+    /// customizing `colors.indexed` -- documented as usable at
+    /// `docs/config/appearance.md` -- got a config load failure. This proves
+    /// the documented syntax loads end-to-end and lands at the expected
+    /// palette index.
+    #[test]
+    fn loads_colors_indexed_with_string_keys() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        std::fs::write(
+            &config_path,
+            "\
+colors: {
+    indexed: { 136: #af8700 }
+}
+",
+        )
+        .unwrap();
+
+        let path_item = PathPossibility::required(config_path);
+        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            .expect("try_load should succeed")
+            .expect("a config was found");
+        let cfg = loaded.config.expect("config should parse");
+
+        let palette = cfg.colors.expect("colors table should be present");
+        let expected = <crate::color::RgbaColor as std::convert::TryFrom<String>>::try_from(
+            "#af8700".to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            palette.indexed.get(&136u8),
+            Some(&expected),
+            "colors.indexed.136 should have loaded from the string key \"136\""
+        );
+    }
+
     /// If a legacy `onlyterm.rhai`/`onlyterm.lua` file exists but there is no
     /// `.ktav` sibling, `try_load` must not silently ignore it (which would
     /// look to the user like "wezterm forgot my config"); it must fail with
