@@ -3,12 +3,34 @@
 use crate::locator::{FontDataSource, FontOrigin};
 use crate::parser::{load_built_in_fonts, parse_and_collect_font_info, ParsedFont};
 use anyhow::Context;
-use config::{Config, FontAttributes};
+use config::{Config, ConfigHandle, FontAttributes};
 use rangeset::RangeSet;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 pub struct FontDatabase {
     by_full_name: HashMap<String, Vec<ParsedFont>>,
+}
+
+lazy_static::lazy_static! {
+    // Enumerating and parsing every file under `font_dirs` is expensive
+    // (hundreds of ms for a system fonts directory with hundreds of
+    // files). `FontConfiguration::new` is called repeatedly during
+    // startup (once to size the initial window before the mux window
+    // exists, and again when `TermWindow::new_window` builds its own
+    // `FontConfiguration`), and each call used to redo the full
+    // directory walk from scratch even though the set of `font_dirs`
+    // hadn't changed. Cache the resulting `FontDatabase` keyed by the
+    // config generation and the font_dirs list, so that repeated
+    // construction within one generation is a cheap Arc clone instead of
+    // a second filesystem scan+parse. See task #312.
+    static ref FONT_DIRS_CACHE: Mutex<Option<(usize, Vec<PathBuf>, Arc<FontDatabase>)>> =
+        Mutex::new(None);
+    // The built-in font selection is compiled into the binary and never
+    // varies with the user's configuration, so it only ever needs to be
+    // parsed once per process.
+    static ref BUILT_IN_CACHE: Mutex<Option<Arc<FontDatabase>>> = Mutex::new(None);
 }
 
 impl FontDatabase {
@@ -59,6 +81,33 @@ impl FontDatabase {
         Ok(db)
     }
 
+    /// Same as `with_font_dirs`, but memoizes the result keyed by the config
+    /// generation and the `font_dirs` list, so that repeated calls within one
+    /// generation reuse the previous scan+parse instead of re-walking the
+    /// filesystem and re-parsing every font file. This matters because
+    /// `FontConfiguration::new` is invoked more than once during startup
+    /// (see task #312) with the same `font_dirs`, and a scan of a system
+    /// fonts directory can take the better part of a second.
+    ///
+    /// The generation is part of the key even though it has no bearing on
+    /// what a scan would find, because "install a font, then reload the
+    /// config to pick it up" is a workflow people rely on: `font_dirs` is
+    /// unchanged in that case, so keying on it alone would keep serving the
+    /// stale database and make the newly installed font permanently
+    /// invisible.
+    pub fn with_font_dirs_cached(config: &ConfigHandle) -> anyhow::Result<Arc<Self>> {
+        let generation = config.generation();
+        let mut cache = FONT_DIRS_CACHE.lock().unwrap();
+        if let Some((cached_generation, dirs, db)) = cache.as_ref() {
+            if *cached_generation == generation && dirs == &config.font_dirs {
+                return Ok(Arc::clone(db));
+            }
+        }
+        let db = Arc::new(Self::with_font_dirs(config)?);
+        cache.replace((generation, config.font_dirs.clone(), Arc::clone(&db)));
+        Ok(db)
+    }
+
     pub fn list_available(&self) -> Vec<ParsedFont> {
         let mut fonts = vec![];
         for parsed_list in self.by_full_name.values() {
@@ -74,6 +123,20 @@ impl FontDatabase {
         load_built_in_fonts(&mut font_info)?;
         let mut db = Self::new();
         db.load_font_info(font_info);
+        Ok(db)
+    }
+
+    /// Same as `with_built_in`, but memoized for the lifetime of the
+    /// process: the built-in font selection is compiled into the binary
+    /// and can never change, so there's no need to re-parse it every time
+    /// a `FontConfiguration` is constructed.
+    pub fn with_built_in_cached() -> anyhow::Result<Arc<Self>> {
+        let mut cache = BUILT_IN_CACHE.lock().unwrap();
+        if let Some(db) = cache.as_ref() {
+            return Ok(Arc::clone(db));
+        }
+        let db = Arc::new(Self::with_built_in()?);
+        cache.replace(Arc::clone(&db));
         Ok(db)
     }
 

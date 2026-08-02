@@ -496,8 +496,8 @@ impl FontConfigInner {
             font_scale: RefCell::new(1.0),
             dpi: RefCell::new(dpi),
             config: RefCell::new(config.clone()),
-            font_dirs: RefCell::new(Arc::new(FontDatabase::with_font_dirs(&config)?)),
-            built_in: RefCell::new(Arc::new(FontDatabase::with_built_in()?)),
+            font_dirs: RefCell::new(FontDatabase::with_font_dirs_cached(&config)?),
+            built_in: RefCell::new(FontDatabase::with_built_in_cached()?),
             fallback_channel: RefCell::new(None),
         })
     }
@@ -512,7 +512,7 @@ impl FontConfigInner {
         self.char_select_font.borrow_mut().take();
         self.command_palette_font.borrow_mut().take();
         self.metrics.borrow_mut().take();
-        *self.font_dirs.borrow_mut() = Arc::new(FontDatabase::with_font_dirs(config)?);
+        *self.font_dirs.borrow_mut() = FontDatabase::with_font_dirs_cached(config)?;
         Ok(())
     }
 
