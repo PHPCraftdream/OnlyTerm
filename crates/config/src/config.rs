@@ -293,7 +293,19 @@ pub struct Config {
     pub font_locator: FontLocatorSelection,
     #[dynamic(default)]
     pub font_rasterizer: FontRasterizerSelection,
-    #[dynamic(default = "default_colr_rasterizer")]
+    /// Was meant to let the COLR (color glyph) rasterizer be selected
+    /// independently of `font_rasterizer`, but no code path ever read this
+    /// field: `wezterm_font::rasterizer::new_rasterizer` (the sole call
+    /// site, driven only by `font_rasterizer`) always renders COLR/COLRv1
+    /// color glyphs by delegating internally to
+    /// `rasterizer::colr_paint::ColrRasterizer` from within
+    /// `SwashRasterizer`, with no way to pick a different backend for them.
+    #[dynamic(
+        default = "default_colr_rasterizer",
+        deprecated = "this option currently has no effect: COLR/COLRv1 color glyph rendering is \
+                      always handled internally by the Swash rasterizer and does not consult \
+                      this setting"
+    )]
     pub font_colr_rasterizer: FontRasterizerSelection,
     #[dynamic(default)]
     pub font_shaper: FontShaperSelection,
@@ -311,9 +323,33 @@ pub struct Config {
     /// Likely values are 35, 38 and 40 which have different
     /// characteristics with respective to subpixel hinting.
     /// See https://freetype.org/freetype2/docs/subpixel-hinting.html
+    ///
+    /// NOTE: this option currently has no effect. It configured the
+    /// FreeType `truetype`/`interpreter-version` property in
+    /// `wezterm-font/src/ftwrap.rs::Library::new`, but that file (and the
+    /// vendored FreeType backend it wrapped) was removed in the
+    /// freetype+harfbuzz -> rustybuzz+swash migration (phase H4); the
+    /// Swash-based rasterizer that replaced it has no equivalent knob.
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything: it configured the FreeType TrueType \
+                      interpreter version, and the FreeType rasterizer backend it applied to was \
+                      removed in the rustybuzz/swash migration"
+    )]
     pub freetype_interpreter_version: Option<u32>,
 
-    #[dynamic(default)]
+    /// NOTE: this option currently has no effect. It configured the
+    /// FreeType `pcf`/`no-long-family-names` property in
+    /// `wezterm-font/src/ftwrap.rs::Library::new`, but that file (and the
+    /// vendored FreeType backend it wrapped) was removed in the
+    /// freetype+harfbuzz -> rustybuzz+swash migration (phase H4); the
+    /// Swash-based rasterizer that replaced it has no equivalent knob.
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything: it configured a FreeType PCF font \
+                      driver property, and the FreeType rasterizer backend it applied to was \
+                      removed in the rustybuzz/swash migration"
+    )]
     pub freetype_pcf_long_family_names: bool,
 
     /// Specify the features to enable when using harfbuzz for font shaping.
