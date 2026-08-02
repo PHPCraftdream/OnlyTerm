@@ -500,15 +500,12 @@ impl LocalDomain {
 /// avoid wrapping this already-non-blocking writer in a second, redundant
 /// thread/queue of its own).
 ///
-/// Queue depth is intentionally unbounded, matching `ThreadedWriter`: pty
-/// write throughput vastly exceeds realistic input rates (typed input,
-/// pastes, IME composition), so in steady state nothing can out-produce
-/// the real write side. Bounding the queue would only trade an
-/// already-vanishingly-unlikely unbounded-memory-growth risk for a very
-/// real risk of turning a slow/stuck child process back into a mechanism
-/// that can block a caller (once a bounded channel is full, `send` either
-/// blocks or the caller has to drop data) -- exactly what this type
-/// exists to avoid.
+/// Queue depth is intentionally unbounded, matching `ThreadedWriter`:
+/// bounding it would only trade an already-vanishingly-unlikely
+/// unbounded-memory-growth risk for a very real risk of turning a
+/// slow/stuck child process back into a mechanism that can block a caller
+/// (once a bounded channel is full, `send` either blocks or the caller
+/// has to drop data) -- exactly what this type exists to avoid.
 ///
 /// A real write failure (the pty is gone or broken) can now only be
 /// observed asynchronously, on the background thread, well after
