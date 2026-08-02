@@ -236,14 +236,23 @@ impl CellCluster {
     /// that may need wrap-aware behavior for other purposes in the future.
     ///
     /// Returns, for each position in the returned order, the source cell
-    /// index.
+    /// index, together with an `in_run` map (indexed by *physical* cell
+    /// index, not by position in `order`) recording whether that cell
+    /// belongs to a reversed Hebrew-phrase span. Callers that walk `order`
+    /// need `in_run` to detect when iteration crosses from inside a
+    /// reversed span to outside it (or vice versa): that boundary is a
+    /// seam between two different orderings glued back-to-back, and text
+    /// that sits on opposite sides of it must never be merged into the
+    /// same shaping cluster, even when nothing whitespace-like separates
+    /// them (e.g. a `(` immediately followed by a Hebrew phrase with no
+    /// space between them).
     fn reorder_hebrew_phrases(
         cells: &[CellRef<'_>],
         _is_wrap_continuation: bool,
         _continues_next: bool,
-    ) -> Vec<usize> {
+    ) -> (Vec<usize>, Vec<bool>) {
         let n = cells.len();
-        let mut is_heb: Vec<bool> = cells.iter().map(|c| Self::is_hebrew_cell(c.str())).collect();
+        let mut is_heb: Vec<bool> = cells.iter().map(|c| CellCluster::is_hebrew_cell(c.str())).collect();
 
         // An ASCII apostrophe standing in for a geresh (`א'`, the Hebrew
         // numeral notation) belongs to the letter in front of it and has
@@ -322,7 +331,7 @@ impl CellCluster {
             }
         }
 
-        order
+        (order, in_run)
     }
 
     fn make_cluster_with_bidi<'a>(
@@ -337,12 +346,14 @@ impl CellCluster {
             return Vec::new();
         }
 
-        let order = Self::reorder_hebrew_phrases(&cells, is_wrap_continuation, continues_next);
+        let (order, in_run) =
+            Self::reorder_hebrew_phrases(&cells, is_wrap_continuation, continues_next);
 
         let mut resolved = Vec::new();
         let mut last_cluster: Option<CellCluster> = None;
         let mut whitespace_run = 0usize;
         let mut only_whitespace = false;
+        let mut last_in_run: Option<bool> = None;
 
         for cell_ref_idx in order {
             let c = &cells[cell_ref_idx];
@@ -356,6 +367,17 @@ impl CellCluster {
             } else {
                 Cow::Borrowed(c.attrs())
             };
+            let cur_in_run = in_run[cell_ref_idx];
+            // A reversed Hebrew-phrase span and the text outside it are
+            // two different orderings glued back-to-back in `order`; the
+            // seam between them must always be a cluster boundary, even
+            // when there's no whitespace there (e.g. "(" immediately
+            // followed by a Hebrew phrase), otherwise the shaped cluster
+            // text ends up mixing cells from "different worlds" and the
+            // GUI's sequential left-to-right cluster placement draws the
+            // punctuation on the wrong side of the phrase.
+            let crosses_run_boundary = last_in_run.is_some_and(|prev| prev != cur_in_run);
+            last_in_run = Some(cur_in_run);
 
             last_cluster = match last_cluster.take() {
                 None => {
@@ -391,7 +413,8 @@ impl CellCluster {
                             whitespace_run = 0;
                             only_whitespace = false;
                         }
-                        let force_break = !only_whitespace && (whitespace_run > 2 || was_whitespace);
+                        let force_break = crosses_run_boundary
+                            || (!only_whitespace && (whitespace_run > 2 || was_whitespace));
 
                         if force_break {
                             resolved.push(last);
@@ -498,5 +521,92 @@ impl CellCluster {
             }
         }
         self.text.push_str(text);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::line::Line;
+    use crate::SEQ_ZERO;
+    use wezterm_cell::CellAttributes;
+
+    /// Regression test for a bug where punctuation sitting immediately
+    /// (no space) next to a Hebrew phrase got glued into the same
+    /// shaping cluster as reversed Hebrew letters from across the run
+    /// boundary, e.g. `(` ending up in the same `CellCluster::text` as
+    /// the last letter of the reversed phrase. `make_cluster_with_bidi`
+    /// walks `order` (the post-reversal iteration order) and only broke
+    /// clusters on whitespace runs, with no notion of "this step just
+    /// crossed from outside a reversed span to inside it" -- so an
+    /// opening paren glued onto the tail of the (now-first, after
+    /// reversal) Hebrew letter it happened to be adjacent to in
+    /// iteration order, even though physically they are not adjacent at
+    /// all once the phrase is reversed. The fix breaks a cluster at any
+    /// such boundary, in addition to (not instead of) the existing
+    /// whitespace-run logic.
+    #[test]
+    fn punctuation_hugging_hebrew_stays_out_of_reversed_cluster() {
+        // Two-letter "phrase" wrapped tightly by parens with no spaces
+        // at either boundary: "(<heb><heb>)". Real Hebrew consonants,
+        // no niqqud involved here -- that stripping happens earlier, in
+        // the terminal's Performer, not in this layer.
+        let s = "(\u{05D0}\u{05D1})";
+        let line = Line::from_text(s, &CellAttributes::default(), SEQ_ZERO, None);
+        let clusters = CellCluster::make_cluster(
+            line.len(),
+            line.visible_cells(),
+            Some(ParagraphDirectionHint::AutoLeftToRight),
+            false,
+            false,
+        );
+
+        // The opening paren (physical cell 0) must never share a
+        // cluster's `text` with either Hebrew letter (physical cells 1
+        // and 2, reversed to iteration order 2,1), and likewise for the
+        // closing paren (physical cell 3).
+        for c in &clusters {
+            let has_paren = c.text.contains('(') || c.text.contains(')');
+            let has_hebrew = c.text.chars().any(|ch| CellCluster::is_hebrew_cell(&ch.to_string()));
+            assert!(
+                !(has_paren && has_hebrew),
+                "a cluster must not mix punctuation with reversed Hebrew content: {:?}",
+                c.text
+            );
+        }
+
+        // The Hebrew letters themselves must still come out reversed
+        // (that part of the design is untouched by this fix): scanning
+        // just the Hebrew-only clusters left-to-right in `first_cell_idx`
+        // order should read the phrase back-to-front relative to typed
+        // order.
+        let mut heb_text = String::new();
+        let mut heb_clusters: Vec<&CellCluster> = clusters
+            .iter()
+            .filter(|c| c.text.chars().any(|ch| CellCluster::is_hebrew_cell(&ch.to_string())))
+            .collect();
+        heb_clusters.sort_by_key(|c| c.first_cell_idx);
+        for c in heb_clusters {
+            heb_text.push_str(&c.text);
+        }
+        assert_eq!(heb_text, "\u{05D1}\u{05D0}");
+    }
+
+    /// Sanity check: a line with no Hebrew content at all must produce
+    /// exactly the clusters it would have before this fix -- `in_run` is
+    /// all-false, so the new boundary check never fires.
+    #[test]
+    fn no_hebrew_no_behavior_change() {
+        let s = "(hello world)";
+        let line = Line::from_text(s, &CellAttributes::default(), SEQ_ZERO, None);
+        let clusters = CellCluster::make_cluster(
+            line.len(),
+            line.visible_cells(),
+            Some(ParagraphDirectionHint::AutoLeftToRight),
+            false,
+            false,
+        );
+        let joined: String = clusters.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(joined, s);
     }
 }

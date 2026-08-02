@@ -1526,3 +1526,49 @@ fn test_resize_reflow_cursor_alt_screen_issue_6669_5100() {
         None,
     );
 }
+
+/// Regression test for a garbled-Hebrew-rendering bug report: a Hebrew
+/// phrase immediately hugged by punctuation with no separating space
+/// (eg. `«...» (<hebrew phrase>)`) used to have its brackets glued into
+/// the same shaping cluster as reversed Hebrew letters from the far end
+/// of the phrase, which made the GUI renderer (which places clusters
+/// sequentially left-to-right using each cluster's width) draw the
+/// opening/closing brackets on the wrong side of the phrase.
+///
+/// This was originally diagnosed with a throwaway harness that printed a
+/// real-world reproducer file line-by-line through a `TestTerm` and
+/// dumped both the raw stored cells and `cluster_with_wrap_context`'s
+/// output (exactly what `crates/wezterm-gui/src/termwindow/render/screen_line.rs`
+/// consumes) -- see git history for this file. That harness depended on
+/// a personal external file path and would not build/run on another
+/// machine or in CI, so it has been replaced with this inline
+/// reproducer covering the same failure mode, exercised through the
+/// same full pipeline (Performer -> Line -> cluster_with_wrap_context).
+/// The root-cause fix itself lives in
+/// `crates/wezterm-surface/src/cellcluster.rs` (`make_cluster_with_bidi`
+/// / `reorder_hebrew_phrases`), which also has its own focused unit
+/// tests.
+#[test]
+fn hebrew_phrase_hugged_by_parens_keeps_brackets_out_of_reversed_cluster() {
+    let mut term = TestTerm::new(1, 40, 0);
+    // "(<heb><heb>)" with no spaces at either boundary -- the minimal
+    // shape of the reported bug.
+    term.print("(\u{05D0}\u{05D1})");
+
+    let screen = term.screen_mut();
+    let phys = screen.phys_row(0);
+    let line = screen.line_mut(phys);
+
+    let bidi_hint = Some(wezterm_bidi::ParagraphDirectionHint::AutoLeftToRight);
+    let clusters = line.cluster_with_wrap_context(bidi_hint, false);
+
+    for c in &clusters {
+        let has_paren = c.text.contains('(') || c.text.contains(')');
+        let has_hebrew = wezterm_surface::cellcluster::CellCluster::is_hebrew_cell(&c.text);
+        assert!(
+            !(has_paren && has_hebrew),
+            "a shaping cluster must not mix punctuation with reversed Hebrew content: {:?}",
+            c.text
+        );
+    }
+}
