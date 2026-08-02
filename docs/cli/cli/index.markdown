@@ -8,7 +8,7 @@ instance, and can be used to spawn programs and manipulate tabs and panes.
 There may be multiple GUI processes running in addition to a multiplexer server.
 wezterm uses the following logic to decide which one it should connect to.
 
-* If the `--prefer-mux` flag is passed, then the `wezterm.lua` config file is
+* If the `--prefer-mux` flag is passed, then the `onlyterm.ktav` config file is
   consulted to determine the first *unix domain* defined by the config.
 * If the `$WEZTERM_UNIX_SOCKET` environment variable is set, use that location
   to identify the running instance

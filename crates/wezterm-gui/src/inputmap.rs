@@ -476,21 +476,16 @@ impl InputMap {
     }
 
     pub fn dump_config(&self, key_table: Option<&str>) {
-        println!("local wezterm = require 'wezterm'");
-        println!("local act = wezterm.action");
-        println!();
-        println!("return {{");
-
         if key_table.is_none() {
-            println!("  keys = {{");
-            show_key_table_as_lua(&self.keys.default, 4);
-            println!("  }},");
+            println!("keys: [");
+            show_key_table_as_ktav(&self.keys.default, 4);
+            println!("]");
             println!();
         }
 
         let mut table_names = self.keys.by_name.keys().collect::<Vec<_>>();
         table_names.sort();
-        println!("  key_tables = {{");
+        println!("key_tables: {{");
         for name in table_names {
             if let Some(wanted_table) = key_table {
                 if name != wanted_table {
@@ -498,14 +493,12 @@ impl InputMap {
                 }
             }
             if let Some(table) = self.keys.by_name.get(name) {
-                println!("    {name} = {{");
-                show_key_table_as_lua(table, 6);
-                println!("    }},");
+                println!("    {name}: [");
+                show_key_table_as_ktav(table, 6);
+                println!("    ]");
                 println!();
             }
         }
-        println!("  }}");
-
         println!("}}");
     }
 
@@ -652,7 +645,14 @@ pub fn human_key(key: &KeyCode) -> String {
     }
 }
 
-fn lua_key_code(key: &KeyCode) -> String {
+/// Render a `KeyCode` as the ktav string value for a `key:` field.
+///
+/// ktav bareword values are written unquoted, so a value that would
+/// otherwise look like a bare number (a single digit, e.g. the `1` key)
+/// must be qualified with the `phys:` prefix to force it to parse as the
+/// physical-position key string rather than a numeric literal. See
+/// `docs/config/keys.md` for the `phys:`/`mapped:`/`raw:` prefixes.
+fn ktav_key_code(key: &KeyCode) -> String {
     match key {
         KeyCode::Char('\x1b') => "Escape".to_string(),
         KeyCode::Char('\x7f') => "Escape".to_string(),
@@ -661,6 +661,26 @@ fn lua_key_code(key: &KeyCode) -> String {
         KeyCode::Char(' ') => "Space".to_string(),
         KeyCode::Char('\t') => "Tab".to_string(),
         KeyCode::Char(c) if c.is_ascii_control() => c.escape_debug().to_string(),
+        KeyCode::Char(c) if c.is_ascii_digit() => {
+            // A bare digit would parse as a ktav number, not a string, and
+            // fail to load as a `key:` value -- force it to the `phys:`
+            // physical-position form, which is unambiguously a string.
+            // Fall back to `mapped:` in the (currently unreachable for
+            // ASCII digits) case there's no physical-position equivalent.
+            match key.to_phys() {
+                Some(phys) => format!("phys:{}", phys.to_string()),
+                None => format!("mapped:{c}"),
+            }
+        }
+        // Characters that carry structural meaning inside a ktav inline
+        // compound have to be escaped or the `key:` value swallows the rest
+        // of the line: `key: [` opens an array, `key: {` an object, `key: }`
+        // closes the enclosing one early, and `key: ,` reads as an empty
+        // pair segment. A backslash is ktav's escape character, so it needs
+        // escaping too. This isn't cosmetic -- a single unescaped bracket
+        // makes the whole emitted document fail to parse, which defeats the
+        // point of a dump that's meant to be pasted straight into a config.
+        KeyCode::Char(c @ ('[' | ']' | '{' | '}' | ',' | '\\')) => format!("\\{c}"),
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Function(n) => format!("F{n}"),
         KeyCode::Numpad(n) => format!("Numpad{n}"),
@@ -669,18 +689,59 @@ fn lua_key_code(key: &KeyCode) -> String {
     }
 }
 
-fn luaify(value: Value, is_top: bool) -> String {
+/// Re-render a `DeferredKeyCode`'s dynamic string form (as produced by
+/// `KeyCode::to_string()`: `"mapped:<char>"`, `"phys:<name>"`, `"raw:<n>"`,
+/// or a bare key name) as a safe ktav `key:` value, going through the same
+/// control-character-aware formatting as the outer key of a binding. This
+/// matters because `KeyCode::to_string()` spells e.g. Enter as the literal
+/// three-byte string `"mapped:\r"` -- a raw carriage return with no ktav
+/// escape available -- which would otherwise corrupt the emitted document.
+fn rewrite_dynamic_key_string(s: &str) -> String {
+    let key = if let Some(c) = s.strip_prefix("mapped:").and_then(|rest| {
+        let mut chars = rest.chars();
+        let c = chars.next()?;
+        if chars.next().is_none() {
+            Some(c)
+        } else {
+            None
+        }
+    }) {
+        KeyCode::Char(c)
+    } else if let Some(phys) = s.strip_prefix("phys:").and_then(|rest| {
+        <PhysKeyCode as std::convert::TryFrom<&str>>::try_from(rest).ok()
+    }) {
+        KeyCode::Physical(phys)
+    } else {
+        // Bare key name (e.g. "Enter", "F1") or a form we don't specially
+        // recognize here -- ktav_key_code re-derives the same spelling for
+        // named keys, and anything else round-trips through unchanged.
+        return escape_ktav_bareword(s);
+    };
+    ktav_key_code(&key)
+}
+
+/// Render a `wezterm_dynamic::Value` (as produced by `KeyAssignment::to_dynamic`)
+/// as a ktav literal. `is_top` is set for the outermost `action` value: a
+/// simple (argument-less) action is just its bare name (`Copy`), while a
+/// parameterized action is a single-key object whose key is the action name
+/// (`{ SpawnCommandInNewTab: { cwd: /tmp } }`), matching the shape documented
+/// in `docs/migration-to-ktav.md#key-bindings-and-actions`.
+fn ktavify(value: Value, is_top: bool) -> String {
     match value {
-        Value::String(s) if is_top => format!("act.{s}"),
-        Value::String(s) => quote_lua_string(&s),
+        Value::String(s) if is_top => s,
+        // ktav has no quoting syntax: bareword strings are written as-is.
+        // A literal backslash starts an escape sequence in ktav, so any
+        // path-like value must use forward slashes to round-trip safely.
+        Value::String(s) => escape_ktav_bareword(&s),
         Value::Bool(true) => "true".to_string(),
         Value::Bool(false) => "false".to_string(),
-        Value::Null => "nil".to_string(),
+        Value::Null => "null".to_string(),
         Value::U64(u) => u.to_string(),
         Value::F64(u) => u.to_string(),
         Value::I64(u) => u.to_string(),
         Value::Array(a) => {
-            format!("wat {a:?}")
+            let items: Vec<String> = a.into_iter().map(|v| ktavify(v, false)).collect();
+            format!("[{}]", items.join(", "))
         }
         Value::Object(o) if is_top => {
             let (k, v) = o.into_iter().next().unwrap();
@@ -688,18 +749,7 @@ fn luaify(value: Value, is_top: bool) -> String {
                 Value::String(s) => s,
                 _ => unreachable!(),
             };
-            let arg = match v {
-                Value::String(_) => format!(" {}", luaify(v, false)),
-                Value::Array(a) => {
-                    let b: Vec<String> = a.into_iter().map(|v| luaify(v, false)).collect();
-                    format!("{{ {} }}", b.join(", "))
-                }
-                Value::I64(i) => format!("({i})"),
-                Value::U64(i) => format!("({i})"),
-                Value::F64(i) => format!("({i})"),
-                _ => luaify(v, false),
-            };
-            format!("act.{k}{arg}")
+            format!("{{ {k}: {} }}", ktavify(v, false))
         }
         Value::Object(o) => {
             let mut fields = vec![];
@@ -708,84 +758,43 @@ fn luaify(value: Value, is_top: bool) -> String {
                     Value::String(s) => s,
                     _ => unreachable!(),
                 };
-                let arg = match v {
+                match v {
                     Value::Null => continue,
-                    Value::String(_) => format!(" {}", luaify(v, false)),
-                    Value::Array(a) => {
-                        let b: Vec<String> = a.into_iter().map(|v| luaify(v, false)).collect();
-                        format!("{{ {} }}", b.join(", "))
-                    }
-                    Value::I64(i) => format!("({i})"),
-                    Value::U64(i) => format!("({i})"),
-                    Value::F64(i) => format!("({i})"),
                     Value::Object(o) if o.is_empty() => continue,
-                    _ => luaify(v, false),
-                };
-                fields.push(format!("{k} = {arg}"));
+                    // A nested `key: <DeferredKeyCode>` field (e.g. inside
+                    // `SendKey`/`ActivateKeyTable`) is serialized via
+                    // `KeyCode::to_string()`, which spells a control
+                    // character key (Enter, Escape, ...) as e.g.
+                    // `"mapped:\r"` -- a raw control byte with no ktav
+                    // escape available. Re-render it the same safe way as
+                    // the outer `key:` field instead of passing the raw
+                    // string through.
+                    Value::String(s) if k == "key" => {
+                        fields.push(format!("{k}: {}", rewrite_dynamic_key_string(&s)))
+                    }
+                    _ => fields.push(format!("{k}: {}", ktavify(v, false))),
+                }
             }
             format!("{{ {} }}", fields.join(", "))
         }
     }
 }
 
-fn quote_lua_string(s: &str) -> String {
-    let mut result = String::new();
-    result.push('\'');
-    for c in s.chars() {
-        match c {
-            '\u{07}' => {
-                result.push_str("\\a");
-            }
-            '\u{08}' => {
-                result.push_str("\\b");
-            }
-            '\u{0c}' => {
-                result.push_str("\\f");
-            }
-            '\n' => {
-                result.push_str("\\n");
-            }
-            '\r' => {
-                result.push_str("\\r");
-            }
-            '\t' => {
-                result.push_str("\\t");
-            }
-            '\u{0b}' => {
-                result.push_str("\\v");
-            }
-            '\\' => {
-                result.push_str("\\\\");
-            }
-            '"' => {
-                result.push_str("\\\"");
-            }
-            '\'' => {
-                result.push_str("\\'");
-            }
-            c if c.is_alphanumeric() || c.is_ascii_punctuation() => {
-                result.push(c);
-            }
-            _ => {
-                let b = c as u32;
-                result.push_str(&format!("\\u{{{b:x}}}"));
-            }
-        }
-    }
-    result.push('\'');
-    result
+/// Escape a string for use as a ktav bareword value: forward-slash any
+/// backslashes (ktav treats `\` as the start of an escape sequence, so a
+/// literal Windows path would otherwise silently corrupt or fail to parse).
+fn escape_ktav_bareword(s: &str) -> String {
+    s.replace('\\', "/")
 }
 
-fn lua_key(key: &KeyCode, mods: Modifiers, action: &KeyAssignment) -> String {
+fn ktav_key(key: &KeyCode, mods: Modifiers, action: &KeyAssignment) -> String {
     let dyn_action = action.to_dynamic();
-    // println!(" -- {dyn_action:?}");
-    let action = luaify(dyn_action, true);
-    let key = lua_key_code(key);
-    let key = quote_lua_string(&key);
+    let action = ktavify(dyn_action, true);
+    let key = ktav_key_code(key);
 
     let mods = format!("{mods:?}").replace(" ", "");
 
-    format!("{{ key = {key}, mods = '{mods}', action = {action} }}")
+    format!("{{ key: {key}, mods: {mods}, action: {action} }}")
 }
 
 fn show_key_table(table: &config::keyassignment::KeyTable) {
@@ -810,13 +819,13 @@ fn show_key_table(table: &config::keyassignment::KeyTable) {
     }
 }
 
-fn show_key_table_as_lua(table: &config::keyassignment::KeyTable, indent: usize) {
+fn show_key_table_as_ktav(table: &config::keyassignment::KeyTable, indent: usize) {
     let ordered = table.iter().collect::<BTreeMap<_, _>>();
 
     let pad = " ".repeat(indent);
     for ((key, mods), entry) in ordered {
         let action = &entry.action;
-        println!("{pad}{},", lua_key(key, *mods, action));
+        println!("{pad}{}", ktav_key(key, *mods, action));
     }
 }
 

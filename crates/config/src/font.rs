@@ -172,8 +172,10 @@ impl FromDynamic for FontWeight {
 impl Display for FontWeight {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self.categorize_weight() {
+            // ktav has no quoting syntax: a label is written as a bare
+            // identifier (e.g. `weight: Bold`), not a quoted string.
             FontWeightOrLabel::Weight(n) => write!(fmt, "{}", n),
-            FontWeightOrLabel::Label(l) => write!(fmt, "\"{}\"", l),
+            FontWeightOrLabel::Label(l) => write!(fmt, "{}", l),
         }
     }
 }
@@ -391,9 +393,11 @@ pub struct FontAttributes {
 
 impl std::fmt::Display for FontAttributes {
     fn fmt(&self, fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        // A ktav `FontAttributes` object literal, ready to paste into a
+        // `font.font` array: `{ family: X, weight: Y, stretch: Z, style: W }`.
         write!(
             fmt,
-            "wezterm.font('{}', {{weight={}, stretch='{}', style={}}})",
+            "{{ family: {}, weight: {}, stretch: {}, style: {} }}",
             self.family, self.weight, self.stretch, self.style
         )
     }

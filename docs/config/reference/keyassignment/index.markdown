@@ -5,13 +5,17 @@ to control the Window, Tab, Pane state typically when a key or mouse event
 is triggered.
 
 Internally, in the underlying Rust code, `KeyAssignment` is an enum
-type with a variant for each possible action known to wezterm.  In Lua,
-enums get represented as a table with a single key corresponding to
-the variant name.
+type with a variant for each possible action known to wezterm. In a ktav
+config, a *parameterized* variant is written as a single-key object whose
+key is the variant name (e.g. `{ SpawnCommandInNewTab: { cwd: /tmp } }`),
+while a *unit* variant (no arguments) is just its bare name (e.g. `Copy`).
+See [Migrating to a ktav config](../../../migration-to-ktav.md#key-bindings-and-actions)
+for the full translation and worked examples.
 
-In most cases the [`wezterm.action`](../wezterm/action.md) function is
-used to create an instance of `KeyAssignment` and make it a bit more
-clear and convenient.
+(`wezterm.action`, referenced on some of the pages below, was a scripting
+helper for constructing these values in Lua/rhai configs; it has been
+removed along with the rest of the scripting engine -- see
+[wezterm.action](../wezterm/action.md) for details.)
 
 ## Available Key Assignments
 
