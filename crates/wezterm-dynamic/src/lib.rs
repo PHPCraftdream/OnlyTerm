@@ -1,6 +1,6 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 //! Types for representing Rust types in a more dynamic form
-//! that is similar to JSON or Lua values.
+//! that is similar to JSON values.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(not(feature = "std"), macro_use)]

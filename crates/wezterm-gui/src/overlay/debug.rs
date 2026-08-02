@@ -21,11 +21,12 @@ lazy_static::lazy_static! {
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// This overlay used to host a rhai REPL (`MainReplHost`/`ReplEditor`,
-/// backed by [`config::rhai_engine::make_rhai_engine`]) that exposed every
-/// `register_rhai` binding (`wezterm.mux.*`, `GuiWin`, `TabInformation`, the
-/// `lua-api-crates`, the `on`/`add_to_config_reload_watch_list` event
-/// surface) for live evaluation, mirroring what a real `.wezterm.rhai`
-/// config callback would see.
+/// backed by the config crate's now-deleted rhai-engine constructor) that
+/// exposed every `register_rhai` binding (`wezterm.mux.*`, `GuiWin`,
+/// `TabInformation`, the `lua-api-crates`, the
+/// `on`/`add_to_config_reload_watch_list` event surface) for live
+/// evaluation, mirroring what a real `.wezterm.rhai` config callback would
+/// see.
 ///
 /// With the scripting layer removed entirely, there is nothing left for a
 /// REPL to evaluate against, so the eval engine has been deleted along with
