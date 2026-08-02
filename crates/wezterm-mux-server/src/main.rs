@@ -24,7 +24,7 @@ mod daemonize;
     trailing_var_arg = true,
 )]
 struct Opt {
-    /// Skip loading wezterm.rhai
+    /// Skip loading the wezterm config (ktav) file
     #[arg(long, short = 'n')]
     skip_config: bool,
 

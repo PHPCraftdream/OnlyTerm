@@ -1200,7 +1200,7 @@ impl Config {
             return found;
         }
 
-        // We didn't find (or were asked to skip) a onlyterm.rhai file, so
+        // We didn't find (or were asked to skip) a onlyterm.ktav file, so
         // update the environment to make it simpler to understand this
         // state.
         std::env::remove_var("ONLYTERM_CONFIG_FILE");
@@ -1492,6 +1492,22 @@ impl Config {
     /// replaces the previous rhai-expression-evaluation behavior
     /// (`apply_overrides_to_rhai`) now that config values are plain,
     /// engine-free data.
+    ///
+    /// Caveats from wrapping `value` as a single `v: <value>` line rather
+    /// than parsing it in the context of a real multi-line document:
+    ///
+    /// - Inline arrays split elements on top-level commas, not whitespace,
+    ///   so `--config 'default_prog=[bash -l]'` does NOT produce the
+    ///   2-element array `["bash", "-l"]` -- ktav parses `bash -l` as a
+    ///   single bareword/string segment, yielding the 1-element array
+    ///   `["bash -l"]`. Use commas instead, e.g.
+    ///   `--config 'default_prog=[bash, -l]'`.
+    /// - Compound values that span multiple lines (e.g. an object literal
+    ///   written across several lines the way it would appear in a config
+    ///   file) are not supported through this flag at all, since `value`
+    ///   is always wrapped as a single line; such overrides fail to parse.
+    ///   Keep `--config` values to a single line (inline `{...}`/`[...]`
+    ///   syntax is fine as long as it's all on one line).
     pub(crate) fn apply_overrides_to_ktav(
         mut config: wezterm_dynamic::Value,
     ) -> anyhow::Result<wezterm_dynamic::Value> {
