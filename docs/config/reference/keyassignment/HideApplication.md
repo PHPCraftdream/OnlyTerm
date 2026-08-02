@@ -2,8 +2,8 @@
 
 On macOS, hide the WezTerm application.
 
-```rhai
-config.keys = [
-  #{ key: "h", mods: "CMD", action: act.HideApplication },
+```
+keys: [
+  { key: "h", mods: "CMD", action: HideApplication },
 ]
 ```

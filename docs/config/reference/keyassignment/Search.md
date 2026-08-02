@@ -11,46 +11,33 @@ The supported [regular expression syntax is described
 here](https://docs.rs/regex/1.3.9/regex/#syntax).
 
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-local act = wezterm.action
-
-config.keys = {
-  -- search for things that look like git hashes
+```
+keys: [
+  // search for things that look like git hashes
   {
-    key = 'H',
-    mods = 'SHIFT|CTRL',
-    action = act.Search {
-      Regex = '[a-f0-9]{6,}',
-    },
-  },
-  -- search for the lowercase string "hash" matching the case exactly
+    key: H
+    mods: SHIFT|CTRL
+    action: { Search: { Regex: "[a-f0-9]{6,}" } }
+  }
+  // search for the lowercase string "hash" matching the case exactly
   {
-    key = 'H',
-    mods = 'SHIFT|CTRL',
-    action = act.Search { CaseSensitiveString = 'hash' },
-  },
-  -- search for the string "hash" matching regardless of case
+    key: H
+    mods: SHIFT|CTRL
+    action: { Search: { CaseSensitiveString: hash } }
+  }
+  // search for the string "hash" matching regardless of case
   {
-    key = 'H',
-    mods = 'SHIFT|CTRL',
-    action = act.Search { CaseInSensitiveString = 'hash' },
-  },
-}
+    key: H
+    mods: SHIFT|CTRL
+    action: { Search: { CaseInSensitiveString: hash } }
+  }
+]
 ```
 
 [Learn more about the search overlay](../../../scrollback.md#searching-the-scrollback)
 
 {{since('20220624-141144-bd1b7c5d')}}
 
-You may now use `wezterm.action.Search("CurrentSelectionOrEmptyString")` to have the search take the currently selected text as the item to search.
+You may now use `{ Search: CurrentSelectionOrEmptyString }` to have the search take the currently selected text as the item to search.
 
 The selection text is adjusted to be a single line.

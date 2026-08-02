@@ -4,19 +4,19 @@
 
 Clears the current CopyMode selection mode without leaving CopyMode.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "y",
         mods: "NONE",
-        action: act.Multiple([
-          act.CopyTo "PrimarySelection",
-          act.ClearSelection,
+        action: { Multiple: [
+          CopyTo "PrimarySelection",
+          ClearSelection,
           // clear the selection mode, but remain in copy mode
-          act.CopyMode [ "ClearSelectionMode" ],
-        ]),
+          CopyMode [ "ClearSelectionMode" ],
+        ] },
       },
     ],
   },

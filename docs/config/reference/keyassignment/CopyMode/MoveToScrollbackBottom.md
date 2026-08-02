@@ -5,14 +5,14 @@
 Moves the CopyMode cursor position to the bottom of the scrollback.
 
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "G",
         mods: "NONE",
-        action: act.CopyMode("MoveToScrollbackBottom"),
+        action: { CopyMode: "MoveToScrollbackBottom" },
       },
     ],
   },

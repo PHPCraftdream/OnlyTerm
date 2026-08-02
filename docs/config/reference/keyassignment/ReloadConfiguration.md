@@ -2,12 +2,12 @@
 
 Explicitly reload the configuration.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "r",
     mods: "CMD|SHIFT",
-    action: act.ReloadConfiguration,
+    action: ReloadConfiguration,
   },
 ]
 ```

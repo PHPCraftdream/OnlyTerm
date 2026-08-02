@@ -5,14 +5,14 @@
 Moves the CopyMode cursor position to the middle of the viewport.
 
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "M",
         mods: "NONE",
-        action: act.CopyMode("MoveToViewportMiddle"),
+        action: { CopyMode: "MoveToViewportMiddle" },
       },
     ],
   },

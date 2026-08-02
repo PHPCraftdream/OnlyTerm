@@ -1,5 +1,18 @@
 # `pane.get_metadata()`
 
+!!! danger "Removed: no scripting engine"
+
+    This page documents part of the rhai (and, before that, Lua) **scripting
+    API**, which has been removed entirely. OnlyTerm's configuration format
+    is now [ktav](../../../migration-to-ktav.md), a static `key: value` data
+    format with no expressions, function calls, or callbacks of any kind --
+    there is nothing left in OnlyTerm that could call this function, invoke
+    this method, or construct this object. The description and examples
+    below are kept for historical reference (e.g. if you're migrating a very
+    old config and trying to understand what it used to do), but none of it
+    is callable today. See the [changelog](../../../changelog.md#continuousnightly)
+    for the full rationale.
+
 {{since('20220903-194523-3bb1ed61')}}
 
 Returns metadata about a pane. The return value depends on the instance of the
@@ -9,15 +22,6 @@ fields.
 
 To consume this value, it is recommend to use logic like this to obtain a map
 value even if the pane doesn't support this method:
-
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
 
 ```lua
 local meta = pane:get_metadata() or {}

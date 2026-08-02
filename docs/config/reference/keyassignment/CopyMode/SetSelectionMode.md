@@ -12,14 +12,14 @@ MODE can be one of:
 * `"Block"` - selection expands to define a rectangular block using the starting point and current cursor position as the corners
 * `"SemanticZone"` - selection expands to the current semantic zone. See [Shell Integration](../../../../shell-integration.md). {{since('20220903-194523-3bb1ed61', inline=True)}}.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "v",
         mods: "NONE",
-        action: act.CopyMode(#{ SetSelectionMode: "Cell" }),
+        action: { CopyMode: { SetSelectionMode: "Cell" } },
       },
     ],
   },

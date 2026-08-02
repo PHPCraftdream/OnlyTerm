@@ -4,39 +4,37 @@
 
 Activates the *nth* GUI window, zero-based.
 
-Performing this action is equivalent to executing this lua code fragment:
+!!! note "`wezterm.gui.gui_windows()` no longer exists"
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-wezterm.gui.gui_windows()[n + 1]:focus()
-```
+    Earlier versions of this page described this action as equivalent to
+    the scripting expression `wezterm.gui.gui_windows()[n + 1]:focus()`.
+    `wezterm.gui` was part of the scripting API and has been removed along
+    with the rest of the scripting engine — see the
+    [changelog](../../../changelog.md#continuousnightly). `ActivateWindow`
+    itself is unaffected; only that illustrative scripting-equivalent
+    description is now obsolete.
 
 Here's an example of setting up hotkeys to activate specific windows:
 
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = {}
+!!! note "No loops in ktav"
 
-config.keys = {}
-for i = 1, 8 do
-  -- CMD+ALT + number to activate that window
-  table.insert(config.keys, {
-    key = tostring(i),
-    mods = 'CMD|ALT',
-    action = act.ActivateWindow(i - 1),
-  })
-end
+    The original version of this example used a Lua `for` loop to generate
+    eight key bindings programmatically. ktav is a static data format with
+    no loops or expressions, so each binding below is now spelled out
+    explicitly instead of generated.
 
-return config
+```
+keys: [
+  // CMD+ALT + number to activate that window
+  { key: "1", mods: "CMD|ALT", action: { ActivateWindow: 0 } }
+  { key: "2", mods: "CMD|ALT", action: { ActivateWindow: 1 } }
+  { key: "3", mods: "CMD|ALT", action: { ActivateWindow: 2 } }
+  { key: "4", mods: "CMD|ALT", action: { ActivateWindow: 3 } }
+  { key: "5", mods: "CMD|ALT", action: { ActivateWindow: 4 } }
+  { key: "6", mods: "CMD|ALT", action: { ActivateWindow: 5 } }
+  { key: "7", mods: "CMD|ALT", action: { ActivateWindow: 6 } }
+  { key: "8", mods: "CMD|ALT", action: { ActivateWindow: 7 } }
+]
 ```
 
 

@@ -36,22 +36,22 @@ The following easing functions are supported:
 
 The following configuration enables a low intensity visual bell that takes a total of 300ms to "flash" the screen:
 
-```rhai
-config.visual_bell = #{
+```
+visual_bell: {
   fade_in_function: "EaseIn",
   fade_in_duration_ms: 150,
   fade_out_function: "EaseOut",
   fade_out_duration_ms: 150,
 }
-config.colors = #{
+colors: {
   visual_bell: "#202020",
 }
 ```
 
 The follow configuration make the cursor briefly flare when the bell is run:
 
-```rhai
-config.visual_bell = #{
+```
+visual_bell: {
   fade_in_duration_ms: 75,
   fade_out_duration_ms: 75,
   target: "CursorColor",

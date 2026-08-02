@@ -3,12 +3,12 @@
 Closes the current tab, terminating all contained panes.  If that was the last
 tab, closes that window.  If that was the last window, wezterm terminates.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "w",
     mods: "CMD",
-    action: act.CloseCurrentTab(#{ confirm: true }),
+    action: { CloseCurrentTab: { confirm: true } },
   },
 ]
 ```

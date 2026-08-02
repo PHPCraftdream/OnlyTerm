@@ -19,7 +19,7 @@ event to eg: vim running in mouse mode and will instead treat the event
 as though `SHIFT` was not pressed and then match it against the mouse
 assignments.
 
-```rhai
+```
 // Use ALT instead of SHIFT to bypass application mouse reporting
-config.bypass_mouse_reporting_modifiers = "ALT"
+bypass_mouse_reporting_modifiers: "ALT"
 ```

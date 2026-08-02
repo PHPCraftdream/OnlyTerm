@@ -41,24 +41,24 @@ This action is by default assigned to `CTRL-SHIFT-U` (`U` for `Unicode`).
 
 The default assignment is equivalent to this config:
 
-```rhai
+```
 // Control the size of the font.
 // Uses the same font as window_frame.font if char_select_font option is not set
 // char_select_font_size = 18.0,
 
-config.keys = [
-  #{
+keys: [
+  {
     key: "u",
     mods: "SHIFT|CTRL",
-    action: act.CharSelect(#{
+    action: { CharSelect: {
       copy_on_select: true,
       copy_to: "ClipboardAndPrimarySelection",
-    }),
+    } },
   },
 ]
 ```
 
-The `CharSelect` action accepts a rhai map with the following fields:
+The `CharSelect` action accepts an object with the following fields:
 
 * `copy_on_select` - a boolean that controls whether hitting `Enter` to select
   an item will copy to the clipboard, in addition to sending the item to the

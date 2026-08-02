@@ -14,17 +14,17 @@ This action has been removed. Please use [PasteFrom](PasteFrom.md) instead.
 
 ## Example
 
-```rhai
-config.keys = [
-  #{ key: "v", mods: "SHIFT|CTRL", action: act.PastePrimarySelection },
+```
+keys: [
+  { key: "v", mods: "SHIFT|CTRL", action: PastePrimarySelection },
 ]
 
 // Middle mouse button pastes the primary selection.
-config.mouse_bindings = [
-  #{
-    event: #{ Up: #{ streak: 1, button: "Middle" } },
+mouse_bindings: [
+  {
+    event: { Up: { streak: 1, button: "Middle" } },
     mods: "NONE",
-    action: act.PastePrimarySelection,
+    action: PastePrimarySelection,
   },
 ]
 ```

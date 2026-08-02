@@ -27,10 +27,10 @@ Available flags are:
   This option doesn't impact the hinter.
 * `NO_AUTOHINT` - don't use the freetype auto-hinter
 
-```rhai
+```
 // You probably don't want to do this, but this demonstrates
 // that the flags can be combined
-config.freetype_load_flags = "NO_HINTING|MONOCHROME"
+freetype_load_flags: "NO_HINTING|MONOCHROME"
 ```
 
 {{since('20240128-202157-1e552d76')}}
@@ -41,8 +41,8 @@ more predictably and with fewer surprising artifacts.
 In earlier versions, it is recommended that you configure this
 explicitly:
 
-```rhai
-config.freetype_load_flags = "NO_HINTING"
+```
+freetype_load_flags: "NO_HINTING"
 ```
 
 {{since('20240203-110809-5046fc22')}}

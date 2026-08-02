@@ -13,6 +13,6 @@ with a key bound to the action [ReloadConfiguration](../keyassignment/ReloadConf
 
 For example, to disable auto config reload:
 
-```rhai
-config.automatically_reload_config = false
+```
+automatically_reload_config: false
 ```

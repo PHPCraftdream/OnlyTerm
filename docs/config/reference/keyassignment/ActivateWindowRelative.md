@@ -13,10 +13,10 @@ at the start/end.
 Here's an example of setting up (not very useful) hotkeys to cycle between
 windows:
 
-```rhai
-config.keys = [
-  #{ key: "r", mods: "ALT", action: act.ActivateWindowRelative(1) },
-  #{ key: "e", mods: "ALT", action: act.ActivateWindowRelative(-1) },
+```
+keys: [
+  { key: "r", mods: "ALT", action: { ActivateWindowRelative: 1 } },
+  { key: "e", mods: "ALT", action: { ActivateWindowRelative: -1 } },
 ]
 ```
 

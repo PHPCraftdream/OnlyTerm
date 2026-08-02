@@ -17,9 +17,9 @@ If you have a lot of long lived tabs then making this value very large
 may put some pressure on your system depending on the amount of RAM
 you have available.
 
-```lua
--- How many lines of scrollback you want to retain per tab
-config.scrollback_lines = 3500
+```
+// How many lines of scrollback you want to retain per tab
+scrollback_lines: 3500
 ```
 
 ### Clearing the scrollback buffer
@@ -36,12 +36,12 @@ on rebinding this key.
 You can control whether OnlyTerm displays a scrollbar via your configuration
 file:
 
-```lua
--- Enable the scrollbar.
--- It will occupy the right window padding space.
--- If right padding is set to 0 then it will be increased
--- to a single cell width
-config.enable_scroll_bar = true
+```
+// Enable the scrollbar.
+// It will occupy the right window padding space.
+// If right padding is set to 0 then it will be increased
+// to a single cell width
+enable_scroll_bar: true
 ```
 
 You may [change the color of the scrollbar](config/appearance.md#defining-your-own-colors) if you wish!
@@ -85,11 +85,16 @@ When the search overlay is active the behavior of OnlyTerm changes:
 
 The key assignments for search mode are specified by the `search_mode` [Key Table](config/key-tables.md).
 
-You may use
+You may provide your own definition of this key table if you wish to customize
+it, by setting the `search_mode` key of `key_tables` to a full replacement
+list of key assignments. There is no way to override just part of the table
+from within config: obtaining the defaults programmatically previously
+required calling
 [wezterm.gui.default_key_tables](config/reference/wezterm.gui/default_key_tables.md)
-to obtain the defaults and extend them. In earlier versions of WezTerm there
-wasn't a way to override portions of the key table, only to replace the entire
-table.
+from a scripting config, which no longer works (see the
+[changelog](changelog.md#continuousnightly)). If you want the defaults plus
+your own additions, copy the default table shown below into your config and
+add your own entries to it.
 
 The default configuration at the time that these docs were built (which
 may be more recent than your version of OnlyTerm) is shown below.
@@ -112,15 +117,15 @@ For example, if you find that you're frequently running `git log` and then reach
 for your mouse to copy and paste a relevant git commit hash then you might like
 this:
 
-```lua
-config.keys = {
-  -- search for things that look like git hashes
+```
+keys: [
+  // search for things that look like git hashes
   {
-    key = 'H',
-    mods = 'SHIFT|CTRL',
-    action = wezterm.action.Search { Regex = '[a-f0-9]{6,}' },
-  },
-}
+    key: H
+    mods: SHIFT|CTRL
+    action: { Search: { Regex: "[a-f0-9]{6,}" } }
+  }
+]
 ```
 
 With that in your config you can now:

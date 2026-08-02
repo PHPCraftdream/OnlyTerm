@@ -90,15 +90,15 @@ the worst cases spaces where a glyph should be, then you have an issue with
 font fallback.
 
 You can resolve this by explicitly adding fallback font(s) the have the glyphs
-that you need in your `.wezterm.rhai`:
+that you need in your `onlyterm.ktav`:
 
-```rhai
-#{
-  font: font_with_fallback([
-    "My Preferred Font",
+```
+font: {
+  font: [
+    { family: "My Preferred Font" }
     // This font has a broader selection of Chinese glyphs than my preferred font
-    "DengXian",
-  ]),
+    { family: DengXian }
+  ]
 }
 ```
 
@@ -336,21 +336,32 @@ basic PATH, OnlyTerm will report that it cannot find it.
 
 Probably the easiest to maintain solution is to change something like:
 
-```lua
-wezterm.action.SpawnCommandInNewWindow {
-  args = { 'nvim', wezterm.config_file },
-}
 ```
+{ SpawnCommandInNewWindow: { args: [nvim, "/home/you/.onlyterm.ktav"] } }
+```
+
+!!! note "`wezterm.config_file`/`wezterm.shell_quote_arg` no longer exist"
+
+    Earlier versions of this page used `wezterm.config_file` (to avoid
+    hardcoding the config path) and `wezterm.shell_quote_arg` (to safely
+    quote it, together with `os.getenv 'SHELL'` to invoke your login shell)
+    to build this argument list dynamically. Those were scripting functions
+    that have been removed along with the rest of the scripting engine (see
+    the [changelog](changelog.md#continuousnightly)); a ktav config can only
+    reference literal values, so you'll need to hardcode your config file's
+    actual path and shell name instead, as shown above and below.
 
 so that it explicitly spawns the command using your shell:
 
-```lua
-wezterm.action.SpawnCommandInNewWindow {
-  args = {
-    os.getenv 'SHELL',
-    '-c',
-    'nvim ' .. wezterm.shell_quote_arg(wezterm.config_file),
-  },
+```
+{
+  SpawnCommandInNewWindow: {
+    args: [
+      "/bin/zsh"
+      "-c"
+      "nvim /home/you/.onlyterm.ktav"
+    ]
+  }
 }
 ```
 Note: For zsh users, you may need to add -l or -i to the above if the PATH settings are specified
@@ -359,21 +370,25 @@ in .zprofile or .zshrc repectively. Homebrew users probably need -l.
 Another option is to explicitly use the full path to the program on your system,
 something like:
 
-```lua
-wezterm.action.SpawnCommandInNewWindow {
-  args = {
-    wezterm.home_dir .. '/.local/bob/nvim-bin/nvim',
-    wezterm.config_file,
-  },
+```
+{
+  SpawnCommandInNewWindow: {
+    args: [
+      "/home/you/.local/bob/nvim-bin/nvim"
+      "/home/you/.onlyterm.ktav"
+    ]
+  }
 }
 ```
 
 and another other option is to explicitly set the PATH up:
 
-```lua
-config.set_environment_variables = {
-  -- prepend the path to your utility and include the rest of the PATH
-  PATH = wezterm.home_dir .. '/.local/bob/nvim-bin:' .. os.getenv 'PATH',
+```
+set_environment_variables: {
+  // prepend the path to your utility and include the rest of the PATH.
+  // There is no way to reference $PATH or $HOME dynamically from ktav, so
+  // write out the full value you want, e.g.:
+  PATH: "/home/you/.local/bob/nvim-bin:/usr/bin:/bin:/usr/sbin:/sbin"
 }
 ```
 
@@ -406,6 +421,6 @@ By default, OnlyTerm enables ligature support in the font that you have selected
 If you prefer to disable ligatures you can instruct *harfbuzz*, the underlying
 font shaping software, to disable them by adding this to your configuration:
 
-```lua
-config.harfbuzz_features = { 'calt = 0', 'clig = 0', 'liga = 0' }
+```
+harfbuzz_features: ["calt = 0", "clig = 0", "liga = 0"]
 ```

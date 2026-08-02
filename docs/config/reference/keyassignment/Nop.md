@@ -6,10 +6,10 @@ keys were not pressed.
 If instead of this you want the key presses to pass through to
 the terminal, look at [DisableDefaultAssignment](DisableDefaultAssignment.md).
 
-```rhai
-config.keys = [
+```
+keys: [
   // Turn off any side effects from pressing CMD-m
-  #{ key: "m", mods: "CMD", action: act.Nop },
+  { key: "m", mods: "CMD", action: Nop },
 ]
 ```
 

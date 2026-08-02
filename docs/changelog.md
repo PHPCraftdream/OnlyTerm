@@ -22,6 +22,37 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* **Breaking**: the rhai scripting engine has been removed entirely, along
+  with every `lua-api-crates/*` crate that backed it. The configuration
+  language is now **ktav**, a static, engine-free `key: value` data format
+  (no expressions, no function calls, no `on(...)` event hooks) — your config
+  file must now be a `.wezterm.ktav` file (previously `.wezterm.rhai`, and
+  before that `.wezterm.lua`). This is a deliberate simplification, not a
+  stopgap: an audit found that most of the scripting surface was already
+  unreachable dead code (an earlier, incomplete Lua-to-rhai migration had
+  silently dropped the wiring for most event hooks and callback plumbing), so
+  rather than carry a scripting engine forward mainly to evaluate static data,
+  OnlyTerm now loads config as data, directly. All rhai-only event
+  hooks/callbacks — `format-tab-title`, `format-window-title`,
+  `update-status`, `update-right-status`, `window-config-reloaded`,
+  `window-focus-changed`, `bell`, `user-var-changed`, `open-uri`,
+  `gui-startup`, `gui-attached`, `new-tab-button-click`,
+  `augment-command-palette`, the `mux-startup`/`mux-is-process-stateful` mux
+  events, the debug overlay's rhai REPL, and the whole scripting API surface
+  under `wezterm.*`/`window.*`/`pane.*` — have been removed with **no
+  scripting replacement**; the underlying default/built-in behavior that each
+  of them used to be able to override (tab titles, window titles, status
+  text, bell handling, and so on) is unchanged. `ExecDomain`'s `fixup`/`label`
+  callbacks are gone for the same reason: an `ExecDomain` can no longer wrap
+  spawned commands. Plugins (which required a scripting engine to evaluate
+  `plugin/init.rhai`) are also gone. If a legacy `.wezterm.rhai`/`.wezterm.lua`
+  is found with no `.wezterm.ktav` sibling, WezTerm prints a clear error
+  naming the file and pointing at the migration guide. A separate, explicit
+  external-hooks API may be added later if a real need for scripted
+  customization emerges — this removal is not a signal that hooks can never
+  come back, only that the old rhai-shaped mechanism is gone. See the
+  [migration guide](migration-to-ktav.md) for the ktav data-format syntax and
+  a side-by-side translation of real configs.
 * Audited every `unsafe` block in the codebase (~85 files across all crates)
   and either removed it in favor of safe Rust where it wasn't strictly
   necessary, or documented it with a `// SAFETY:` comment explaining the
@@ -164,8 +195,9 @@ As features stabilize some brief notes about them will accumulate here.
   the file to migrate. Plugins must now be rhai (`plugin/init.rhai`, not
   `plugin/init.lua`) and required by local path via `plugin::require(path)` —
   git-URL plugin installation was already removed separately. See the
-  [Lua → rhai migration guide](migration-lua-to-rhai.md) for a side-by-side
-  translation of real configs.
+  [migration guide](migration-to-ktav.md) (the Lua/rhai-specific version of
+  this guide was superseded when the config format subsequently moved to
+  ktav; see the entry above) for a side-by-side translation of real configs.
 * DECRQCRA is now disabled by default to prevent silent screen scraping.
   Set `enable_checksum_rectangular_area = true` to re-enable it.
   Thanks to @jquast! #7701

@@ -8,12 +8,12 @@ Possible values for destination are:
 * `PrimarySelection` - Copy the text to the primary selection buffer (applicable to X11 and some Wayland systems only)
 * `ClipboardAndPrimarySelection` - Copy to both the clipboard and the primary selection.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "C",
     mods: "CTRL",
-    action: act.CopyTo("ClipboardAndPrimarySelection"),
+    action: { CopyTo: "ClipboardAndPrimarySelection" },
   },
 ]
 ```

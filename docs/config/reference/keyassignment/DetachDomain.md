@@ -10,25 +10,25 @@ when you later attach to the domain, they'll still be there.
 Not every domain supports detaching, and will log an error to the
 error log/debug overlay.
 
-```rhai
-config.unix_domains = [
-  #{
+```
+unix_domains: [
+  {
     name: "devhost",
   },
 ]
-config.keys = [
-  #{ key: "U", mods: "CTRL|SHIFT", action: act.AttachDomain("devhost") },
+keys: [
+  { key: "U", mods: "CTRL|SHIFT", action: { AttachDomain: "devhost" } },
   // Detaches the domain associated with the current pane
-  #{
+  {
     key: "D",
     mods: "CTRL|SHIFT",
-    action: act.DetachDomain("CurrentPaneDomain"),
+    action: { DetachDomain: "CurrentPaneDomain" },
   },
   // Detaches the "devhost" domain
-  #{
+  {
     key: "E",
     mods: "CTRL|SHIFT",
-    action: act.DetachDomain(#{ DomainName: "devhost" }),
+    action: { DetachDomain: { DomainName: "devhost" } },
   },
 ]
 ```

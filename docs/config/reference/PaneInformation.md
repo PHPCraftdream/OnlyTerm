@@ -1,5 +1,18 @@
 # PaneInformation
 
+!!! danger "Removed: no scripting engine"
+
+    This page documents part of the rhai (and, before that, Lua) **scripting
+    API**, which has been removed entirely. OnlyTerm's configuration format
+    is now [ktav](../../migration-to-ktav.md), a static `key: value` data
+    format with no expressions, function calls, or callbacks of any kind --
+    there is nothing left in OnlyTerm that could call this function, invoke
+    this method, or construct this object. The description and examples
+    below are kept for historical reference (e.g. if you're migrating a very
+    old config and trying to understand what it used to do), but none of it
+    is callable today. See the [changelog](../../changelog.md#continuousnightly)
+    for the full rationale.
+
 The `PaneInformation` struct describes a pane.  Unlike [the Pane
 object](pane/index.md), `PaneInformation` is a snapshot of some of
 the key characteristics of the pane, intended for use in synchronous, fast,
@@ -33,15 +46,6 @@ pay the cost of computing them.
 * `current_working_dir` - the current working directory, per [pane:get_current_working_dir()](pane/get_current_working_dir.md). 
 
 This example places the executable name in the tab titles:
-
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
 
 ```lua
 local wezterm = require 'wezterm'

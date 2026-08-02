@@ -1,31 +1,27 @@
 
 ## Quick Start
 
-Create a file named `.wezterm.rhai` in your home directory, with the following
+Create a file named `.onlyterm.ktav` in your home directory, with the following
 contents:
 
-```rhai
-// The whole script evaluates to a config object-map.
-// There is no `require` and no `config_builder()`: every option is just
-// a key in the map returned as the last expression.
-#{
-    // For example, changing the initial geometry for new windows:
-    initial_cols: 120,
-    initial_rows: 28,
+```
+// For example, changing the initial geometry for new windows:
+initial_cols: 120
+initial_rows: 28
 
-    // or, changing the font size and color scheme.
-    font_size: 10.0,
-    color_scheme: "AdventureTime",
-}
+// or, changing the font size and color scheme.
+font_size: 10.0
+color_scheme: AdventureTime
 ```
 
-!!! tip "Migrating from a `.wezterm.lua`?"
+!!! tip "Migrating from a `.wezterm.lua` or `.wezterm.rhai`?"
 
-    WezTerm's config language changed from Lua to [rhai](https://rhai.rs/).
-    If you have an existing Lua config, see the
-    [Lua → rhai migration guide](../migration-lua-to-rhai.md) for a
-    side-by-side syntax translation. A leftover `.wezterm.lua` with no
-    `.wezterm.rhai` sibling will produce a clear error pointing you at it.
+    WezTerm's config language changed from Lua, to rhai, and now to a static
+    data format called [ktav](../migration-to-ktav.md). If you have an
+    existing Lua or rhai config, see the
+    [migration guide](../migration-to-ktav.md) for a side-by-side syntax
+    translation. A leftover legacy `.rhai`/`.lua` file with no `.ktav`
+    sibling will produce a clear error pointing you at it.
 
 For more details, see:
 
@@ -36,17 +32,18 @@ For more details, see:
 
 ## Configuration Files
 
-`wezterm` will look for a [rhai](https://rhai.rs/) configuration file using the
-logic shown below. (Earlier releases looked for a Lua `.wezterm.lua` file; see
-the [migration guide](../migration-lua-to-rhai.md) to translate one.)
+`wezterm` will look for a `ktav` configuration file using the logic shown
+below. (Earlier releases looked for a Lua `.wezterm.lua` file, then a rhai
+`.wezterm.rhai`/`onlyterm.rhai` file; see the
+[migration guide](../migration-to-ktav.md) to translate one.)
 
 !!! tip
-    The recommendation is to place your configuration file at `$HOME/.wezterm.rhai`
-    (`%USERPROFILE%/.wezterm.rhai` on Windows) to get started.
+    The recommendation is to place your configuration file at `$HOME/.onlyterm.ktav`
+    (`%USERPROFILE%/.onlyterm.ktav` on Windows) to get started.
 
 More complex configurations can be placed in
-`$XDG_CONFIG_HOME/onlyterm/wezterm.rhai` (for X11/Wayland) or
-`$HOME/.onlyterm/wezterm.rhai` (for all other systems).
+`$XDG_CONFIG_HOME/onlyterm/onlyterm.ktav` (for X11/Wayland) or
+`$HOME/.onlyterm/onlyterm.ktav` (for all other systems).
 
 {% raw %}
 ```mermaid
@@ -55,16 +52,16 @@ graph TD
   A -->|Yes| B{{Can that file be loaded?}}
   B -->|Yes| C[Use it]
   B -->|No| D[Use built-in default configuration]
-  A -->|No| E{{$WEZTERM_CONFIG_FILE<br/>environment set?}}
+  A -->|No| E{{$ONLYTERM_CONFIG_FILE<br/>environment set?}}
   E -->|Yes| B
-  E -->|No| F{{"Running on Windows and<br/>wezterm.rhai exists in same<br/>dir as wezterm.exe?<br/>(Thumb drive mode)"}}
+  E -->|No| F{{"Running on Windows and<br/>onlyterm.ktav exists in same<br/>dir as wezterm.exe?<br/>(Thumb drive mode)"}}
   F -->|Yes| B
-  F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>onlyterm/wezterm.rhai<br/>exists inside it?}}
+  F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>onlyterm/onlyterm.ktav<br/>exists inside it?}}
   H -->|Yes| B
   J --> B
-  H -->|No| K{{Does $HOME/.onlyterm/wezterm.rhai exist?}}
+  H -->|No| K{{Does $HOME/.onlyterm/onlyterm.ktav exist?}}
   K -->|Yes| B
-  K -->|No| J[Use $HOME/.wezterm.rhai]
+  K -->|No| J[Use $HOME/.onlyterm.ktav]
 ```
 {% endraw %}
 
@@ -86,12 +83,10 @@ take effect immediately.  You may also use the `CTRL+SHIFT+R` keyboard shortcut
 to force the configuration to be reloaded.
 
 !!! info
-    **The configuration file may be evaluated multiple times for each wezterm
-    process** both at startup and in response to the configuration file being
-    reloaded.  You should avoid taking actions in the main flow of the config file
-    that have side effects; for example, unconditionally launching background
-    processes can result in many of them being spawned over time if you launch
-    many copies of wezterm, or are frequently reloading your config file.
+    Since ktav is a static data format with no running engine, the config
+    file is simply re-parsed from scratch each time it (re)loads; there is no
+    concern about side effects from re-evaluating script code, unlike with
+    the old Lua/rhai config formats.
 
 ### Configuration Overrides
 
@@ -107,71 +102,60 @@ $ wezterm --config 'exit_behavior="Hold"'
 
 Configuration specified via the command line will always override the values
 provided by the configuration file, even if the configuration file is reloaded.
+Each `--config key=value` value is parsed as a standalone ktav value fragment
+and spliced into the parsed config document, replacing that key.
 
-Each window can have an additional set of window-specific overrides applied to
-it by code in your configuration file.  That's useful for eg: setting
-transparency or any other arbitrary option on a per-window basis.  Read the
-[window:set_config_overrides](reference/window/set_config_overrides.md) documentation
-for more information and examples of how to use that functionality.
+Per-window configuration overrides set from inside your config file (the old
+`window:set_config_overrides()` mechanism) no longer exist, since that
+required a scripting callback with access to a live `window` object; there is
+no ktav equivalent.
 
 ## Configuration File Structure
 
-The `.wezterm.rhai` configuration file is a rhai script which allows for a high
-degree of flexibility. The script is expected to evaluate to a configuration
-object-map, so a basic empty (and rather useless!) configuration file will look
-like this:
+The `onlyterm.ktav` configuration file is a static ktav document: a flat or
+nested set of `key: value` pairs, with no code to evaluate. A basic empty
+(and rather useless!) configuration file is just an empty document.
 
-```rhai
-#{}
+A simple fragment like this:
+
+```
+color_scheme: Batman
 ```
 
-Throughout these docs many configuration fragments are still shown in Lua syntax
-(they predate the rhai switch); the [migration guide](../migration-lua-to-rhai.md)
-explains how to read them as rhai. A simple fragment like this:
+sets `color_scheme`, and to also set the font in the same file you add
+another top-level key:
 
-```rhai
-#{
-    color_scheme: "Batman",
-}
+```
+font: { font: [{ family: "JetBrains Mono" }] }
+color_scheme: Batman
 ```
 
-sets `color_scheme`, and to also set the font in the same file you merge the keys
-into one map:
+(there is no `wezterm.font(...)` helper anymore — the `font` option is a
+`TextStyle` object whose `font` field is an array of `FontAttributes`; see
+the [migration guide](../migration-to-ktav.md)).
 
-```rhai
-#{
-    font: #{ font: [#{ family: "JetBrains Mono" }] },
-    color_scheme: "Batman",
-}
+For the sake of brevity, individual snippets throughout the rest of these
+docs may be shown as just a single key:
+
 ```
-
-(`wezterm.font(...)` has no rhai helper — the `font` option is a `TextStyle`
-object whose `font` field is an array of `FontAttributes`; see the migration
-guide.)
-
-For the sake of brevity, individual snippets may be shown as just a single key:
-
-```rhai
-color_scheme: "Batman",
+color_scheme: Batman
 ```
 
 ## Splitting your configuration across files
 
 !!! note
 
-    WezTerm's Lua config let you split a config across multiple files via Lua's
-    `package.path` / `require`. **The rhai engine does not yet wire up rhai's
-    `import`/module resolution**, so a rhai config is currently a single
-    `.wezterm.rhai` file. To share code, package it as a
-    [plugin](plugins.md) (a directory with a `plugin/init.rhai` entry point,
-    loaded via `plugin::require("path")`). The legacy `package.path`-based
-    Lua module layout below no longer applies to the rhai engine.
-
+    WezTerm's Lua config let you split a config across multiple files via
+    Lua's `package.path` / `require`, and the rhai engine (briefly) supported
+    packaging shared code as a plugin. Neither mechanism exists for ktav:
+    there is no `import`, no `require`, and no plugin loading, since all of
+    those required a scripting engine to evaluate the imported code. A ktav
+    config is a single `onlyterm.ktav` file; if you need different configs in
+    different contexts, maintain separate files and select between them via
+    `--config-file`/`ONLYTERM_CONFIG_FILE`.
 
 ## Configuration Reference
 
 Continue browsing this section of the docs for an overview of the commonly
 adjusted settings, or visit the [config reference](reference/config/index.md) for a
-more detailed list of possibilities (the per-option reference pages still show
-Lua examples; use the [migration guide](../migration-lua-to-rhai.md) to read
-them as rhai).
+more detailed list of possibilities.

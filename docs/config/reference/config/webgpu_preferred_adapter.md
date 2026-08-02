@@ -51,58 +51,33 @@ the list:
 Based on that list, I might choose to explicitly target the discrete Gpu like
 this (but note that this would be the default selection anyway):
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-config.webgpu_preferred_adapter = {
-  backend = 'Vulkan',
-  device = 29730,
-  device_type = 'DiscreteGpu',
-  driver = 'radv',
-  driver_info = 'Mesa 22.3.4',
-  name = 'AMD Radeon Pro W6400 (RADV NAVI24)',
-  vendor = 4098,
+```
+webgpu_preferred_adapter: {
+  backend: Vulkan
+  device: 29730
+  device_type: DiscreteGpu
+  driver: radv
+  driver_info: "Mesa 22.3.4"
+  name: "AMD Radeon Pro W6400 (RADV NAVI24)"
+  vendor: 4098
 }
-config.front_end = 'WebGpu'
+front_end: WebGpu
 ```
 
-alternatively, I might use:
+!!! note "Selecting a GPU programmatically is no longer possible"
 
-```lua
-local wezterm = require 'wezterm'
-local config = {}
-local gpus = wezterm.gui.enumerate_gpus()
-
-config.webgpu_preferred_adapter = gpus[1]
-config.front_end = 'WebGpu'
-return config
-```
-
-If you have a more complex situation you can get a bit more elaborate; this
-example will only enable WebGpu if there is an integrated GPU available with
-Vulkan drivers:
-
-```lua
-local wezterm = require 'wezterm'
-local config = {}
-
-for _, gpu in ipairs(wezterm.gui.enumerate_gpus()) do
-  if gpu.backend == 'Vulkan' and gpu.device_type == 'IntegratedGpu' then
-    config.webgpu_preferred_adapter = gpu
-    config.front_end = 'WebGpu'
-    break
-  end
-end
-
-return config
-```
+    Earlier versions of this page also showed how to call
+    `wezterm.gui.enumerate_gpus()` from a config script to pick the first
+    available GPU, or to loop over the list and pick the first Vulkan
+    integrated GPU. `wezterm.gui` was part of the scripting API and has been
+    removed along with the rest of the scripting engine — see the
+    [changelog](../../../changelog.md#continuousnightly) — and ktav has no
+    loops or function calls to replace that logic with. You can still find
+    the exact `backend`/`device`/`device_type`/`driver`/`driver_info`/`name`/
+    `vendor` values to hardcode via the Debug Overlay, as shown above; there
+    is currently no way to select a GPU by category (e.g. "the first
+    integrated GPU") without knowing its exact identifying fields ahead of
+    time.
 
 See also [webgpu_power_preference](webgpu_power_preference.md),
 [webgpu_force_fallback_adapter](webgpu_force_fallback_adapter.md).

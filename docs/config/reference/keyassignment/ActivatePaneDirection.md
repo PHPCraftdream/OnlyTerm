@@ -9,27 +9,27 @@ wezterm will choose the pane that has the largest edge intersection.
 If the active pane is [zoomed](TogglePaneZoomState.md), behavior is determined
 by the [`unzoom_on_switch_pane`](../config/unzoom_on_switch_pane.md) flag. 
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "LeftArrow",
     mods: "CTRL|SHIFT",
-    action: act.ActivatePaneDirection("Left"),
+    action: { ActivatePaneDirection: "Left" },
   },
-  #{
+  {
     key: "RightArrow",
     mods: "CTRL|SHIFT",
-    action: act.ActivatePaneDirection("Right"),
+    action: { ActivatePaneDirection: "Right" },
   },
-  #{
+  {
     key: "UpArrow",
     mods: "CTRL|SHIFT",
-    action: act.ActivatePaneDirection("Up"),
+    action: { ActivatePaneDirection: "Up" },
   },
-  #{
+  {
     key: "DownArrow",
     mods: "CTRL|SHIFT",
-    action: act.ActivatePaneDirection("Down"),
+    action: { ActivatePaneDirection: "Down" },
   },
 ]
 ```

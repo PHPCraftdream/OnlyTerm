@@ -9,7 +9,9 @@ Read on to learn more about how to see those logs.
 
 By default, pressing <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>L</kbd> will activate
 the debug overlay and allow you to review the most recently logged issues.
-It also gives you access to a Lua REPL for evaluating built-in lua functions.
+(The overlay used to also provide a Lua/rhai REPL; that has been removed
+along with the scripting engine — see
+[ShowDebugOverlay](config/reference/keyassignment/ShowDebugOverlay.md).)
 
 See [ShowDebugOverlay](config/reference/keyassignment/ShowDebugOverlay.md) for more
 information on this key assignment.

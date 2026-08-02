@@ -10,6 +10,6 @@ using fancy tab mode.
 
 Defaults to 16 glyphs in width.
 
-```rhai
-config.tab_max_width = 16
+```
+tab_max_width: 16
 ```

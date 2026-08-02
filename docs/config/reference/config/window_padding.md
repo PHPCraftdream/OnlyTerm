@@ -14,8 +14,8 @@ set for `right` will control the width of the scrollbar.  If you have
 enabled the scrollbar and have set `right` to `0` then the right padding
 (and thus the scrollbar width) will instead match the width of a cell.
 
-```rhai
-config.window_padding = #{
+```
+window_padding: {
   left: 2,
   right: 2,
   top: 0,
@@ -37,8 +37,8 @@ You may use a fractional number such as `"0.5cell"` or numbers larger than one s
 
 The default padding is shown below.  In earlier releases, the default padding was 0 for each of the possible edges.
 
-```rhai
-config.window_padding = #{
+```
+window_padding: {
   left: "1cell",
   right: "1cell",
   top: "0.5cell",

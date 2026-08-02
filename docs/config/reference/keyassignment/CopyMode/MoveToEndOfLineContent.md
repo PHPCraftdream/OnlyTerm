@@ -5,14 +5,14 @@
 Moves the CopyMode cursor position to the last non-space cell in the current
 line.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "$",
         mods: "NONE",
-        action: act.CopyMode("MoveToEndOfLineContent"),
+        action: { CopyMode: "MoveToEndOfLineContent" },
       },
     ],
   },

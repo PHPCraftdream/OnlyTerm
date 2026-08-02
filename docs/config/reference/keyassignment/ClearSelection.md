@@ -4,37 +4,35 @@
 
 Clears the selection in the current pane.
 
-This example shows how to rebind `CTRL-C` to copy to the clipboard
-when there is a selection present (clearing it afterwards) or sending
-CTRL-C to the terminal when there is no selection:
+This example shows how it's used together with [Multiple](Multiple.md) to
+copy to the clipboard and then clear the selection in a single key press
+(the built-in default `CTRL-C` binding already does something similar to
+this, conditionally, but this shows how you could always run both steps
+back-to-back):
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-
-config.keys = {
-  {
-    key = 'c',
-    mods = 'CTRL',
-    action = wezterm.action_callback(function(window, pane)
-      local has_selection = window:get_selection_text_for_pane(pane) ~= ''
-      if has_selection then
-        window:perform_action(act.CopyTo 'ClipboardAndPrimarySelection', pane)
-
-        window:perform_action(act.ClearSelection, pane)
-      else
-        window:perform_action(act.SendKey { key = 'c', mods = 'CTRL' }, pane)
-      end
-    end),
-  },
-}
 ```
+keys: [
+  {
+    key: c
+    mods: CTRL|SHIFT
+    action: { Multiple: [
+      { CopyTo: ClipboardAndPrimarySelection }
+      ClearSelection
+    ] }
+  }
+]
+```
+
+!!! danger "Non-functional: conditional variant required a scripting callback"
+
+    An earlier version of this example rebound plain `CTRL-C` to
+    conditionally copy-and-clear only when there was an active selection
+    (falling back to sending a literal `CTRL-C` interrupt byte otherwise),
+    using `wezterm.action_callback(...)` to inspect
+    `window:get_selection_text_for_pane(pane)` at run time and branch on it.
+    That relied on the scripting engine, which has been removed — see the
+    [changelog](../../../changelog.md#continuousnightly). There is currently
+    no way to express that conditional behavior in ktav; the unconditional
+    `Multiple` binding above is the closest static equivalent. (OnlyTerm's
+    own default `CTRL-C` binding implements the conditional behavior
+    natively in Rust, not via config.)
