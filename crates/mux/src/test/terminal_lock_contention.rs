@@ -548,7 +548,7 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
     // taken for task #261 across a range of machine load (idle through
     // the machine pinned at 100% CPU by an unrelated process) show the
     // ratio (whole_hold / max_hold) for healthy chunking stays in the
-    // 33x-264x range across 6 runs:
+    // 34x-264x range across 6 runs:
     //   unchunked=837ms    max_hold=3.2ms    ratio=264x  (idle-ish)
     //   unchunked=1222ms   max_hold=18.7ms   ratio=65x
     //   unchunked=1198ms   max_hold=35.4ms   ratio=34x
@@ -568,7 +568,7 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
     //   unchunked=788ms    max_hold=108.1ms  ratio=7.3x
     //
     // That's a clean separation: healthy chunking never dropped below
-    // 33x even under heavy ambient load, broken chunking never rose
+    // 34x even under heavy ambient load, broken chunking never rose
     // above 7.7x even though the ratio measurement is itself sensitive
     // to load. Requiring at least an 8x reduction sits in the gap
     // between those two clusters, with >4x of headroom below the worst
@@ -582,7 +582,7 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
          same run, but max_hold={:?} and unchunked={:?} (ratio={:.1}x); this compares \
          against the unchunked baseline measured moments earlier in the same run \
          specifically so it self-calibrates against ambient machine load -- see the \
-         comment above for the real measured ratios (healthy: 33x-264x, deliberately \
+         comment above for the real measured ratios (healthy: 34x-264x, deliberately \
          broken chunking: 5.6x-7.7x) that this threshold was calibrated against",
         CHUNK_SIZE,
         MIN_HOLD_TIME_REDUCTION_RATIO,
