@@ -839,7 +839,9 @@ pub struct Config {
     pub check_for_updates: bool,
     #[dynamic(
         default,
-        deprecated = "this option no longer does anything and will be removed in a future release"
+        deprecated = "this option no longer does anything: the update-notification window it \
+                      controlled was removed upstream in 39d2b6ca8, and it will be removed in a \
+                      future release"
     )]
     pub show_update_window: bool,
 

@@ -379,11 +379,46 @@ pub struct FontAttributes {
 
     #[dynamic(default)]
     pub harfbuzz_features: Option<Vec<String>>,
-    #[dynamic(default)]
+    /// NOTE: this option currently has no effect. Its only reader was
+    /// `ftwrap.rs::compute_load_flags_from_config`, which took this
+    /// per-font override ahead of the top-level `Config::freetype_load_target`
+    /// when building FreeType's glyph-load flags. That file (and the
+    /// vendored FreeType backend it wrapped) was removed in the
+    /// freetype+harfbuzz -> rustybuzz+swash migration (phase H4); the
+    /// Swash-based rasterizer that replaced it has no equivalent per-font
+    /// knob. Note that the like-named top-level `Config::freetype_load_target`
+    /// is unrelated and still live -- it drives subpixel vs alpha blending
+    /// in the GL renderer regardless of which rasterizer produced the glyph.
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything: its only reader was the FreeType \
+                      glyph-loading code, and the FreeType rasterizer backend it applied to was \
+                      removed in the rustybuzz/swash migration"
+    )]
     pub freetype_load_target: Option<FreeTypeLoadTarget>,
-    #[dynamic(default)]
+    /// NOTE: this option currently has no effect, for the same reason as
+    /// `freetype_load_target` above: its only reader was
+    /// `ftwrap.rs::compute_load_flags_from_config`, removed along with the
+    /// rest of the vendored FreeType backend in the rustybuzz/swash
+    /// migration (phase H4).
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything: its only reader was the FreeType \
+                      glyph-loading code, and the FreeType rasterizer backend it applied to was \
+                      removed in the rustybuzz/swash migration"
+    )]
     pub freetype_render_target: Option<FreeTypeLoadTarget>,
-    #[dynamic(default)]
+    /// NOTE: this option currently has no effect, for the same reason as
+    /// `freetype_load_target` above: its only reader was
+    /// `ftwrap.rs::compute_load_flags_from_config`, removed along with the
+    /// rest of the vendored FreeType backend in the rustybuzz/swash
+    /// migration (phase H4).
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything: its only reader was the FreeType \
+                      glyph-loading code, and the FreeType rasterizer backend it applied to was \
+                      removed in the rustybuzz/swash migration"
+    )]
     pub freetype_load_flags: Option<FreeTypeLoadFlags>,
     #[dynamic(default)]
     pub scale: Option<NotNan<f64>>,
