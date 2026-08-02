@@ -5,11 +5,11 @@
 Move the CopyMode/SearchMode cycle between case-sensitive, case-insensitive
 and regular expression match types.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     search_mode: [
-      #{ key: "r", mods: "CTRL", action: act.CopyMode("CycleMatchType") },
+      { key: "r", mods: "CTRL", action: { CopyMode: "CycleMatchType" } },
     ],
   },
 }

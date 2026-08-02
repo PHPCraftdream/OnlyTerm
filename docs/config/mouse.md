@@ -33,41 +33,39 @@ of that triple click, so for a triple click both
 `SelectTextAtMouseCursor="Line"` and `CompleteSelection` will be triggered in
 that order.
 
-NOTE: In the action column, `act` is an alias to `wezterm.action` (to avoid repetition):
-
-```lua
-local act = wezterm.action
-```
+NOTE: In the action column below, each action is shown in its ktav form —
+a bare string for a simple action, or `{ ActionName: args }` for one with
+arguments:
 
 | Event | Modifiers | Action |
 | --------- | --- | ------ |
-| Triple Left Down | `NONE`   | `act.SelectTextAtMouseCursor("Line")`  |
-| Double Left Down | `NONE`   | `act.SelectTextAtMouseCursor("Word")`  |
-| Single Left Down | `NONE`   | `act.SelectTextAtMouseCursor("Cell")`  |
-| Single Left Down | `SHIFT`   | `act.ExtendSelectionToMouseCursor("Cell")`  |
-| Single Left Down | `ALT`   | `act.SelectTextAtMouseCursor("Block")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
-| Single Left Up | `SHIFT`   | `act.CompleteSelectionOrOpenLinkAtMouseCursor("ClipboardAndPrimarySelection")`  |
-| Single Left Up | `NONE`   | `act.CompleteSelectionOrOpenLinkAtMouseCursor("ClipboardAndPrimarySelection")`  |
-| Single Left Up | `ALT`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
-| Double Left Up | `NONE`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  |
-| Triple Left Up | `NONE`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  |
-| Single Left Drag | `NONE`   | `act.ExtendSelectionToMouseCursor("Cell")`  |
-| Single Left Drag | `ALT`   | `act.ExtendSelectionToMouseCursor("Block")` {{since('20220624-141144-bd1b7c5d', inline=True)}} |
-| Single Left Down | `ALT+SHIFT`   | `act.ExtendSelectionToMouseCursor("Block")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
-| Single Left Up | `ALT+SHIFT`   | `act.CompleteSelection("ClipboardAndPrimarySelection")`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
-| Double Left Drag | `NONE`   | `act.ExtendSelectionToMouseCursor("Word")`  |
-| Triple Left Drag | `NONE`   | `act.ExtendSelectionToMouseCursor("Line")`  |
-| Single Middle Down | `NONE`   | `act.PasteFrom("PrimarySelection")`  |
-| Single Left Drag | `SUPER` | `act.StartWindowDrag` (*since 20210314-114017-04b7cedd*) |
-| Single Left Drag | `CTRL+SHIFT` | `act.StartWindowDrag` (*since 20210314-114017-04b7cedd*) |
-| Single Right Up | `NONE`   | `act.CopyLinkAtMouseCursor("ClipboardAndPrimarySelection")`  |
+| Triple Left Down | `NONE`   | `{ SelectTextAtMouseCursor: Line }`  |
+| Double Left Down | `NONE`   | `{ SelectTextAtMouseCursor: Word }`  |
+| Single Left Down | `NONE`   | `{ SelectTextAtMouseCursor: Cell }`  |
+| Single Left Down | `SHIFT`   | `{ ExtendSelectionToMouseCursor: Cell }`  |
+| Single Left Down | `ALT`   | `{ SelectTextAtMouseCursor: Block }`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Single Left Up | `SHIFT`   | `{ CompleteSelectionOrOpenLinkAtMouseCursor: ClipboardAndPrimarySelection }`  |
+| Single Left Up | `NONE`   | `{ CompleteSelectionOrOpenLinkAtMouseCursor: ClipboardAndPrimarySelection }`  |
+| Single Left Up | `ALT`   | `{ CompleteSelection: ClipboardAndPrimarySelection }`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Double Left Up | `NONE`   | `{ CompleteSelection: ClipboardAndPrimarySelection }`  |
+| Triple Left Up | `NONE`   | `{ CompleteSelection: ClipboardAndPrimarySelection }`  |
+| Single Left Drag | `NONE`   | `{ ExtendSelectionToMouseCursor: Cell }`  |
+| Single Left Drag | `ALT`   | `{ ExtendSelectionToMouseCursor: Block }` {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Single Left Down | `ALT+SHIFT`   | `{ ExtendSelectionToMouseCursor: Block }`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Single Left Up | `ALT+SHIFT`   | `{ CompleteSelection: ClipboardAndPrimarySelection }`  {{since('20220624-141144-bd1b7c5d', inline=True)}} |
+| Double Left Drag | `NONE`   | `{ ExtendSelectionToMouseCursor: Word }`  |
+| Triple Left Drag | `NONE`   | `{ ExtendSelectionToMouseCursor: Line }`  |
+| Single Middle Down | `NONE`   | `{ PasteFrom: PrimarySelection }`  |
+| Single Left Drag | `SUPER` | `StartWindowDrag` (*since 20210314-114017-04b7cedd*) |
+| Single Left Drag | `CTRL+SHIFT` | `StartWindowDrag` (*since 20210314-114017-04b7cedd*) |
+| Single Right Up | `NONE`   | `{ CopyLinkAtMouseCursor: ClipboardAndPrimarySelection }`  |
 
 If you don't want the default assignments to be registered, you can
 disable all of them with this configuration; if you chose to do this,
 you must explicitly register every binding.
 
-```lua
-config.disable_default_mouse_bindings = true
+```
+disable_default_mouse_bindings: true
 ```
 
 ## Configuring Mouse Assignments
@@ -76,38 +74,32 @@ config.disable_default_mouse_bindings = true
 
 You can define mouse actions using the `mouse_bindings` configuration section:
 
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = {}
-
-config.mouse_bindings = {
-  -- Right click sends "woot" to the terminal
+```
+mouse_bindings: [
+  // Right click sends "woot" to the terminal
   {
-    event = { Down = { streak = 1, button = 'Right' } },
-    mods = 'NONE',
-    action = act.SendString 'woot',
-  },
+    event: { Down: { streak: 1, button: Right } }
+    mods: NONE
+    action: { SendString: woot }
+  }
 
-  -- Change the default click behavior so that it only selects
-  -- text and doesn't open hyperlinks
+  // Change the default click behavior so that it only selects
+  // text and doesn't open hyperlinks
   {
-    event = { Up = { streak = 1, button = 'Left' } },
-    mods = 'NONE',
-    action = act.CompleteSelection 'ClipboardAndPrimarySelection',
-  },
+    event: { Up: { streak: 1, button: Left } }
+    mods: NONE
+    action: { CompleteSelection: ClipboardAndPrimarySelection }
+  }
 
-  -- and make CTRL-Click open hyperlinks
+  // and make CTRL-Click open hyperlinks
   {
-    event = { Up = { streak = 1, button = 'Left' } },
-    mods = 'CTRL',
-    action = act.OpenLinkAtMouseCursor,
-  },
-  -- NOTE that binding only the 'Up' event can give unexpected behaviors.
-  -- Read more below on the gotcha of binding an 'Up' event only.
-}
-
-return config
+    event: { Up: { streak: 1, button: Left } }
+    mods: CTRL
+    action: OpenLinkAtMouseCursor
+  }
+  // NOTE that binding only the 'Up' event can give unexpected behaviors.
+  // Read more below on the gotcha of binding an 'Up' event only.
+]
 ```
 
 Each entry in the mouse binding table can have the following fields:
@@ -152,11 +144,11 @@ with `streak=2` is generated.
 The mouse event recognizer supports an arbitrary click streak, so if
 you wanted quadruple-click bindings you can specify `streak=4`.
 
-| Event             | Lua Representation  |
+| Event             | ktav Representation  |
 | ----------------- | ------------------- |
-| Triple Left Down  | `event={Down={streak=3, button="Left"}}` |
-| Double Left Up  | `event={Up={streak=2, button="Left"}}` |
-| Single Left Drag  | `event={Drag={streak=1, button="Left"}}` |
+| Triple Left Down  | `event: { Down: { streak: 3, button: Left } }` |
+| Double Left Up  | `event: { Up: { streak: 2, button: Left } }` |
+| Single Left Drag  | `event: { Drag: { streak: 1, button: Left } }` |
 
 {{since('20220807-113146-c2fee766')}}
 
@@ -166,28 +158,22 @@ You can handle vertical wheel scroll events using the example shown below. The
 [`window:current_event`](reference/window/current_event.md), if to access the actual
 delta scroll value while handling the event.
 
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = {}
-
-config.mouse_bindings = {
-  -- Scrolling up while holding CTRL increases the font size
+```
+mouse_bindings: [
+  // Scrolling up while holding CTRL increases the font size
   {
-    event = { Down = { streak = 1, button = { WheelUp = 1 } } },
-    mods = 'CTRL',
-    action = act.IncreaseFontSize,
-  },
+    event: { Down: { streak: 1, button: { WheelUp: 1 } } }
+    mods: CTRL
+    action: IncreaseFontSize
+  }
 
-  -- Scrolling down while holding CTRL decreases the font size
+  // Scrolling down while holding CTRL decreases the font size
   {
-    event = { Down = { streak = 1, button = { WheelDown = 1 } } },
-    mods = 'CTRL',
-    action = act.DecreaseFontSize,
-  },
-}
-
-return config
+    event: { Down: { streak: 1, button: { WheelDown: 1 } } }
+    mods: CTRL
+    action: DecreaseFontSize
+  }
+]
 ```
 
 
@@ -201,26 +187,21 @@ event, but not the 'Up' event (which is bound to something in your config).
 
 To avoid this, it is recommended to disable the 'Down' event (to ensure it won't
 be sent to the running program), for example:
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = {}
-
-config.mouse_bindings = {
-  -- Bind 'Up' event of CTRL-Click to open hyperlinks
+```
+mouse_bindings: [
+  // Bind 'Up' event of CTRL-Click to open hyperlinks
   {
-    event = { Up = { streak = 1, button = 'Left' } },
-    mods = 'CTRL',
-    action = act.OpenLinkAtMouseCursor,
-  },
-  -- Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
+    event: { Up: { streak: 1, button: Left } }
+    mods: CTRL
+    action: OpenLinkAtMouseCursor
+  }
+  // Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
   {
-    event = { Down = { streak = 1, button = 'Left' } },
-    mods = 'CTRL',
-    action = act.Nop,
-  },
-}
-return config
+    event: { Down: { streak: 1, button: Left } }
+    mods: CTRL
+    action: Nop
+  }
+]
 ```
 
 

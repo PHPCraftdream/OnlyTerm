@@ -62,99 +62,102 @@ Here's an example from my configuration file, which I use with a variant of
 font-weights that are either too bold or too light for the default rules to
 produce great results, hence this set of rules.
 
-```rhai
-config.font = font_with_fallback("Operator Mono SSm Lig Medium")
-config.font_rules = [
+Each `font` value below is a `TextStyle` object (`{ font: [...] }`, an array
+of `FontAttributes`); there is no `font(...)`/`font_with_fallback(...)`
+scripting helper anymore, so the object is written out directly, with
+additional array entries providing fallback fonts where the original
+example used `font_with_fallback`'s multiple arguments.
+
+```
+font: { font: [{ family: "Operator Mono SSm Lig Medium" }] }
+font_rules: [
   // For Bold-but-not-italic text, use this relatively bold font, and override
   // its color to a tomato-red color to make bold text really stand out.
-  #{
+  {
     intensity: "Bold",
     italic: false,
-    font: font_with_fallback(
-      "Operator Mono SSm Lig",
-      // Override the color specified by the terminal output and force
-      // it to be tomato-red.
-      // The color value you set here can be any CSS color name or
-      // RGB color string.
-      #{ foreground: "tomato" }
-    ),
+    // Override the color specified by the terminal output and force
+    // it to be tomato-red.
+    // The color value you set here can be any CSS color name or
+    // RGB color string.
+    font: { font: [{ family: "Operator Mono SSm Lig" }], foreground: "tomato" },
   },
 
   // Bold-and-italic
-  #{
+  {
     intensity: "Bold",
     italic: true,
-    font: font_with_fallback(#{
+    font: { font: [{
       family: "Operator Mono SSm Lig",
       italic: true,
-    }),
+    }] },
   },
 
   // normal-intensity-and-italic
-  #{
+  {
     intensity: "Normal",
     italic: true,
-    font: font_with_fallback(#{
+    font: { font: [{
       family: "Operator Mono SSm Lig",
       weight: "DemiLight",
       italic: true,
-    }),
+    }] },
   },
 
   // half-intensity-and-italic (half-bright or dim); use a lighter weight font
-  #{
+  {
     intensity: "Half",
     italic: true,
-    font: font_with_fallback(#{
+    font: { font: [{
       family: "Operator Mono SSm Lig",
       weight: "Light",
       italic: true,
-    }),
+    }] },
   },
 
   // half-intensity-and-not-italic
-  #{
+  {
     intensity: "Half",
     italic: false,
-    font: font_with_fallback(#{
+    font: { font: [{
       family: "Operator Mono SSm Lig",
       weight: "Light",
-    }),
+    }] },
   },
 ]
 ```
 
 Here's another example combining `FiraCode` with `Victor Mono`, using `Victor Mono` only for italics:
 
-```rhai
-config.font = font(#{ family: "FiraCode" })
+```
+font: { font: [{ family: "FiraCode" }] }
 
-config.font_rules = [
-  #{
+font_rules: [
+  {
     intensity: "Bold",
     italic: true,
-    font: font(#{
+    font: { font: [{
       family: "VictorMono",
       weight: "Bold",
       style: "Italic",
-    }),
+    }] },
   },
-  #{
+  {
     italic: true,
     intensity: "Half",
-    font: font(#{
+    font: { font: [{
       family: "VictorMono",
       weight: "DemiBold",
       style: "Italic",
-    }),
+    }] },
   },
-  #{
+  {
     italic: true,
     intensity: "Normal",
-    font: font(#{
+    font: { font: [{
       family: "VictorMono",
       style: "Italic",
-    }),
+    }] },
   },
 ]
 ```

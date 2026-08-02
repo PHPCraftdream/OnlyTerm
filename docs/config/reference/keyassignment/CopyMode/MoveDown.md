@@ -4,11 +4,11 @@
 
 Moves the CopyMode cursor position one cell down.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{ key: "DownArrow", mods: "NONE", action: act.CopyMode("MoveDown") },
+      { key: "DownArrow", mods: "NONE", action: { CopyMode: "MoveDown" } },
     ],
   },
 }

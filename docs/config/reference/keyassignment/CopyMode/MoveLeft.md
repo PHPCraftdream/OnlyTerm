@@ -4,12 +4,12 @@
 
 Moves the CopyMode cursor position one cell to the left.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{ key: "h", mods: "NONE", action: act.CopyMode("MoveLeft") },
-      #{ key: "LeftArrow", mods: "NONE", action: act.CopyMode("MoveLeft") },
+      { key: "h", mods: "NONE", action: { CopyMode: "MoveLeft" } },
+      { key: "LeftArrow", mods: "NONE", action: { CopyMode: "MoveLeft" } },
     ],
   },
 }

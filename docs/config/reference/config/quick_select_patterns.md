@@ -9,8 +9,8 @@ tags:
 Specify additional patterns to match when in [quick select mode](../../../quickselect.md).
 This setting is a table listing out a set of regular expressions.
 
-```rhai
-config.quick_select_patterns = [
+```
+quick_select_patterns: [
   // match things that look like sha1 hashes
   // (this is actually one of the default patterns)
   "[0-9a-f]{7,40}",
@@ -34,8 +34,8 @@ config.quick_select_patterns = [
     This example matches the string `"bar"`, but only when not part of the string
     `"foo:bar"`:
 
-    ```lua
-    config.quick_select_patterns = {
+    ```
+    quick_select_patterns: [
         "(?<!foo:)bar"
-    }
+    ]
     ```

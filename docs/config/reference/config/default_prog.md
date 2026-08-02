@@ -10,8 +10,8 @@ instead of running the user's shell.
 For example, to have `wezterm` always run `top` by default,
 you'd use this:
 
-```rhai
-config.default_prog = [ "top" ]
+```
+default_prog: [ "top" ]
 ```
 
 `default_prog` is implemented as an array where the 0th element

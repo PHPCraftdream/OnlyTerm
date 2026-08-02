@@ -12,8 +12,8 @@ to launch `wezterm` directly from another terminal to see this logging**.
 This can be helpful in figuring out how keys are being decoded on your system,
 or for discovering the system-dependent "raw" key code values.
 
-```rhai
-config.debug_key_events = true
+```
+debug_key_events: true
 ```
 
 Produces logs like the following when typing `ls`: (artificially wrapped

@@ -9,97 +9,42 @@ Switch to a different workspace, creating it if it doesn't already exist.
 * `name` - the name of the workspace. If omitted, a randomly generated name will be chosen.
 * `spawn` - a [SpawnCommand](../SpawnCommand.md) describing the command that should be started in the workspace if it doesn't already exist.  If omitted, the default program will be spawned in the newly created workspace.
 
-!!! warning "Pending rhai conversion"
+!!! note "`update-right-status` no longer exists"
 
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
+    The original version of this example also registered a
+    `wezterm.on('update-right-status', ...)` handler to show the active
+    workspace name in the status bar. That event hook has been removed along
+    with the rest of the scripting engine — see the
+    [changelog](../../../changelog.md#continuousnightly). Only the key
+    bindings below (the actual `SwitchToWorkspace` usage) still work.
 
-```lua
-local act = wezterm.action
-
-wezterm.on('update-right-status', function(window, pane)
-  window:set_right_status(window:active_workspace())
-end)
-
-config.keys = {
-  -- Switch to the default workspace
+```
+keys: [
+  // Switch to the default workspace
+  { key: y, mods: CTRL|SHIFT, action: { SwitchToWorkspace: { name: default } } }
+  // Switch to a monitoring workspace, which will have `top` launched into it
   {
-    key = 'y',
-    mods = 'CTRL|SHIFT',
-    action = act.SwitchToWorkspace {
-      name = 'default',
-    },
-  },
-  -- Switch to a monitoring workspace, which will have `top` launched into it
-  {
-    key = 'u',
-    mods = 'CTRL|SHIFT',
-    action = act.SwitchToWorkspace {
-      name = 'monitoring',
-      spawn = {
-        args = { 'top' },
-      },
-    },
-  },
-  -- Create a new workspace with a random name and switch to it
-  { key = 'i', mods = 'CTRL|SHIFT', action = act.SwitchToWorkspace },
-  -- Show the launcher in fuzzy selection mode and have it list all workspaces
-  -- and allow activating one.
-  {
-    key = '9',
-    mods = 'ALT',
-    action = act.ShowLauncherArgs {
-      flags = 'FUZZY|WORKSPACES',
-    },
-  },
-}
-
-return config
+    key: u
+    mods: CTRL|SHIFT
+    action: { SwitchToWorkspace: { name: monitoring, spawn: { args: [top] } } }
+  }
+  // Create a new workspace with a random name and switch to it
+  { key: i, mods: CTRL|SHIFT, action: SwitchToWorkspace }
+  // Show the launcher in fuzzy selection mode and have it list all workspaces
+  // and allow activating one.
+  { key: "9", mods: ALT, action: { ShowLauncherArgs: { flags: "FUZZY|WORKSPACES" } } }
+]
 ```
 
 ## Prompting for the workspace name
 
 {{since('20230408-112425-69ae8472')}}
 
-```lua
-local act = wezterm.action
+!!! danger "Non-functional: required a scripting callback"
 
-wezterm.on('update-right-status', function(window, pane)
-  window:set_right_status(window:active_workspace())
-end)
-
-config.keys = {
-  -- Prompt for a name to use for a new workspace and switch to it.
-  {
-    key = 'W',
-    mods = 'CTRL|SHIFT',
-    action = act.PromptInputLine {
-      description = wezterm.format {
-        { Attribute = { Intensity = 'Bold' } },
-        { Foreground = { AnsiColor = 'Fuchsia' } },
-        { Text = 'Enter name for new workspace' },
-      },
-      action = wezterm.action_callback(function(window, pane, line)
-        -- line will be `nil` if they hit escape without entering anything
-        -- An empty string if they just hit enter
-        -- Or the actual line of text they wrote
-        if line then
-          window:perform_action(
-            act.SwitchToWorkspace {
-              name = line,
-            },
-            pane
-          )
-        end
-      end),
-    },
-  },
-}
-
-return config
-```
+    The original version of this example used `PromptInputLine` with a
+    `wezterm.action_callback(...)` to take the entered name and switch to a
+    newly-named workspace. `PromptInputLine`'s callback mechanism no longer
+    works (see [PromptInputLine](PromptInputLine.md)), so this specific
+    "prompt then switch" flow currently has no working equivalent.
 

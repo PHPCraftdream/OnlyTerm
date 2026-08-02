@@ -34,8 +34,8 @@ For example, if:
 then wezterm will by default create a `WslDomain` with the name `"WSL:Ubuntu-18.04"`
 and if I set my config like this:
 
-```rhai
-config.default_domain = "WSL:Ubuntu-18.04"
+```
+default_domain: "WSL:Ubuntu-18.04"
 ```
 
 then when wezterm starts up, it will open with a shell running inside that Ubuntu

@@ -4,11 +4,11 @@
 
 Clear the CopyMode/SearchMode search pattern.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     search_mode: [
-      #{ key: "u", mods: "CTRL", action: act.CopyMode("ClearPattern") },
+      { key: "u", mods: "CTRL", action: { CopyMode: "ClearPattern" } },
     ],
   },
 }

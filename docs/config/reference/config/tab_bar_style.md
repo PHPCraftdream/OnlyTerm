@@ -41,33 +41,33 @@ This example changes the tab edges to the PowerLine arrow symbols:
 
 ![Demonstrating setting the styling of the left and right tab edges](../../../screenshots/wezterm-tab-edge-styled.png)
 
-```rhai
+```
 // The filled in variant of the < symbol
 let SOLID_LEFT_ARROW = nerdfonts("pl_right_hard_divider")
 
 // The filled in variant of the > symbol
 let SOLID_RIGHT_ARROW = nerdfonts("pl_left_hard_divider")
 
-config.tab_bar_style = #{
+tab_bar_style: {
   active_tab_left: format([
-    #{ Background: #{ Color: "#0b0022" } },
-    #{ Foreground: #{ Color: "#2b2042" } },
-    #{ Text: SOLID_LEFT_ARROW },
+    { Background: { Color: "#0b0022" } },
+    { Foreground: { Color: "#2b2042" } },
+    { Text: SOLID_LEFT_ARROW },
   ]),
   active_tab_right: format([
-    #{ Background: #{ Color: "#0b0022" } },
-    #{ Foreground: #{ Color: "#2b2042" } },
-    #{ Text: SOLID_RIGHT_ARROW },
+    { Background: { Color: "#0b0022" } },
+    { Foreground: { Color: "#2b2042" } },
+    { Text: SOLID_RIGHT_ARROW },
   ]),
   inactive_tab_left: format([
-    #{ Background: #{ Color: "#0b0022" } },
-    #{ Foreground: #{ Color: "#1b1032" } },
-    #{ Text: SOLID_LEFT_ARROW },
+    { Background: { Color: "#0b0022" } },
+    { Foreground: { Color: "#1b1032" } },
+    { Text: SOLID_LEFT_ARROW },
   ]),
   inactive_tab_right: format([
-    #{ Background: #{ Color: "#0b0022" } },
-    #{ Foreground: #{ Color: "#1b1032" } },
-    #{ Text: SOLID_RIGHT_ARROW },
+    { Background: { Color: "#0b0022" } },
+    { Foreground: { Color: "#1b1032" } },
+    { Text: SOLID_RIGHT_ARROW },
   ]),
 }
 ```

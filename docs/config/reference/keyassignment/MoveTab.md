@@ -4,31 +4,25 @@ Move the tab so that it has the index specified by the argument. eg: `0`
 moves the tab to be  leftmost, while `1` moves the tab so that it is second tab
 from the left, and so on.
 
-!!! warning "Pending rhai conversion"
+!!! note "No loops in ktav"
 
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
+    The original version of this example used a Lua `for` loop to generate
+    eight key bindings programmatically. ktav is a static data format with
+    no loops or expressions, so each binding below is now spelled out
+    explicitly instead of generated.
 
-```lua
-local wezterm = require 'wezterm'
-local config = {}
-
-config.keys = {}
-
-for i = 1, 8 do
-  -- CTRL+ALT + number to move to that position
-  table.insert(config.keys, {
-    key = tostring(i),
-    mods = 'CTRL|ALT',
-    action = wezterm.action.MoveTab(i - 1),
-  })
-end
-
-return config
+```
+keys: [
+  // CTRL+ALT + number to move to that position
+  { key: "1", mods: "CTRL|ALT", action: { MoveTab: 0 } }
+  { key: "2", mods: "CTRL|ALT", action: { MoveTab: 1 } }
+  { key: "3", mods: "CTRL|ALT", action: { MoveTab: 2 } }
+  { key: "4", mods: "CTRL|ALT", action: { MoveTab: 3 } }
+  { key: "5", mods: "CTRL|ALT", action: { MoveTab: 4 } }
+  { key: "6", mods: "CTRL|ALT", action: { MoveTab: 5 } }
+  { key: "7", mods: "CTRL|ALT", action: { MoveTab: 6 } }
+  { key: "8", mods: "CTRL|ALT", action: { MoveTab: 7 } }
+]
 ```
 
 

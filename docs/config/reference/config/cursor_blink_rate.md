@@ -15,8 +15,8 @@ specified with some degree of slop.
 It is recommended to avoid blinking cursors when on battery power, as it is
 relatively costly to keep re-rendering for the blink!
 
-```rhai
-config.cursor_blink_rate = 800
+```
+cursor_blink_rate: 800
 ```
 
 {{since('20220319-142410-0fcdea07')}}

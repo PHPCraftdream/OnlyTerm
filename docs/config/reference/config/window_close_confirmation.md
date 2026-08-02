@@ -12,8 +12,8 @@ OnlyTerm defaults this to `"NeverPrompt"` (upstream wezterm defaults to
 `"AlwaysPrompt"`). Set it to `"AlwaysPrompt"` if you'd like the
 confirmation prompt back.
 
-```rhai
-config.window_close_confirmation = "NeverPrompt"
+```
+window_close_confirmation: "NeverPrompt"
 ```
 
 See also

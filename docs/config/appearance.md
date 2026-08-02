@@ -8,16 +8,17 @@ WezTerm ships with over 700 color schemes available from
 
 You can select a color scheme with a line like this:
 
-```rhai
-config.color_scheme = "Batman"
+```
+color_scheme: "Batman"
 ```
 
 You can find a list of available color schemes and screenshots
 in [The Color Schemes Section](../colorschemes/index.md).
 
-If you'd like to automatically adjust your color scheme based on the
-system dark mode or light mode appearance, see the example in
-[wezterm.gui.get_appearance()](reference/wezterm.gui/get_appearance.md)
+Automatically adjusting the color scheme based on the system dark mode or
+light mode appearance previously required a scripting callback (see
+[wezterm.gui.get_appearance()](reference/wezterm.gui/get_appearance.md),
+which no longer works); there is currently no static-config equivalent.
 
 !!! note
     if you are using multiplexing with ssh or tls domains, the color scheme
@@ -28,8 +29,13 @@ system dark mode or light mode appearance, see the example in
 ### Precedence of `colors` vs `color_schemes`
 
 The `color_scheme` option takes precedence over the `colors` section below,
-and is mutually exclusive with it. If you want to merge/override colors
-you need to use [wezterm.color.get_default_colors()](reference/wezterm.color/get_default_colors.md) and explicitly merge them.
+and is mutually exclusive with it. Merging/overriding colors programmatically
+previously required calling
+[wezterm.color.get_default_colors()](reference/wezterm.color/get_default_colors.md)
+from a scripting config, which no longer works; you can instead copy the
+specific color values you want to override directly into your `colors`
+section, since (per the note below) any colors you define there are merged
+on top of the selected `color_scheme`.
 
 {{since('20220903-194523-3bb1ed61')}}
 
@@ -46,8 +52,8 @@ You can configure colors with a section like this.  In addition to specifying
 you can use `#RRGGBB` to specify a color code using the
 usual hex notation; eg: `#000000` is equivalent to `black`:
 
-```rhai
-config.colors = #{
+```
+colors: {
   // The default text color
   foreground: "silver",
   // The default background color
@@ -96,7 +102,7 @@ config.colors = #{
   ],
 
   // Arbitrary colors of the palette in the range from 16 to 255
-  indexed: #{ "136": "#af8700" },
+  indexed: { "136": "#af8700" },
 
   // Since: 20220319-142410-0fcdea07
   // When the IME, a dead key or a leader key are being processed and are effectively
@@ -109,27 +115,27 @@ config.colors = #{
   // In copy_mode, the color of the active text is:
   // 1. copy_mode_active_highlight_* if additional text was selected using the mouse
   // 2. selection_* otherwise
-  copy_mode_active_highlight_bg: #{ Color: "#000000" },
+  copy_mode_active_highlight_bg: { Color: "#000000" },
   // use `AnsiColor` to specify one of the ansi color palette values
   // (index 0-15) using one of the names "Black", "Maroon", "Green",
   //  "Olive", "Navy", "Purple", "Teal", "Silver", "Grey", "Red", "Lime",
   // "Yellow", "Blue", "Fuchsia", "Aqua" or "White".
-  copy_mode_active_highlight_fg: #{ AnsiColor: "Black" },
-  copy_mode_inactive_highlight_bg: #{ Color: "#52ad70" },
-  copy_mode_inactive_highlight_fg: #{ AnsiColor: "White" },
+  copy_mode_active_highlight_fg: { AnsiColor: "Black" },
+  copy_mode_inactive_highlight_bg: { Color: "#52ad70" },
+  copy_mode_inactive_highlight_fg: { AnsiColor: "White" },
 
-  quick_select_label_bg: #{ Color: "peru" },
-  quick_select_label_fg: #{ Color: "#ffffff" },
-  quick_select_match_bg: #{ AnsiColor: "Navy" },
-  quick_select_match_fg: #{ Color: "#ffffff" },
-
-  // (since nightly builds)
-  input_selector_label_bg: #{ AnsiColor: "Black" },
-  input_selector_label_fg: #{ Color: "#ffffff" },
+  quick_select_label_bg: { Color: "peru" },
+  quick_select_label_fg: { Color: "#ffffff" },
+  quick_select_match_bg: { AnsiColor: "Navy" },
+  quick_select_match_fg: { Color: "#ffffff" },
 
   // (since nightly builds)
-  launcher_label_bg: #{ AnsiColor: "Black" },
-  launcher_label_fg: #{ Color: "#ffffff" },
+  input_selector_label_bg: { AnsiColor: "Black" },
+  input_selector_label_fg: { Color: "#ffffff" },
+
+  // (since nightly builds)
+  launcher_label_bg: { AnsiColor: "Black" },
+  launcher_label_fg: { Color: "#ffffff" },
 }
 ```
 
@@ -137,8 +143,8 @@ config.colors = #{
 
 You may specify colors in the HSL color space, if you prefer that over RGB, by using:
 
-```rhai
-config.colors = #{
+```
+colors: {
   // the first number is the hue measured in degrees with a range
   // of 0-360.
   // The second number is the saturation measured in percentage with
@@ -175,8 +181,8 @@ hsv(120deg 100% 100% / 100%)
 The alpha value is ignored except when used with `selection_fg` and
 `selection_bg`:
 
-```rhai
-config.colors = #{
+```
+colors: {
   // Make the selection text color fully transparent.
   // When fully transparent, the current text color will be used.
   selection_fg: "none",
@@ -187,35 +193,35 @@ config.colors = #{
 }
 ```
 
-### Defining a Color Scheme in your `.wezterm.rhai`
+### Defining a Color Scheme in your `onlyterm.ktav`
 
 If you'd like to keep a couple of color schemes handy in your configuration
 file, rather than filling out the `colors` section, place it in a
 `color_schemes` section as shown below; you can then reference it using the
 `color_scheme` setting.
 
-Color schemes names that you define in your `wezterm.rhai` take precedence
+Color scheme names that you define in your `onlyterm.ktav` take precedence
 over all other color schemes.
 
 All of the settings available from the `colors` section are available
 to use in the `color_schemes` sections.
 
-```rhai
-config.color_scheme = "Red Scheme"
+```
+color_scheme: "Red Scheme"
 
-config.color_schemes = #{
-  "Red Scheme": #{
+color_schemes: {
+  "Red Scheme": {
     background: "red",
   },
-  "Blue Scheme": #{
+  "Blue Scheme": {
     background: "blue",
   },
 }
 ```
 
-See also [wezterm.get_builtin_color_schemes()](reference/wezterm/get_builtin_color_schemes.md) for
-some more advanced examples, such as picking a random color scheme, or deriving from a
-builting color scheme.
+See also [wezterm.get_builtin_color_schemes()](reference/wezterm/get_builtin_color_schemes.md)
+(a removed scripting function; see that page) for background on the full
+set of built-in schemes.
 
 ### Defining a Color Scheme in a separate file
 
@@ -233,8 +239,8 @@ If you wish to place your color scheme files in some other location, then you
 will need to instruct wezterm where to look for your scheme files; the
 `color_scheme_dirs` setting specifies a list of directories to be searched:
 
-```rhai
-config.color_scheme_dirs = [ "/some/path/to/my/color/schemes" ]
+```
+color_scheme_dirs: [ "/some/path/to/my/color/schemes" ]
 ```
 
 Color scheme names that are defined in files in your `color_scheme_dirs` list
@@ -280,15 +286,15 @@ details.
 
 The following options affect the fancy tab bar:
 
-```rhai
-config.window_frame = #{
+```
+window_frame: {
   // The font used in the tab bar.
   // Roboto Bold is the default; this font is bundled
   // with wezterm.
   // Whatever font is selected here, it will have the
   // main font setting appended to it to pick up any
   // fallback fonts you may have used there.
-  font: font(#{ family: "Roboto", weight: "Bold" }),
+  font: { font: [{ family: "Roboto", weight: "Bold" }] },
 
   // The size of the font in the tab bar.
   // Default to 10.0 on Windows but 12.0 on other systems
@@ -303,8 +309,8 @@ config.window_frame = #{
   inactive_titlebar_bg: "#333333",
 }
 
-config.colors = #{
-  tab_bar: #{
+colors: {
+  tab_bar: {
     // The color of the inactive tab bar edge/divider
     inactive_tab_edge: "#575757",
   },
@@ -318,15 +324,15 @@ to the items displayed in the tab bar.
 
 The following options control the appearance of the tab bar:
 
-```rhai
-config.colors = #{
-  tab_bar: #{
+```
+colors: {
+  tab_bar: {
     // The color of the strip that goes along the top of the window
     // (does not apply when fancy tab bar is in use)
     background: "#0b0022",
 
     // The active tab is the one that has focus in the window
-    active_tab: #{
+    active_tab: {
       // The color of the background area for the tab
       bg_color: "#2b2042",
       // The color of the text for the tab
@@ -352,7 +358,7 @@ config.colors = #{
     },
 
     // Inactive tabs are the tabs that do not have focus
-    inactive_tab: #{
+    inactive_tab: {
       bg_color: "#1b1032",
       fg_color: "#808080",
 
@@ -362,7 +368,7 @@ config.colors = #{
 
     // You can configure some alternate styling when the mouse pointer
     // moves over inactive tabs
-    inactive_tab_hover: #{
+    inactive_tab_hover: {
       bg_color: "#3b3052",
       fg_color: "#909090",
       italic: true,
@@ -372,7 +378,7 @@ config.colors = #{
     },
 
     // The new tab button that let you create new tabs
-    new_tab: #{
+    new_tab: {
       bg_color: "#1b1032",
       fg_color: "#808080",
 
@@ -382,7 +388,7 @@ config.colors = #{
 
     // You can configure some alternate styling when the mouse pointer
     // moves over the new tab button
-    new_tab_hover: #{
+    new_tab_hover: {
       bg_color: "#3b3052",
       fg_color: "#909090",
       italic: true,
@@ -413,8 +419,8 @@ saturation, brightness (HSB) multiplier.
 In this example, inactive panes will be slightly de-saturated and dimmed;
 this is the default configuration:
 
-```rhai
-config.inactive_pane_hsb = #{
+```
+inactive_pane_hsb: {
   saturation: 0.9,
   brightness: 0.8,
 }
@@ -445,12 +451,12 @@ reduce it by half, and 2.0 will double the value.
 
 You can attach an image to the background of the wezterm window:
 
-```rhai
-config.window_background_image = "/path/to/wallpaper.jpg"
+```
+window_background_image: "/path/to/wallpaper.jpg"
 ```
 
 If the path is a relative path then it will be expanded relative
-to the directory containing your `wezterm.rhai` config file.
+to the directory containing your `onlyterm.ktav` config file.
 
 PNG, JPEG, GIF, BMP, ICO, TIFF, PNM, DDS, TGA and farbfeld files
 can be loaded.  Animated GIF and PNG files will animate while
@@ -463,10 +469,10 @@ GPU, so you may wish to resize the image file before using it.
 You can optionally transform the background image by specifying
 a hue, saturation, brightness multiplier:
 
-```rhai
-config.window_background_image = "/path/to/wallpaper.jpg"
+```
+window_background_image: "/path/to/wallpaper.jpg"
 
-config.window_background_image_hsb = #{
+window_background_image_hsb: {
   // Darken the background image by reducing it to 1/3rd
   brightness: 0.3,
 
@@ -516,8 +522,8 @@ translucent/transparent) through to `1.0` (meaning completely opaque).
 Setting this to a value other than the default `1.0` may impact render
 performance.
 
-```rhai
-config.window_background_opacity = 1.0
+```
+window_background_opacity: 1.0
 ```
 
 ## Text Background Opacity
@@ -537,7 +543,7 @@ color is fully opaque.
 The range of values permitted are `0.0` (completely translucent)
 through to `1.0` (completely opaque).
 
-```rhai
-config.text_background_opacity = 0.3
+```
+text_background_opacity: 0.3
 ```
 

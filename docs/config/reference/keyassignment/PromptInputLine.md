@@ -7,106 +7,81 @@ tags:
 
 {{since('20230408-112425-69ae8472')}}
 
+!!! danger "Non-functional: required a scripting callback"
+
+    `PromptInputLine`'s `action` field was designed to hold an event
+    callback registered via `wezterm.action_callback(...)`, resolved through
+    rhai's (and, before that, Lua's) event-handler registry. That registry no
+    longer exists — see the [changelog](../../../changelog.md#continuousnightly)
+    and the [migration guide](../../../migration-to-ktav.md). The overlay
+    below still displays and accepts a line of input, but the entered text
+    now goes nowhere: there is no handler left to receive it, so using this
+    action currently has no observable effect beyond showing and closing a
+    prompt. `action` still only accepts the internal `EmitEvent` shape (for
+    backwards-compatible config loading); any config still written against
+    the examples below will keep loading, but nothing runs with the entered
+    text.
+
 Activates an overlay to display a prompt and request a line of input
 from the user.
-
-When the user enters the line, emits an event that allows you to act
-upon the input.
 
 `PromptInputLine` accepts four fields:
 
 * `description` - the text to show at the top of the display area. You may
-  embed escape sequences and/or use [wezterm.format](../wezterm/format.md).
-* `action` - and event callback registered via `wezterm.action_callback`.  The
-  callback's function signature is `(window, pane, line)` where `window` and
-  `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md)
-  objects from the current pane and window, and `line` is the text that the
-  user entered. `line` may be `nil` if they hit Escape without entering
-  anything, or CTRL-C to cancel the input.
-* `prompt` - the text to show as the prompt. You may embed escape sequences
-  and/or use [wezterm.format](../wezterm/format.md).  Defaults to: `"> "`. {{since('nightly', inline=True)}}
+  embed escape sequences.
+* `action` - previously an event callback registered via
+  `wezterm.action_callback`, called with the entered line. No longer
+  connected to anything (see above).
+* `prompt` - the text to show as the prompt. You may embed escape sequences.
+  Defaults to: `"> "`. {{since('nightly', inline=True)}}
 * `initial_value` - optional.  If provided, the initial content of the input
   field will be set to this value.  The user may edit it prior to submitting
   the input. {{since('nightly', inline=True)}}
 
-## Example of interactively renaming the current tab
+## Historical examples (no longer functional)
 
-!!! warning "Pending rhai conversion"
+These are preserved for reference only; the callbacks here will not run in
+the current version of OnlyTerm.
 
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-
-local config = wezterm.config_builder()
-config.keys = {
-  {
-    key = 'E',
-    mods = 'CTRL|SHIFT',
-    action = act.PromptInputLine {
-      description = 'Enter new name for tab',
-      initial_value = 'My Tab Name',
-      action = wezterm.action_callback(function(window, pane, line)
-        -- line will be `nil` if they hit escape without entering anything
-        -- An empty string if they just hit enter
-        -- Or the actual line of text they wrote
-        if line then
-          window:active_tab():set_title(line)
-        end
-      end),
-    },
+```rhai
+config.keys = [
+  #{
+    key: "E",
+    mods: "CTRL|SHIFT",
+    action: act.PromptInputLine(#{
+      description: "Enter new name for tab",
+      initial_value: "My Tab Name",
+      action: wezterm.action_callback(|window, pane, line| {
+        // line will be `()` if they hit escape without entering anything
+        // An empty string if they just hit enter
+        // Or the actual line of text they wrote
+        if line != () {
+          window.active_tab().set_title(line);
+        }
+      }),
+    }),
   },
-}
-
-return config
+]
 ```
 
-## Example of interactively picking a name and creating a new workspace
-
-Similar to the above, but prompts for a name prior to creating
-the workspace.
-
-This example also shows the use of `wezterm.format` to emit colored text.
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-
-local config = wezterm.config_builder()
-config.keys = {
-  {
-    key = 'N',
-    mods = 'CTRL|SHIFT',
-    action = act.PromptInputLine {
-      description = wezterm.format {
-        { Attribute = { Intensity = 'Bold' } },
-        { Foreground = { AnsiColor = 'Fuchsia' } },
-        { Text = 'Enter name for new workspace' },
-      },
-      action = wezterm.action_callback(function(window, pane, line)
-        -- line will be `nil` if they hit escape without entering anything
-        -- An empty string if they just hit enter
-        -- Or the actual line of text they wrote
-        if line then
-          window:perform_action(
-            act.SwitchToWorkspace {
-              name = line,
-            },
+```rhai
+config.keys = [
+  #{
+    key: "N",
+    mods: "CTRL|SHIFT",
+    action: act.PromptInputLine(#{
+      description: "Enter name for new workspace",
+      action: wezterm.action_callback(|window, pane, line| {
+        if line != () {
+          window.perform_action(
+            act.SwitchToWorkspace(#{ name: line }),
             pane
-          )
-        end
-      end),
-    },
+          );
+        }
+      }),
+    }),
   },
-}
-
-return config
+]
 ```
 
 See also:

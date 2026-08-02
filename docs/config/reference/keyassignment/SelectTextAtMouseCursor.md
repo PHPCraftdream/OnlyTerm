@@ -13,11 +13,11 @@ In this example, the triple-left-click mouse action is set to
 automatically select the entire command output when clicking
 on any character within that region:
 
-```rhai
-config.mouse_bindings = [
-  #{
-    event: #{ Down: #{ streak: 3, button: "Left" } },
-    action: act.SelectTextAtMouseCursor("SemanticZone"),
+```
+mouse_bindings: [
+  {
+    event: { Down: { streak: 3, button: "Left" } },
+    action: { SelectTextAtMouseCursor: "SemanticZone" },
     mods: "NONE",
   },
 ]

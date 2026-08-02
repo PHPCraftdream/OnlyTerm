@@ -12,8 +12,8 @@ blinking.  Note that this value is approximate due to the way that the system
 event loop schedulers manage timers; non-zero values will be at least the
 interval specified with some degree of slop.
 
-```rhai
-config.text_blink_rate_rapid = 250
+```
+text_blink_rate_rapid: 250
 ```
 
 {{since('20220319-142410-0fcdea07')}}

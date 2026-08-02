@@ -11,7 +11,7 @@ Controls the alignment of the terminal cells inside the window.
 When window size is not a multiple of terminal cell size, terminal cells will be slightly smaller than the window, and leave a small gap between the two.
 You can use this option to control where the additional gap will be.
 
-The rhai map has two fields and following possible values:
+The object has two fields and following possible values:
 
 * `horizontal`
     * `"Left"` (the default)
@@ -24,8 +24,8 @@ The rhai map has two fields and following possible values:
 
 For example, to center the terminal cells:
 
-```rhai
-config.window_content_alignment = #{
+```
+window_content_alignment: {
   horizontal: "Center",
   vertical: "Center",
 }

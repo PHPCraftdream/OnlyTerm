@@ -16,9 +16,9 @@ a crystal clear transparent window effect.
 
 This effect can be achieved by adding the following to the configuration:
 
-```rhai
-config.window_background_opacity = 0.4 // opacity as you please
-config.kde_window_background_blur = true
+```
+window_background_opacity: 0.4 // opacity as you please
+kde_window_background_blur: true
 ```
 
 ![Screenshot](../../../screenshots/wezterm-kde-background-blur.png)

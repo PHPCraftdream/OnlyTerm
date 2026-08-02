@@ -7,14 +7,14 @@ cursor is at the top left corner and the starting point is the bottom right
 corner, then the cursor and starting point are swapped, with the cursor now
 positioned at the bottom right corner.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "o",
         mods: "NONE",
-        action: act.CopyMode("MoveToSelectionOtherEnd"),
+        action: { CopyMode: "MoveToSelectionOtherEnd" },
       },
     ],
   },

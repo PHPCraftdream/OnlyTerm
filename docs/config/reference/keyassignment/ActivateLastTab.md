@@ -4,14 +4,14 @@
 
 Activate the previously active tab. If there is none, it will do nothing.
 
-```rhai
-config.leader = #{ key: "a", mods: "CTRL" }
-config.keys = [
+```
+leader: { key: "a", mods: "CTRL" }
+keys: [
   // CTRL-a, followed by CTRL-o will switch back to the last active tab
-  #{
+  {
     key: "o",
     mods: "LEADER|CTRL",
-    action: act.ActivateLastTab,
+    action: ActivateLastTab,
   },
 ]
 ```

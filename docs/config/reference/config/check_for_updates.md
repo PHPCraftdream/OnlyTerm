@@ -16,7 +16,7 @@ No data are collected for the wezterm project as part of this.
 Set `check_for_updates` to `false` to disable this completely or set
 `check_for_updates_interval_seconds` for an alternative update interval.
 
-```rhai
-config.check_for_updates = true
-config.check_for_updates_interval_seconds = 86400
+```
+check_for_updates: true
+check_for_updates_interval_seconds: 86400
 ```

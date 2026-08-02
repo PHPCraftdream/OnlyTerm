@@ -2,12 +2,12 @@
 
 Toggles full screen mode for the current window.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "n",
     mods: "SHIFT|CTRL",
-    action: act.ToggleFullScreen,
+    action: ToggleFullScreen,
   },
 ]
 ```

@@ -14,14 +14,14 @@ Possible values for ZONE are:
 * `"Input"`
 * `"Prompt"`
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "z",
         mods: "ALT",
-        action: act.CopyMode(#{ MoveBackwardZoneOfType: "Output" }),
+        action: { CopyMode: { MoveBackwardZoneOfType: "Output" } },
       },
     ],
   },

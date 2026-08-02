@@ -17,17 +17,17 @@ entries with this action.
 
 The example below shows how to bind a key to trigger attaching to a unix domain:
 
-```rhai
-config.unix_domains = [
-  #{
+```
+unix_domains: [
+  {
     name: "devhost",
   },
 ]
-config.keys = [
-  #{
+keys: [
+  {
     key: "U",
     mods: "CTRL|SHIFT",
-    action: act.AttachDomain("devhost"),
+    action: { AttachDomain: "devhost" },
   },
 ]
 ```

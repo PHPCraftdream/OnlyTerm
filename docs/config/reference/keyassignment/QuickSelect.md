@@ -4,9 +4,9 @@
 
 Activates [Quick Select Mode](../../../quickselect.md).
 
-```rhai
-config.keys = [
-  #{ key: " ", mods: "SHIFT|CTRL", action: act.QuickSelect },
+```
+keys: [
+  { key: " ", mods: "SHIFT|CTRL", action: QuickSelect },
 ]
 ```
 

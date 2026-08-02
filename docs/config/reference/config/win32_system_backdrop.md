@@ -37,27 +37,27 @@ effect on Linux Wayland.
 
 ## Acrylic
 
-```rhai
-config.window_background_opacity = 0
-config.win32_system_backdrop = "Acrylic"
+```
+window_background_opacity: 0
+win32_system_backdrop: "Acrylic"
 ```
 
 ![Acrylic Effect](../../../screenshots/wezterm-acrylic.png)
 
 ## Mica
 
-```rhai
-config.window_background_opacity = 0
-config.win32_system_backdrop = "Mica"
+```
+window_background_opacity: 0
+win32_system_backdrop: "Mica"
 ```
 
 ![Mica Effect](../../../screenshots/wezterm-mica.png)
 
 ## Tabbed
 
-```rhai
-config.window_background_opacity = 0
-config.win32_system_backdrop = "Tabbed"
+```
+window_background_opacity: 0
+win32_system_backdrop: "Tabbed"
 ```
 
 ![Tabbed Effect](../../../screenshots/wezterm-tabbed.png)

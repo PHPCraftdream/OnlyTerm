@@ -92,8 +92,8 @@ If you don't want the default assignments to be registered, you can
 disable all of them with this configuration; if you chose to do this,
 you must explicitly register every binding.
 
-```lua
-config.disable_default_key_bindings = true
+```
+disable_default_key_bindings: true
 ```
 
 !!! tip
