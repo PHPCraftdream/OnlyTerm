@@ -998,6 +998,22 @@ impl TermWindow {
     /// for another tick. See `schedule_render_thread_hang_check` for the
     /// scheduling half.
     fn check_render_thread_hang_tick(&mut self, window: &Window) {
+        // Sweep any WebGpu child HWNDs retired by an earlier
+        // `begin_renderer_rebuild` (task #283): destroys the ones whose
+        // paired `Weak<WebGpuState>` has since hit zero strong references
+        // (i.e. the old render thread has actually returned), leaving any
+        // others -- still possibly referenced by a render thread that
+        // hasn't unwedged yet -- in place for the next tick. Runs
+        // unconditionally, before the early-return guards below, so this
+        // ~2s cadence is what actually reclaims a retired HWND promptly
+        // instead of leaving it until the window closes; see
+        // `Window::sweep_retired_webgpu_children`'s doc comment for the
+        // full rationale, including why leaving one unswept is never a
+        // leak (the top-level window's own `WS_CHILD` teardown is a
+        // backstop).
+        #[cfg(windows)]
+        window.sweep_retired_webgpu_children();
+
         if self.render_thread_hang_handled.get() {
             // Already rebuilding/closing this window for a hang detected on
             // an earlier tick; a tick that fires after that (a race between
@@ -1378,16 +1394,40 @@ impl TermWindow {
         // device must be able to tell it's stale and no-op, instead of
         // charging a spurious rebuild attempt against the freshly-rebuilt,
         // perfectly healthy device that replaces it below.
-        if let Some(webgpu) = self.webgpu.take() {
-            webgpu.mark_stale();
-        }
+        //
+        // Downgrade to a `Weak` *before* dropping our own strong reference
+        // (task #283): the render thread we just (non-blockingly) told to
+        // shut down may hold the other strong `Arc` (`RenderThreadSeed::webgpu`)
+        // and, if it's wedged inside `submit_frame`/`present()`, may not
+        // drop it for an arbitrarily long time. `recreate_webgpu_child_window`
+        // stashes this `Weak` alongside the old child HWND instead of
+        // destroying it immediately, so `check_render_thread_hang_tick` can
+        // poll it later and only destroy the HWND once this reports zero
+        // strong references (i.e. once the render thread has actually
+        // returned and dropped its own `Arc`, taking the surface/swapchain
+        // with it). See `Window::recreate_webgpu_child_window`'s doc comment
+        // for the full rationale.
+        // Only actually consumed on Windows (`recreate_webgpu_child_window`
+        // below), since that's the only platform with a dedicated WebGpu
+        // child HWND to retire in the first place; the `#[allow]` avoids an
+        // unused-variable warning on other platforms where it's computed
+        // but never read.
+        #[allow(unused_variables)]
+        let old_webgpu_weak: std::sync::Weak<dyn std::any::Any + Send + Sync> =
+            match self.webgpu.take() {
+                Some(webgpu) => {
+                    webgpu.mark_stale();
+                    Arc::downgrade(&webgpu) as std::sync::Weak<dyn std::any::Any + Send + Sync>
+                }
+                None => std::sync::Weak::<WebGpuState>::new(),
+            };
 
         let window_for_async = window.clone();
         let dimensions = self.dimensions;
         let config = self.config.clone();
 
         promise::spawn::spawn(async move {
-            // Step 3: destroy the old WebGpu child HWND and create a fresh
+            // Step 3: retire the old WebGpu child HWND and create a fresh
             // one, *before* rebuilding `WebGpuState` below. This has to
             // happen ahead of the `WebGpuState::new` call, not after it:
             // `WebGpuState::new` picks whichever child HWND
@@ -1411,7 +1451,10 @@ impl TermWindow {
             // the original `notify()` call, is what actually avoids the
             // re-entrant borrow.
             #[cfg(windows)]
-            if let Err(err) = window_for_async.recreate_webgpu_child_window().await {
+            if let Err(err) = window_for_async
+                .recreate_webgpu_child_window(old_webgpu_weak)
+                .await
+            {
                 let win = window_for_async.clone();
                 window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                     tw.finish_renderer_rebuild(&win, Err(err));
@@ -1459,6 +1502,20 @@ impl TermWindow {
         window: &Window,
         result: anyhow::Result<WebGpuState>,
     ) {
+        // Opportunistic extra sweep (task #283): by the time `WebGpuState::new`
+        // (real adapter/device/surface setup work, not instantaneous) has
+        // resolved, the old render thread this rebuild abandoned has
+        // usually already observed the shutdown signal and returned,
+        // dropping its `Arc<WebGpuState>`. Sweeping here means the common
+        // case -- a healthy render thread that wasn't really wedged, just
+        // slow -- gets its retired HWND destroyed right away instead of
+        // waiting for the next ~2s `check_render_thread_hang_tick`. Not
+        // load-bearing: if the old thread is still wedged, this is a
+        // harmless no-op and the next tick (or eventually window close)
+        // will catch it once it's safe.
+        #[cfg(windows)]
+        window.sweep_retired_webgpu_children();
+
         let webgpu = match result {
             Ok(state) => Arc::new(state),
             Err(err) => {
