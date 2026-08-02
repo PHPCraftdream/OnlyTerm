@@ -1399,6 +1399,26 @@ impl TermWindow {
         // doc comment.
         self.permanently_on_opengl.set(true);
 
+        // One-shot sweep of any WebGpu child HWNDs retired by the failed
+        // rebuild attempts that led to this fallback (task #292, issue 2):
+        // once this window is permanently on OpenGL, `schedule_render_thread_hang_check`
+        // is never armed again (see this function's own doc comment), so the
+        // `check_render_thread_hang_tick` cadence that normally sweeps
+        // `retired_webgpu_children` promptly (task #283) will never run
+        // again for this window either -- without this call, up to
+        // `MAX_REBUILDS_PER_WINDOW` retired HWNDs from the rebuild attempts
+        // above would sit hidden-but-technically-alive until the window
+        // itself closes (still not a real leak, since `hwnd`'s own
+        // `WS_CHILD` teardown is a backstop -- see
+        // `retired_webgpu_children`'s doc comment -- just not reclaimed
+        // promptly). A single sweep here is sufficient and nothing needs to
+        // keep polling afterward: WebGpu rebuilds have stopped for this
+        // window permanently, so no *new* HWNDs will ever be retired after
+        // this point. Safe to call even if nothing was retired (plain
+        // no-op per `sweep_retired_webgpu_children`'s doc comment).
+        #[cfg(windows)]
+        window.sweep_retired_webgpu_children();
+
         window.invalidate();
 
         log::warn!(
@@ -1422,6 +1442,36 @@ impl TermWindow {
     /// code -> async GUI-thread-only work -> re-entry via
     /// `TermWindowNotif::Apply`).
     fn begin_renderer_rebuild(&mut self, window: &Window) {
+        // Grab the outgoing render thread's teardown sentinel (task #292)
+        // *before* taking/shutting it down below: `RenderThreadHandle::
+        // teardown_sentinel` only exists on the handle itself, so this has
+        // to happen while `self.render_thread` still holds it. See that
+        // method's doc comment for why this -- not a `Weak` obtained by
+        // downgrading `self.webgpu` -- is the correct signal for
+        // `recreate_webgpu_child_window`/`sweep_retired_webgpu_children` to
+        // poll: a `Weak<WebGpuState>`'s strong count can read zero while
+        // `WebGpuState::drop` (and the `wgpu::Surface`/DXGI swapchain
+        // teardown inside it) is still running on the render thread, since
+        // `Arc::drop` decrements the strong count before running the
+        // value's own `drop_in_place`. The sentinel instead only reports
+        // zero strong references once the render thread has fully returned
+        // from `render_thread_loop`, strictly after every `Arc<WebGpuState>`
+        // clone it held has already been dropped.
+        //
+        // Only actually consumed on Windows (`recreate_webgpu_child_window`
+        // below), since that's the only platform with a dedicated WebGpu
+        // child HWND to retire in the first place; the `#[allow]` avoids an
+        // unused-variable warning on other platforms where it's computed
+        // but never read.
+        #[allow(unused_variables)]
+        let old_webgpu_weak: std::sync::Weak<dyn std::any::Any + Send + Sync> = self
+            .render_thread
+            .as_ref()
+            .map(|rt| rt.teardown_sentinel())
+            .unwrap_or_else(|| {
+                std::sync::Weak::<()>::new() as std::sync::Weak<dyn std::any::Any + Send + Sync>
+            });
+
         // Step 1: abandon the old render thread. Detach, don't join --
         // exactly like the `Destroyed` handler: a stuck GPU driver call
         // can't freeze the GUI thread, so blocking here via `.join()` would
@@ -1454,33 +1504,9 @@ impl TermWindow {
         // device must be able to tell it's stale and no-op, instead of
         // charging a spurious rebuild attempt against the freshly-rebuilt,
         // perfectly healthy device that replaces it below.
-        //
-        // Downgrade to a `Weak` *before* dropping our own strong reference
-        // (task #283): the render thread we just (non-blockingly) told to
-        // shut down may hold the other strong `Arc` (`RenderThreadSeed::webgpu`)
-        // and, if it's wedged inside `submit_frame`/`present()`, may not
-        // drop it for an arbitrarily long time. `recreate_webgpu_child_window`
-        // stashes this `Weak` alongside the old child HWND instead of
-        // destroying it immediately, so `check_render_thread_hang_tick` can
-        // poll it later and only destroy the HWND once this reports zero
-        // strong references (i.e. once the render thread has actually
-        // returned and dropped its own `Arc`, taking the surface/swapchain
-        // with it). See `Window::recreate_webgpu_child_window`'s doc comment
-        // for the full rationale.
-        // Only actually consumed on Windows (`recreate_webgpu_child_window`
-        // below), since that's the only platform with a dedicated WebGpu
-        // child HWND to retire in the first place; the `#[allow]` avoids an
-        // unused-variable warning on other platforms where it's computed
-        // but never read.
-        #[allow(unused_variables)]
-        let old_webgpu_weak: std::sync::Weak<dyn std::any::Any + Send + Sync> =
-            match self.webgpu.take() {
-                Some(webgpu) => {
-                    webgpu.mark_stale();
-                    Arc::downgrade(&webgpu) as std::sync::Weak<dyn std::any::Any + Send + Sync>
-                }
-                None => std::sync::Weak::<WebGpuState>::new(),
-            };
+        if let Some(webgpu) = self.webgpu.take() {
+            webgpu.mark_stale();
+        }
 
         let window_for_async = window.clone();
         let dimensions = self.dimensions;
