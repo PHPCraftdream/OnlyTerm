@@ -293,10 +293,8 @@ title: Color Schemes with first letter "{scheme_prefix}"
                     idx.write("\nTo use this scheme, add this to your config:\n")
                     idx.write(
                         f"""
-```rhai
-#{{
-    color_scheme: "{title}",
-}}
+```
+color_scheme: {title}
 ```
 
 """
