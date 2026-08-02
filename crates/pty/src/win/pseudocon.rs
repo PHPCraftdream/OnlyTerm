@@ -59,9 +59,29 @@ fn load_conpty() -> ConPtyFuncs {
     // We prefer to use a sideloaded conpty.dll and openconsole.exe host deployed
     // alongside the application.  We check for this after checking for kernel
     // support so that we don't try to proceed and do something crazy.
+    //
+    // Falling back to `kernel` here does NOT mean a fully working in-box
+    // ConPTY: on at least Windows 10 22H2 (build 19045) the in-box
+    // `CreatePseudoConsole` succeeds, but the pseudo-console it creates
+    // cannot actually host a child process -- `CreateProcessW` against it
+    // fails with `ERROR_INVALID_HANDLE` (see task #326). The sideload is
+    // there precisely to paper over that gap, so losing it (missing
+    // `conpty.dll`/`OpenConsole.exe` next to the executable) is a real
+    // degradation, not just a cosmetic difference. We still return the
+    // kernel-provided functions here (rather than failing outright) so
+    // that newer Windows versions where the in-box implementation *does*
+    // work end up in a good state; `LocalDomain::spawn_pane` is
+    // responsible for surfacing a loud, user-visible error if spawning
+    // through whichever ConPTY we ended up with doesn't actually work.
     if let Ok(sideloaded) = ConPtyFuncs::open(Path::new("conpty.dll")) {
         sideloaded
     } else {
+        log::warn!(
+            "sideloaded conpty.dll not found next to the executable; \
+             falling back to the system-provided ConPTY in kernel32.dll. \
+             On some Windows versions this fallback cannot actually host a \
+             shell (see task #326); if pane spawn fails, that's why."
+        );
         kernel
     }
 }
