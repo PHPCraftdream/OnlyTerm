@@ -26,7 +26,7 @@ As features stabilize some brief notes about them will accumulate here.
   with every `lua-api-crates/*` crate that backed it. The configuration
   language is now **ktav**, a static, engine-free `key: value` data format
   (no expressions, no function calls, no `on(...)` event hooks) — your config
-  file must now be a `.wezterm.ktav` file (previously `.wezterm.rhai`, and
+  file must now be a `.onlyterm.ktav` file (previously `.wezterm.rhai`, and
   before that `.wezterm.lua`). This is a deliberate simplification, not a
   stopgap: an audit found that most of the scripting surface was already
   unreachable dead code (an earlier, incomplete Lua-to-rhai migration had
@@ -54,7 +54,7 @@ As features stabilize some brief notes about them will accumulate here.
   rather than via scripting, and is the closest still-working alternative
   for reaching WSL). Plugins (which required a scripting engine to evaluate
   `plugin/init.rhai`) are also gone. If a legacy `.wezterm.rhai`/`.wezterm.lua`
-  is found with no `.wezterm.ktav` sibling, WezTerm prints a clear error
+  is found with no `.onlyterm.ktav` sibling, WezTerm prints a clear error
   naming the file and pointing at the migration guide. A separate, explicit
   external-hooks API may be added later if a real need for scripted
   customization emerges — this removal is not a signal that hooks can never
