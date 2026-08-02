@@ -26,10 +26,16 @@ to the `"Verbose"` setting.
 
 ## Example of a failing process with Verbose messaging
 
+`default_prog=[:: false]` overrides `default_prog` to spawn the literal
+string `false` (the Unix `/bin/false` command, which always exits with a
+non-zero status) as a single-element argv array. The `::` before `false` is
+required here: without it, the bareword `false` would parse as the ktav
+boolean `false` rather than the program-name string `"false"`.
+
 ```console
-$ wezterm -n --config 'default_prog={"false"}' \
-    --config 'exit_behavior="Hold"' \
-    --config 'exit_behavior_messaging="Verbose"'
+$ wezterm -n --config 'default_prog=[:: false]' \
+    --config exit_behavior=Hold \
+    --config exit_behavior_messaging=Verbose
 ```
 
 Produces:
@@ -43,9 +49,9 @@ This message is shown because exit_behavior="Hold"
 ## Example of a failing process with Brief messaging
 
 ```console
-$ wezterm -n --config 'default_prog={"false"}' \
-     --config 'exit_behavior="Hold"' \
-     --config 'exit_behavior_messaging="Brief"'
+$ wezterm -n --config 'default_prog=[:: false]' \
+     --config exit_behavior=Hold \
+     --config exit_behavior_messaging=Brief
 ```
 
 Produces:
@@ -58,9 +64,9 @@ Exited with code 1
 ## Example of a failing process with Terse messaging
 
 ```console
-$ wezterm -n --config 'default_prog={"false"}' \
-     --config 'exit_behavior="Hold"' \
-     --config 'exit_behavior_messaging="Terse"'
+$ wezterm -n --config 'default_prog=[:: false]' \
+     --config exit_behavior=Hold \
+     --config exit_behavior_messaging=Terse
 ```
 
 Produces:
@@ -72,9 +78,9 @@ Produces:
 ## Example of a successful process with Verbose messaging
 
 ```console
-$ wezterm -n --config 'default_prog={"true"}' \
-     --config 'exit_behavior="Hold"' \
-     --config 'exit_behavior_messaging="Verbose"'
+$ wezterm -n --config 'default_prog=[:: true]' \
+     --config exit_behavior=Hold \
+     --config exit_behavior_messaging=Verbose
 ```
 
 Produces:
@@ -87,9 +93,9 @@ This message is shown because exit_behavior="Hold"
 ## Example of a successful process with Brief messaging
 
 ```console
-$ wezterm -n --config 'default_prog={"true"}' \
-     --config 'exit_behavior="Hold"' \
-     --config 'exit_behavior_messaging="Brief"'
+$ wezterm -n --config 'default_prog=[:: true]' \
+     --config exit_behavior=Hold \
+     --config exit_behavior_messaging=Brief
 ```
 
 Produces:
@@ -101,9 +107,9 @@ Produces:
 ## Example of a successful process with Terse messaging
 
 ```console
-$ wezterm -n --config 'default_prog={"true"}' \
-     --config 'exit_behavior="Hold"' \
-     --config 'exit_behavior_messaging="Terse"'
+$ wezterm -n --config 'default_prog=[:: true]' \
+     --config exit_behavior=Hold \
+     --config exit_behavior_messaging=Terse
 ```
 
 Produces:

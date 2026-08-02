@@ -20,19 +20,19 @@ Switch to a different workspace, creating it if it doesn't already exist.
 
 ```
 keys: [
-  // Switch to the default workspace
+  ## Switch to the default workspace
   { key: y, mods: CTRL|SHIFT, action: { SwitchToWorkspace: { name: default } } }
-  // Switch to a monitoring workspace, which will have `top` launched into it
+  ## Switch to a monitoring workspace, which will have `top` launched into it
   {
     key: u
     mods: CTRL|SHIFT
     action: { SwitchToWorkspace: { name: monitoring, spawn: { args: [top] } } }
   }
-  // Create a new workspace with a random name and switch to it
+  ## Create a new workspace with a random name and switch to it
   { key: i, mods: CTRL|SHIFT, action: SwitchToWorkspace }
-  // Show the launcher in fuzzy selection mode and have it list all workspaces
-  // and allow activating one.
-  { key: "9", mods: ALT, action: { ShowLauncherArgs: { flags: "FUZZY|WORKSPACES" } } }
+  ## Show the launcher in fuzzy selection mode and have it list all workspaces
+  ## and allow activating one.
+  { key: 9, mods: ALT, action: { ShowLauncherArgs: { flags: FUZZY|WORKSPACES } } }
 ]
 ```
 

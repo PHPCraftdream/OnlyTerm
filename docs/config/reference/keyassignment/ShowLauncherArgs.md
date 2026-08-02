@@ -45,10 +45,10 @@ matching mode, and have it show only tabs:
 ```
 keys: [
   {
-    key: "9",
-    mods: "ALT",
-    action: { ShowLauncherArgs: { flags: "FUZZY|TABS" } },
-  },
+    key: 9
+    mods: ALT
+    action: { ShowLauncherArgs: { flags: FUZZY|TABS } }
+  }
 ]
 ```
 

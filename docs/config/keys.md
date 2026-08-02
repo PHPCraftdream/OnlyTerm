@@ -6,9 +6,9 @@ disable a default assignment like this:
 
 ```
 keys: [
-    // Turn off the default CMD-m Hide action, allowing CMD-m to
-    // be potentially recognized and handled by the tab
-    { key: "m", mods: "CMD", action: "DisableDefaultAssignment" },
+    ## Turn off the default CMD-m Hide action, allowing CMD-m to
+    ## be potentially recognized and handled by the tab
+    { key: m, mods: CMD, action: DisableDefaultAssignment }
 ]
 ```
 
@@ -18,7 +18,8 @@ keys: [
     in a rhai config, `action: act.DisableDefaultAssignment`. In ktav there is
     no `wezterm.action`/`act` helper at all: a simple action is its name as a
     bare string (`DisableDefaultAssignment`), and a parameterized action is a
-    single-key object (e.g. `{ SpawnCommandInNewTab: { cwd: "/tmp" } }`). See
+    single-key object (e.g. `{ SpawnCommandInNewTab: { cwd: /tmp } }`, with no
+    quotes around `/tmp` since ktav does not strip them). See
     the [migration guide](../migration-to-ktav.md#key-bindings-and-actions)
     for the full translation.
 
@@ -66,7 +67,7 @@ all of these are meaningful on all platforms:
 Alternatively, a single unicode character can be specified to indicate
 pressing the corresponding key.
 
-Pay attention to the case of the text that you use and the state of the `SHIFT` modifier, as `key="A"` will match 
+Pay attention to the case of the text that you use and the state of the `SHIFT` modifier, as `key: A` will match 
 
 ### Physical vs Mapped Key Assignments
 
@@ -77,11 +78,11 @@ US keyboard or to the post-keyboard-layout-mapped value produced by a key
 press.
 
 You can explicitly assign using the physical position by adding a `phys:` prefix
-to the value, for example: `key="phys:A"`.  This will match key presses for
+to the value, for example: `key: phys:A`.  This will match key presses for
 the key that would be in the position of the `A` key on an ANSI US keyboard.
 
 You can explicitly assign the mapped key by adding a `mapped:` prefix to the
-value, for example: `key="mapped:a"` will match a key press where the OS
+value, for example: `key: mapped:a` will match a key press where the OS
 keyboard layout produces `a`, regardless of its physical position.
 
 If you omit an explicit prefix, wezterm will assume `phys:` and use the
@@ -90,16 +91,16 @@ physical position of the specified key.
 The default key assignments listed above use `phys:`.  In previous releases
 there was no physical position support and those assignments were all `mapped:`.
 
-When upgrading from earlier releases, if you had `{key="N", mods="CMD", ..}` in
-your config, you will need to change it to either
-`{key="N", mods="CMD|SHIFT", ..}` or `{key="mapped:N", mods="CMD", ..}`
-in order to continue to respect the `SHIFT` modifier.
+When upgrading from earlier releases, if you had a binding equivalent to
+`{ key: N, mods: CMD }` in your config, you will need to change it to either
+`{ key: N, mods: CMD|SHIFT }` or `{ key: mapped:N, mods: CMD }` in order to
+continue to respect the `SHIFT` modifier.
 
 {{since('20220408-101518-b908e2dd')}}
 
 A new `key_map_preference` option controls how keys without an explicit `phys:`
-or `mapped:` prefix are treated. If `key_map_preference = "Mapped"` (the
-default), then `mapped:` is assumed. If `key_map_preference = "Physical"` then
+or `mapped:` prefix are treated. If `key_map_preference: Mapped` (the
+default), then `mapped:` is assumed. If `key_map_preference: Physical` then
 `phys:` is assumed.
 
 The default key assignments will respect `key_map_preference`.
@@ -118,7 +119,7 @@ To discover these values, you can set [debug_key_events =
 true](reference/config/debug_key_events.md) and press the keys of
 interest.
 
-You can specify a raw key value of 123 by using `key="raw:123"` in your config
+You can specify a raw key value of 123 by using `key: raw:123` in your config
 rather than one of the other key values.
 
 ### Leader Key
@@ -144,15 +145,15 @@ milliseconds).  While `LEADER` is active, the `|` key (with no other modifiers)
 will trigger the current pane to be split.
 
 ```
-// timeout_milliseconds defaults to 1000 and can be omitted
+## timeout_milliseconds defaults to 1000 and can be omitted
 leader: { key: a, mods: CTRL, timeout_milliseconds: 1000 }
 keys: [
   {
-    key: "|"
+    key: |
     mods: LEADER|SHIFT
     action: { SplitHorizontal: { domain: CurrentPaneDomain } }
   }
-  // Send "CTRL-A" to the terminal when pressing CTRL-A, CTRL-A
+  ## Send "CTRL-A" to the terminal when pressing CTRL-A, CTRL-A
   {
     key: a
     mods: LEADER|CTRL
@@ -172,17 +173,17 @@ uses `CapsLock` as a `LEADER` without it affecting the shift / capital state as
 long as you have `setxkbmap -option caps:none` configured.
 
 ```
-// timeout_milliseconds defaults to 1000 and can be omitted
-// for this example use `setxkbmap -option caps:none` in your terminal.
+## timeout_milliseconds defaults to 1000 and can be omitted
+## for this example use `setxkbmap -option caps:none` in your terminal.
 leader: { key: VoidSymbol, mods: NONE, timeout_milliseconds: 1000 }
 keys: [
   {
-    key: "|"
+    key: |
     mods: LEADER|SHIFT
     action: { SplitHorizontal: { domain: CurrentPaneDomain } }
   }
   {
-    key: "-"
+    key: -
     mods: LEADER
     action: { SplitVertical: { domain: CurrentPaneDomain } }
   }

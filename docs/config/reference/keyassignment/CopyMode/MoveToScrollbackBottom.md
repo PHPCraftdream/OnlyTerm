@@ -6,16 +6,14 @@ Moves the CopyMode cursor position to the bottom of the scrollback.
 
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "G",
-        mods: "NONE",
-        action: { CopyMode: "MoveToScrollbackBottom" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: G
+      mods: NONE
+      action: { CopyMode: MoveToScrollbackBottom }
+    }
+  ]
 }
 ```
 

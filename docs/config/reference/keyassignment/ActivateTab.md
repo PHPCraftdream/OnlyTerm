@@ -19,16 +19,16 @@ to its left and so on.
 
 ```
 keys: [
-  // CTRL+ALT + number to activate that tab
-  { key: "1", mods: "CTRL|ALT", action: { ActivateTab: 0 } }
-  { key: "2", mods: "CTRL|ALT", action: { ActivateTab: 1 } }
-  { key: "3", mods: "CTRL|ALT", action: { ActivateTab: 2 } }
-  { key: "4", mods: "CTRL|ALT", action: { ActivateTab: 3 } }
-  { key: "5", mods: "CTRL|ALT", action: { ActivateTab: 4 } }
-  { key: "6", mods: "CTRL|ALT", action: { ActivateTab: 5 } }
-  { key: "7", mods: "CTRL|ALT", action: { ActivateTab: 6 } }
-  { key: "8", mods: "CTRL|ALT", action: { ActivateTab: 7 } }
-  // F1 through F8 to activate that tab
+  ## CTRL+ALT + number to activate that tab
+  { key: 1, mods: CTRL|ALT, action: { ActivateTab: 0 } }
+  { key: 2, mods: CTRL|ALT, action: { ActivateTab: 1 } }
+  { key: 3, mods: CTRL|ALT, action: { ActivateTab: 2 } }
+  { key: 4, mods: CTRL|ALT, action: { ActivateTab: 3 } }
+  { key: 5, mods: CTRL|ALT, action: { ActivateTab: 4 } }
+  { key: 6, mods: CTRL|ALT, action: { ActivateTab: 5 } }
+  { key: 7, mods: CTRL|ALT, action: { ActivateTab: 6 } }
+  { key: 8, mods: CTRL|ALT, action: { ActivateTab: 7 } }
+  ## F1 through F8 to activate that tab
   { key: F1, action: { ActivateTab: 0 } }
   { key: F2, action: { ActivateTab: 1 } }
   { key: F3, action: { ActivateTab: 2 } }

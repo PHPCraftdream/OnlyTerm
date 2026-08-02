@@ -12,25 +12,25 @@ by the [`unzoom_on_switch_pane`](../config/unzoom_on_switch_pane.md) flag.
 ```
 keys: [
   {
-    key: "LeftArrow",
-    mods: "CTRL|SHIFT",
-    action: { ActivatePaneDirection: "Left" },
-  },
+    key: LeftArrow
+    mods: CTRL|SHIFT
+    action: { ActivatePaneDirection: Left }
+  }
   {
-    key: "RightArrow",
-    mods: "CTRL|SHIFT",
-    action: { ActivatePaneDirection: "Right" },
-  },
+    key: RightArrow
+    mods: CTRL|SHIFT
+    action: { ActivatePaneDirection: Right }
+  }
   {
-    key: "UpArrow",
-    mods: "CTRL|SHIFT",
-    action: { ActivatePaneDirection: "Up" },
-  },
+    key: UpArrow
+    mods: CTRL|SHIFT
+    action: { ActivatePaneDirection: Up }
+  }
   {
-    key: "DownArrow",
-    mods: "CTRL|SHIFT",
-    action: { ActivatePaneDirection: "Down" },
-  },
+    key: DownArrow
+    mods: CTRL|SHIFT
+    action: { ActivatePaneDirection: Down }
+  }
 ]
 ```
 

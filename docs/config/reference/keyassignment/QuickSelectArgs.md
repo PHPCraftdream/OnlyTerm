@@ -15,11 +15,13 @@ keys: [
   {
     key: P
     mods: CTRL
-    action: { QuickSelectArgs: {
-      patterns: [
-        "https?://\\S+"
-      ]
-    } }
+    action: {
+      QuickSelectArgs: {
+        patterns: [
+          https?://\\S+
+        ]
+      }
+    }
   }
 ]
 ```

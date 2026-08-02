@@ -13,19 +13,22 @@ here](https://docs.rs/regex/1.3.9/regex/#syntax).
 
 ```
 keys: [
-  // search for things that look like git hashes
+  ## search for things that look like git hashes
   {
     key: H
     mods: SHIFT|CTRL
-    action: { Search: { Regex: "[a-f0-9]{6,}" } }
+    ## The double colon before the pattern forces it to be read as a
+    ## literal string; without it, the pattern's own `[`/`{` characters
+    ## would be parsed as ktav array/object syntax instead of regex text.
+    action: { Search: { Regex:: [a-f0-9]{6,} } }
   }
-  // search for the lowercase string "hash" matching the case exactly
+  ## search for the lowercase string "hash" matching the case exactly
   {
     key: H
     mods: SHIFT|CTRL
     action: { Search: { CaseSensitiveString: hash } }
   }
-  // search for the string "hash" matching regardless of case
+  ## search for the string "hash" matching regardless of case
   {
     key: H
     mods: SHIFT|CTRL

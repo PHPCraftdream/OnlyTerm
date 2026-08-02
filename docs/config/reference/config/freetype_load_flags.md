@@ -28,9 +28,9 @@ Available flags are:
 * `NO_AUTOHINT` - don't use the freetype auto-hinter
 
 ```
-// You probably don't want to do this, but this demonstrates
-// that the flags can be combined
-freetype_load_flags: "NO_HINTING|MONOCHROME"
+## You probably don't want to do this, but this demonstrates
+## that the flags can be combined
+freetype_load_flags: NO_HINTING|MONOCHROME
 ```
 
 {{since('20240128-202157-1e552d76')}}
@@ -42,7 +42,7 @@ In earlier versions, it is recommended that you configure this
 explicitly:
 
 ```
-freetype_load_flags: "NO_HINTING"
+freetype_load_flags: NO_HINTING
 ```
 
 {{since('20240203-110809-5046fc22')}}

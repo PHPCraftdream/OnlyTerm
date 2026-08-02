@@ -5,11 +5,11 @@ a hyperlink, this action causes that link to be opened.
 
 ```
 mouse_bindings: [
-  // Ctrl-click will open the link under the mouse cursor
+  ## Ctrl-click will open the link under the mouse cursor
   {
-    event: { Up: { streak: 1, button: "Left" } },
-    mods: "CTRL",
-    action: OpenLinkAtMouseCursor,
-  },
+    event: { Up: { streak: 1, button: Left } }
+    mods: CTRL
+    action: OpenLinkAtMouseCursor
+  }
 ]
 ```

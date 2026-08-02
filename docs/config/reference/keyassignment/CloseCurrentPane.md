@@ -10,10 +10,10 @@ then kills the process associated with that pane.
 ```
 keys: [
   {
-    key: "w",
-    mods: "CMD",
-    action: { CloseCurrentPane: { confirm: true } },
-  },
+    key: w
+    mods: CMD
+    action: { CloseCurrentPane: { confirm: true } }
+  }
 ]
 ```
 

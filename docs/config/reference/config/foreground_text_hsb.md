@@ -27,11 +27,11 @@ values, so the default of 1.0 preserves the existing component, whilst 0.5 will
 reduce it by half, and 2.0 will double the value.
 
 ```
-// This increases color saturation by 50%
+## This increases color saturation by 50%
 foreground_text_hsb: {
-  hue: 1.0,
-  saturation: 1.5,
-  brightness: 1.0,
+  hue: 1.0
+  saturation: 1.5
+  brightness: 1.0
 }
 ```
 

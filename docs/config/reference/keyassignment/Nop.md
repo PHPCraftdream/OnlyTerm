@@ -8,8 +8,8 @@ the terminal, look at [DisableDefaultAssignment](DisableDefaultAssignment.md).
 
 ```
 keys: [
-  // Turn off any side effects from pressing CMD-m
-  { key: "m", mods: "CMD", action: Nop },
+  ## Turn off any side effects from pressing CMD-m
+  { key: m, mods: CMD, action: Nop }
 ]
 ```
 

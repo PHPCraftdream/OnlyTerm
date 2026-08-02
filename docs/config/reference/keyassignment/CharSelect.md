@@ -42,19 +42,21 @@ This action is by default assigned to `CTRL-SHIFT-U` (`U` for `Unicode`).
 The default assignment is equivalent to this config:
 
 ```
-// Control the size of the font.
-// Uses the same font as window_frame.font if char_select_font option is not set
-// char_select_font_size = 18.0,
+## Control the size of the font.
+## Uses the same font as window_frame.font if char_select_font option is not set
+## char_select_font_size = 18.0,
 
 keys: [
   {
-    key: "u",
-    mods: "SHIFT|CTRL",
-    action: { CharSelect: {
-      copy_on_select: true,
-      copy_to: "ClipboardAndPrimarySelection",
-    } },
-  },
+    key: u
+    mods: SHIFT|CTRL
+    action: {
+      CharSelect: {
+        copy_on_select: true
+        copy_to: ClipboardAndPrimarySelection
+      }
+    }
+  }
 ]
 ```
 

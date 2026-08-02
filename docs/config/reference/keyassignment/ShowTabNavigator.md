@@ -6,7 +6,7 @@ and activate a tab from that list.
 
 ```
 keys: [
-  { key: "F9", mods: "ALT", action: ShowTabNavigator },
+  { key: F9, mods: ALT, action: ShowTabNavigator }
 ]
 ```
 

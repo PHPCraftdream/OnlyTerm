@@ -16,16 +16,16 @@ This action has been removed. Please use [PasteFrom](PasteFrom.md) instead.
 
 ```
 keys: [
-  { key: "v", mods: "SHIFT|CTRL", action: PastePrimarySelection },
+  { key: v, mods: SHIFT|CTRL, action: PastePrimarySelection }
 ]
 
-// Middle mouse button pastes the primary selection.
+## Middle mouse button pastes the primary selection.
 mouse_bindings: [
   {
-    event: { Up: { streak: 1, button: "Middle" } },
-    mods: "NONE",
-    action: PastePrimarySelection,
-  },
+    event: { Up: { streak: 1, button: Middle } }
+    mods: NONE
+    action: PastePrimarySelection
+  }
 ]
 ```
 

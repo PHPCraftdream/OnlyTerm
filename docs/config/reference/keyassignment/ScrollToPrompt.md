@@ -22,8 +22,8 @@ closest to the top of the viewport.
 
 ```
 keys: [
-  { key: "UpArrow", mods: "SHIFT", action: { ScrollToPrompt: -1 } },
-  { key: "DownArrow", mods: "SHIFT", action: { ScrollToPrompt: 1 } },
+  { key: UpArrow, mods: SHIFT, action: { ScrollToPrompt: -1 } }
+  { key: DownArrow, mods: SHIFT, action: { ScrollToPrompt: 1 } }
 ]
 ```
 

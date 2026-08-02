@@ -4,7 +4,7 @@ Decreases the font size of the current window by 10%
 
 ```
 keys: [
-  { key: "-", mods: "CTRL", action: DecreaseFontSize },
+  { key: -, mods: CTRL, action: DecreaseFontSize }
 ]
 ```
 

@@ -19,20 +19,22 @@ The following configuration achieves that same effect:
 
 ```
 keys: [
-  // Rebind OPT-Left, OPT-Right as ALT-b, ALT-f respectively to match Terminal.app behavior
+  ## Rebind OPT-Left, OPT-Right as ALT-b, ALT-f respectively to match Terminal.app behavior
   {
-    key: "LeftArrow",
-    mods: "OPT",
-    action: { SendKey: {
-      key: "b",
-      mods: "ALT",
-    } },
-  },
+    key: LeftArrow
+    mods: OPT
+    action: {
+      SendKey: {
+        key: b
+        mods: ALT
+      }
+    }
+  }
   {
-    key: "RightArrow",
-    mods: "OPT",
-    action: { SendKey: { key: "f", mods: "ALT" } },
-  },
+    key: RightArrow
+    mods: OPT
+    action: { SendKey: { key: f, mods: ALT } }
+  }
 ]
 ```
 

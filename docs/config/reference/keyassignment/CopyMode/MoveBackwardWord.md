@@ -5,11 +5,9 @@
 Moves the CopyMode cursor position one word to the left.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      { key: "b", mods: "NONE", action: { CopyMode: "MoveBackwardWord" } },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    { key: b, mods: NONE, action: { CopyMode: MoveBackwardWord } }
+  ]
 }
 ```

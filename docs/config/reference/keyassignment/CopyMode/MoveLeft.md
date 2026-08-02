@@ -5,12 +5,10 @@
 Moves the CopyMode cursor position one cell to the left.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      { key: "h", mods: "NONE", action: { CopyMode: "MoveLeft" } },
-      { key: "LeftArrow", mods: "NONE", action: { CopyMode: "MoveLeft" } },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    { key: h, mods: NONE, action: { CopyMode: MoveLeft } }
+    { key: LeftArrow, mods: NONE, action: { CopyMode: MoveLeft } }
+  ]
 }
 ```

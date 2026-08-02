@@ -27,37 +27,41 @@ modes, using `r` for resize and `a` for activation:
 ```
 leader: { key: Space, mods: CTRL|SHIFT }
 keys: [
-  // CTRL+SHIFT+Space, followed by 'r' will put us in resize-pane
-  // mode until we cancel that mode.
+  ## CTRL+SHIFT+Space, followed by 'r' will put us in resize-pane
+  ## mode until we cancel that mode.
   {
     key: r
     mods: LEADER
-    action: { ActivateKeyTable: {
-      name: resize_pane
-      one_shot: false
-    } }
+    action: {
+      ActivateKeyTable: {
+        name: resize_pane
+        one_shot: false
+      }
+    }
   }
 
-  // CTRL+SHIFT+Space, followed by 'a' will put us in activate-pane
-  // mode until we press some other key or until 1 second (1000ms)
-  // of time elapses
+  ## CTRL+SHIFT+Space, followed by 'a' will put us in activate-pane
+  ## mode until we press some other key or until 1 second (1000ms)
+  ## of time elapses
   {
     key: a
     mods: LEADER
-    action: { ActivateKeyTable: {
-      name: activate_pane
-      timeout_milliseconds: 1000
-    } }
+    action: {
+      ActivateKeyTable: {
+        name: activate_pane
+        timeout_milliseconds: 1000
+      }
+    }
   }
 ]
 
 key_tables: {
-  // Defines the keys that are active in our resize-pane mode.
-  // Since we're likely to want to make multiple adjustments,
-  // we made the activation one_shot: false. We therefore need
-  // to define a key assignment for getting out of this mode.
-  // 'resize_pane' here corresponds to the name: resize_pane in
-  // the key assignments above.
+  ## Defines the keys that are active in our resize-pane mode.
+  ## Since we're likely to want to make multiple adjustments,
+  ## we made the activation one_shot: false. We therefore need
+  ## to define a key assignment for getting out of this mode.
+  ## 'resize_pane' here corresponds to the name: resize_pane in
+  ## the key assignments above.
   resize_pane: [
     { key: LeftArrow, action: { AdjustPaneSize: [Left, 1] } }
     { key: h, action: { AdjustPaneSize: [Left, 1] } }
@@ -71,13 +75,13 @@ key_tables: {
     { key: DownArrow, action: { AdjustPaneSize: [Down, 1] } }
     { key: j, action: { AdjustPaneSize: [Down, 1] } }
 
-    // Cancel the mode by pressing escape
+    ## Cancel the mode by pressing escape
     { key: Escape, action: PopKeyTable }
   ]
 
-  // Defines the keys that are active in our activate-pane mode.
-  // 'activate_pane' here corresponds to the name: activate_pane in
-  // the key assignments above.
+  ## Defines the keys that are active in our activate-pane mode.
+  ## 'activate_pane' here corresponds to the name: activate_pane in
+  ## the key assignments above.
   activate_pane: [
     { key: LeftArrow, action: { ActivatePaneDirection: Left } }
     { key: h, action: { ActivatePaneDirection: Left } }

@@ -18,8 +18,8 @@ The default value for this is:
 
 ```
 mux_env_remove: [
-  "SSH_AUTH_SOCK",
-  "SSH_CLIENT",
-  "SSH_CONNECTION",
+  SSH_AUTH_SOCK
+  SSH_CLIENT
+  SSH_CONNECTION
 ]
 ```

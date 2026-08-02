@@ -6,15 +6,13 @@ Moves the CopyMode cursor position to the bottom of the viewport.
 
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "L",
-        mods: "NONE",
-        action: { CopyMode: "MoveToViewportBottom" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: L
+      mods: NONE
+      action: { CopyMode: MoveToViewportBottom }
+    }
+  ]
 }
 ```

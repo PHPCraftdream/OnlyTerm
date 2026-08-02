@@ -5,12 +5,10 @@
 Close copy mode.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      { key: "q", mods: "NONE", action: { CopyMode: "Close" } },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    { key: q, mods: NONE, action: { CopyMode: Close } }
+  ]
 }
 ```
 

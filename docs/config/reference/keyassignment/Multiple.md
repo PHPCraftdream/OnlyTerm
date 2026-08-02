@@ -10,13 +10,15 @@ The example below causes `LeftArrow` to effectively type `left`:
 ```
 keys: [
   {
-    key: "LeftArrow",
-    action: { Multiple: [
-      { SendKey: { key: "l" } },
-      { SendKey: { key: "e" } },
-      { SendKey: { key: "f" } },
-      { SendKey: { key: "t" } },
-    ] },
-  },
+    key: LeftArrow
+    action: {
+      Multiple: [
+        { SendKey: { key: l } }
+        { SendKey: { key: e } }
+        { SendKey: { key: f } }
+        { SendKey: { key: t } }
+      ]
+    }
+  }
 ]
 ```

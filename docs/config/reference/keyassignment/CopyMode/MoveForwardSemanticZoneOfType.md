@@ -15,16 +15,14 @@ Possible values for ZONE are:
 * `"Prompt"`
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "Z",
-        mods: "ALT",
-        action: { CopyMode: { MoveForwardZoneOfType: "Output" } },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: Z
+      mods: ALT
+      action: { CopyMode: { MoveForwardZoneOfType: Output } }
+    }
+  ]
 }
 ```
 

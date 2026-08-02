@@ -23,9 +23,9 @@ This configuration defines a single port:
 ```
 serial_ports: [
   {
-    name: "/dev/tty.usbserial-10",
-    baud: 115200,
-  },
+    name: /dev/tty.usbserial-10
+    baud: 115200
+  }
 ]
 ```
 
@@ -45,14 +45,14 @@ You can define multiple ports if you require, and use friendly name for them:
 ```
 serial_ports: [
   {
-    name: "Sensor 1",
-    port: "/dev/tty.usbserial-10",
-    baud: 115200,
-  },
+    name: Sensor 1
+    port: /dev/tty.usbserial-10
+    baud: 115200
+  }
   {
-    name: "Sensor 2",
-    port: "/dev/tty.usbserial-11",
-    baud: 115200,
-  },
+    name: Sensor 2
+    port: /dev/tty.usbserial-11
+    baud: 115200
+  }
 ]
 ```

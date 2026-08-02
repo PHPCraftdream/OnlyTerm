@@ -23,8 +23,10 @@ This configuration supplements the [tab bar color](../../appearance.md#tab-bar-a
 options.
 
 Styling in this context refers to how the edges of the tabs and the new tab button are rendered.
-The default is simply a space character but you can use any sequence of formatted text produced
-by the [wezterm.format](../wezterm/format.md) function.
+The default is simply a space character. Each field's value is a plain string: previously that
+string was produced by calling the [wezterm.format](../wezterm/format.md) scripting function to
+build up a sequence of terminal escape codes (for color/attribute changes) around some text; with
+no scripting engine, `format(...)` can no longer be called from config.
 
 The defaults for each of these styles is simply a space.  For each element, the foreground
 and background colors are set as per the tab bar colors you've configured.
@@ -37,40 +39,25 @@ The available elements are:
 * `new_tab_left`, `new_tab_right` - the left and right sides of the new tab `+` button
 * `new_tab_hover_left`, `new_tab_hover_right` - the left and right sides of the new tab `+` button in the hover state.
 
-This example changes the tab edges to the PowerLine arrow symbols:
+!!! danger "Non-functional: styled tab edges required the scripting engine"
+
+    The example that used to appear here called `nerdfonts(...)` and
+    `format(...)` (rhai scripting functions, now both removed) to build a
+    string containing terminal escape sequences for the PowerLine-styled
+    tab edges shown below. Since `tab_bar_style` fields are plain `String`
+    values, you could in principle still set one to a literal string
+    containing raw terminal escape bytes — but ktav's string escape set
+    (`\\`, `\,`, `\}`, `\]`, `\{`, `\[`, `\n`, `\r`, `\.`, `\:`; see the
+    [migration guide](../../../migration-to-ktav.md)) has no `\x1b`-style
+    hex-byte escape, so there is currently no way to write the required ESC
+    (0x1B) control byte directly in a ktav value either. There is presently
+    no static way to reproduce this styled-tab-edge example; a plain-text
+    (non-escape-sequence) value such as a Nerd Font glyph character used
+    directly, e.g. `active_tab_left: ` followed by the glyph itself pasted
+    in as literal UTF-8 text with no coloring, is the closest static
+    approximation.
 
 ![Demonstrating setting the styling of the left and right tab edges](../../../screenshots/wezterm-tab-edge-styled.png)
-
-```
-// The filled in variant of the < symbol
-let SOLID_LEFT_ARROW = nerdfonts("pl_right_hard_divider")
-
-// The filled in variant of the > symbol
-let SOLID_RIGHT_ARROW = nerdfonts("pl_left_hard_divider")
-
-tab_bar_style: {
-  active_tab_left: format([
-    { Background: { Color: "#0b0022" } },
-    { Foreground: { Color: "#2b2042" } },
-    { Text: SOLID_LEFT_ARROW },
-  ]),
-  active_tab_right: format([
-    { Background: { Color: "#0b0022" } },
-    { Foreground: { Color: "#2b2042" } },
-    { Text: SOLID_RIGHT_ARROW },
-  ]),
-  inactive_tab_left: format([
-    { Background: { Color: "#0b0022" } },
-    { Foreground: { Color: "#1b1032" } },
-    { Text: SOLID_LEFT_ARROW },
-  ]),
-  inactive_tab_right: format([
-    { Background: { Color: "#0b0022" } },
-    { Foreground: { Color: "#1b1032" } },
-    { Text: SOLID_RIGHT_ARROW },
-  ]),
-}
-```
 
 #### Retro Tab Bar with Integrated Window Management Buttons
 

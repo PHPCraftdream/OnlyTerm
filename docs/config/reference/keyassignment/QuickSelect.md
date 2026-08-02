@@ -6,7 +6,7 @@ Activates [Quick Select Mode](../../../quickselect.md).
 
 ```
 keys: [
-  { key: " ", mods: "SHIFT|CTRL", action: QuickSelect },
+  { key:  , mods: SHIFT|CTRL, action: QuickSelect }
 ]
 ```
 

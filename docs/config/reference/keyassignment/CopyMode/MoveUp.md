@@ -5,12 +5,10 @@
 Moves the CopyMode cursor position one cell up.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      { key: "UpArrow", mods: "NONE", action: { CopyMode: "MoveUp" } },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    { key: UpArrow, mods: NONE, action: { CopyMode: MoveUp } }
+  ]
 }
 ```
 

@@ -15,11 +15,11 @@ a link copies its URL, while left-clicking it continues to open it via
 
 ```
 mouse_bindings: [
-  // Right-click will copy the link under the mouse cursor to the clipboard
+  ## Right-click will copy the link under the mouse cursor to the clipboard
   {
-    event: { Up: { streak: 1, button: "Right" } },
-    mods: "NONE",
-    action: { CopyLinkAtMouseCursor: "ClipboardAndPrimarySelection" },
-  },
+    event: { Up: { streak: 1, button: Right } }
+    mods: NONE
+    action: { CopyLinkAtMouseCursor: ClipboardAndPrimarySelection }
+  }
 ]
 ```

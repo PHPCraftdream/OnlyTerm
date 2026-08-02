@@ -5,12 +5,10 @@
 Move the CopyMode/SearchMode selection to the previous matching text, if any.
 
 ```
-return {
-  key_tables: {
-    search_mode: [
-      { key: "Enter", mods: "NONE", action: { CopyMode: "PriorMatch" } },
-    ],
-  },
+key_tables: {
+  search_mode: [
+    { key: Enter, mods: NONE, action: { CopyMode: PriorMatch } }
+  ]
 }
 ```
 

@@ -46,8 +46,8 @@ it lists available stylistic sets here:
 and you can set them in wezterm:
 
 ```
-// Use this for a zero with a line through it rather than a dot
-// when using the Fira Code font
+## Use this for a zero with a line through it rather than a dot
+## when using the Fira Code font
 harfbuzz_features: [zero]
 ```
 
@@ -57,24 +57,30 @@ You can specify `harfbuzz_features` on a per-font basis, rather than
 globally for all fonts:
 
 ```
-font: { font: [{
-  family: "JetBrains Mono"
-  harfbuzz_features: [calt=0, clig=0, liga=0]
-}] }
+font: {
+  font: [
+    {
+      family: JetBrains Mono
+      harfbuzz_features: [calt=0, clig=0, liga=0]
+    }
+  ]
+}
 ```
 
 and this example disables ligatures for JetBrains Mono,
 but keeps the default for the other fonts in the fallback:
 
 ```
-font: { font: [
-  {
-    family: "JetBrains Mono"
-    weight: Medium
-    harfbuzz_features: [calt=0, clig=0, liga=0]
-  }
-  { family: Terminus, weight: Bold }
-  { family: "Noto Color Emoji" }
-] }
+font: {
+  font: [
+    {
+      family: JetBrains Mono
+      weight: Medium
+      harfbuzz_features: [calt=0, clig=0, liga=0]
+    }
+    { family: Terminus, weight: Bold }
+    { family: Noto Color Emoji }
+  ]
+}
 ```
 

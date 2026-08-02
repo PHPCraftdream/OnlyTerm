@@ -6,16 +6,14 @@ Moves the CopyMode cursor position to the top of the viewport.
 
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "H",
-        mods: "NONE",
-        action: { CopyMode: "MoveToViewportTop" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: H
+      mods: NONE
+      action: { CopyMode: MoveToViewportTop }
+    }
+  ]
 }
 ```
 

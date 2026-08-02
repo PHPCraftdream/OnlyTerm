@@ -7,10 +7,10 @@ Toggles the window to remain behind all other windows.
 ```
 keys: [
   {
-    key: "]",
-    mods: "CMD|SHIFT",
-    action: ToggleAlwaysOnBottom,
-  },
+    key: ]
+    mods: CMD|SHIFT
+    action: ToggleAlwaysOnBottom
+  }
 ]
 ```
 

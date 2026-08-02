@@ -18,7 +18,7 @@ may put some pressure on your system depending on the amount of RAM
 you have available.
 
 ```
-// How many lines of scrollback you want to retain per tab
+## How many lines of scrollback you want to retain per tab
 scrollback_lines: 3500
 ```
 
@@ -37,10 +37,10 @@ You can control whether OnlyTerm displays a scrollbar via your configuration
 file:
 
 ```
-// Enable the scrollbar.
-// It will occupy the right window padding space.
-// If right padding is set to 0 then it will be increased
-// to a single cell width
+## Enable the scrollbar.
+## It will occupy the right window padding space.
+## If right padding is set to 0 then it will be increased
+## to a single cell width
 enable_scroll_bar: true
 ```
 
@@ -119,11 +119,14 @@ this:
 
 ```
 keys: [
-  // search for things that look like git hashes
+  ## search for things that look like git hashes
   {
     key: H
     mods: SHIFT|CTRL
-    action: { Search: { Regex: "[a-f0-9]{6,}" } }
+    ## The double colon before the pattern forces it to be read as a
+    ## literal string; without it, the pattern's own `[`/`{` characters
+    ## would be parsed as ktav array/object syntax instead of regex text.
+    action: { Search: { Regex:: [a-f0-9]{6,} } }
   }
 ]
 ```

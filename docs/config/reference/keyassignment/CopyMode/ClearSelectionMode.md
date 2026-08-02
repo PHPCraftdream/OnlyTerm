@@ -5,21 +5,21 @@
 Clears the current CopyMode selection mode without leaving CopyMode.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "y",
-        mods: "NONE",
-        action: { Multiple: [
-          CopyTo "PrimarySelection",
-          ClearSelection,
-          // clear the selection mode, but remain in copy mode
-          CopyMode [ "ClearSelectionMode" ],
-        ] },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: y
+      mods: NONE
+      action: {
+        Multiple: [
+          { CopyTo: PrimarySelection }
+          ClearSelection
+          ## clear the selection mode, but remain in copy mode
+          { CopyMode: ClearSelectionMode }
+        ]
+      }
+    }
+  ]
 }
 ```
 

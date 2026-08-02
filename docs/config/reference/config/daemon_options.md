@@ -17,8 +17,8 @@ There are three fields supported:
 
 ```
 daemon_options: {
-  stdout: "/some/where/stdout",
-  stderr: "/some/where/stderr",
-  pid_file: "/some/where/pid_file",
+  stdout: /some/where/stdout
+  stderr: /some/where/stderr
+  pid_file: /some/where/pid_file
 }
 ```

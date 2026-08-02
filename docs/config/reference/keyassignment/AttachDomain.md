@@ -20,15 +20,15 @@ The example below shows how to bind a key to trigger attaching to a unix domain:
 ```
 unix_domains: [
   {
-    name: "devhost",
-  },
+    name: devhost
+  }
 ]
 keys: [
   {
-    key: "U",
-    mods: "CTRL|SHIFT",
-    action: { AttachDomain: "devhost" },
-  },
+    key: U
+    mods: CTRL|SHIFT
+    action: { AttachDomain: devhost }
+  }
 ]
 ```
 

@@ -25,15 +25,15 @@ Here's an example of setting up hotkeys to activate specific windows:
 
 ```
 keys: [
-  // CMD+ALT + number to activate that window
-  { key: "1", mods: "CMD|ALT", action: { ActivateWindow: 0 } }
-  { key: "2", mods: "CMD|ALT", action: { ActivateWindow: 1 } }
-  { key: "3", mods: "CMD|ALT", action: { ActivateWindow: 2 } }
-  { key: "4", mods: "CMD|ALT", action: { ActivateWindow: 3 } }
-  { key: "5", mods: "CMD|ALT", action: { ActivateWindow: 4 } }
-  { key: "6", mods: "CMD|ALT", action: { ActivateWindow: 5 } }
-  { key: "7", mods: "CMD|ALT", action: { ActivateWindow: 6 } }
-  { key: "8", mods: "CMD|ALT", action: { ActivateWindow: 7 } }
+  ## CMD+ALT + number to activate that window
+  { key: 1, mods: CMD|ALT, action: { ActivateWindow: 0 } }
+  { key: 2, mods: CMD|ALT, action: { ActivateWindow: 1 } }
+  { key: 3, mods: CMD|ALT, action: { ActivateWindow: 2 } }
+  { key: 4, mods: CMD|ALT, action: { ActivateWindow: 3 } }
+  { key: 5, mods: CMD|ALT, action: { ActivateWindow: 4 } }
+  { key: 6, mods: CMD|ALT, action: { ActivateWindow: 5 } }
+  { key: 7, mods: CMD|ALT, action: { ActivateWindow: 6 } }
+  { key: 8, mods: CMD|ALT, action: { ActivateWindow: 7 } }
 ]
 ```
 

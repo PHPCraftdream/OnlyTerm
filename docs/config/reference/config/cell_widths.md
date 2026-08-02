@@ -26,8 +26,8 @@ treats these character widths as full-width:
 
 ```
 cell_widths: [
-  { first: 0xe000, last: 0xf8ff, width: 2 },
-  { first: 0xf0000, last: 0xf1fff, width: 2 },
+  { first: 0xe000, last: 0xf8ff, width: 2 }
+  { first: 0xf0000, last: 0xf1fff, width: 2 }
 ]
 ```
 

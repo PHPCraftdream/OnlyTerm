@@ -6,7 +6,7 @@ Activates copy mode!
 
 ```
 keys: [
-  { key: "X", mods: "CTRL", action: ActivateCopyMode },
+  { key: X, mods: CTRL, action: ActivateCopyMode }
 ]
 ```
 

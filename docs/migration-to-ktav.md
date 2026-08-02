@@ -34,10 +34,17 @@ a terser, quote-optional, comma-optional syntax. It has:
 * `key: value` pairs, one per line (or separated by whitespace/newlines).
 * `{ ... }` for nested objects.
 * `[ ... ]` for arrays.
-* Bare, unquoted strings where unambiguous (quotes are only needed for
-  strings that would otherwise be parsed as something else, or that contain
-  special characters).
-* Line (`//`) comments.
+* Bare, unquoted strings: **write string values without quotes.** ktav does
+  not strip quote characters, so `family: "JetBrains Mono"` does not give you
+  the string `JetBrains Mono` — it gives you the literal seven-character
+  string `"JetBrains Mono"`, quote marks included. Write `family: JetBrains
+  Mono` instead. See [Strings](#strings) below for the very small number of
+  cases where this actually matters.
+* `##` comments: a line whose first non-whitespace characters are `##` is
+  ignored. Nothing else is a comment — not `#` alone, and not `//`. A line
+  starting with a single `#` or with `//` is parsed as ordinary content
+  (usually a bare top-level array item), not skipped, and will either produce
+  a confusing error or silently change the shape of your document.
 
 It does **not** have variables, `let`, functions, closures, `if`/`else`
 expressions, loops, string concatenation, module imports, or any notion of
@@ -96,7 +103,7 @@ config.window_padding = #{ left: 2, right: 2, top: 0, bottom: 0 };
 ```
 
 ```
-# ktav
+## ktav
 window_padding: {
     left: 2
     right: 2
@@ -127,7 +134,7 @@ config.launch_menu = [
 ```
 
 ```
-# ktav
+## ktav
 launch_menu: [
     { args: [top] }
     { args: [bash] }
@@ -139,11 +146,16 @@ expression at all — it's just a literal list).
 
 ### Strings
 
-Lua/rhai string literals (`"..."` or `'...'`) become ktav strings; quotes are
-optional for simple bareword-looking values (identifiers, numbers-as-strings
-that need to stay strings, etc.) but are still accepted and recommended for
-anything containing spaces, colons, brackets, or leading/trailing
-whitespace.
+Lua/rhai string literals (`"..."` or `'...'`) become ktav strings — but
+**drop the quotes**. ktav does not treat `"` as a string delimiter at all: it
+has no quoting syntax, so any quote characters you write become part of the
+value. `color_scheme: "AdventureTime"` does not parse to the string
+`AdventureTime`; it parses to the 15-character string `"AdventureTime"`,
+quote marks included. For a `String`-typed field like `font` this fails
+*silently* — you just get the wrong value with no error, and OnlyTerm falls
+back to whatever default applies. For an enum-typed field (most keyassignment
+and enum config options) it fails loudly at config-load time, since the
+quoted value doesn't match any known variant name.
 
 ```lua
 color_scheme = 'AdventureTime'
@@ -154,10 +166,21 @@ color_scheme: "AdventureTime",
 ```
 
 ```
+## ktav — write the bareword value with no quotes at all:
 color_scheme: AdventureTime
-# or, equivalently and more defensively:
-color_scheme: "AdventureTime"
 ```
+
+This applies to every plain string value: file paths, font family names,
+program arguments, and so on. There is no escaping mechanism for a value
+that would need to contain a literal `#` or `:` as its very first character
+— ktav has no quoting syntax to fall back on for that case, so if you ever
+need a string value that is genuinely ambiguous with ktav's own syntax
+(this essentially never happens for wezterm config values), there currently
+isn't a way to express it. Ordinary values that merely *contain* a `#`,
+`:`, or `//` in the middle (a URL like `http://example.com:8080`, a hex
+color like `#af8700`) are unaffected; the ambiguity only exists for `##`
+right at the very start of a line, and there's no config field where a
+literal string value would need to start that way.
 
 ### Numbers and booleans
 
@@ -176,7 +199,7 @@ no direct ktav replacement for:
   other function call — write the value directly as it would have been
   *returned*, not the call that produced it. For example,
   `wezterm.font_with_fallback("Operator Mono")` becomes a literal
-  `TextStyle` object: `font: { font: [{ family: "Operator Mono" }] }`.
+  `TextStyle` object: `font: { font: [{ family: Operator Mono }] }`.
 * `wezterm.on(event, ...)`/`wezterm.emit(...)` and every event hook
   (`format-tab-title`, `format-window-title`, `update-status`,
   `window-config-reloaded`, `bell`, `user-var-changed`, `gui-startup`,
@@ -243,7 +266,7 @@ config.keys = [
 ```
 
 ```
-# ktav
+## ktav
 keys: [
     { key: c, mods: CTRL|SHIFT, action: Copy }
     {
@@ -282,7 +305,7 @@ config.keys = [
 
 ```
 color_scheme: Catppuccin Mocha
-font: { font: [{ family: "JetBrains Mono" }] }
+font: { font: [{ family: JetBrains Mono }] }
 font_size: 11.0
 window_background_opacity: 0.9
 

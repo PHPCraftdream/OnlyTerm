@@ -42,48 +42,55 @@ and is shown below:
 
 ```
 hyperlink_rules: [
-  // Matches: a URL in parens: (URL)
+  ## Matches: a URL in parens: (URL)
   {
-    regex: "\\((\\w+://\\S+)\\)",
-    format: "$1",
-    highlight: 1,
-  },
-  // Matches: a URL in brackets: [URL]
+    regex: \\((\\w+://\\S+)\\)
+    format: $1
+    highlight: 1
+  }
+  ## Matches: a URL in brackets: [URL]
   {
-    regex: "\\[(\\w+://\\S+)\\]",
-    format: "$1",
-    highlight: 1,
-  },
-  // Matches: a URL in curly braces: [URL]
+    regex: \\[(\\w+://\\S+)\\]
+    format: $1
+    highlight: 1
+  }
+  ## Matches: a URL in curly braces: [URL]
   {
-    regex: "\\{(\\w+://\\S+)\\}",
-    format: "$1",
-    highlight: 1,
-  },
-  // Matches: a URL in angle brackets: <URL>
+    regex: \\{(\\w+://\\S+)\\}
+    format: $1
+    highlight: 1
+  }
+  ## Matches: a URL in angle brackets: <URL>
   {
-    regex: "<(\\w+://\\S+)>",
-    format: "$1",
-    highlight: 1,
-  },
-  // Then handle URLs not wrapped in brackets
+    regex: <(\\w+://\\S+)>
+    format: $1
+    highlight: 1
+  }
+  ## Then handle URLs not wrapped in brackets
   {
-    regex: "\\b\\w+://\\S+[)/a-zA-Z0-9-]+",
-    format: "$0",
-  },
-  // implicit mailto link
+    regex: \\b\\w+://\\S+[)/a-zA-Z0-9-]+
+    format: $0
+  }
+  ## implicit mailto link
   {
-    regex: "\\b\\w+@[\\w-]+(\\.[\\w-]+)+\\b",
-    format: "mailto:$0",
-  },
+    regex: \\b\\w+@[\\w-]+(\\.[\\w-]+)+\\b
+    format: mailto:$0
+  }
 ]
 ```
 
 !!! note
-    In a quoted ktav string literal, the backslash character must be
-    escaped even when the following character isn't otherwise special.
-    That means you'll always want to double it up as `\\` when using it in
-    a regex string, e.g. `"\\b[tT](\\d+)\\b"`.
+    ktav has no string quoting syntax, but it does recognize a small, fixed
+    set of backslash escapes in any value: `\\`, `\,`, `\}`, `\]`, `\{`,
+    `\[`, `\n`, `\r`, `\.` and `\:` (see the
+    [migration guide](../../../migration-to-ktav.md)). A literal backslash
+    must always be written as `\\`, so a regex like `\b[tT](\d+)\b` becomes
+    `\\b[tT](\\d+)\\b` when written as a ktav value, with no surrounding
+    quotes. Also note that a `regex` value containing raw `[`, `]`, `{` or
+    `}` characters (as several of the rules above do) must have each field
+    on its own line inside the rule's `{ ... }` object — packing multiple
+    fields onto one line alongside a regex containing those characters can
+    confuse ktav's line-based bracket matching.
 
 !!! danger "No longer possible: extending the defaults from config"
 

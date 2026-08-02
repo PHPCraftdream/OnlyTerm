@@ -11,10 +11,10 @@ The default value for this option is:
 
 ```
 tiling_desktop_environments: [
-  "X11 LG3D",
-  "X11 bspwm",
-  "X11 i3",
-  "X11 dwm",
+  X11 LG3D
+  X11 bspwm
+  X11 i3
+  X11 dwm
 ]
 ```
 

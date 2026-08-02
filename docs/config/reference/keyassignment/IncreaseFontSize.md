@@ -4,7 +4,7 @@ Increases the font size of the current window by 10%
 
 ```
 keys: [
-  { key: "=", mods: "CTRL", action: IncreaseFontSize },
+  { key: =, mods: CTRL, action: IncreaseFontSize }
 ]
 ```
 

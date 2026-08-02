@@ -6,16 +6,14 @@ Moves the CopyMode cursor position to the top of the scrollback.
 
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "g",
-        mods: "NONE",
-        action: { CopyMode: "MoveToScrollbackTop" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: g
+      mods: NONE
+      action: { CopyMode: MoveToScrollbackTop }
+    }
+  ]
 }
 ```
 

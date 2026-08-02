@@ -26,7 +26,7 @@ A simple example that unconditionally points at the 1Password SSH agent
 socket:
 
 ```
-default_ssh_auth_sock: "/home/you/.1password/agent.sock"
+default_ssh_auth_sock: /home/you/.1password/agent.sock
 ```
 
 !!! note "No conditional logic in ktav"

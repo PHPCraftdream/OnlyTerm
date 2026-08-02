@@ -5,12 +5,10 @@
 Clear the CopyMode/SearchMode search pattern.
 
 ```
-return {
-  key_tables: {
-    search_mode: [
-      { key: "u", mods: "CTRL", action: { CopyMode: "ClearPattern" } },
-    ],
-  },
+key_tables: {
+  search_mode: [
+    { key: u, mods: CTRL, action: { CopyMode: ClearPattern } }
+  ]
 }
 ```
 

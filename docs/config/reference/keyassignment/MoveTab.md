@@ -13,15 +13,15 @@ from the left, and so on.
 
 ```
 keys: [
-  // CTRL+ALT + number to move to that position
-  { key: "1", mods: "CTRL|ALT", action: { MoveTab: 0 } }
-  { key: "2", mods: "CTRL|ALT", action: { MoveTab: 1 } }
-  { key: "3", mods: "CTRL|ALT", action: { MoveTab: 2 } }
-  { key: "4", mods: "CTRL|ALT", action: { MoveTab: 3 } }
-  { key: "5", mods: "CTRL|ALT", action: { MoveTab: 4 } }
-  { key: "6", mods: "CTRL|ALT", action: { MoveTab: 5 } }
-  { key: "7", mods: "CTRL|ALT", action: { MoveTab: 6 } }
-  { key: "8", mods: "CTRL|ALT", action: { MoveTab: 7 } }
+  ## CTRL+ALT + number to move to that position
+  { key: 1, mods: CTRL|ALT, action: { MoveTab: 0 } }
+  { key: 2, mods: CTRL|ALT, action: { MoveTab: 1 } }
+  { key: 3, mods: CTRL|ALT, action: { MoveTab: 2 } }
+  { key: 4, mods: CTRL|ALT, action: { MoveTab: 3 } }
+  { key: 5, mods: CTRL|ALT, action: { MoveTab: 4 } }
+  { key: 6, mods: CTRL|ALT, action: { MoveTab: 5 } }
+  { key: 7, mods: CTRL|ALT, action: { MoveTab: 6 } }
+  { key: 8, mods: CTRL|ALT, action: { MoveTab: 7 } }
 ]
 ```
 

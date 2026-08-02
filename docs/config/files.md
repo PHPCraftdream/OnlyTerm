@@ -5,11 +5,11 @@ Create a file named `.onlyterm.ktav` in your home directory, with the following
 contents:
 
 ```
-// For example, changing the initial geometry for new windows:
+## For example, changing the initial geometry for new windows:
 initial_cols: 120
 initial_rows: 28
 
-// or, changing the font size and color scheme.
+## or, changing the font size and color scheme.
 font_size: 10.0
 color_scheme: AdventureTime
 ```
@@ -97,13 +97,16 @@ a couple of examples:
 
 ```bash
 $ wezterm --config enable_scroll_bar=true
-$ wezterm --config 'exit_behavior="Hold"'
+$ wezterm --config exit_behavior=Hold
 ```
 
 Configuration specified via the command line will always override the values
 provided by the configuration file, even if the configuration file is reloaded.
 Each `--config key=value` value is parsed as a standalone ktav value fragment
-and spliced into the parsed config document, replacing that key.
+and spliced into the parsed config document, replacing that key. As with the
+rest of ktav, do not quote the value — `--config exit_behavior=Hold`, not
+`--config 'exit_behavior="Hold"'`; ktav does not strip quote characters, so a
+quoted value here will fail to parse as the expected enum/type.
 
 Per-window configuration overrides set from inside your config file (the old
 `window:set_config_overrides()` mechanism) no longer exist, since that
@@ -126,7 +129,7 @@ sets `color_scheme`, and to also set the font in the same file you add
 another top-level key:
 
 ```
-font: { font: [{ family: "JetBrains Mono" }] }
+font: { font: [{ family: JetBrains Mono }] }
 color_scheme: Batman
 ```
 

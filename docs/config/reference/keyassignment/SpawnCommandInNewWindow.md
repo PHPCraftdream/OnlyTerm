@@ -6,14 +6,16 @@ detail in the [SpawnCommand](../SpawnCommand.md) docs.
 
 ```
 keys: [
-  // CMD-y starts `top` in a new window
+  ## CMD-y starts `top` in a new window
   {
-    key: "y",
-    mods: "CMD",
-    action: { SpawnCommandInNewWindow: {
-      args: [ "top" ],
-    } },
-  },
+    key: y
+    mods: CMD
+    action: {
+      SpawnCommandInNewWindow: {
+        args: [ top ]
+      }
+    }
+  }
 ]
 ```
 

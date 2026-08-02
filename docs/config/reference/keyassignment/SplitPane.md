@@ -13,16 +13,18 @@ This assignment has a number of fields that control the overall action:
 
 ```
 keys: [
-  // This will create a new split and run the `top` program inside it
+  ## This will create a new split and run the `top` program inside it
   {
-    key: "%",
-    mods: "CTRL|SHIFT|ALT",
-    action: { SplitPane: {
-      direction: "Left",
-      command: { args: [ "top" ] },
-      size: { Percent: 50 },
-    } },
-  },
+    key: %
+    mods: CTRL|SHIFT|ALT
+    action: {
+      SplitPane: {
+        direction: Left
+        command: { args: [ top ] }
+        size: { Percent: 50 }
+      }
+    }
+  }
 ]
 ```
 

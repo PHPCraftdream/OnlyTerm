@@ -8,16 +8,14 @@ See [Shell Integration](../../../../shell-integration.md) for more information
 about semantic zones.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "z",
-        mods: "NONE",
-        action: { CopyMode: "MoveBackwardSemanticZone" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: z
+      mods: NONE
+      action: { CopyMode: MoveBackwardSemanticZone }
+    }
+  ]
 }
 ```
 

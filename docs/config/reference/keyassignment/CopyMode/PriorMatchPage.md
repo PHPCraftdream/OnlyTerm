@@ -5,16 +5,14 @@
 Move the CopyMode/SearchMode selection to the previous matching text on the previous page of the screen, if any.
 
 ```
-return {
-  key_tables: {
-    search_mode: [
-      {
-        key: "PageUp",
-        mods: "CTRL",
-        action: { CopyMode: "PriorMatchPage" },
-      },
-    ],
-  },
+key_tables: {
+  search_mode: [
+    {
+      key: PageUp
+      mods: CTRL
+      action: { CopyMode: PriorMatchPage }
+    }
+  ]
 }
 ```
 

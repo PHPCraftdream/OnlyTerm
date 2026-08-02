@@ -7,10 +7,10 @@ Toggles the window between floating and non-floating states to stay on top of ot
 ```
 keys: [
   {
-    key: "]",
-    mods: "CMD|SHIFT",
-    action: ToggleAlwaysOnTop,
-  },
+    key: ]
+    mods: CMD|SHIFT
+    action: ToggleAlwaysOnTop
+  }
 ]
 ```
 

@@ -39,7 +39,7 @@ effect on Linux Wayland.
 
 ```
 window_background_opacity: 0
-win32_system_backdrop: "Acrylic"
+win32_system_backdrop: Acrylic
 ```
 
 ![Acrylic Effect](../../../screenshots/wezterm-acrylic.png)
@@ -48,7 +48,7 @@ win32_system_backdrop: "Acrylic"
 
 ```
 window_background_opacity: 0
-win32_system_backdrop: "Mica"
+win32_system_backdrop: Mica
 ```
 
 ![Mica Effect](../../../screenshots/wezterm-mica.png)
@@ -57,7 +57,7 @@ win32_system_backdrop: "Mica"
 
 ```
 window_background_opacity: 0
-win32_system_backdrop: "Tabbed"
+win32_system_backdrop: Tabbed
 ```
 
 ![Tabbed Effect](../../../screenshots/wezterm-tabbed.png)

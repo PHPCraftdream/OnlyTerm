@@ -11,9 +11,12 @@ This setting is a table listing out a set of regular expressions.
 
 ```
 quick_select_patterns: [
-  // match things that look like sha1 hashes
-  // (this is actually one of the default patterns)
-  "[0-9a-f]{7,40}",
+  ## match things that look like sha1 hashes
+  ## (this is actually one of the default patterns)
+  ## The leading `::` forces this array item to be read as a literal
+  ## string; without it, the pattern's own `[`/`{` characters would be
+  ## parsed as ktav array/object syntax instead of literal regex text.
+  :: [0-9a-f]{7,40}
 ]
 ```
 
@@ -36,6 +39,6 @@ quick_select_patterns: [
 
     ```
     quick_select_patterns: [
-        "(?<!foo:)bar"
+        :: (?<!foo:)bar
     ]
     ```
