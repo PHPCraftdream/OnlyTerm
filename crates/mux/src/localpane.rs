@@ -237,9 +237,10 @@ const TERMINAL_ACCESSOR_LOCK_TIMEOUT: Duration = Duration::from_millis(8);
 /// within a bounded, human-imperceptible-as-a-hang delay rather than
 /// staying flagged forever. One second comfortably clears both bars: it
 /// is tens of frame-intervals even at a sluggish ~10fps, yet is short
-/// enough that nothing external (the tab bar, `pane:is_unresponsive()`
-/// from Lua/rhai, `PaneInformation.is_unresponsive`) could mistake it for
-/// a permanent, sticky flag.
+/// enough that no caller of the public `Pane::is_unresponsive()` method
+/// (it's part of the `Pane` trait, so anything holding a pane reference can
+/// call it) could mistake a transient render-budget hiccup for a permanent,
+/// sticky flag.
 const RENDER_BUDGET_EXCEEDED_EXPIRY: Duration = Duration::from_secs(1);
 
 /// Attempts to acquire `terminal.lock()` within `TERMINAL_ACCESSOR_LOCK_TIMEOUT`

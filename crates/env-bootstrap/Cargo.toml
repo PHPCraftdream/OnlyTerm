@@ -17,7 +17,6 @@ env_logger = "0.10" # Note: we rely on filter::Builder which is gone in 0.11
 lazy_static.workspace = true
 libc.workspace = true
 log.workspace = true
-mux-lua.workspace = true
 termwiz-funcs.workspace = true
 termwiz.workspace = true
 wezterm-version.workspace = true

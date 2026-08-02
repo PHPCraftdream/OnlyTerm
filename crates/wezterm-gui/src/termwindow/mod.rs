@@ -274,8 +274,9 @@ pub struct TabState {
     pub overlay: Option<OverlayState>,
 }
 
-/// Manages the state/queue of lua based event handlers.
-/// We don't want to queue more than 1 event at a time,
+/// Tracks the in-flight/pending state of named window events
+/// (`emit_window_event`/`schedule_window_event`/`finish_window_event`).
+/// We don't want to queue more than 1 event of a given name at a time,
 /// so we use this enum to allow for at most 1 executing
 /// and 1 pending event.
 #[derive(Copy, Clone, Debug)]

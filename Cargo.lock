@@ -1438,7 +1438,6 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "mux-lua",
  "objc2",
  "objc2-foundation",
  "termwiz",

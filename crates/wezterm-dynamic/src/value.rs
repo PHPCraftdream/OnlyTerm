@@ -11,9 +11,11 @@ extern crate alloc;
 use alloc::string::String;
 
 /// Represents values of various possible other types.
-/// Value is intended to be convertible to the same set
-/// of types as Lua and is a superset of the types possible
-/// in TOML and JSON.
+/// Value is intended to be a superset of the types possible
+/// in TOML and JSON, general enough to bridge any config-format
+/// front end's own dynamic value type (see e.g. the `ktav` crate's
+/// `Value` and `config::ktav_value::ktav_value_to_dynamic`) into this
+/// engine-agnostic representation.
 #[derive(Clone, PartialEq, Hash, Eq, Ord, PartialOrd)]
 pub enum Value {
     Null,
