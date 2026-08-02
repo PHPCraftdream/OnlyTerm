@@ -861,6 +861,15 @@ impl Window {
                 unsafe {
                     DestroyWindow(old_child);
                 }
+                // Null out the field immediately, before attempting to
+                // create the replacement. `old_child` is now destroyed (and
+                // Windows is free to recycle its HWND value for an unrelated
+                // window), so leaving the stale handle in place until the
+                // create call below succeeds would let a `?`-triggered early
+                // return leave `webgpu_child_hwnd` pointing at a dead --
+                // possibly recycled -- HWND instead of correctly reporting
+                // "no child window" via `webgpu_child_hwnd()`.
+                handle.borrow_mut().webgpu_child_hwnd = HWindow(null_mut());
             }
 
             let new_child = Self::create_webgpu_child_window(parent)?;
