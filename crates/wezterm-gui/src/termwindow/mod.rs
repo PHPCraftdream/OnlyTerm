@@ -120,20 +120,6 @@ pub enum TermWindowNotif {
         assignment: KeyAssignment,
         tx: Option<Sender<anyhow::Result<()>>>,
     },
-    SetLeftStatus(String),
-    SetRightStatus(String),
-    GetDimensions(Sender<(Dimensions, WindowState)>),
-    GetSelectionForPane {
-        pane_id: PaneId,
-        tx: Sender<String>,
-    },
-    GetEffectiveConfig(Sender<ConfigHandle>),
-    FinishWindowEvent {
-        name: String,
-        again: bool,
-    },
-    GetConfigOverrides(Sender<wezterm_dynamic::Value>),
-    SetConfigOverrides(wezterm_dynamic::Value),
     CancelOverlayForPane(PaneId),
     CancelOverlayForTab {
         tab_id: TabId,
@@ -143,10 +129,6 @@ pub enum TermWindowNotif {
     EmitStatusUpdate,
     Apply(Box<dyn FnOnce(&mut TermWindow) + Send + Sync>),
     SwitchToMuxWindow(MuxWindowId),
-    SetInnerSize {
-        width: usize,
-        height: usize,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,57 +187,25 @@ pub struct PaneState {
 }
 
 /// Data used when synchronously formatting pane and window titles
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct TabInformation {
     pub tab_id: TabId,
     pub tab_index: usize,
     pub is_active: bool,
-    pub is_last_active: bool,
     pub active_pane: Option<PaneInformation>,
-    pub window_id: MuxWindowId,
     pub tab_title: String,
 }
 
 /// Data used when synchronously formatting pane and window titles
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct PaneInformation {
-    pub pane_id: PaneId,
-    pub pane_index: usize,
     pub is_active: bool,
     pub is_zoomed: bool,
-    pub has_unseen_output: bool,
-    /// True if a recent GUI-thread-reachable accessor on this pane
-    /// (`get_title()`, `get_progress()`, `copy_user_vars()`,
-    /// `get_current_working_dir()`) gave up waiting on the pane's
-    /// terminal lock and served stale cached data instead -- see
-    /// `Pane::is_unresponsive()` and `try_lock_terminal_for` (task #246)
-    /// in `crates/mux/src/localpane.rs` -- OR'd together with the
-    /// unrelated per-frame render-budget signal (task #251) via
-    /// `is_unresponsive()` itself (task #269 split these into two
-    /// independently-written flags so the render-budget path's frequent
-    /// writes can't clobber a genuine lock-timeout signal; they're still
-    /// combined into this single bool here since nothing downstream needs
-    /// to distinguish the two causes). Exposed the same way as
-    /// `has_unseen_output` above so a user's own `format-tab-title`/
-    /// `format-window-title` handler can style a possibly-wedged pane
-    /// however it likes; there is no built-in visual treatment for this
-    /// in wezterm-gui itself.
-    pub is_unresponsive: bool,
-    pub left: usize,
-    pub top: usize,
-    pub width: usize,
-    pub height: usize,
-    pub pixel_width: usize,
-    pub pixel_height: usize,
     pub title: String,
-    pub user_vars: HashMap<String, String>,
     pub progress: Progress,
     /// The active pane's current working directory, as reported by the
-    /// pane's `get_current_working_dir` (same source as the rhai-only
-    /// `current_working_dir` getter registered below), rendered as a
-    /// plain string. `None` if the pane hasn't reported a cwd yet.
+    /// pane's `get_current_working_dir`, rendered as a plain string.
+    /// `None` if the pane hasn't reported a cwd yet.
     pub current_working_dir: Option<String>,
 }
 
@@ -1629,10 +1579,15 @@ impl TermWindow {
             }
         };
 
-        // The WebGpu child HWND was already destroyed and recreated
-        // synchronously in `begin_renderer_rebuild`, before `WebGpuState::new`
-        // was even called, so the surface/device just resolved above already
-        // targets the fresh child HWND. Nothing left to do for the HWND here.
+        // The WebGpu child HWND was already retired and a fresh one
+        // recreated (task #283 onward: the old HWND is *retired*, not
+        // destroyed here -- it's swept later once the outgoing render
+        // thread's `WebGpuState` has actually dropped, see
+        // `sweep_retired_webgpu_children` above) via the spawned task in
+        // `begin_renderer_rebuild` that awaits
+        // `recreate_webgpu_child_window`, before `WebGpuState::new` was even
+        // called. So the surface/device just resolved above already targets
+        // the fresh child HWND. Nothing left to do for the HWND here.
         self.webgpu.replace(Arc::clone(&webgpu));
         if let Err(err) = self.created(RenderContext::WebGpu(Arc::clone(&webgpu))) {
             // Same reasoning as the `WebGpuState::new` failure arm above
@@ -1954,10 +1909,6 @@ impl TermWindow {
     }
 
     fn dispatch_notif(&mut self, notif: TermWindowNotif, window: &Window) -> anyhow::Result<()> {
-        fn chan_err<T>(e: smol::channel::TrySendError<T>) -> anyhow::Error {
-            anyhow::anyhow!("{}", e)
-        }
-
         match notif {
             TermWindowNotif::InvalidateShapeCache => {
                 self.shape_generation += 1;
@@ -1994,46 +1945,6 @@ impl TermWindow {
                 window.invalidate();
                 if let Some(tx) = tx {
                     tx.try_send(result).ok();
-                }
-            }
-            TermWindowNotif::SetRightStatus(status) => {
-                if status != self.right_status {
-                    self.right_status = status;
-                    self.update_title_post_status();
-                } else {
-                    self.schedule_next_status_update();
-                }
-            }
-            TermWindowNotif::SetLeftStatus(status) => {
-                if status != self.left_status {
-                    self.left_status = status;
-                    self.update_title_post_status();
-                } else {
-                    self.schedule_next_status_update();
-                }
-            }
-            TermWindowNotif::GetDimensions(tx) => {
-                tx.try_send((self.dimensions, self.window_state))
-                    .map_err(chan_err)
-                    .context("send GetDimensions response")?;
-            }
-            TermWindowNotif::GetEffectiveConfig(tx) => {
-                tx.try_send(self.config.clone())
-                    .map_err(chan_err)
-                    .context("send GetEffectiveConfig response")?;
-            }
-            TermWindowNotif::FinishWindowEvent { name, again } => {
-                self.finish_window_event(&name, again);
-            }
-            TermWindowNotif::GetConfigOverrides(tx) => {
-                tx.try_send(self.config_overrides.clone())
-                    .map_err(chan_err)
-                    .context("send GetConfigOverrides response")?;
-            }
-            TermWindowNotif::SetConfigOverrides(value) => {
-                if value != self.config_overrides {
-                    self.config_overrides = value;
-                    self.config_was_reloaded();
                 }
             }
             TermWindowNotif::CancelOverlayForPane(pane_id) => {
@@ -2166,16 +2077,6 @@ impl TermWindow {
             TermWindowNotif::EmitStatusUpdate => {
                 self.emit_status_event();
             }
-            TermWindowNotif::GetSelectionForPane { pane_id, tx } => {
-                let mux = Mux::get();
-                let pane = mux
-                    .get_pane(pane_id)
-                    .ok_or_else(|| anyhow!("pane id {} is not valid", pane_id))?;
-
-                tx.try_send(self.selection_text(&pane))
-                    .map_err(chan_err)
-                    .context("send GetSelectionForPane response")?;
-            }
             TermWindowNotif::Apply(func) => {
                 func(self);
             }
@@ -2196,9 +2097,6 @@ impl TermWindow {
                 };
                 self.update_title();
                 window.invalidate();
-            }
-            TermWindowNotif::SetInnerSize { width, height } => {
-                self.set_inner_size(window, width, height);
             }
         }
 
@@ -4279,20 +4177,9 @@ impl TermWindow {
 
     fn pos_pane_to_pane_info(pos: &PositionedPane) -> PaneInformation {
         PaneInformation {
-            pane_id: pos.pane.pane_id(),
-            pane_index: pos.index,
             is_active: pos.is_active,
             is_zoomed: pos.is_zoomed,
-            has_unseen_output: pos.pane.has_unseen_output(),
-            is_unresponsive: pos.pane.is_unresponsive(),
-            left: pos.left,
-            top: pos.top,
-            width: pos.width,
-            height: pos.height,
-            pixel_width: pos.pixel_width,
-            pixel_height: pos.pixel_height,
             title: pos.pane.get_title(),
-            user_vars: pos.pane.copy_user_vars(),
             progress: pos.pane.get_progress(),
             current_working_dir: pos
                 .pane
@@ -4319,11 +4206,6 @@ impl TermWindow {
                     tab_index: idx,
                     tab_id: tab.tab_id(),
                     is_active: tab_index == idx,
-                    is_last_active: window
-                        .get_last_active_idx()
-                        .map(|last_active| last_active == idx)
-                        .unwrap_or(false),
-                    window_id: self.mux_window_id,
                     tab_title: tab.get_title(),
                     active_pane: panes
                         .iter()

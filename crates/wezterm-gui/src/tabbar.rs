@@ -524,9 +524,6 @@ impl TabBarState {
             let active = tab_idx == active_tab_no;
             let hover = !active && is_tab_hover(mouse_x, x, tab_title_len);
 
-            // Recompute the title for this tab.
-            let tab_title = compute_tab_title(&tab_info[tab_idx], config);
-
             let cell_attrs = if active {
                 &active_cell_attrs
             } else if hover {
