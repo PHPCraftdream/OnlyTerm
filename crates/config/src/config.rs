@@ -1051,6 +1051,40 @@ impl Default for Config {
     }
 }
 
+/// Distinguishes "no `.ktav` config exists at this candidate path, but a
+/// legacy `.rhai`/`.lua` sibling does" from any other load error (I/O error,
+/// a `.ktav` file that exists but fails to parse, etc). `load_with_overrides`
+/// downcasts to this type so that a legacy sibling found next to an
+/// earlier-searched candidate doesn't prevent it from continuing on to a
+/// later candidate that might have a genuine, loadable `.ktav` config (task
+/// #298 / bug F9): this case is deferred and only surfaced as a hard error if
+/// no valid `.ktav` config is found anywhere in the whole search order.
+#[derive(Debug)]
+struct LegacyScriptSiblingError {
+    script_path: PathBuf,
+    expected_path: PathBuf,
+}
+
+impl std::fmt::Display for LegacyScriptSiblingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Found a legacy scripted configuration file at {} but \
+             scripted configs (rhai/Lua) are no longer supported: \
+             the config-scripting engine has been removed from \
+             wezterm's live config-loading path in favor of the \
+             static `ktav` format. Please migrate {} to the ktav \
+             format and save it as {}. See the migration guide for \
+             details.",
+            self.script_path.display(),
+            self.script_path.display(),
+            self.expected_path.display()
+        )
+    }
+}
+
+impl std::error::Error for LegacyScriptSiblingError {}
+
 impl Config {
     pub fn load() -> LoadedConfig {
         Self::load_with_overrides(&wezterm_dynamic::Value::default())
@@ -1162,22 +1196,8 @@ impl Config {
             paths.insert(0, PathPossibility::required(path.clone()));
         }
 
-        for path_item in &paths {
-            if CONFIG_SKIP.load(Ordering::Relaxed) {
-                break;
-            }
-
-            match Self::try_load(path_item, overrides) {
-                Err(err) => {
-                    return LoadedConfig {
-                        config: Err(err),
-                        file_name: Some(path_item.path.clone()),
-                        warnings: vec![],
-                    }
-                }
-                Ok(None) => continue,
-                Ok(Some(loaded)) => return loaded,
-            }
+        if let Some(found) = Self::search_paths_for_config(&paths, overrides) {
+            return found;
         }
 
         // We didn't find (or were asked to skip) a onlyterm.rhai file, so
@@ -1194,6 +1214,63 @@ impl Config {
             },
             Ok(cfg) => cfg,
         }
+    }
+
+    /// Walks `paths` (candidate `.ktav` config locations, in priority order)
+    /// and returns `Some(loaded)` as soon as a candidate either loads
+    /// successfully or hits a hard error; returns `None` if none of the
+    /// candidates exist/apply at all (the caller should then fall back to
+    /// `try_default`).
+    ///
+    /// A legacy `.rhai`/`.lua` sibling found next to one candidate path must
+    /// not stop the search: a *later* candidate path may still have a valid,
+    /// already-migrated `.ktav` config (task #298 / bug F9), and that should
+    /// win outright with no error at all. So a `LegacyScriptSiblingError`
+    /// from `try_load` is stashed here instead of being returned
+    /// immediately, and only surfaced -- using the first one found, i.e. the
+    /// highest-priority candidate that had a legacy sibling -- if no
+    /// candidate anywhere in the whole search order produces a real config.
+    /// Any other error (a real I/O error, or a `.ktav` file that exists at
+    /// this candidate but fails to parse/validate) still bails out
+    /// immediately: those indicate an actual problem with a config file the
+    /// user is actively using, not just an absent candidate, so hiding them
+    /// in favor of a lower-priority candidate would risk silently skipping a
+    /// real typo in the user's active config.
+    fn search_paths_for_config(
+        paths: &[PathPossibility],
+        overrides: &wezterm_dynamic::Value,
+    ) -> Option<LoadedConfig> {
+        let mut deferred_legacy_error: Option<anyhow::Error> = None;
+
+        for path_item in paths {
+            if CONFIG_SKIP.load(Ordering::Relaxed) {
+                break;
+            }
+
+            match Self::try_load(path_item, overrides) {
+                Err(err) => {
+                    if err.downcast_ref::<LegacyScriptSiblingError>().is_some() {
+                        if deferred_legacy_error.is_none() {
+                            deferred_legacy_error = Some(err);
+                        }
+                        continue;
+                    }
+                    return Some(LoadedConfig {
+                        config: Err(err),
+                        file_name: Some(path_item.path.clone()),
+                        warnings: vec![],
+                    });
+                }
+                Ok(None) => continue,
+                Ok(Some(loaded)) => return Some(loaded),
+            }
+        }
+
+        deferred_legacy_error.map(|err| LoadedConfig {
+            config: Err(err),
+            file_name: None,
+            warnings: vec![],
+        })
     }
 
     pub fn try_default() -> anyhow::Result<LoadedConfig> {
@@ -1253,18 +1330,23 @@ impl Config {
             Err(err) => match err.kind() {
                 std::io::ErrorKind::NotFound if !path_item.is_required => {
                     if let Some(script_path) = Self::legacy_script_sibling(p) {
-                        anyhow::bail!(
-                            "Found a legacy scripted configuration file at {} but \
-                             scripted configs (rhai/Lua) are no longer supported: \
-                             the config-scripting engine has been removed from \
-                             wezterm's live config-loading path in favor of the \
-                             static `ktav` format. Please migrate {} to the ktav \
-                             format and save it as {}. See the migration guide for \
-                             details.",
-                            script_path.display(),
-                            script_path.display(),
-                            p.display()
-                        );
+                        // Note: this is deliberately a distinguishable error
+                        // type (`LegacyScriptSiblingError`), not a bare
+                        // `anyhow::bail!` string. `load_with_overrides` walks
+                        // multiple candidate paths in priority order, and a
+                        // legacy `.rhai`/`.lua` sibling found next to an
+                        // *earlier* candidate must not prevent a later
+                        // candidate's valid `.ktav` config from loading (see
+                        // task #298 / bug F9): the caller downcasts this
+                        // error to tell "no ktav here, but there's a legacy
+                        // script sibling" (keep searching, only report if
+                        // nothing better turns up) apart from any other error
+                        // (which should still bail out immediately).
+                        return Err(LegacyScriptSiblingError {
+                            script_path,
+                            expected_path: p.to_path_buf(),
+                        }
+                        .into());
                     }
                     return Ok(None);
                 }
@@ -2793,6 +2875,99 @@ colors: {
         assert!(
             message.contains("onlyterm.ktav"),
             "error should mention the expected new filename: {}",
+            message
+        );
+    }
+
+    /// Regression test for task #298 / bug F9: a legacy `.rhai`/`.lua`
+    /// sibling sitting next to an *earlier* candidate in the config search
+    /// order must not prevent a *later* candidate's valid, already-migrated
+    /// `.ktav` config from loading. Concretely: a user who migrated from
+    /// `$HOME/.onlyterm.rhai` to the more advanced `<config-dir>/onlyterm.ktav`
+    /// location, but left the old `.rhai` file sitting on disk, must still
+    /// start successfully from the `.ktav` file found later in the search
+    /// order -- not be blocked by a legacy-script error pointing at the old,
+    /// irrelevant file. This exercises the actual multi-candidate search loop
+    /// (`Config::search_paths_for_config`), not just a single `try_load`
+    /// call, since the bug was specifically in how the search loop reacted
+    /// to an error from an earlier candidate.
+    #[test]
+    fn legacy_sibling_at_earlier_candidate_does_not_block_later_valid_ktav() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        // First (higher-priority) candidate directory: has an old `.rhai`
+        // file but no `.ktav` replacement -- simulates a stale legacy file
+        // left behind after migrating elsewhere.
+        let old_dir = tempfile::tempdir().unwrap();
+        std::fs::write(old_dir.path().join(".onlyterm.rhai"), "#{}").unwrap();
+        let old_ktav_path = old_dir.path().join(".onlyterm.ktav");
+
+        // Second (lower-priority) candidate directory: has a genuine, valid,
+        // already-migrated `.ktav` config.
+        let new_dir = tempfile::tempdir().unwrap();
+        let new_ktav_path = new_dir.path().join("onlyterm.ktav");
+        std::fs::write(&new_ktav_path, "font_size: 18\nterm: screen\n").unwrap();
+
+        let paths = vec![
+            PathPossibility::optional(old_ktav_path),
+            PathPossibility::optional(new_ktav_path.clone()),
+        ];
+
+        let loaded = Config::search_paths_for_config(&paths, &wezterm_dynamic::Value::default())
+            .expect("the later candidate's valid .ktav config should be found");
+        let cfg = loaded
+            .config
+            .expect("a valid .ktav config later in the search order must load successfully, not be blocked by an earlier legacy .rhai sibling");
+        assert_eq!(cfg.font_size, 18.0);
+        assert_eq!(cfg.term, "screen");
+        assert_eq!(loaded.file_name.as_deref(), Some(new_ktav_path.as_path()));
+    }
+
+    /// Companion to the test above: confirms the existing legacy-detection
+    /// behavior is unchanged for the simple case where NO candidate anywhere
+    /// in the search order has a valid `.ktav` config -- only a legacy
+    /// `.rhai`/`.lua` file. This must still produce the same clear,
+    /// actionable "found a legacy scripted configuration file" error as
+    /// before, not be silently swallowed now that the search loop defers
+    /// legacy-sibling errors.
+    #[test]
+    fn legacy_sibling_with_no_ktav_anywhere_still_errors() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let old_dir = tempfile::tempdir().unwrap();
+        std::fs::write(old_dir.path().join(".onlyterm.rhai"), "#{}").unwrap();
+        let old_ktav_path = old_dir.path().join(".onlyterm.ktav");
+
+        // A second candidate directory that has neither a `.ktav` file nor
+        // any legacy sibling at all -- just a plain "nothing here".
+        let empty_dir = tempfile::tempdir().unwrap();
+        let empty_ktav_path = empty_dir.path().join("onlyterm.ktav");
+
+        let paths = vec![
+            PathPossibility::optional(old_ktav_path),
+            PathPossibility::optional(empty_ktav_path),
+        ];
+
+        let loaded = Config::search_paths_for_config(&paths, &wezterm_dynamic::Value::default())
+            .expect("a deferred legacy-sibling error must still be surfaced eventually");
+        let err = match loaded.config {
+            Err(err) => err,
+            Ok(_) => panic!(
+                "a legacy .rhai-only search order (no .ktav found anywhere) must still \
+                 error, not silently fall through"
+            ),
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("no longer supported"),
+            "unexpected error message: {}",
+            message
+        );
+        assert!(
+            message.contains(".onlyterm.rhai") || message.contains("onlyterm.rhai"),
+            "error should mention the specific legacy file to migrate: {}",
             message
         );
     }
