@@ -108,7 +108,7 @@ span multiple lines:
 
 ```
 set_environment_variables: {
-  prompt: "$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ",
+  prompt: $E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m 
 }
 ```
 
@@ -163,13 +163,13 @@ per-platform config file is simply written for that platform only):
 
 ```
 set_environment_variables: {
-  // Use OSC 7 as per the above example
-  prompt: "$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m "
-  // use a more ls-like output format for dir
-  DIRCMD: "/d"
+  ## Use OSC 7 as per the above example
+  prompt: $E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m 
+  ## use a more ls-like output format for dir
+  DIRCMD: /d
 }
-// And inject clink into the command prompt
-default_prog: [ "cmd.exe", "/s", "/k", "c:/clink/clink_x64.exe", "inject", "-q" ]
+## And inject clink into the command prompt
+default_prog: [ cmd.exe, /s, /k, c:/clink/clink_x64.exe, inject, -q ]
 ```
 
 Now, rather than just running `cmd.exe` on its own, this will cause `cmd.exe`

@@ -38,13 +38,13 @@ The following configuration enables a low intensity visual bell that takes a tot
 
 ```
 visual_bell: {
-  fade_in_function: "EaseIn",
-  fade_in_duration_ms: 150,
-  fade_out_function: "EaseOut",
-  fade_out_duration_ms: 150,
+  fade_in_function: EaseIn
+  fade_in_duration_ms: 150
+  fade_out_function: EaseOut
+  fade_out_duration_ms: 150
 }
 colors: {
-  visual_bell: "#202020",
+  visual_bell: #202020
 }
 ```
 
@@ -52,9 +52,9 @@ The follow configuration make the cursor briefly flare when the bell is run:
 
 ```
 visual_bell: {
-  fade_in_duration_ms: 75,
-  fade_out_duration_ms: 75,
-  target: "CursorColor",
+  fade_in_duration_ms: 75
+  fade_out_duration_ms: 75
+  target: CursorColor
 }
 ```
 

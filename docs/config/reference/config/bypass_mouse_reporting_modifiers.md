@@ -20,6 +20,6 @@ as though `SHIFT` was not pressed and then match it against the mouse
 assignments.
 
 ```
-// Use ALT instead of SHIFT to bypass application mouse reporting
-bypass_mouse_reporting_modifiers: "ALT"
+## Use ALT instead of SHIFT to bypass application mouse reporting
+bypass_mouse_reporting_modifiers: ALT
 ```

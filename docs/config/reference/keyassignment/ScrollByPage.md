@@ -5,8 +5,8 @@ Negative values scroll upwards, while positive values scroll downwards.
 
 ```
 keys: [
-  { key: "PageUp", mods: "SHIFT", action: { ScrollByPage: -1 } },
-  { key: "PageDown", mods: "SHIFT", action: { ScrollByPage: 1 } },
+  { key: PageUp, mods: SHIFT, action: { ScrollByPage: -1 } }
+  { key: PageDown, mods: SHIFT, action: { ScrollByPage: 1 } }
 ]
 ```
 
@@ -17,7 +17,7 @@ how to make the `PageUp`/`PageDown` scroll by half a page at a time:
 
 ```
 keys: [
-  { key: "PageUp", mods: "SHIFT", action: { ScrollByPage: -0.5 } },
-  { key: "PageDown", mods: "SHIFT", action: { ScrollByPage: 0.5 } },
+  { key: PageUp, mods: SHIFT, action: { ScrollByPage: -0.5 } }
+  { key: PageDown, mods: SHIFT, action: { ScrollByPage: 0.5 } }
 ]
 ```

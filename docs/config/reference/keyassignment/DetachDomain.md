@@ -13,23 +13,23 @@ error log/debug overlay.
 ```
 unix_domains: [
   {
-    name: "devhost",
-  },
+    name: devhost
+  }
 ]
 keys: [
-  { key: "U", mods: "CTRL|SHIFT", action: { AttachDomain: "devhost" } },
-  // Detaches the domain associated with the current pane
+  { key: U, mods: CTRL|SHIFT, action: { AttachDomain: devhost } }
+  ## Detaches the domain associated with the current pane
   {
-    key: "D",
-    mods: "CTRL|SHIFT",
-    action: { DetachDomain: "CurrentPaneDomain" },
-  },
-  // Detaches the "devhost" domain
+    key: D
+    mods: CTRL|SHIFT
+    action: { DetachDomain: CurrentPaneDomain }
+  }
+  ## Detaches the "devhost" domain
   {
-    key: "E",
-    mods: "CTRL|SHIFT",
-    action: { DetachDomain: { DomainName: "devhost" } },
-  },
+    key: E
+    mods: CTRL|SHIFT
+    action: { DetachDomain: { DomainName: devhost } }
+  }
 ]
 ```
 

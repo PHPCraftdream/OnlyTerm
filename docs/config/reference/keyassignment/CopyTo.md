@@ -11,10 +11,10 @@ Possible values for destination are:
 ```
 keys: [
   {
-    key: "C",
-    mods: "CTRL",
-    action: { CopyTo: "ClipboardAndPrimarySelection" },
-  },
+    key: C
+    mods: CTRL
+    action: { CopyTo: ClipboardAndPrimarySelection }
+  }
 ]
 ```
 

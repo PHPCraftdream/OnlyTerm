@@ -15,15 +15,15 @@ windows:
 ```
 keys: [
   {
-    key: "r",
-    mods: "ALT",
-    action: { ActivateWindowRelativeNoWrap: 1 },
-  },
+    key: r
+    mods: ALT
+    action: { ActivateWindowRelativeNoWrap: 1 }
+  }
   {
-    key: "e",
-    mods: "ALT",
-    action: { ActivateWindowRelativeNoWrap: -1 },
-  },
+    key: e
+    mods: ALT
+    action: { ActivateWindowRelativeNoWrap: -1 }
+  }
 ]
 ```
 

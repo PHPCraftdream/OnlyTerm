@@ -5,16 +5,14 @@
 Moves the CopyMode cursor position forward to the end of word.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "e",
-        mods: "NONE",
-        action: { CopyMode: "MoveForwardWordEnd" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: e
+      mods: NONE
+      action: { CopyMode: MoveForwardWordEnd }
+    }
+  ]
 }
 ```
 

@@ -13,12 +13,12 @@ is now equivalent to [CopyTo](CopyTo.md).
 
 ```
 mouse_bindings: [
-  // Change the default click behavior so that it populates
-  // the Clipboard rather the PrimarySelection.
+  ## Change the default click behavior so that it populates
+  ## the Clipboard rather the PrimarySelection.
   {
-    event: { Up: { streak: 1, button: "Left" } },
-    mods: "NONE",
-    action: { CompleteSelectionOrOpenLinkAtMouseCursor: "Clipboard" },
-  },
+    event: { Up: { streak: 1, button: Left } }
+    mods: NONE
+    action: { CompleteSelectionOrOpenLinkAtMouseCursor: Clipboard }
+  }
 ]
 ```

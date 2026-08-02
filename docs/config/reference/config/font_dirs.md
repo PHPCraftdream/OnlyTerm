@@ -10,10 +10,10 @@ if you configure the `font_dirs` option, wezterm will load fonts from that
 set of directories:
 
 ```
-// This tells wezterm to look first for fonts in the directory named
-// `fonts` that is found alongside your `onlyterm.ktav` file.
-// As this option is an array, you may list multiple locations if
-// you wish.
+## This tells wezterm to look first for fonts in the directory named
+## `fonts` that is found alongside your `onlyterm.ktav` file.
+## As this option is an array, you may list multiple locations if
+## you wish.
 font_dirs: [fonts]
 ```
 

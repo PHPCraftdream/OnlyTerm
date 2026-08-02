@@ -5,7 +5,7 @@ in the current tab.
 
 ```
 keys: [
-  { key: "l", mods: "ALT", action: ShowLauncher },
+  { key: l, mods: ALT, action: ShowLauncher }
 ]
 ```
 

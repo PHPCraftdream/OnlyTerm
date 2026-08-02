@@ -13,7 +13,7 @@ OnlyTerm defaults this to `"NeverPrompt"` (upstream wezterm defaults to
 confirmation prompt back.
 
 ```
-window_close_confirmation: "NeverPrompt"
+window_close_confirmation: NeverPrompt
 ```
 
 See also

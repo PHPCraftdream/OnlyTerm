@@ -7,12 +7,12 @@ the left half and the new right half spawns a new command.
 
 ```
 keys: [
-  // This will create a new split and run your default program inside it
+  ## This will create a new split and run your default program inside it
   {
-    key: "%",
-    mods: "CTRL|SHIFT|ALT",
-    action: { SplitHorizontal: { domain: "CurrentPaneDomain" } },
-  },
+    key: %
+    mods: CTRL|SHIFT|ALT
+    action: { SplitHorizontal: { domain: CurrentPaneDomain } }
+  }
 ]
 ```
 
@@ -21,14 +21,16 @@ specify what should be spawned into the new split.
 
 ```
 keys: [
-  // This will create a new split and run the `top` program inside it
+  ## This will create a new split and run the `top` program inside it
   {
-    key: "%",
-    mods: "CTRL|SHIFT|ALT",
-    action: { SplitHorizontal: {
-      args: [ "top" ],
-    } },
-  },
+    key: %
+    mods: CTRL|SHIFT|ALT
+    action: {
+      SplitHorizontal: {
+        args: [ top ]
+      }
+    }
+  }
 ]
 ```
 

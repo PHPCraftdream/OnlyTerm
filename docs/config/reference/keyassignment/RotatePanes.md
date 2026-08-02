@@ -40,11 +40,11 @@ the panes withing those placements.
 ```
 keys: [
   {
-    key: "b",
-    mods: "CTRL",
-    action: { RotatePanes: "CounterClockwise" },
-  },
-  { key: "n", mods: "CTRL", action: { RotatePanes: "Clockwise" } },
+    key: b
+    mods: CTRL
+    action: { RotatePanes: CounterClockwise }
+  }
+  { key: n, mods: CTRL, action: { RotatePanes: Clockwise } }
 ]
 ```
 

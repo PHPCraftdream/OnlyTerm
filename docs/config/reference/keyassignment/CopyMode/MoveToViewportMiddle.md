@@ -6,16 +6,14 @@ Moves the CopyMode cursor position to the middle of the viewport.
 
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "M",
-        mods: "NONE",
-        action: { CopyMode: "MoveToViewportMiddle" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: M
+      mods: NONE
+      action: { CopyMode: MoveToViewportMiddle }
+    }
+  ]
 }
 ```
 

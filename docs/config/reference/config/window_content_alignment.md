@@ -26,7 +26,7 @@ For example, to center the terminal cells:
 
 ```
 window_content_alignment: {
-  horizontal: "Center",
-  vertical: "Center",
+  horizontal: Center
+  vertical: Center
 }
 ```

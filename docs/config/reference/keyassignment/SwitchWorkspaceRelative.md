@@ -24,7 +24,7 @@ to create workspaces.
 
 ```
 keys: [
-  { key: "9", mods: ALT, action: { ShowLauncherArgs: { flags: "FUZZY|WORKSPACES" } } }
+  { key: 9, mods: ALT, action: { ShowLauncherArgs: { flags: FUZZY|WORKSPACES } } }
   { key: n, mods: CTRL, action: { SwitchWorkspaceRelative: 1 } }
   { key: p, mods: CTRL, action: { SwitchWorkspaceRelative: -1 } }
 ]

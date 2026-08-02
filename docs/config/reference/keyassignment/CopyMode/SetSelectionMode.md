@@ -13,16 +13,14 @@ MODE can be one of:
 * `"SemanticZone"` - selection expands to the current semantic zone. See [Shell Integration](../../../../shell-integration.md). {{since('20220903-194523-3bb1ed61', inline=True)}}.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "v",
-        mods: "NONE",
-        action: { CopyMode: { SetSelectionMode: "Cell" } },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: v
+      mods: NONE
+      action: { CopyMode: { SetSelectionMode: Cell } }
+    }
+  ]
 }
 ```
 

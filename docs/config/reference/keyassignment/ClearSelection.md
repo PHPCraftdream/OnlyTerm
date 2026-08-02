@@ -15,10 +15,12 @@ keys: [
   {
     key: c
     mods: CTRL|SHIFT
-    action: { Multiple: [
-      { CopyTo: ClipboardAndPrimarySelection }
-      ClearSelection
-    ] }
+    action: {
+      Multiple: [
+        { CopyTo: ClipboardAndPrimarySelection }
+        ClearSelection
+      ]
+    }
   }
 ]
 ```

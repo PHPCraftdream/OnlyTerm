@@ -8,10 +8,10 @@ the values specified by your `font`, `initial_rows`, and `initial_cols` configur
 ```
 keys: [
   {
-    key: "0",
-    mods: "CTRL",
-    action: ResetFontAndWindowSize,
-  },
+    key: 0
+    mods: CTRL
+    action: ResetFontAndWindowSize
+  }
 ]
 ```
 

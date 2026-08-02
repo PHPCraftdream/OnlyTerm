@@ -20,7 +20,7 @@ troubleshooting.
 
 ```
 keys: [
-  // CTRL-SHIFT-l activates the debug overlay
-  { key: "L", mods: "CTRL", action: ShowDebugOverlay },
+  ## CTRL-SHIFT-l activates the debug overlay
+  { key: L, mods: CTRL, action: ShowDebugOverlay }
 ]
 ```

@@ -5,10 +5,10 @@ Toggles full screen mode for the current window.
 ```
 keys: [
   {
-    key: "n",
-    mods: "SHIFT|CTRL",
-    action: ToggleFullScreen,
-  },
+    key: n
+    mods: SHIFT|CTRL
+    action: ToggleFullScreen
+  }
 ]
 ```
 

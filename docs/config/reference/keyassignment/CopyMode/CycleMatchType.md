@@ -6,12 +6,10 @@ Move the CopyMode/SearchMode cycle between case-sensitive, case-insensitive
 and regular expression match types.
 
 ```
-return {
-  key_tables: {
-    search_mode: [
-      { key: "r", mods: "CTRL", action: { CopyMode: "CycleMatchType" } },
-    ],
-  },
+key_tables: {
+  search_mode: [
+    { key: r, mods: CTRL, action: { CopyMode: CycleMatchType } }
+  ]
 }
 ```
 

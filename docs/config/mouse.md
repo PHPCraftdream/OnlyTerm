@@ -30,8 +30,8 @@ In the table below, `Triple Left Down` means that the left mouse button is
 being triple clicked and that the event matches the downstroke of the third
 quick consecutive press.  `Triple Left Up` matches the subsequent release event
 of that triple click, so for a triple click both
-`SelectTextAtMouseCursor="Line"` and `CompleteSelection` will be triggered in
-that order.
+`{ SelectTextAtMouseCursor: Line }` and `CompleteSelection` will be triggered
+in that order.
 
 NOTE: In the action column below, each action is shown in its ktav form —
 a bare string for a simple action, or `{ ActionName: args }` for one with
@@ -76,29 +76,29 @@ You can define mouse actions using the `mouse_bindings` configuration section:
 
 ```
 mouse_bindings: [
-  // Right click sends "woot" to the terminal
+  ## Right click sends "woot" to the terminal
   {
     event: { Down: { streak: 1, button: Right } }
     mods: NONE
     action: { SendString: woot }
   }
 
-  // Change the default click behavior so that it only selects
-  // text and doesn't open hyperlinks
+  ## Change the default click behavior so that it only selects
+  ## text and doesn't open hyperlinks
   {
     event: { Up: { streak: 1, button: Left } }
     mods: NONE
     action: { CompleteSelection: ClipboardAndPrimarySelection }
   }
 
-  // and make CTRL-Click open hyperlinks
+  ## and make CTRL-Click open hyperlinks
   {
     event: { Up: { streak: 1, button: Left } }
     mods: CTRL
     action: OpenLinkAtMouseCursor
   }
-  // NOTE that binding only the 'Up' event can give unexpected behaviors.
-  // Read more below on the gotcha of binding an 'Up' event only.
+  ## NOTE that binding only the 'Up' event can give unexpected behaviors.
+  ## Read more below on the gotcha of binding an 'Up' event only.
 ]
 ```
 
@@ -160,14 +160,14 @@ delta scroll value while handling the event.
 
 ```
 mouse_bindings: [
-  // Scrolling up while holding CTRL increases the font size
+  ## Scrolling up while holding CTRL increases the font size
   {
     event: { Down: { streak: 1, button: { WheelUp: 1 } } }
     mods: CTRL
     action: IncreaseFontSize
   }
 
-  // Scrolling down while holding CTRL decreases the font size
+  ## Scrolling down while holding CTRL decreases the font size
   {
     event: { Down: { streak: 1, button: { WheelDown: 1 } } }
     mods: CTRL
@@ -189,13 +189,13 @@ To avoid this, it is recommended to disable the 'Down' event (to ensure it won't
 be sent to the running program), for example:
 ```
 mouse_bindings: [
-  // Bind 'Up' event of CTRL-Click to open hyperlinks
+  ## Bind 'Up' event of CTRL-Click to open hyperlinks
   {
     event: { Up: { streak: 1, button: Left } }
     mods: CTRL
     action: OpenLinkAtMouseCursor
   }
-  // Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
+  ## Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
   {
     event: { Down: { streak: 1, button: Left } }
     mods: CTRL

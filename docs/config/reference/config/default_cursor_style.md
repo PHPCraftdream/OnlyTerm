@@ -16,7 +16,7 @@ Acceptable values are `SteadyBlock`, `BlinkingBlock`,
 and `BlinkingBar`.
 
 ```
-default_cursor_style: "SteadyBlock"
+default_cursor_style: SteadyBlock
 ```
 
 Using a blinking style puts more load on the graphics subsystem.
