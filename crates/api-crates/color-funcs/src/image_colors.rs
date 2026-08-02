@@ -175,13 +175,13 @@ fn extract_distinct_colors_lab(
     }
 }
 
-/// Engine-agnostic implementation shared by the mlua binding above and the
-/// rhai binding in `crate::extract_colors_from_image_rhai` (L4a, see
-/// docs/plans/2026-07-23-lua-rhai-migration.md). Identical logic/caching to
-/// what `extract_colors_from_image` always did; only the error type changed
-/// (`anyhow::Error` instead of directly building an `mlua::Error`) so both
-/// engine bindings can wrap it in their own error type without duplicating the
-/// image analysis itself.
+/// Image color extraction, factored out so callers can wrap the result in
+/// their own error type without duplicating the image analysis itself. This
+/// used to be shared by the mlua and rhai config-scripting bindings that
+/// called it (see docs/plans/2026-07-23-lua-rhai-migration.md for the
+/// migration that removed the scripting layer entirely); it is currently
+/// unused (see the `#[allow(dead_code)]` on the `image_colors` module in
+/// `lib.rs`) but left in place for a future non-scripting caller.
 pub fn extract_colors_from_image_impl(
     file_name: String,
     params: Option<ExtractColorParams>,
