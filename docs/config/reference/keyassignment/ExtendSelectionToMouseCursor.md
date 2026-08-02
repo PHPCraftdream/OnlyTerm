@@ -11,10 +11,10 @@ The mode argument can also be `"Block"` to enable a rectangular block selection.
 ```
 mouse_bindings: [
   {
-    event: { Up: { streak: 1, button: "Left" } },
-    mods: "SHIFT",
-    action: { ExtendSelectionToMouseCursor: "Word" },
-  },
+    event: { Up: { streak: 1, button: Left } }
+    mods: SHIFT
+    action: { ExtendSelectionToMouseCursor: Word }
+  }
 ]
 ```
 

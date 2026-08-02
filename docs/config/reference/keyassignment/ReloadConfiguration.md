@@ -5,10 +5,10 @@ Explicitly reload the configuration.
 ```
 keys: [
   {
-    key: "r",
-    mods: "CMD|SHIFT",
-    action: ReloadConfiguration,
-  },
+    key: r
+    mods: CMD|SHIFT
+    action: ReloadConfiguration
+  }
 ]
 ```
 

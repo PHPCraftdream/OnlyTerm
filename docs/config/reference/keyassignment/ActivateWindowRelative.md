@@ -15,8 +15,8 @@ windows:
 
 ```
 keys: [
-  { key: "r", mods: "ALT", action: { ActivateWindowRelative: 1 } },
-  { key: "e", mods: "ALT", action: { ActivateWindowRelative: -1 } },
+  { key: r, mods: ALT, action: { ActivateWindowRelative: 1 } }
+  { key: e, mods: ALT, action: { ActivateWindowRelative: -1 } }
 ]
 ```
 

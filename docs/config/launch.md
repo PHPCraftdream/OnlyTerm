@@ -41,8 +41,8 @@ the argument array; the array allows specifying the program and arguments
 portably:
 
 ```
-// Spawn a fish shell in login mode
-default_prog: [ "/usr/local/bin/fish", "-l" ]
+## Spawn a fish shell in login mode
+default_prog: [ /usr/local/bin/fish, -l ]
 ```
 
 ## Launching a different program as a one off via the CLI
@@ -109,10 +109,10 @@ and then set the specified variables for the spawned process.
 
 ```
 set_environment_variables: {
-  // This changes the default prompt for cmd.exe to report the
-  // current directory using OSC 7, show the current time and
-  // the current directory colored in the prompt.
-  prompt: "$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ",
+  ## This changes the default prompt for cmd.exe to report the
+  ## current directory using OSC 7, show the current time and
+  ## the current directory colored in the prompt.
+  prompt: $E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m 
 }
 ```
 
@@ -140,27 +140,27 @@ Each entry in `launch_menu` is an instance of a
 ```
 launch_menu: [
   {
-    args: [ "top" ],
-  },
+    args: [ top ]
+  }
   {
-    // Optional label to show in the launcher. If omitted, a label
-    // is derived from the `args`
-    label: "Bash",
-    // The argument array to spawn.  If omitted the default program
-    // will be used as described in the documentation above
-    args: [ "bash", "-l" ],
+    ## Optional label to show in the launcher. If omitted, a label
+    ## is derived from the `args`
+    label: Bash
+    ## The argument array to spawn.  If omitted the default program
+    ## will be used as described in the documentation above
+    args: [ bash, -l ]
 
-    // You can specify an alternative current working directory
-    // if you don't specify one then a default based on the OSC 7
-    // escape sequence will be used (see the Shell Integration
-    // docs), falling back to the home directory.
-    // cwd: "/some/path"
+    ## You can specify an alternative current working directory
+    ## if you don't specify one then a default based on the OSC 7
+    ## escape sequence will be used (see the Shell Integration
+    ## docs), falling back to the home directory.
+    ## cwd: "/some/path"
 
-    // You can override environment variables just for this command
-    // by setting this here.  It has the same semantics as the main
-    // set_environment_variables configuration option described above
-    // set_environment_variables: { FOO: bar }
-  },
+    ## You can override environment variables just for this command
+    ## by setting this here.  It has the same semantics as the main
+    ## set_environment_variables configuration option described above
+    ## set_environment_variables: { FOO: bar }
+  }
 ]
 ```
 

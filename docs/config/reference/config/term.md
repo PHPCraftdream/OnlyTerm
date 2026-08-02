@@ -30,8 +30,8 @@ The following snippet works if you installed `wezterm.terminfo` with nix into yo
 
 ```
 set_environment_variables: {
-  TERMINFO_DIRS: "/home/user/.nix-profile/share/terminfo",
-  WSLENV: "TERMINFO_DIRS",
+  TERMINFO_DIRS: /home/user/.nix-profile/share/terminfo
+  WSLENV: TERMINFO_DIRS
 }
-term: "wezterm"
+term: wezterm
 ```

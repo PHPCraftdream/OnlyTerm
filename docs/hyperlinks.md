@@ -13,33 +13,69 @@ to make this clickable, and that can be done with the following configuration
 in your `~/.onlyterm.ktav`:
 
 ```
-// ktav has no function calls, so there is no way to reference "the built-in
-// defaults" from config; if you want the defaults plus your own rules, copy
-// the default rule list (see hyperlink_rules) into your config alongside
-// the extra rules you want, as done below.
+## ktav has no function calls, so there is no way to reference "the built-in
+## defaults" from config; if you want the defaults plus your own rules, copy
+## the default rule list (see hyperlink_rules) into your config alongside
+## the extra rules you want, as done below.
+##
+## Note: each rule below has one field per line inside its `{ ... }` object.
+## This matters here because several of these regexes contain raw `[`, `]`,
+## `{` or `}` characters; packing multiple fields onto a single line
+## alongside such a regex can confuse ktav's line-based bracket matching.
 hyperlink_rules: [
-  // Matches: a URL in parens: (URL)
-  { regex: "\\((\\w+://\\S+)\\)", format: "$1", highlight: 1 }
-  // Matches: a URL in brackets: [URL]
-  { regex: "\\[(\\w+://\\S+)\\]", format: "$1", highlight: 1 }
-  // Matches: a URL in curly braces: [URL]
-  { regex: "\\{(\\w+://\\S+)\\}", format: "$1", highlight: 1 }
-  // Matches: a URL in angle brackets: <URL>
-  { regex: "<(\\w+://\\S+)>", format: "$1", highlight: 1 }
-  // Then handle URLs not wrapped in brackets
-  { regex: "\\b\\w+://\\S+[)/a-zA-Z0-9-]+", format: "$0" }
-  // implicit mailto link
-  { regex: "\\b\\w+@[\\w-]+(\\.[\\w-]+)+\\b", format: "mailto:$0" }
+  ## Matches: a URL in parens: (URL)
+  {
+    regex: \\((\\w+://\\S+)\\)
+    format: $1
+    highlight: 1
+  }
+  ## Matches: a URL in brackets: [URL]
+  {
+    regex: \\[(\\w+://\\S+)\\]
+    format: $1
+    highlight: 1
+  }
+  ## Matches: a URL in curly braces: [URL]
+  {
+    regex: \\{(\\w+://\\S+)\\}
+    format: $1
+    highlight: 1
+  }
+  ## Matches: a URL in angle brackets: <URL>
+  {
+    regex: <(\\w+://\\S+)>
+    format: $1
+    highlight: 1
+  }
+  ## Then handle URLs not wrapped in brackets
+  {
+    regex: \\b\\w+://\\S+[)/a-zA-Z0-9-]+
+    format: $0
+  }
+  ## implicit mailto link
+  {
+    regex: \\b\\w+@[\\w-]+(\\.[\\w-]+)+\\b
+    format: mailto:$0
+  }
 
-  // make task numbers clickable
-  // the first matched regex group is captured in $1.
-  { regex: "\\b[tt](\\d+)\\b", format: "https://example.com/tasks/?t=$1" }
+  ## make task numbers clickable
+  ## the first matched regex group is captured in $1.
+  {
+    regex: \\b[tt](\\d+)\\b
+    format: https://example.com/tasks/?t=$1
+  }
 
-  // make username/project paths clickable. this implies paths like the following are for github.
-  // ( "nvim-treesitter/nvim-treesitter" | wbthomason/packer.nvim | wezterm/wezterm | "wezterm/wezterm.git" )
-  // as long as a full url hyperlink regex exists above this it should not match a full url to
-  // github or gitlab / bitbucket (i.e. https://gitlab.com/user/project.git is still a whole clickable url)
-  { regex: "[\"]?([\\w\\d]{1}[-\\w\\d]+)(/){1}([-\\w\\d\\.]+)[\"]?", format: "https://www.github.com/$1/$3" }
+  ## make username/project paths clickable. this implies paths like the following are for github.
+  ## ( nvim-treesitter/nvim-treesitter | wbthomason/packer.nvim | wezterm/wezterm | wezterm/wezterm.git )
+  ## as long as a full url hyperlink regex exists above this it should not match a full url to
+  ## github or gitlab / bitbucket (i.e. https://gitlab.com/user/project.git is still a whole clickable url)
+  {
+    ## The double colon is required here because this regex starts with a
+    ## literal `[`, which ktav would otherwise parse as opening an array
+    ## value instead of as the first character of the regex text.
+    regex:: [\\]?([\\w\\d]{1}[-\\w\\d]+)(/){1}([-\\w\\d\\.]+)[\\]?
+    format: https://www.github.com/$1/$3
+  }
 ]
 ```
 

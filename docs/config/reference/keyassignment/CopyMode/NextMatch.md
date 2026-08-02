@@ -5,11 +5,9 @@
 Move the CopyMode/SearchMode selection to the next matching text, if any.
 
 ```
-return {
-  key_tables: {
-    search_mode: [
-      { key: "n", mods: "CTRL", action: { CopyMode: "NextMatch" } },
-    ],
-  },
+key_tables: {
+  search_mode: [
+    { key: n, mods: CTRL, action: { CopyMode: NextMatch } }
+  ]
 }
 ```

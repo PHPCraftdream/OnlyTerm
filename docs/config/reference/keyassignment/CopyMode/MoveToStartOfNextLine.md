@@ -5,16 +5,14 @@
 Moves the CopyMode cursor position to the first cell in the next line.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "Enter",
-        mods: "NONE",
-        action: { CopyMode: "MoveToStartOfNextLine" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: Enter
+      mods: NONE
+      action: { CopyMode: MoveToStartOfNextLine }
+    }
+  ]
 }
 ```
 

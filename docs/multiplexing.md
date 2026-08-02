@@ -38,10 +38,10 @@ unix_domains: [
   }
 ]
 
-// This causes OnlyTerm to act as though it was started as
-// `onlyterm connect unix` by default, connecting to the unix
-// domain on startup.
-// If you prefer to connect manually, leave out this line.
+## This causes OnlyTerm to act as though it was started as
+## `onlyterm connect unix` by default, connecting to the unix
+## domain on startup.
+## If you prefer to connect manually, leave out this line.
 default_gui_startup_args: [connect, unix]
 ```
 
@@ -61,26 +61,26 @@ The possible configuration values are:
 ```
 unix_domains: [
   {
-    // The name; must be unique amongst all domains
+    ## The name; must be unique amongst all domains
     name: unix
 
-    // The path to the socket.  If unspecified, a reasonable default
-    // value will be computed.
+    ## The path to the socket.  If unspecified, a reasonable default
+    ## value will be computed.
 
-    // socket_path: "/some/path"
+    ## socket_path: "/some/path"
 
-    // If true, do not attempt to start this server if we try and fail to
-    // connect to it.
+    ## If true, do not attempt to start this server if we try and fail to
+    ## connect to it.
 
-    // no_serve_automatically: false
+    ## no_serve_automatically: false
 
-    // If true, bypass checking for secure ownership of the
-    // socket_path.  This is not recommended on a multi-user
-    // system, but is useful for example when running the
-    // server inside a WSL container but with the socket
-    // on the host NTFS volume.
+    ## If true, bypass checking for secure ownership of the
+    ## socket_path.  This is not recommended on a multi-user
+    ## system, but is useful for example when running the
+    ## server inside a WSL container but with the socket
+    ## on the host NTFS volume.
 
-    // skip_permissions_check: false
+    ## skip_permissions_check: false
   }
 ]
 ```
@@ -100,7 +100,7 @@ to an appropriate invocation of netcat/socat on Windows:
 unix_domains: [
   {
     name: unix
-    proxy_command: [nc, "-U", "/Users/wez/.local/share/wezterm/sock"]
+    proxy_command: [nc, -U, /Users/wez/.local/share/wezterm/sock]
   }
 ]
 ```
@@ -133,11 +133,11 @@ Inside your WSL instance, configure `.onlyterm.ktav` with this snippet:
 unix_domains: [
   {
     name: wsl
-    // Override the default path to match the default on the host win32
-    // filesystem.  This will allow the host to connect into the WSL
-    // container.
-    socket_path: "/mnt/c/Users/USERNAME/.local/share/wezterm/sock"
-    // NTFS permissions will always be "wrong", so skip that check
+    ## Override the default path to match the default on the host win32
+    ## filesystem.  This will allow the host to connect into the WSL
+    ## container.
+    socket_path: /mnt/c/Users/USERNAME/.local/share/wezterm/sock
+    ## NTFS permissions will always be "wrong", so skip that check
     skip_permissions_check: true
   }
 ]
@@ -149,7 +149,7 @@ In the host win32 configuration, use this snippet:
 unix_domains: [
   {
     name: wsl
-    serve_command: [wsl, "onlyterm-mux-server", "--daemonize"]
+    serve_command: [wsl, onlyterm-mux-server, --daemonize]
   }
 ]
 default_gui_startup_args: [connect, wsl]
@@ -180,13 +180,13 @@ Put this in `~/.onlyterm.ktav` (`%USERPROFILE%\.onlyterm.ktav` on Windows):
 ```
 unix_domains: [ { name: main, connect_automatically: true } ]
 default_domain: main
-default_gui_startup_args: [start, "--always-new-process"]
+default_gui_startup_args: [start, --always-new-process]
 ```
 
 What each setting does in this recipe:
 
 - `unix_domains: [ { name: main, connect_automatically: true } ]` declares
-  a unix-domain named `"main"`. Because `socket_path` is left unset, it
+  a unix-domain named `main`. Because `socket_path` is left unset, it
   resolves to the default socket path under OnlyTerm's runtime directory
   (`$XDG_RUNTIME_DIR`/equivalent on Unix, or the per-user runtime dir on
   Windows) — the same default every GUI process and `onlyterm-mux-server`
@@ -194,10 +194,10 @@ What each setting does in this recipe:
   `connect_automatically: true` makes any GUI process that starts up (via
   `onlyterm connect main`, or implicitly through `default_gui_startup_args`
   below) auto-attach to this domain instead of waiting to be told to.
-- `default_domain: "main"` makes `"main"` the default multiplexing domain for
-  new windows/tabs, instead of the built-in `"local"` domain (which spawns
+- `default_domain: main` makes `main` the default multiplexing domain for
+  new windows/tabs, instead of the built-in `local` domain (which spawns
   processes directly in the GUI process itself, with no survival guarantee).
-- `default_gui_startup_args: ["start", "--always-new-process"]` makes every
+- `default_gui_startup_args: [start, --always-new-process]` makes every
   invocation of the GUI act like `onlyterm start --always-new-process`.
   `--always-new-process` is the important part: it stops the GUI from trying
   to find and reuse an already-running GUI window (see the gui-sock caveat

@@ -7,10 +7,10 @@ Activates the Command Palette, a modal overlay that enables discovery and activa
 ```
 keys: [
   {
-    key: "P",
-    mods: "CTRL",
-    action: ActivateCommandPalette,
-  },
+    key: P
+    mods: CTRL
+    action: ActivateCommandPalette
+  }
 ]
 ```
 

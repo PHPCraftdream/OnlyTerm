@@ -6,10 +6,10 @@ tab, closes that window.  If that was the last window, wezterm terminates.
 ```
 keys: [
   {
-    key: "w",
-    mods: "CMD",
-    action: { CloseCurrentTab: { confirm: true } },
-  },
+    key: w
+    mods: CMD
+    action: { CloseCurrentTab: { confirm: true } }
+  }
 ]
 ```
 

@@ -7,8 +7,8 @@ Negative values scroll upwards, while positive values scroll downwards.
 
 ```
 keys: [
-  { key: "UpArrow", mods: "SHIFT", action: { ScrollByLine: -1 } },
-  { key: "DownArrow", mods: "SHIFT", action: { ScrollByLine: 1 } },
+  { key: UpArrow, mods: SHIFT, action: { ScrollByLine: -1 } }
+  { key: DownArrow, mods: SHIFT, action: { ScrollByLine: 1 } }
 ]
 ```
 

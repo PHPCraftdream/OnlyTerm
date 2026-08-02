@@ -7,13 +7,13 @@ to the tab for processing.
 
 ```
 keys: [
-  // Turn off the default CMD-m Hide action, allowing CMD-m to
-  // be potentially recognized and handled by the tab
+  ## Turn off the default CMD-m Hide action, allowing CMD-m to
+  ## be potentially recognized and handled by the tab
   {
-    key: "m",
-    mods: "CMD",
-    action: DisableDefaultAssignment,
-  },
+    key: m
+    mods: CMD
+    action: DisableDefaultAssignment
+  }
 ]
 ```
 

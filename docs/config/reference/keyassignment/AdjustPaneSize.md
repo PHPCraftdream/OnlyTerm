@@ -17,23 +17,23 @@ motion keys are used to adjust the size in their conventional directions,
 respectively.
 
 ```
-leader: { key: "a", mods: "CTRL" }
+leader: { key: a, mods: CTRL }
 keys: [
   {
-    key: "H",
-    mods: "LEADER",
-    action: { AdjustPaneSize: [ "Left", 5 ] },
-  },
+    key: H
+    mods: LEADER
+    action: { AdjustPaneSize: [ Left, 5 ] }
+  }
   {
-    key: "J",
-    mods: "LEADER",
-    action: { AdjustPaneSize: [ "Down", 5 ] },
-  },
-  { key: "K", mods: "LEADER", action: { AdjustPaneSize: [ "Up", 5 ] } },
+    key: J
+    mods: LEADER
+    action: { AdjustPaneSize: [ Down, 5 ] }
+  }
+  { key: K, mods: LEADER, action: { AdjustPaneSize: [ Up, 5 ] } }
   {
-    key: "L",
-    mods: "LEADER",
-    action: { AdjustPaneSize: [ "Right", 5 ] },
-  },
+    key: L
+    mods: LEADER
+    action: { AdjustPaneSize: [ Right, 5 ] }
+  }
 ]
 ```

@@ -57,8 +57,8 @@ webgpu_preferred_adapter: {
   device: 29730
   device_type: DiscreteGpu
   driver: radv
-  driver_info: "Mesa 22.3.4"
-  name: "AMD Radeon Pro W6400 (RADV NAVI24)"
+  driver_info: Mesa 22.3.4
+  name: AMD Radeon Pro W6400 (RADV NAVI24)
   vendor: 4098
 }
 front_end: WebGpu

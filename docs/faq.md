@@ -95,8 +95,8 @@ that you need in your `onlyterm.ktav`:
 ```
 font: {
   font: [
-    { family: "My Preferred Font" }
-    // This font has a broader selection of Chinese glyphs than my preferred font
+    { family: My Preferred Font }
+    ## This font has a broader selection of Chinese glyphs than my preferred font
     { family: DengXian }
   ]
 }
@@ -337,7 +337,7 @@ basic PATH, OnlyTerm will report that it cannot find it.
 Probably the easiest to maintain solution is to change something like:
 
 ```
-{ SpawnCommandInNewWindow: { args: [nvim, "/home/you/.onlyterm.ktav"] } }
+{ SpawnCommandInNewWindow: { args: [nvim, /home/you/.onlyterm.ktav] } }
 ```
 
 !!! note "`wezterm.config_file`/`wezterm.shell_quote_arg` no longer exist"
@@ -357,9 +357,9 @@ so that it explicitly spawns the command using your shell:
 {
   SpawnCommandInNewWindow: {
     args: [
-      "/bin/zsh"
-      "-c"
-      "nvim /home/you/.onlyterm.ktav"
+      /bin/zsh
+      -c
+      nvim /home/you/.onlyterm.ktav
     ]
   }
 }
@@ -374,8 +374,8 @@ something like:
 {
   SpawnCommandInNewWindow: {
     args: [
-      "/home/you/.local/bob/nvim-bin/nvim"
-      "/home/you/.onlyterm.ktav"
+      /home/you/.local/bob/nvim-bin/nvim
+      /home/you/.onlyterm.ktav
     ]
   }
 }
@@ -385,10 +385,10 @@ and another other option is to explicitly set the PATH up:
 
 ```
 set_environment_variables: {
-  // prepend the path to your utility and include the rest of the PATH.
-  // There is no way to reference $PATH or $HOME dynamically from ktav, so
-  // write out the full value you want, e.g.:
-  PATH: "/home/you/.local/bob/nvim-bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  ## prepend the path to your utility and include the rest of the PATH.
+  ## There is no way to reference $PATH or $HOME dynamically from ktav, so
+  ## write out the full value you want, e.g.:
+  PATH: /home/you/.local/bob/nvim-bin:/usr/bin:/bin:/usr/sbin:/sbin
 }
 ```
 
@@ -422,5 +422,5 @@ If you prefer to disable ligatures you can instruct *harfbuzz*, the underlying
 font shaping software, to disable them by adding this to your configuration:
 
 ```
-harfbuzz_features: ["calt = 0", "clig = 0", "liga = 0"]
+harfbuzz_features: [calt = 0, clig = 0, liga = 0]
 ```

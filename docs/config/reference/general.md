@@ -7,7 +7,7 @@ file. There is no scripting engine, no function calls, and no modules to
 import — every option is just a key in the config document:
 
 ```
-font: { font: [{ family: "JetBrains Mono" }] }
+font: { font: [{ family: JetBrains Mono }] }
 ```
 
 If you have an existing `.wezterm.lua` or `.wezterm.rhai`/`onlyterm.rhai`

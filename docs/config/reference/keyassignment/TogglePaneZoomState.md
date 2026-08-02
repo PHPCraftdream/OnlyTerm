@@ -9,10 +9,10 @@ Switching its zoom state off will restore the prior split arrangement.
 ```
 keys: [
   {
-    key: "Z",
-    mods: "CTRL",
-    action: TogglePaneZoomState,
-  },
+    key: Z
+    mods: CTRL
+    action: TogglePaneZoomState
+  }
 ]
 ```
 

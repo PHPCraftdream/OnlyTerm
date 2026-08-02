@@ -8,16 +8,14 @@ the starting point at the right end, then the cursor and starting point are
 swapped, with the cursor now positioned at the right end.
 
 ```
-return {
-  key_tables: {
-    copy_mode: [
-      {
-        key: "O",
-        mods: "NONE",
-        action: { CopyMode: "MoveToSelectionOtherEndHoriz" },
-      },
-    ],
-  },
+key_tables: {
+  copy_mode: [
+    {
+      key: O
+      mods: NONE
+      action: { CopyMode: MoveToSelectionOtherEndHoriz }
+    }
+  ]
 }
 ```
 

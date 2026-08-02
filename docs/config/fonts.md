@@ -10,10 +10,13 @@ a `TextStyle` object (there is no `wezterm.font(...)` helper anymore — see
 [wezterm.font](reference/wezterm/font.md), a removed scripting function):
 
 ```
-font: { font: [{ family: "Fira Code" }] }
-// You can specify some parameters to influence the font selection;
-// for example, this selects a Bold, Italic font variant.
-font: { font: [{ family: "JetBrains Mono", weight: Bold, italic: true }] }
+font: { font: [{ family: Fira Code }] }
+```
+
+```
+## You can specify some parameters to influence the font selection;
+## for example, this selects a Bold, Italic font variant.
+font: { font: [{ family: JetBrains Mono, weight: Bold, italic: true }] }
 ```
 
 #### Fallback
@@ -32,10 +35,12 @@ monospace font, but it doesn't have glyphs for the asian script that you
 sometimes work with:
 
 ```
-font: { font: [
-  { family: "Fira Code" }
-  { family: DengXian }
-] }
+font: {
+  font: [
+    { family: Fira Code }
+    { family: DengXian }
+  ]
+}
 ```
 
 WezTerm will still append its default fallback to whatever list you specify,

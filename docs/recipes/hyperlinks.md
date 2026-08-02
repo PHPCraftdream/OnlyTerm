@@ -141,7 +141,7 @@ mouse_bindings: [
     mods: CTRL
     action: OpenLinkAtMouseCursor
   }
-  // Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
+  ## Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
   {
     event: { Down: { streak: 1, button: Left } }
     mods: CTRL

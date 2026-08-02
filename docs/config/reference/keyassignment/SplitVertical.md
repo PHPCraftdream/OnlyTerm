@@ -7,12 +7,12 @@ the top half and the new bottom half spawns a new command.
 
 ```
 keys: [
-  // This will create a new split and run your default program inside it
+  ## This will create a new split and run your default program inside it
   {
-    key: "\"",
-    mods: "CTRL|SHIFT|ALT",
-    action: { SplitVertical: { domain: "CurrentPaneDomain" } },
-  },
+    key: "
+    mods: CTRL|SHIFT|ALT
+    action: { SplitVertical: { domain: CurrentPaneDomain } }
+  }
 ]
 ```
 
@@ -21,14 +21,16 @@ specify what should be spawned into the new split.
 
 ```
 keys: [
-  // This will create a new split and run the `top` program inside it
+  ## This will create a new split and run the `top` program inside it
   {
-    key: "\"",
-    mods: "CTRL|SHIFT|ALT",
-    action: { SplitVertical: {
-      args: [ "top" ],
-    } },
-  },
+    key: "
+    mods: CTRL|SHIFT|ALT
+    action: {
+      SplitVertical: {
+        args: [ top ]
+      }
+    }
+  }
 ]
 ```
 

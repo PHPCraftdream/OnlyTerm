@@ -16,10 +16,10 @@ enabled the scrollbar and have set `right` to `0` then the right padding
 
 ```
 window_padding: {
-  left: 2,
-  right: 2,
-  top: 0,
-  bottom: 0,
+  left: 2
+  right: 2
+  top: 0
+  bottom: 0
 }
 ```
 
@@ -39,10 +39,10 @@ The default padding is shown below.  In earlier releases, the default padding wa
 
 ```
 window_padding: {
-  left: "1cell",
-  right: "1cell",
-  top: "0.5cell",
-  bottom: "0.5cell",
+  left: 1cell
+  right: 1cell
+  top: 0.5cell
+  bottom: 0.5cell
 }
 ```
 

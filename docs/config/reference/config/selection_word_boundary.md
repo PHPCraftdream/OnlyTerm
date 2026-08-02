@@ -14,5 +14,8 @@ Defaults to ``" \t\n{}[]()\"'`"``.
 
 For example, to always include spaces and newline when selecting a word, but stop on punctuations:
 ```
-selection_word_boundary: "{}[]()\"'`.,;:"
+## The double colon forces the rest of the line to be read as a literal
+## string; without it, the value's own `{`/`[`/`"` characters would be
+## parsed as ktav syntax instead of literal punctuation.
+selection_word_boundary:: {}[]()\'`.,;:"
 ```

@@ -6,16 +6,14 @@ Move the CopyMode/SearchMode selection to the next matching text on the next
 page of the screen, if any.
 
 ```
-return {
-  key_tables: {
-    search_mode: [
-      {
-        key: "PageDown",
-        mods: "CTRL",
-        action: { CopyMode: "NextMatchPage" },
-      },
-    ],
-  },
+key_tables: {
+  search_mode: [
+    {
+      key: PageDown
+      mods: CTRL
+      action: { CopyMode: NextMatchPage }
+    }
+  ]
 }
 ```
 

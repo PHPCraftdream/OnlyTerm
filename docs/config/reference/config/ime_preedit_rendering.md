@@ -30,7 +30,7 @@ WezTerm supports the following IME preedit rendering.
 You can control IME preedit rendering in your configuration file:
 
 ```
-ime_preedit_rendering: "System"
+ime_preedit_rendering: System
 ```
 
 Otherwise, the default is `"Builtin"`.

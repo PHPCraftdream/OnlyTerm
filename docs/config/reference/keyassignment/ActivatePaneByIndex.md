@@ -10,8 +10,8 @@ panes, respectively:
 
 ```
 keys: [
-  { key: "a", mods: "ALT", action: { ActivatePaneByIndex: 0 } },
-  { key: "b", mods: "ALT", action: { ActivatePaneByIndex: 1 } },
-  { key: "c", mods: "ALT", action: { ActivatePaneByIndex: 2 } },
+  { key: a, mods: ALT, action: { ActivatePaneByIndex: 0 } }
+  { key: b, mods: ALT, action: { ActivatePaneByIndex: 1 } }
+  { key: c, mods: ALT, action: { ActivatePaneByIndex: 2 } }
 ]
 ```

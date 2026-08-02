@@ -11,11 +11,11 @@ Possible values for source are:
 
 ```
 keys: [
-  // paste from the clipboard
-  { key: "V", mods: "CTRL", action: { PasteFrom: "Clipboard" } },
+  ## paste from the clipboard
+  { key: V, mods: CTRL, action: { PasteFrom: Clipboard } }
 
-  // paste from the primary selection
-  { key: "V", mods: "CTRL", action: { PasteFrom: "PrimarySelection" } },
+  ## paste from the primary selection
+  { key: V, mods: CTRL, action: { PasteFrom: PrimarySelection } }
 ]
 ```
 
