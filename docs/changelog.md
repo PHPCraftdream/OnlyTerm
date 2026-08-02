@@ -27,7 +27,9 @@ As features stabilize some brief notes about them will accumulate here.
   language is now **ktav**, a static, engine-free `key: value` data format
   (no expressions, no function calls, no `on(...)` event hooks) — your config
   file must now be a `.onlyterm.ktav` file (previously `.wezterm.rhai`, and
-  before that `.wezterm.lua`). This is a deliberate simplification, not a
+  before that `.wezterm.lua`), found either as `~/.onlyterm.ktav` or as
+  `onlyterm.ktav` in one of your config directories (e.g.
+  `~/.config/wezterm/onlyterm.ktav`). This is a deliberate simplification, not a
   stopgap: an audit found that most of the scripting surface was already
   unreachable dead code (an earlier, incomplete Lua-to-rhai migration had
   silently dropped the wiring for most event hooks and callback plumbing), so
@@ -53,9 +55,10 @@ As features stabilize some brief notes about them will accumulate here.
   (`wsl_domains` remains fully supported, since it is implemented natively
   rather than via scripting, and is the closest still-working alternative
   for reaching WSL). Plugins (which required a scripting engine to evaluate
-  `plugin/init.rhai`) are also gone. If a legacy `.wezterm.rhai`/`.wezterm.lua`
-  is found with no `.onlyterm.ktav` sibling, WezTerm prints a clear error
-  naming the file and pointing at the migration guide. A separate, explicit
+  `plugin/init.rhai`) are also gone. If a legacy `onlyterm.rhai`/`onlyterm.lua`
+  (or, for the dotfile location, `.onlyterm.rhai`/`.onlyterm.lua`) is found
+  with no `.onlyterm.ktav` sibling, OnlyTerm prints a clear error naming the
+  file and pointing at the migration guide. A separate, explicit
   external-hooks API may be added later if a real need for scripted
   customization emerges — this removal is not a signal that hooks can never
   come back, only that the old rhai-shaped mechanism is gone. See the

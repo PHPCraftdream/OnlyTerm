@@ -1240,7 +1240,7 @@ impl Config {
         paths: &[PathPossibility],
         overrides: &wezterm_dynamic::Value,
     ) -> Option<LoadedConfig> {
-        let mut deferred_legacy_error: Option<anyhow::Error> = None;
+        let mut deferred_legacy_error: Option<(anyhow::Error, PathBuf)> = None;
 
         for path_item in paths {
             if CONFIG_SKIP.load(Ordering::Relaxed) {
@@ -1249,9 +1249,10 @@ impl Config {
 
             match Self::try_load(path_item, overrides) {
                 Err(err) => {
-                    if err.downcast_ref::<LegacyScriptSiblingError>().is_some() {
+                    if let Some(sibling_err) = err.downcast_ref::<LegacyScriptSiblingError>() {
                         if deferred_legacy_error.is_none() {
-                            deferred_legacy_error = Some(err);
+                            let expected_path = sibling_err.expected_path.clone();
+                            deferred_legacy_error = Some((err, expected_path));
                         }
                         continue;
                     }
@@ -1266,9 +1267,18 @@ impl Config {
             }
         }
 
-        deferred_legacy_error.map(|err| LoadedConfig {
+        // Even though no `.ktav` file exists yet at `expected_path`, we still
+        // report it as `file_name`: `ConfigInner::reload` (see
+        // `crates/config/src/lib.rs`) builds its filesystem-watch list from
+        // `file_name` alone, and watching `expected_path`'s parent directory
+        // (which does exist) means that if the user migrates their legacy
+        // script to `expected_path` while OnlyTerm is still running (showing
+        // this very error), the new file's creation is picked up by the
+        // `notify` watcher and triggers a live reload -- instead of leaving
+        // the user stuck with this error until they manually restart.
+        deferred_legacy_error.map(|(err, expected_path)| LoadedConfig {
             config: Err(err),
-            file_name: None,
+            file_name: Some(expected_path),
             warnings: vec![],
         })
     }
@@ -2985,6 +2995,65 @@ colors: {
             message.contains(".onlyterm.rhai") || message.contains("onlyterm.rhai"),
             "error should mention the specific legacy file to migrate: {}",
             message
+        );
+    }
+
+    /// Regression test for task #301 (second-round review of task #298's
+    /// refactor): when no candidate anywhere in the search order produces a
+    /// real config and the deferred legacy-sibling error is finally
+    /// surfaced, `LoadedConfig.file_name` must be `Some(expected_path)` --
+    /// the not-yet-existing `.ktav` path the user is expected to migrate
+    /// to -- not `None`. `ConfigInner::reload` (see
+    /// `crates/config/src/lib.rs`) builds its filesystem-watch list solely
+    /// from `file_name`; with `None` nothing gets watched in this error
+    /// state, so migrating the legacy file while OnlyTerm is still running
+    /// would never be picked up by the live-reload watcher until the user
+    /// manually restarts. Before task #298's refactor this was
+    /// `Some(path_item.path.clone())`; the refactor accidentally dropped it
+    /// to `None` on the deferred-error path specifically.
+    #[test]
+    fn deferred_legacy_error_still_reports_expected_ktav_path_as_file_name() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let old_dir = tempfile::tempdir().unwrap();
+        std::fs::write(old_dir.path().join(".onlyterm.rhai"), "#{}").unwrap();
+        let old_ktav_path = old_dir.path().join(".onlyterm.ktav");
+
+        // A second candidate directory that has neither a `.ktav` file nor
+        // any legacy sibling at all -- just a plain "nothing here" -- so no
+        // candidate in the whole search order produces a real config.
+        let empty_dir = tempfile::tempdir().unwrap();
+        let empty_ktav_path = empty_dir.path().join("onlyterm.ktav");
+
+        let paths = vec![
+            PathPossibility::optional(old_ktav_path.clone()),
+            PathPossibility::optional(empty_ktav_path),
+        ];
+
+        let loaded = Config::search_paths_for_config(&paths, &wezterm_dynamic::Value::default())
+            .expect("a deferred legacy-sibling error must still be surfaced eventually");
+        assert!(
+            loaded.config.is_err(),
+            "no valid .ktav config exists anywhere, so this must still be an error"
+        );
+        assert_eq!(
+            loaded.file_name.as_deref(),
+            Some(old_ktav_path.as_path()),
+            "file_name must be the expected (not-yet-existing) .ktav path, so that its \
+             parent directory -- which does exist -- ends up on the config-reload \
+             watch list; otherwise migrating the legacy file while OnlyTerm is still \
+             running is never picked up by the live-reload watcher"
+        );
+        // The expected path's parent directory is `old_dir`, which does
+        // exist on disk: this is exactly the directory that
+        // `ConfigInner::reload` in `crates/config/src/lib.rs` would add to
+        // its `notify` watch list from `file_name.parent()`, since
+        // `file_name` is now `Some(old_ktav_path)` rather than `None`.
+        assert!(
+            loaded.file_name.as_ref().unwrap().parent() == Some(old_dir.path()),
+            "the watched parent directory must be the real, existing directory the user \
+             would migrate their config into"
         );
     }
 
