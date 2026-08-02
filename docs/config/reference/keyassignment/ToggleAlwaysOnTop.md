@@ -4,12 +4,12 @@
 
 Toggles the window between floating and non-floating states to stay on top of other windows.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "]",
     mods: "CMD|SHIFT",
-    action: act.ToggleAlwaysOnTop,
+    action: ToggleAlwaysOnTop,
   },
 ]
 ```

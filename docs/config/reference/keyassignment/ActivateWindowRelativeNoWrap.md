@@ -12,17 +12,17 @@ This action will NOT wrap around; if the current window is the first/last, then 
 Here's an example of setting up (not very useful) hotkeys to cycle between
 windows:
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "r",
     mods: "ALT",
-    action: act.ActivateWindowRelativeNoWrap(1),
+    action: { ActivateWindowRelativeNoWrap: 1 },
   },
-  #{
+  {
     key: "e",
     mods: "ALT",
-    action: act.ActivateWindowRelativeNoWrap(-1),
+    action: { ActivateWindowRelativeNoWrap: -1 },
   },
 ]
 ```

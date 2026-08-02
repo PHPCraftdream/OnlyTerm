@@ -7,67 +7,59 @@ tags:
 
 {{since('nightly')}}
 
-Activates an overlay to display a confirmation menu
+!!! danger "Non-functional: required a scripting callback"
 
-When the user accepts a line, emits an event that allows you to act
-upon the input.
+    `Confirmation`'s `action`/`cancel` fields were designed to hold an event
+    callback registered via `wezterm.action_callback(...)`, resolved through
+    rhai's (and, before that, Lua's) event-handler registry. That registry no
+    longer exists — see the [changelog](../../../changelog.md#continuousnightly)
+    and the [migration guide](../../../migration-to-ktav.md). The overlay
+    below still displays and can be dismissed, but the answer (`Yes`/`No`)
+    now goes nowhere: there is no handler left to receive it, so using this
+    action currently has no observable effect beyond showing and closing a
+    prompt. `action`/`cancel` still only accept the internal `EmitEvent`
+    shape (for backwards-compatible config loading); any config still
+    written against the example below will keep loading, but nothing runs
+    in response to the user's choice.
+
+Activates an overlay to display a confirmation menu.
 
 `Confirmation` accepts the following fields:
 
 * `message` - the text to show for confirmation. You may embed
-  escape sequences and/or use [wezterm.format](../wezterm/format.md).
-  Defaults to: `"🛑 Really continue?"`.
-* `action` - event callback registered via `wezterm.action_callback`.  The
-  callback's function signature is `(window, pane)` where `window` and
-  `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md)
-  objects from the current pane and window. This callback is called when the
-  user selects `Yes`.
-* `cancel` - event callback registered via `wezterm.action_callback`.  The
-  callback's function signature is `(window, pane)` where `window` and
-  `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md).
-  This is an optional argument. If present, this callback is called when the
-  user selects `No` or closes the confirmation menu.
+  escape sequences. Defaults to: `"🛑 Really continue?"`.
+* `action` - previously an event callback registered via
+  `wezterm.action_callback`, called when the user selects `Yes`. No longer
+  connected to anything (see above).
+* `cancel` - previously an event callback registered via
+  `wezterm.action_callback`, called when the user selects `No` or closes the
+  confirmation menu. Optional. No longer connected to anything (see above).
 
-## Example of choosing a program with user confirmation
+## Historical example (no longer functional)
 
-!!! warning "Pending rhai conversion"
+This is preserved for reference only; the callback here will not run in the
+current version of OnlyTerm.
 
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = wezterm.config_builder()
-
-config.keys = {
-  {
-    key = 'E',
-    mods = 'CTRL|SHIFT',
-    action = act.Confirmation {
-      message = 'Do you want to run htop in a new window?',
-      action = wezterm.action_callback(function(window, pane)
-        window:perform_action(
-          act.SpawnCommandInNewWindow { args = { 'htop' } },
+```rhai
+config.keys = [
+  #{
+    key: "E",
+    mods: "CTRL|SHIFT",
+    action: act.Confirmation(#{
+      message: "Do you want to run htop in a new window?",
+      action: wezterm.action_callback(|window, pane| {
+        window.perform_action(
+          act.SpawnCommandInNewWindow(#{ args: ["htop"] }),
           pane
-        )
-      end),
-      cancel = wezterm.action_callback(function(window, pane)
-        wezterm.log_error 'user declined'
-      end),
-    },
+        );
+      }),
+      cancel: wezterm.action_callback(|window, pane| {
+        wezterm.log_error("user declined");
+      }),
+    }),
   },
-}
-
-return config
+]
 ```
-
-
-
 
 See also:
    * [InputSelector](InputSelector.md).

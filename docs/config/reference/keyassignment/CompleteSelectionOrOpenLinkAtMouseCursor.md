@@ -11,14 +11,14 @@ triggered.
 which clipboard buffer the selection will populate. The copy action
 is now equivalent to [CopyTo](CopyTo.md).
 
-```rhai
-config.mouse_bindings = [
+```
+mouse_bindings: [
   // Change the default click behavior so that it populates
   // the Clipboard rather the PrimarySelection.
-  #{
-    event: #{ Up: #{ streak: 1, button: "Left" } },
+  {
+    event: { Up: { streak: 1, button: "Left" } },
     mods: "NONE",
-    action: act.CompleteSelectionOrOpenLinkAtMouseCursor("Clipboard"),
+    action: { CompleteSelectionOrOpenLinkAtMouseCursor: "Clipboard" },
   },
 ]
 ```

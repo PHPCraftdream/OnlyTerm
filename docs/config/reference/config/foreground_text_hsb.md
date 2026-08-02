@@ -26,9 +26,9 @@ The range of these values is 0.0 and up; they are used to multiply the existing
 values, so the default of 1.0 preserves the existing component, whilst 0.5 will
 reduce it by half, and 2.0 will double the value.
 
-```rhai
+```
 // This increases color saturation by 50%
-config.foreground_text_hsb = #{
+foreground_text_hsb: {
   hue: 1.0,
   saturation: 1.5,
   brightness: 1.0,

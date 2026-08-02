@@ -18,7 +18,25 @@ alias rg='rg --hyperlink-format=kitty'
 
 ## Configuration
 
-With this snippet, you can:
+!!! danger "No longer possible: this recipe required the `open-uri` event hook"
+
+    This recipe worked by registering a `wezterm.on('open-uri', ...)` handler
+    that inspected the clicked URI and the active pane's foreground process,
+    and then synthesized and sent a shell command to open the target
+    directory/file (falling back to a raw shell command over SSH when no
+    local shell could be detected). The `open-uri` event hook, along with
+    `run_child_process`, `wezterm.url.parse`, `pane:get_foreground_process_name()`,
+    `pane:send_text()`, `wezterm.shell_join_args`, and the scripting engine
+    that ran all of it, have all been removed — see the
+    [changelog](../changelog.md#continuousnightly). There is currently no
+    way to intercept a hyperlink click and run custom logic; clicking a
+    hyperlink today always falls through to OnlyTerm's built-in default
+    behavior (opening it with the OS's default handler for its URI scheme).
+
+    The code below is kept for historical reference only; it will not load
+    or run in the current version of OnlyTerm.
+
+With this snippet, you could:
 
 - **Click on an hyperlinked directory** to navigate into that directory and list its contents
 - **Click on an hyperlinked file** and if its MIME type is 'text', open it directly in Neovim
@@ -116,20 +134,20 @@ Check the [mouse bindings](../config/mouse.md) section for examples on modifying
 
 For example, to require holding `CTRL` before opening a hyperlink, use the following configuration:
 
-```lua
-config.mouse_bindings = {
+```
+mouse_bindings: [
   {
-    event = { Up = { streak = 1, button = 'Left' } },
-    mods = 'CTRL',
-    action = act.OpenLinkAtMouseCursor,
-  },
-  -- Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
+    event: { Up: { streak: 1, button: Left } }
+    mods: CTRL
+    action: OpenLinkAtMouseCursor
+  }
+  // Disable the 'Down' event of CTRL-Click to avoid weird program behaviors
   {
-    event = { Down = { streak = 1, button = 'Left' } },
-    mods = 'CTRL',
-    action = act.Nop,
-  },
-}
+    event: { Down: { streak: 1, button: Left } }
+    mods: CTRL
+    action: Nop
+  }
+]
 ```
 
 ## Drawbacks

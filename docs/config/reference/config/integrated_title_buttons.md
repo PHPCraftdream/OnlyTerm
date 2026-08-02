@@ -18,19 +18,19 @@ the following values:
 
 The default value is equivalent to:
 
-```rhai
-config.integrated_title_buttons = [ "Hide", "Maximize", "Close" ]
+```
+integrated_title_buttons: [ "Hide", "Maximize", "Close" ]
 ```
 
 You can change the order by listing them in a different order:
 
-```rhai
-config.integrated_title_buttons = [ "Close", "Maximize", "Hide" ]
+```
+integrated_title_buttons: [ "Close", "Maximize", "Hide" ]
 ```
 
 or remove buttons you don't want:
 
-```rhai
-config.integrated_title_buttons = [ "Close" ]
+```
+integrated_title_buttons: [ "Close" ]
 ```
 

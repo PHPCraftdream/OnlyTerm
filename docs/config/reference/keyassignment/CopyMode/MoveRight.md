@@ -4,14 +4,14 @@
 
 Moves the CopyMode cursor position one cell to the right.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "RightArrow",
         mods: "NONE",
-        action: act.CopyMode("MoveRight"),
+        action: { CopyMode: "MoveRight" },
       },
     ],
   },

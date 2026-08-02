@@ -13,8 +13,8 @@ There are three possible values:
 * `"Hold"` - keep the pane open after the program exits. The pane must be manually closed via [CloseCurrentPane](../keyassignment/CloseCurrentPane.md), [CloseCurrentTab](../keyassignment/CloseCurrentTab.md) or closing the window.
 * `"CloseOnCleanExit"` - if the shell program exited with a successful status, behave like `"Close"`, otherwise, behave like `"Hold"`.  This is the default setting.
 
-```rhai
-config.exit_behavior = "Hold"
+```
+exit_behavior: "Hold"
 ```
 
 Note that most unix shells will exit with the status of the last command that

@@ -8,12 +8,12 @@ the scope of the selection.
 
 The mode argument can also be `"Block"` to enable a rectangular block selection.
 
-```rhai
-config.mouse_bindings = [
-  #{
-    event: #{ Up: #{ streak: 1, button: "Left" } },
+```
+mouse_bindings: [
+  {
+    event: { Up: { streak: 1, button: "Left" } },
     mods: "SHIFT",
-    action: act.ExtendSelectionToMouseCursor("Word"),
+    action: { ExtendSelectionToMouseCursor: "Word" },
   },
 ]
 ```

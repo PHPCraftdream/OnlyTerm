@@ -5,12 +5,12 @@
 Put CopyMode/SearchMode into editing mode: keyboard input will be directed to
 the search pattern editor.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     search_mode: [
       // This action is not bound by default in wezterm
-      #{ key: "e", mods: "CTRL", action: act.CopyMode("EditPattern") },
+      { key: "e", mods: "CTRL", action: { CopyMode: "EditPattern" } },
     ],
   },
 }

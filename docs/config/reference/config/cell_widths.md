@@ -24,10 +24,10 @@ default character width. This setting takes priority over the
 example of half advance width.  Below is a configuration example that
 treats these character widths as full-width:
 
-```rhai
-config.cell_widths = [
-  #{ first: 0xe000, last: 0xf8ff, width: 2 },
-  #{ first: 0xf0000, last: 0xf1fff, width: 2 },
+```
+cell_widths: [
+  { first: 0xe000, last: 0xf8ff, width: 2 },
+  { first: 0xf0000, last: 0xf1fff, width: 2 },
 ]
 ```
 

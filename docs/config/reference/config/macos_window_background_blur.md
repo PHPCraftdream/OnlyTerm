@@ -14,9 +14,9 @@ a crystal clear transparent window effect.
 
 The screenshot below was achieved using this configuration:
 
-```rhai
-config.window_background_opacity = 0.3
-config.macos_window_background_blur = 20
+```
+window_background_opacity: 0.3
+macos_window_background_blur: 20
 ```
 
 ![Screenshot](../../../screenshots/wezterm-macos-background-blur.png)

@@ -4,11 +4,11 @@
 
 Close copy mode.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{ key: "q", mods: "NONE", action: act.CopyMode("Close") },
+      { key: "q", mods: "NONE", action: { CopyMode: "Close" } },
     ],
   },
 }

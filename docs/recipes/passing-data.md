@@ -1,4 +1,20 @@
-# Passing Data from a pane to Lua
+# Passing Data from a pane to your config
+
+!!! danger "Reading this data back out from config is no longer possible"
+
+    Everything on this page about *setting* user vars, titles, and the
+    current working directory via escape sequences from your shell is still
+    accurate and still works, since those are terminal-protocol features
+    (OSC escape sequences) unrelated to the config-scripting engine.
+    However, every mechanism this page describes for *reading that
+    information back out* from OnlyTerm's side (`format-tab-title`,
+    `update-status`, `user-var-changed` event hooks, `pane:get_user_vars()`,
+    `pane:get_title()`, `pane:get_current_working_dir()`,
+    `pane:get_foreground_process_info()`, the whole `wezterm.procinfo`
+    module) required the scripting engine, which has been removed — see the
+    [changelog](../changelog.md#continuousnightly). There is currently no
+    way to use any of this data from your config; it's only readable via
+    `wezterm cli list`/`get-text` and similar CLI introspection.
 
 After spawning a program into a pane, a terminal emulator has no guaranteed
 reliable way to reason about what might be happening inside the pane; the only
@@ -82,7 +98,9 @@ alias tmux="_run_prog tmux"
 alias nvim="_run_prog nvim"
 ```
 
-Then on the wezterm side, this information can be used when formatting the tab titles:
+Then on the wezterm side, this information could previously be used when
+formatting the tab titles (this no longer works — see the note at the top of
+this page):
 
 ```lua
 local wezterm = require 'wezterm'

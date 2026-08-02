@@ -113,9 +113,9 @@ only bypassed when *both* options are set to `false`. If you want left `Alt`
 to always send the raw key (eg: so that it can be used to send `ESC`-prefixed
 Meta sequences) on Windows, set both:
 
-```lua
-config.send_composed_key_when_left_alt_is_pressed = false
-config.send_composed_key_when_right_alt_is_pressed = false
+```
+send_composed_key_when_left_alt_is_pressed: false
+send_composed_key_when_right_alt_is_pressed: false
 ```
 
 ### macOS Left and Right Option Key
@@ -128,9 +128,9 @@ with no composition effects, while the right `Option` key performs composition
 
 You can control this behavior in your configuration:
 
-```lua
-config.send_composed_key_when_left_alt_is_pressed = false
-config.send_composed_key_when_right_alt_is_pressed = true
+```
+send_composed_key_when_left_alt_is_pressed: false
+send_composed_key_when_right_alt_is_pressed: true
 ```
 
 {{since('20210203-095643-70a364eb')}}
@@ -170,8 +170,8 @@ dead key processing so that `^` can be used with a single keypress.
 You can tell WezTerm to disable dead keys by setting this in your configuration
 file:
 
-```lua
-config.use_dead_keys = false
+```
+use_dead_keys: false
 ```
 
 Note that for X11 systems with `use_ime=true`, depending on the configured IME,

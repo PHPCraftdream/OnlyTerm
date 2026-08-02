@@ -11,10 +11,10 @@ but this one will not wrap around; for example, if the first tab is active
 `ActivateTabRelativeNoWrap=-1` will not move to the last tab and vice versa.
 
 
-```rhai
-config.keys = [
-  #{ key: "{", mods: "ALT", action: act.ActivateTabRelativeNoWrap(-1) },
-  #{ key: "}", mods: "ALT", action: act.ActivateTabRelativeNoWrap(1) },
+```
+keys: [
+  { key: "{", mods: "ALT", action: { ActivateTabRelativeNoWrap: -1 } },
+  { key: "}", mods: "ALT", action: { ActivateTabRelativeNoWrap: 1 } },
 ]
 ```
 

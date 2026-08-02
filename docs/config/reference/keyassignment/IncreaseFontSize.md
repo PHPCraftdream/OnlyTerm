@@ -2,9 +2,9 @@
 
 Increases the font size of the current window by 10%
 
-```rhai
-config.keys = [
-  #{ key: "=", mods: "CTRL", action: act.IncreaseFontSize },
+```
+keys: [
+  { key: "=", mods: "CTRL", action: IncreaseFontSize },
 ]
 ```
 

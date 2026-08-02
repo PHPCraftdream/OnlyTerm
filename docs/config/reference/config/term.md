@@ -15,7 +15,7 @@ $ tempfile=$(mktemp) \
   && rm $tempfile
 ```
 
-You can then set `term = "wezterm"` in your `.wezterm.lua` config file.
+You can then set `term: wezterm` in your `onlyterm.ktav` config file.
 
 Doing this will inform some software of newer, more advanced features such
 as colored underlines, styled underlines (eg: undercurl).  If the system
@@ -28,10 +28,10 @@ See [this Microsoft blog post](https://devblogs.microsoft.com/commandline/share-
 If your package manager installed the terminfo data in a non-standard location, which will likely be the case if your are using nixpkgs/home-manager/NixOS, then you need to set `TERMINFO_DIRS` in the environment in order for applications to find it.
 The following snippet works if you installed `wezterm.terminfo` with nix into your user profile. Update the path to `TERMINFO_DIRS` to match the location on your system.
 
-```rhai
-config.set_environment_variables = #{
+```
+set_environment_variables: {
   TERMINFO_DIRS: "/home/user/.nix-profile/share/terminfo",
   WSLENV: "TERMINFO_DIRS",
 }
-config.term = "wezterm"
+term: "wezterm"
 ```

@@ -18,8 +18,8 @@ not prompt for closing that particular pane.
 
 The default value for this setting is shown below:
 
-```rhai
-config.skip_close_confirmation_for_processes_named = [
+```
+skip_close_confirmation_for_processes_named: [
   "bash",
   "sh",
   "zsh",

@@ -17,9 +17,9 @@ If you are running with a CPU renderer (eg: you have [front_end](front_end.md)
 = 1` is recommended, as doing so will disable easing effects and use
 transitions:
 
-```rhai
-config.animation_fps = 1
-config.cursor_blink_ease_in = "Constant"
-config.cursor_blink_ease_out = "Constant"
+```
+animation_fps: 1
+cursor_blink_ease_in: "Constant"
+cursor_blink_ease_out: "Constant"
 ```
 

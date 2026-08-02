@@ -15,45 +15,36 @@ By default, wezterm creates a list of `WslDomain` objects based on parsing the
 output from `wsl -l -v` and assigns that as the value of the
 [wsl_domains](config/wsl_domains.md) configuration option.
 
-A `WslDomain` is a rhai map with the following fields:
+A `WslDomain` is an object with the following fields:
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-config.wsl_domains = {
+```
+wsl_domains: [
   {
-    -- The name of this specific domain.  Must be unique amonst all types
-    -- of domain in the configuration file.
-    name = 'WSL:Ubuntu-18.04',
+    // The name of this specific domain.  Must be unique amonst all types
+    // of domain in the configuration file.
+    name: "WSL:Ubuntu-18.04"
 
-    -- The name of the distribution.  This identifies the WSL distribution.
-    -- It must match a valid distribution from your `wsl -l -v` output in
-    -- order for the domain to be useful.
-    distribution = 'Ubuntu-18.04',
+    // The name of the distribution.  This identifies the WSL distribution.
+    // It must match a valid distribution from your `wsl -l -v` output in
+    // order for the domain to be useful.
+    distribution: "Ubuntu-18.04"
 
-    -- The username to use when spawning commands in the distribution.
-    -- If omitted, the default user for that distribution will be used.
+    // The username to use when spawning commands in the distribution.
+    // If omitted, the default user for that distribution will be used.
 
-    -- username = "hunter",
+    // username: hunter
 
-    -- The current working directory to use when spawning commands, if
-    -- the SpawnCommand doesn't otherwise specify the directory.
+    // The current working directory to use when spawning commands, if
+    // the SpawnCommand doesn't otherwise specify the directory.
 
-    -- default_cwd = "/tmp"
+    // default_cwd: "/tmp"
 
-    -- The default command to run, if the SpawnCommand doesn't otherwise
-    -- override it.  Note that you may prefer to use `chsh` to set the
-    -- default shell for your user inside WSL to avoid needing to
-    -- specify it here
+    // The default command to run, if the SpawnCommand doesn't otherwise
+    // override it.  Note that you may prefer to use `chsh` to set the
+    // default shell for your user inside WSL to avoid needing to
+    // specify it here
 
-    -- default_prog = {"fish"}
-  },
-}
+    // default_prog: [fish]
+  }
+]
 ```

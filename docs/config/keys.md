@@ -1,27 +1,26 @@
 ## Configuring Key Assignments
 
 The default key table assignments can be overridden or extended using the
-`keys` section in your `~/.wezterm.rhai` config file.  For example, you can
+`keys` section in your `~/.onlyterm.ktav` config file.  For example, you can
 disable a default assignment like this:
 
-```rhai
-#{
-    keys: [
-        // Turn off the default CMD-m Hide action, allowing CMD-m to
-        // be potentially recognized and handled by the tab
-        #{ key: "m", mods: "CMD", action: "DisableDefaultAssignment" },
-    ],
-}
+```
+keys: [
+    // Turn off the default CMD-m Hide action, allowing CMD-m to
+    // be potentially recognized and handled by the tab
+    { key: "m", mods: "CMD", action: "DisableDefaultAssignment" },
+]
 ```
 
-!!! tip "Migrating from Lua?"
+!!! tip "Migrating from Lua or rhai?"
 
-    In a Lua config this used `action = wezterm.action.DisableDefaultAssignment`.
-    In rhai there is no `wezterm.action` helper: a simple action is its name as
-    a string (`"DisableDefaultAssignment"`), and a parameterized action is a
-    single-key map (e.g. `#{ SpawnCommandInNewTab: #{ cwd: "/tmp" } }`). See the
-    [migration guide](../migration-lua-to-rhai.md#key-bindings-and-actions) for
-    the full translation.
+    In a Lua config this used `action = wezterm.action.DisableDefaultAssignment`;
+    in a rhai config, `action: act.DisableDefaultAssignment`. In ktav there is
+    no `wezterm.action`/`act` helper at all: a simple action is its name as a
+    bare string (`DisableDefaultAssignment`), and a parameterized action is a
+    single-key object (e.g. `{ SpawnCommandInNewTab: { cwd: "/tmp" } }`). See
+    the [migration guide](../migration-to-ktav.md#key-bindings-and-actions)
+    for the full translation.
 
 The `action` value can be one of the [available key
 assignments](reference/keyassignment/index.md).  Every action has an example that shows
@@ -144,22 +143,22 @@ pressing `CTRL-A` activates the leader key for up to 1 second (1000
 milliseconds).  While `LEADER` is active, the `|` key (with no other modifiers)
 will trigger the current pane to be split.
 
-```lua
--- timeout_milliseconds defaults to 1000 and can be omitted
-config.leader = { key = 'a', mods = 'CTRL', timeout_milliseconds = 1000 }
-config.keys = {
+```
+// timeout_milliseconds defaults to 1000 and can be omitted
+leader: { key: a, mods: CTRL, timeout_milliseconds: 1000 }
+keys: [
   {
-    key = '|',
-    mods = 'LEADER|SHIFT',
-    action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
-  },
-  -- Send "CTRL-A" to the terminal when pressing CTRL-A, CTRL-A
+    key: "|"
+    mods: LEADER|SHIFT
+    action: { SplitHorizontal: { domain: CurrentPaneDomain } }
+  }
+  // Send "CTRL-A" to the terminal when pressing CTRL-A, CTRL-A
   {
-    key = 'a',
-    mods = 'LEADER|CTRL',
-    action = wezterm.action.SendKey { key = 'a', mods = 'CTRL' },
-  },
-}
+    key: a
+    mods: LEADER|CTRL
+    action: { SendKey: { key: a, mods: CTRL } }
+  }
+]
 ```
 
 ### VoidSymbol
@@ -172,22 +171,22 @@ other part of key bindings. The following example now uses `VoidSymbol` and
 uses `CapsLock` as a `LEADER` without it affecting the shift / capital state as
 long as you have `setxkbmap -option caps:none` configured.
 
-```lua
--- timeout_milliseconds defaults to 1000 and can be omitted
--- for this example use `setxkbmap -option caps:none` in your terminal.
-config.leader = { key = 'VoidSymbol', mods = '', timeout_milliseconds = 1000 }
-config.keys = {
+```
+// timeout_milliseconds defaults to 1000 and can be omitted
+// for this example use `setxkbmap -option caps:none` in your terminal.
+leader: { key: VoidSymbol, mods: NONE, timeout_milliseconds: 1000 }
+keys: [
   {
-    key = '|',
-    mods = 'LEADER|SHIFT',
-    action = wezterm.action.SplitHorizontal { domain = 'CurrentPaneDomain' },
-  },
+    key: "|"
+    mods: LEADER|SHIFT
+    action: { SplitHorizontal: { domain: CurrentPaneDomain } }
+  }
   {
-    key = '-',
-    mods = 'LEADER',
-    action = wezterm.action.SplitVertical { domain = 'CurrentPaneDomain' },
-  },
-}
+    key: "-"
+    mods: LEADER
+    action: { SplitVertical: { domain: CurrentPaneDomain } }
+  }
+]
 ```
 
 # Available Actions

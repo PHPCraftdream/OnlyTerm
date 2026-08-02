@@ -11,6 +11,6 @@ cursor is over the tab bar.
 
 The default is `true`. Set to `false` to disable this behavior.
 
-```rhai
-config.mouse_wheel_scrolls_tabs = true
+```
+mouse_wheel_scrolls_tabs: true
 ```

@@ -40,39 +40,39 @@ The default value for `hyperlink_rules` can be retrieved using
 [wezterm.default_hyperlink_rules()](../wezterm/default_hyperlink_rules.md),
 and is shown below:
 
-```rhai
-config.hyperlink_rules = [
+```
+hyperlink_rules: [
   // Matches: a URL in parens: (URL)
-  #{
+  {
     regex: "\\((\\w+://\\S+)\\)",
     format: "$1",
     highlight: 1,
   },
   // Matches: a URL in brackets: [URL]
-  #{
+  {
     regex: "\\[(\\w+://\\S+)\\]",
     format: "$1",
     highlight: 1,
   },
   // Matches: a URL in curly braces: [URL]
-  #{
+  {
     regex: "\\{(\\w+://\\S+)\\}",
     format: "$1",
     highlight: 1,
   },
   // Matches: a URL in angle brackets: <URL>
-  #{
+  {
     regex: "<(\\w+://\\S+)>",
     format: "$1",
     highlight: 1,
   },
   // Then handle URLs not wrapped in brackets
-  #{
+  {
     regex: "\\b\\w+://\\S+[)/a-zA-Z0-9-]+",
     format: "$0",
   },
   // implicit mailto link
-  #{
+  {
     regex: "\\b\\w+@[\\w-]+(\\.[\\w-]+)+\\b",
     format: "mailto:$0",
   },
@@ -80,41 +80,22 @@ config.hyperlink_rules = [
 ```
 
 !!! note
-    In quoted Lua string literals the backslash character must be
-    quoted even if the following character isn't meaningful to Lua
-    when quoted by a backslash. That means that you'll always want to
-    double it up as `\\` when using it in a regex string.
+    In a quoted ktav string literal, the backslash character must be
+    escaped even when the following character isn't otherwise special.
+    That means you'll always want to double it up as `\\` when using it in
+    a regex string, e.g. `"\\b[tT](\\d+)\\b"`.
 
-    Alternatively, you can use the alternative string literal
-    syntax; the following two examples are equivalent:
+!!! danger "No longer possible: extending the defaults from config"
 
-    ```lua
-    regex = [[\b[tT](\d+)\b]]
-    ```
-
-    ```lua
-    regex = '\\b[tT](\\d+)\\b'
-    ```
-
-Some other examples include:
-
-```rhai
-// Use the defaults as a base
-config.hyperlink_rules = default_hyperlink_rules()
-
-// make task numbers clickable
-// the first matched regex group is captured in $1.
-config.hyperlink_rules.push(#{
-  regex: "\\b[tt](\\d+)\\b",
-  format: "https://example.com/tasks/?t=$1",
-});
-
-// make username/project paths clickable. this implies paths like the following are for github.
-// ( "nvim-treesitter/nvim-treesitter" | wbthomason/packer.nvim | wezterm/wezterm | "wezterm/git" )
-// as long as a full url hyperlink regex exists above this it should not match a full url to
-// github or gitlab / bitbucket (i.e. https://gitlab.com/user/project.git is still a whole clickable url)
-config.hyperlink_rules.push(#{
-  regex: "[\"]?([\\w\\d]{1}[-\\w\\d]+)(/){1}([-\\w\\d\\.]+)[\"]?",
-  format: "https://www.github.com/$1/$3",
-});
-```
+    Earlier versions of this page showed calling the scripting function
+    `wezterm.default_hyperlink_rules()` to get the built-in rule list and
+    then `.push(...)`-ing extra rules onto it (for example, to make task
+    numbers or bare `owner/repo` paths clickable in addition to the
+    defaults). `default_hyperlink_rules()` and `.push(...)` both required
+    the scripting engine, which has been removed — see the
+    [changelog](../../../changelog.md#continuousnightly). ktav has no
+    function calls and no way to reference "the built-in defaults" from
+    within the config file, so `hyperlink_rules` can now only be set to a
+    complete, literal list: if you want the defaults *plus* your own rules,
+    you must copy the default rules shown above into your config file
+    alongside the ones you want to add.

@@ -9,8 +9,8 @@ the window size set by an application.
 
 The default value for this option is:
 
-```rhai
-config.tiling_desktop_environments = [
+```
+tiling_desktop_environments: [
   "X11 LG3D",
   "X11 bspwm",
   "X11 i3",

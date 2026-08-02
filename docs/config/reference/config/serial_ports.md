@@ -20,9 +20,9 @@ Each entry defines a `SerialDomain` with the following fields:
 
 This configuration defines a single port:
 
-```rhai
-config.serial_ports = [
-  #{
+```
+serial_ports: [
+  {
     name: "/dev/tty.usbserial-10",
     baud: 115200,
   },
@@ -42,14 +42,14 @@ You can then use the port in one of the following ways:
 
 You can define multiple ports if you require, and use friendly name for them:
 
-```rhai
-config.serial_ports = [
-  #{
+```
+serial_ports: [
+  {
     name: "Sensor 1",
     port: "/dev/tty.usbserial-10",
     baud: 115200,
   },
-  #{
+  {
     name: "Sensor 2",
     port: "/dev/tty.usbserial-11",
     baud: 115200,

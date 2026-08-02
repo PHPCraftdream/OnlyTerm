@@ -11,9 +11,9 @@ This can be used to produce a translucent window effect rather than
 a crystal clear transparent window effect.
 
 This effect can be achieved by adding the following to the configuration:
-```rhai
-config.window_background_opacity = 0.4
-config.wayland_window_background_blur = true
+```
+window_background_opacity: 0.4
+wayland_window_background_blur: true
 ```
 
 !!! note

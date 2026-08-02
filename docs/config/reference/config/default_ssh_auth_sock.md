@@ -22,35 +22,24 @@ running on Gnome the system default is Gnome's keyring agent.
 While you can fix this up in your shell startup files, those are not involved
 when spawning the GUI directly from the desktop environment.
 
-The following wezterm configuration snippet shows how to detect when gnome
-keyring is set and to selectively replace it with the 1Password agent:
+A simple example that unconditionally points at the 1Password SSH agent
+socket:
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-local config = wezterm.config_builder()
-
--- Override gnome keyring with 1password's ssh agent
-local SSH_AUTH_SOCK = os.getenv 'SSH_AUTH_SOCK'
-if
-  SSH_AUTH_SOCK
-  == string.format('%s/keyring/ssh', os.getenv 'XDG_RUNTIME_DIR')
-then
-  local onep_auth =
-    string.format('%s/.1password/agent.sock', wezterm.home_dir)
-  -- Glob is being used here as an indirect way to check to see if
-  -- the socket exists or not. If it didn't, the length of the result
-  -- would be 0
-  if #wezterm.glob(onep_auth) == 1 then
-    config.default_ssh_auth_sock = onep_auth
-  end
-end
 ```
+default_ssh_auth_sock: "/home/you/.1password/agent.sock"
+```
+
+!!! note "No conditional logic in ktav"
+
+    An earlier version of this example detected, at config-load time,
+    whether gnome-keyring's ssh-agent socket was the current
+    `SSH_AUTH_SOCK` and conditionally substituted the 1Password agent's
+    socket only if it existed, using Lua's `if`/`os.getenv`/`wezterm.glob`.
+    ktav is a static data format with no conditional expressions, no
+    environment variable lookups, and no filesystem globbing at config-load
+    time, so that kind of environment-dependent, self-adjusting logic can no
+    longer be expressed in the config file itself. If you need
+    machine-specific values, maintain separate `.ktav` files per machine (see
+    [Configuration Files](../../files.md)) rather than branching inside one
+    file.
 

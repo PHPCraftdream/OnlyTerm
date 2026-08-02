@@ -7,26 +7,34 @@ tags:
 
 {{since('20230408-112425-69ae8472')}}
 
+!!! danger "Non-functional: required a scripting callback"
+
+    `InputSelector`'s `action` field was designed to hold an event callback
+    registered via `wezterm.action_callback(...)`, resolved through rhai's
+    (and, before that, Lua's) event-handler registry. That registry no
+    longer exists — see the [changelog](../../../changelog.md#continuousnightly)
+    and the [migration guide](../../../migration-to-ktav.md). The overlay
+    below still displays and lets you pick a choice, but the selection now
+    goes nowhere: there is no handler left to receive it, so using this
+    action currently has no observable effect beyond showing and closing a
+    list. `action` still only accepts the internal `EmitEvent` shape (for
+    backwards-compatible config loading); any config still written against
+    the example below will keep loading, but nothing runs with the selected
+    choice.
+
 Activates an overlay to display a list of choices for the user
 to select from.
-
-When the user accepts a line, emits an event that allows you to act
-upon the input.
 
 `InputSelector` accepts the following fields:
 
 * `title` - the title that will be set for the overlay pane
-* `choices` - a rhai array consisting of the potential choices. Each entry
-  is itself a map with a `label` field and an optional `id` field.
+* `choices` - an array consisting of the potential choices. Each entry
+  is itself an object with a `label` field and an optional `id` field.
   The label will be shown in the list, while the id can be a different
-  string that is meaningful to your action. The label can be used together
-  with [format](../wezterm/format.md) to produce styled text.
-* `action` - and event callback registered via `action_callback`.  The
-  callback's function signature is `(window, pane, id, label)` where `window` and
-  `pane` are the [Window](../window/index.md) and [Pane](../pane/index.md)
-  objects from the current pane and window, and `id` and `label` hold the
-  corresponding fields from the selected choice. Both will be `nil` if
-  the overlay is cancelled without selecting anything.
+  string that is meaningful to your action.
+* `action` - previously an event callback registered via
+  `action_callback`, called with the selected `id`/`label` (or with both
+  unset if cancelled). No longer connected to anything (see above).
 * `fuzzy` - a boolean that defaults to `false`. If `true`, InputSelector will start
   in its fuzzy finding mode (this is equivalent to starting the InputSelector and
   pressing / in the default mode).
@@ -73,179 +81,36 @@ The default key assignments in the InputSelector are as follows:
 
 Note: If the InputSelector is started with `fuzzy` set to `false`, then <kbd>Backspace</kbd> can go from fuzzy finding mode back to the default mode when pressed while the filtering string is empty.
 
-## Example of choosing some canned text to enter into the terminal
+## Historical example (no longer functional)
 
-!!! warning "Pending rhai conversion"
+This is preserved for reference only; the callback here will not run in the
+current version of OnlyTerm.
 
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = wezterm.config_builder()
-
-config.keys = {
-  {
-    key = 'E',
-    mods = 'CTRL|SHIFT',
-    action = act.InputSelector {
-      action = wezterm.action_callback(function(window, pane, id, label)
-        if not id and not label then
-          wezterm.log_info 'cancelled'
-        else
-          wezterm.log_info('you selected ', id, label)
-          pane:send_text(id)
-        end
-      end),
-      title = 'I am title',
-      choices = {
-        -- This is the first entry
-        {
-          -- Here we're using wezterm.format to color the text.
-          -- You can just use a string directly if you don't want
-          -- to control the colors
-          label = wezterm.format {
-            { Foreground = { AnsiColor = 'Red' } },
-            { Text = 'No' },
-            { Foreground = { AnsiColor = 'Green' } },
-            { Text = ' thanks' },
-          },
-          -- This is the text that we'll send to the terminal when
-          -- this entry is selected
-          id = 'Regretfully, I decline this offer.',
-        },
-        -- This is the second entry
-        {
-          label = 'WTF?',
-          id = 'An interesting idea, but I have some questions about it.',
-        },
-        -- This is the third entry
-        {
-          label = 'LGTM',
-          id = 'This sounds like the right choice',
-        },
-      },
-    },
+```rhai
+config.keys = [
+  #{
+    key: "E",
+    mods: "CTRL|SHIFT",
+    action: act.InputSelector(#{
+      action: wezterm.action_callback(|window, pane, id, label| {
+        if id == () && label == () {
+          wezterm.log_info("cancelled");
+        } else {
+          wezterm.log_info("you selected " + id + label);
+          pane.send_text(id);
+        }
+      }),
+      title: "I am title",
+      choices: [
+        #{ label: "No thanks", id: "Regretfully, I decline this offer." },
+        #{ label: "WTF?", id: "An interesting idea, but I have some questions about it." },
+        #{ label: "LGTM", id: "This sounds like the right choice" },
+      ],
+    }),
   },
-}
-
-return config
+]
 ```
-
-## Example of dynamically constructing a list
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = wezterm.config_builder()
-
-config.keys = {
-  {
-    key = 'R',
-    mods = 'CTRL|SHIFT',
-    action = wezterm.action_callback(function(window, pane)
-      -- We're going to dynamically construct the list and then
-      -- show it.  Here we're just showing some numbers but you
-      -- could read or compute data from other sources
-
-      local choices = {}
-      for n = 1, 20 do
-        table.insert(choices, { label = tostring(n) })
-      end
-
-      window:perform_action(
-        act.InputSelector {
-          action = wezterm.action_callback(function(window, pane, id, label)
-            if not id and not label then
-              wezterm.log_info 'cancelled'
-            else
-              wezterm.log_info('you selected ', id, label)
-              -- Since we didn't set an id in this example, we're
-              -- sending the label
-              pane:send_text(label)
-            end
-          end),
-          title = 'I am title',
-          choices = choices,
-          alphabet = '123456789',
-          description = 'Write the number you want to choose or press / to search.',
-        },
-        pane
-      )
-    end),
-  },
-}
-
-return config
-```
-
-## Example of switching between a list of workspaces with the InputSelector
-
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-local config = wezterm.config_builder()
-
-config.keys = {
-  {
-    key = 'S',
-    mods = 'CTRL|SHIFT',
-    action = wezterm.action_callback(function(window, pane)
-      -- Here you can dynamically construct a longer list if needed
-
-      local home = wezterm.home_dir
-      local workspaces = {
-        { id = home, label = 'Home' },
-        { id = home .. '/work', label = 'Work' },
-        { id = home .. '/personal', label = 'Personal' },
-        { id = home .. '/.config', label = 'Config' },
-      }
-
-      window:perform_action(
-        act.InputSelector {
-          action = wezterm.action_callback(
-            function(inner_window, inner_pane, id, label)
-              if not id and not label then
-                wezterm.log_info 'cancelled'
-              else
-                wezterm.log_info('id = ' .. id)
-                wezterm.log_info('label = ' .. label)
-                inner_window:perform_action(
-                  act.SwitchToWorkspace {
-                    name = label,
-                    spawn = {
-                      label = 'Workspace: ' .. label,
-                      cwd = id,
-                    },
-                  },
-                  inner_pane
-                )
-              end
-            end
-          ),
-          title = 'Choose Workspace',
-          choices = workspaces,
-          fuzzy = true,
-          fuzzy_description = 'Fuzzy find and/or make a workspace',
-        },
-        pane
-      )
-    end),
-  },
-}
-
-return config
-```
-
-
-
 
 See also:
    * [PromptInputLine](PromptInputLine.md).
    * [Confirmation](Confirmation.md).
-

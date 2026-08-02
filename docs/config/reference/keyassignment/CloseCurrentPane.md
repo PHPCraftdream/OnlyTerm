@@ -7,12 +7,12 @@ wezterm terminates.
 The act of closing a pane shuts down the PTY associated with the pane and
 then kills the process associated with that pane.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "w",
     mods: "CMD",
-    action: act.CloseCurrentPane(#{ confirm: true }),
+    action: { CloseCurrentPane: { confirm: true } },
   },
 ]
 ```

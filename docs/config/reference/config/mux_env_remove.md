@@ -16,8 +16,8 @@ spawned by the multiplexer server.
 
 The default value for this is:
 
-```rhai
-config.mux_env_remove = [
+```
+mux_env_remove: [
   "SSH_AUTH_SOCK",
   "SSH_CLIENT",
   "SSH_CONNECTION",

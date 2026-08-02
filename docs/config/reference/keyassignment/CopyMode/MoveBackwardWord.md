@@ -4,11 +4,11 @@
 
 Moves the CopyMode cursor position one word to the left.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{ key: "b", mods: "NONE", action: act.CopyMode("MoveBackwardWord") },
+      { key: "b", mods: "NONE", action: { CopyMode: "MoveBackwardWord" } },
     ],
   },
 }

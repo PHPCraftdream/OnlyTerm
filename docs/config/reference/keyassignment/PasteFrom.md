@@ -9,13 +9,13 @@ Possible values for source are:
 * `Clipboard` - paste from the system clipboard
 * `PrimarySelection` - paste from the primary selection buffer
 
-```rhai
-config.keys = [
+```
+keys: [
   // paste from the clipboard
-  #{ key: "V", mods: "CTRL", action: act.PasteFrom("Clipboard") },
+  { key: "V", mods: "CTRL", action: { PasteFrom: "Clipboard" } },
 
   // paste from the primary selection
-  #{ key: "V", mods: "CTRL", action: act.PasteFrom("PrimarySelection") },
+  { key: "V", mods: "CTRL", action: { PasteFrom: "PrimarySelection" } },
 ]
 ```
 

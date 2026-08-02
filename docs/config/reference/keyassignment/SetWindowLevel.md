@@ -10,22 +10,22 @@ Accepted values:
  * `"Normal"` (this is the default)
  * `"AlwaysOnTop"`
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "[",
     mods: "CMD",
-    action: act.SetWindowLevel("AlwaysOnBottom"),
+    action: { SetWindowLevel: "AlwaysOnBottom" },
   },
-  #{
+  {
     key: "0",
     mods: "CMD|SHIFT",
-    action: act.SetWindowLevel("Normal"),
+    action: { SetWindowLevel: "Normal" },
   },
-  #{
+  {
     key: "]",
     mods: "CMD",
-    action: act.SetWindowLevel("AlwaysOnTop"),
+    action: { SetWindowLevel: "AlwaysOnTop" },
   },
 ]
 ```

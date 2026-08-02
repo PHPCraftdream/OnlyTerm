@@ -14,6 +14,6 @@ To fix this behavior you can tell WezTerm to treat left *Ctrl-Alt* keys as
 *AltGr* with the option `treat_left_ctrlalt_as_altgr`. Note that the key
 bindings using separate Ctrl and Alt won't be triggered anymore.
 
-```rhai
-config.treat_left_ctrlalt_as_altgr = true
+```
+treat_left_ctrlalt_as_altgr: true
 ```

@@ -40,9 +40,9 @@ described above, you can use the `default_prog` config setting to specify
 the argument array; the array allows specifying the program and arguments
 portably:
 
-```rhai
+```
 // Spawn a fish shell in login mode
-config.default_prog = [ "/usr/local/bin/fish", "-l" ]
+default_prog: [ "/usr/local/bin/fish", "-l" ]
 ```
 
 ## Launching a different program as a one off via the CLI
@@ -53,7 +53,7 @@ to launch it.  This example opens up a new terminal window running vim
 to edit your wezterm configuration:
 
 ```console
-$ wezterm start -- vim ~/.wezterm.rhai
+$ wezterm start -- vim ~/.onlyterm.ktav
 ```
 
 ## Specifying the current working directory
@@ -64,8 +64,8 @@ directory you can do so via the config, CLI, and when using
 
 * Setting the [`default_cwd`](reference/config/default_cwd.md) via the config:
 
-  ```rhai
-  config.default_cwd = "/some/path"
+  ```
+  default_cwd: "/some/path"
   ```
 
 * One off program in a specific working directory via the CLI:
@@ -80,8 +80,8 @@ directory you can do so via the config, CLI, and when using
   all accept a [`SpawnCommand`](reference/SpawnCommand.md) object that accepts an
   optional `cwd` field:
 
-  ```rhai
-  #{
+  ```
+  {
     label: "List files in /some/path",
     args: ["ls", "-al"],
     cwd: "/some/path",
@@ -107,8 +107,8 @@ environment of the spawned program.
 The behavior is to take the environment of the `wezterm` process
 and then set the specified variables for the spawned process.
 
-```rhai
-config.set_environment_variables = #{
+```
+set_environment_variables: {
   // This changes the default prompt for cmd.exe to report the
   // current directory using OSC 7, show the current time and
   // the current directory colored in the prompt.
@@ -137,12 +137,12 @@ shell.
 Each entry in `launch_menu` is an instance of a
 [SpawnCommand](reference/SpawnCommand.md) object.
 
-```rhai
-config.launch_menu = [
-  #{
+```
+launch_menu: [
+  {
     args: [ "top" ],
   },
-  #{
+  {
     // Optional label to show in the launcher. If omitted, a label
     // is derived from the `args`
     label: "Bash",
@@ -150,7 +150,7 @@ config.launch_menu = [
     // will be used as described in the documentation above
     args: [ "bash", "-l" ],
 
-    // You can specify an alternative current working directory;
+    // You can specify an alternative current working directory
     // if you don't specify one then a default based on the OSC 7
     // escape sequence will be used (see the Shell Integration
     // docs), falling back to the home directory.
@@ -159,41 +159,35 @@ config.launch_menu = [
     // You can override environment variables just for this command
     // by setting this here.  It has the same semantics as the main
     // set_environment_variables configuration option described above
-    // set_environment_variables: #{ FOO: "bar" },
+    // set_environment_variables: { FOO: bar }
   },
 ]
 ```
 
 ![Launch Menu](../screenshots/launch-menu.png)
 
-Here's a fancy example that will add some helpful entries to the launcher
-menu when running on Windows:
+!!! danger "No longer possible: building the launcher menu programmatically"
 
-```rhai
-let mut launch_menu = [];
+    Earlier versions of this page showed a "fancy" example that used
+    `target_triple()` to detect Windows and `glob(...)` to discover
+    installed Visual Studio versions at config-load time, then built up the
+    `launch_menu` list with a loop and `.push(...)`. All of that — the
+    functions, the loop, `.push(...)` — required the scripting engine, which
+    has been removed (see the [changelog](../changelog.md#continuousnightly)),
+    and ktav has no conditionals, loops, or filesystem globbing to replace it
+    with. If you want a Visual Studio developer prompt entry in your
+    launcher menu, add a static entry for the specific installed version on
+    your machine instead, e.g.:
 
-if target_triple() == "x86_64-pc-windows-msvc" {
-  launch_menu.push(#{
-    label: "PowerShell",
-    args: [ "powershell.exe", "-NoLogo" ],
-  });
-
-  // Find installed visual studio version(s) and add their compilation
-  // environment command prompts to the menu
-  for vsvers in glob("Microsoft Visual Studio/20*", "C:/Program Files (x86)") {
-    let year = vsvers.replace("Microsoft Visual Studio/", "");
-    launch_menu.push(#{
-      label: "x64 Native Tools VS " + year,
-      args: [
-        "cmd.exe",
-        "/k",
-        "C:/Program Files (x86)/" + vsvers + "/BuildTools/VC/Auxiliary/Build/vcvars64.bat",
-      ],
-    });
-  }
-}
-
-#{
-  launch_menu: launch_menu,
-}
-```
+    ```
+    launch_menu: [
+      {
+        label: "x64 Native Tools VS 2022"
+        args: [
+          "cmd.exe"
+          "/k"
+          "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat"
+        ]
+      }
+    ]
+    ```

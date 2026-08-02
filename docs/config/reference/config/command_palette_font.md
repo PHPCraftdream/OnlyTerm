@@ -13,12 +13,13 @@ in more detail in the [Fonts](../../fonts.md) section.
 
 If not specified, the font is same as the font in `window_frame.font`
 
-You will typically use [wezterm.font](../wezterm/font.md) or
-[wezterm.font_with_fallback](../wezterm/font_with_fallback.md) to specify the
-font.
+`command_palette_font` is a `TextStyle` object (the same shape used by the
+main [font](font.md) option); the `wezterm.font`/`wezterm.font_with_fallback`
+scripting helpers linked from older versions of this page no longer exist
+— write the `TextStyle` value directly.
 
 To specify `command_palette_font`:
 
-```rhai
-config.command_palette_font = font("Roboto")
+```
+command_palette_font: { font: [{ family: Roboto }] }
 ```

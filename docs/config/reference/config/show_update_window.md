@@ -11,8 +11,8 @@ available version and links to download/install it.
 See [check_for_updates](check_for_updates.md) for more information on
 the automatic update checks.
 
-```rhai
-config.show_update_window = false
+```
+show_update_window: false
 ```
 
 {{since('nightly')}}

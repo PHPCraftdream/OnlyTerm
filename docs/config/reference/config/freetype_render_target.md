@@ -16,8 +16,8 @@ how freetype hints and then renders glyphs.
 For example, this configuration uses light hinting but produces
 subpixel-antialiased glyph bitmaps:
 
-```rhai
-config.freetype_load_target = "Light"
-config.freetype_render_target = "HorizontalLcd"
+```
+freetype_load_target: "Light"
+freetype_render_target: "HorizontalLcd"
 ```
 

@@ -5,14 +5,14 @@
 Moves the CopyMode cursor position to the top of the viewport.
 
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "H",
         mods: "NONE",
-        action: act.CopyMode("MoveToViewportTop"),
+        action: { CopyMode: "MoveToViewportTop" },
       },
     ],
   },

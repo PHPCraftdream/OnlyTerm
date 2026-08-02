@@ -6,6 +6,19 @@ tags:
 
 # `act` (formerly `wezterm.action`)
 
+!!! danger "Removed: no scripting engine"
+
+    This page documents part of the rhai (and, before that, Lua) **scripting
+    API**, which has been removed entirely. OnlyTerm's configuration format
+    is now [ktav](../../../migration-to-ktav.md), a static `key: value` data
+    format with no expressions, function calls, or callbacks of any kind --
+    there is nothing left in OnlyTerm that could call this function, invoke
+    this method, or construct this object. The description and examples
+    below are kept for historical reference (e.g. if you're migrating a very
+    old config and trying to understand what it used to do), but none of it
+    is callable today. See the [changelog](../../../changelog.md#continuousnightly)
+    for the full rationale.
+
 Helper for defining key assignment actions in your configuration file.
 This is really just sugar for the underlying Rust deserialization mapping
 that makes it a bit easier to identify where syntax errors may exist in
@@ -119,7 +132,7 @@ return #{
 
 The action value is simply an object map whose single key names the
 KeyAssignment variant and whose value carries its parameters (see [Key
-bindings and actions](../../migration-lua-to-rhai.md#key-bindings-and-actions)
+bindings and actions](../../../migration-to-ktav.md#key-bindings-and-actions)
 in the migration guide). These docs aim to spell out sufficient examples that
 you shouldn't need to learn to read Rust code, but there are occasions where
 newly developed features are not yet documented and an enterprising user may

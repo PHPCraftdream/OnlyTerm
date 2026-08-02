@@ -20,10 +20,10 @@ This action is not bound by default.
 For the purposes of scrolling, the "current zone" is considered to be the one
 closest to the top of the viewport.
 
-```rhai
-config.keys = [
-  #{ key: "UpArrow", mods: "SHIFT", action: act.ScrollToPrompt(-1) },
-  #{ key: "DownArrow", mods: "SHIFT", action: act.ScrollToPrompt(1) },
+```
+keys: [
+  { key: "UpArrow", mods: "SHIFT", action: { ScrollToPrompt: -1 } },
+  { key: "DownArrow", mods: "SHIFT", action: { ScrollToPrompt: 1 } },
 ]
 ```
 

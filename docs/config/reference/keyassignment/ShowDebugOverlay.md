@@ -2,21 +2,25 @@
 
 {{since('20210814-124438-54e29167')}}
 
-Overlays the current tab with the debug overlay, which is a combination
-of a debug log and a rhai [REPL](https://en.wikipedia.org/wiki/Read%E2%80%93eval%E2%80%93print_loop).
+!!! danger "The REPL has been removed"
 
-The REPL has the following globals available:
+    This overlay used to combine a debug log with a rhai (and, before that,
+    Lua) [REPL](https://en.wikipedia.org/wiki/Read%E2%80%93eval%E2%80%93print_loop)
+    that exposed the same functions/modules and the current `window` object
+    for live, interactive evaluation. With the scripting engine removed
+    entirely (see the [changelog](../../../changelog.md#continuousnightly)),
+    there is nothing left for a REPL to evaluate against, so it has been
+    deleted. The overlay now shows a static summary of the running OnlyTerm
+    process (version, target triple, window/OpenGL environment) plus a live
+    tail of the application's own log, and nothing else.
 
-* all of the usual top-level functions and modules (`color::`, `serde::`, `procinfo::`, `plugin::`, `mux::`)
-* `window` - the [window](../window/index.md) object for the current window
+Overlays the current tab with the debug overlay: a version/environment
+summary and a live tail of OnlyTerm's own application log, useful for
+troubleshooting.
 
-The rhai context in the REPL is not connected to any global state; you cannot use it
-to dynamically assign event handlers for example.  It is primarily useful for
-prototyping rhai snippets before you integrate them fully into your config.
-
-```rhai
-config.keys = [
+```
+keys: [
   // CTRL-SHIFT-l activates the debug overlay
-  #{ key: "L", mods: "CTRL", action: act.ShowDebugOverlay },
+  { key: "L", mods: "CTRL", action: ShowDebugOverlay },
 ]
 ```

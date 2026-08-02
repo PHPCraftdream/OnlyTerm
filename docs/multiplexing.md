@@ -31,18 +31,18 @@ The bare minimum configuration to enable a unix domain is this, which will
 spawn a server if needed and then connect the gui to it automatically
 when OnlyTerm is launched:
 
-```lua
-config.unix_domains = {
+```
+unix_domains: [
   {
-    name = 'unix',
-  },
-}
+    name: unix
+  }
+]
 
--- This causes OnlyTerm to act as though it was started as
--- `onlyterm connect unix` by default, connecting to the unix
--- domain on startup.
--- If you prefer to connect manually, leave out this line.
-config.default_gui_startup_args = { 'connect', 'unix' }
+// This causes OnlyTerm to act as though it was started as
+// `onlyterm connect unix` by default, connecting to the unix
+// domain on startup.
+// If you prefer to connect manually, leave out this line.
+default_gui_startup_args: [connect, unix]
 ```
 
 If you prefer to connect manually, omit the `default_gui_startup_args` setting
@@ -58,31 +58,31 @@ option was shown as the way to connect on startup.  Using
 
 The possible configuration values are:
 
-```lua
-config.unix_domains = {
+```
+unix_domains: [
   {
-    -- The name; must be unique amongst all domains
-    name = 'unix',
+    // The name; must be unique amongst all domains
+    name: unix
 
-    -- The path to the socket.  If unspecified, a reasonable default
-    -- value will be computed.
+    // The path to the socket.  If unspecified, a reasonable default
+    // value will be computed.
 
-    -- socket_path = "/some/path",
+    // socket_path: "/some/path"
 
-    -- If true, do not attempt to start this server if we try and fail to
-    -- connect to it.
+    // If true, do not attempt to start this server if we try and fail to
+    // connect to it.
 
-    -- no_serve_automatically = false,
+    // no_serve_automatically: false
 
-    -- If true, bypass checking for secure ownership of the
-    -- socket_path.  This is not recommended on a multi-user
-    -- system, but is useful for example when running the
-    -- server inside a WSL container but with the socket
-    -- on the host NTFS volume.
+    // If true, bypass checking for secure ownership of the
+    // socket_path.  This is not recommended on a multi-user
+    // system, but is useful for example when running the
+    // server inside a WSL container but with the socket
+    // on the host NTFS volume.
 
-    -- skip_permissions_check = false,
-  },
-}
+    // skip_permissions_check: false
+  }
+]
 ```
 
 {{since('20220101-133340-7edc5b5a')}}
@@ -96,13 +96,13 @@ the unix socket path on my mac.  This isn't useful on its own,
 but may help with the WSL 2 issue mentioned below when translated
 to an appropriate invocation of netcat/socat on Windows:
 
-```lua
-config.unix_domains = {
+```
+unix_domains: [
   {
-    name = 'unix',
-    proxy_command = { 'nc', '-U', '/Users/wez/.local/share/wezterm/sock' },
-  },
-}
+    name: unix
+    proxy_command: [nc, "-U", "/Users/wez/.local/share/wezterm/sock"]
+  }
+]
 ```
 
 {{since('20220319-142410-0fcdea07')}}
@@ -114,45 +114,45 @@ client will attempt to predict the server's response to key events and echo the
 result of that prediction locally without waiting, hence hiding latency to the
 user. This option only applies when `multiplexing = "WezTerm"`.
 
-```lua
-config.unix_domains = {
+```
+unix_domains: [
   {
-    name = 'unix',
-    local_echo_threshold_ms = 10,
-  },
-}
+    name: unix
+    local_echo_threshold_ms: 10
+  }
+]
 ```
 
 ### Connecting into Windows Subsystem for Linux
 
 *Note: this only works with WSL 1. [WSL 2 doesn't support AF_UNIX interop](https://github.com/microsoft/WSL/issues/5961)*
 
-Inside your WSL instance, configure `.wezterm.lua` with this snippet:
+Inside your WSL instance, configure `.onlyterm.ktav` with this snippet:
 
-```lua
-config.unix_domains = {
+```
+unix_domains: [
   {
-    name = 'wsl',
-    -- Override the default path to match the default on the host win32
-    -- filesystem.  This will allow the host to connect into the WSL
-    -- container.
-    socket_path = '/mnt/c/Users/USERNAME/.local/share/wezterm/sock',
-    -- NTFS permissions will always be "wrong", so skip that check
-    skip_permissions_check = true,
-  },
-}
+    name: wsl
+    // Override the default path to match the default on the host win32
+    // filesystem.  This will allow the host to connect into the WSL
+    // container.
+    socket_path: "/mnt/c/Users/USERNAME/.local/share/wezterm/sock"
+    // NTFS permissions will always be "wrong", so skip that check
+    skip_permissions_check: true
+  }
+]
 ```
 
 In the host win32 configuration, use this snippet:
 
-```lua
-config.unix_domains = {
+```
+unix_domains: [
   {
-    name = 'wsl',
-    serve_command = { 'wsl', 'onlyterm-mux-server', '--daemonize' },
-  },
-}
-config.default_gui_startup_args = { 'connect', 'wsl' }
+    name: wsl
+    serve_command: [wsl, "onlyterm-mux-server", "--daemonize"]
+  }
+]
+default_gui_startup_args: [connect, wsl]
 ```
 
 Now when you start OnlyTerm you'll be presented with a WSL tab.
@@ -167,14 +167,6 @@ to manually connect into your WSL instance.
 
 ## Surviving a crashed or killed GUI process
 
-!!! note
-    The rest of this page predates OnlyTerm's migration from Lua to
-    [rhai](migration-lua-to-rhai.md) config files and shows Lua examples
-    (`config.foo = bar` assignments on a `wezterm.config_builder()` table).
-    Those Lua examples will **not** load as-is; see
-    [Migrating from a Lua config to a rhai config](migration-lua-to-rhai.md)
-    for the current syntax. The recipe below is written directly in rhai.
-
 The unix-domain multiplexing described above can be pointed at OnlyTerm's own
 standalone `onlyterm-mux-server` daemon (`onlyterm-mux-server.exe` on Windows)
 instead of at another GUI process's embedded mux. `onlyterm-mux-server` has no
@@ -183,19 +175,17 @@ headless daemon that owns the panes, tabs and windows and speaks the mux
 protocol over a unix-domain socket. Running against it turns "GUI process
 crashes" into a non-event for the programs running in your panes.
 
-Put this in `~/.wezterm.rhai` (`%USERPROFILE%\.wezterm.rhai` on Windows):
+Put this in `~/.onlyterm.ktav` (`%USERPROFILE%\.onlyterm.ktav` on Windows):
 
-```rhai
-#{
-    unix_domains: [ #{ name: "main", connect_automatically: true } ],
-    default_domain: "main",
-    default_gui_startup_args: ["start", "--always-new-process"],
-}
+```
+unix_domains: [ { name: main, connect_automatically: true } ]
+default_domain: main
+default_gui_startup_args: [start, "--always-new-process"]
 ```
 
 What each setting does in this recipe:
 
-- `unix_domains: [ #{ name: "main", connect_automatically: true } ]` declares
+- `unix_domains: [ { name: main, connect_automatically: true } ]` declares
   a unix-domain named `"main"`. Because `socket_path` is left unset, it
   resolves to the default socket path under OnlyTerm's runtime directory
   (`$XDG_RUNTIME_DIR`/equivalent on Unix, or the per-user runtime dir on
@@ -218,8 +208,8 @@ What each setting does in this recipe:
   `onlyterm-mux-server`.
 
 If no `onlyterm-mux-server` is already listening on the socket, the first GUI
-process to connect will auto-spawn one in the background (unless you pass
-`no_serve_automatically = true` on the domain, or start it explicitly:
+process to connect will auto-spawn one in the background (unless you set
+`no_serve_automatically: true` on the domain, or start it explicitly:
 `onlyterm-mux-server.exe` with the same config file).
 
 ### What this buys you
@@ -259,14 +249,15 @@ reading the current source, not assumed from upstream WezTerm docs):
   works for local panes. Confirmed by manual testing in this session: `cli
   list`'s `TITLE` column showed only the pane's initial title/CWD, never a
   foreground process name, for the entire life of the test panes.
-- **Window-enumeration APIs are per-GUI-process, not global.** Rhai APIs
-  such as `wezterm.gui.gui_windows()` enumerate `known_windows`
-  (`crates/wezterm-gui/src/frontend.rs`), which is populated only with
-  windows that *this* GUI process created locally. A second GUI process
-  attached to the same `main` domain has its own, disjoint `known_windows`.
-  There is no API that enumerates "every window across every GUI process
-  attached to this mux-server" — you would need to go through `wezterm cli
-  list` (which talks to the mux-server directly) instead.
+- **Window tracking is per-GUI-process, not global.** Each GUI process
+  tracks only the `known_windows` it created locally
+  (`crates/wezterm-gui/src/frontend.rs`). A second GUI process attached to
+  the same `main` domain has its own, disjoint set of known windows, and
+  (now that the scripting engine that used to expose a
+  `wezterm.gui.gui_windows()` function is gone) there is no way to enumerate
+  windows from config at all. To see "every window across every GUI process
+  attached to this mux-server" you need to go through `wezterm cli list`
+  (which talks to the mux-server directly) instead.
 - **No automatic reconnect if `onlyterm-mux-server` itself dies.**
   `Reconnectable::reconnectable()` for a unix-domain `ClientDomain`
   (`crates/wezterm-client/src/client.rs`) unconditionally returns `false`,
@@ -309,15 +300,15 @@ reading the current source, not assumed from upstream WezTerm docs):
 To verify the topology end-to-end yourself:
 
 1. Save the config snippet above to a config file, e.g.
-   `smoke.wezterm.rhai`.
+   `smoke.onlyterm.ktav`.
 2. Start (or let auto-spawn) the daemon:
-   `onlyterm-mux-server.exe --config-file smoke.wezterm.rhai`
+   `onlyterm-mux-server.exe --config-file smoke.onlyterm.ktav`
 3. Launch a GUI process attached to it:
-   `onlyterm-gui.exe --config-file smoke.wezterm.rhai start --always-new-process`
+   `onlyterm-gui.exe --config-file smoke.onlyterm.ktav start --always-new-process`
 4. In the resulting window's shell, run something identifiable, e.g.
    `echo hello-from-pane-1`.
 5. From another shell, confirm the mux-server sees it:
-   `onlyterm.exe --config-file smoke.wezterm.rhai cli --no-auto-start get-text --pane-id 0`
+   `onlyterm.exe --config-file smoke.onlyterm.ktav cli --no-auto-start get-text --pane-id 0`
    should show the echoed text.
 6. Find the GUI process's PID (e.g. via Task Manager or `tasklist`) and kill
    it directly and ungracefully (`taskkill /F /PID <pid>` on Windows,

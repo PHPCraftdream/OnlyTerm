@@ -5,7 +5,7 @@
 Activate the [Launcher Menu](../../launch.md#the-launcher-menu)
 in the current tab, scoping it to a set of items and with an optional title.
 
-The arguments are a rhai map with the following keys:
+The arguments are an object with the following keys:
 
 * `flags` - required; the set of flags that specifies what to show in the launcher
 * `title` - optional; the title to show in the tab while the launcher is active
@@ -42,12 +42,12 @@ list.
 This example shows how to make `ALT-9` activate the launcher directly in fuzzy
 matching mode, and have it show only tabs:
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "9",
     mods: "ALT",
-    action: act.ShowLauncherArgs(#{ flags: "FUZZY|TABS" }),
+    action: { ShowLauncherArgs: { flags: "FUZZY|TABS" } },
   },
 ]
 ```

@@ -13,31 +13,20 @@ This example binds CTRL-N and CTRL-P to move forwards, backwards through workspa
 It shows the active workspace in the title bar.  The launcher menu can be used
 to create workspaces.
 
-!!! warning "Pending rhai conversion"
+!!! note "`update-right-status` no longer exists"
 
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
+    The original version of this example also registered a
+    `wezterm.on('update-right-status', ...)` handler to show the active
+    workspace name in the title bar. That event hook has been removed along
+    with the rest of the scripting engine — see the
+    [changelog](../../../changelog.md#continuousnightly). Only the key
+    bindings below (the actual `SwitchWorkspaceRelative` usage) still work.
 
-```lua
-local wezterm = require 'wezterm'
-local act = wezterm.action
-
-wezterm.on('update-right-status', function(window, pane)
-  window:set_right_status(window:active_workspace())
-end)
-
-config.keys = {
-  {
-    key = '9',
-    mods = 'ALT',
-    action = act.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' },
-  },
-  { key = 'n', mods = 'CTRL', action = act.SwitchWorkspaceRelative(1) },
-  { key = 'p', mods = 'CTRL', action = act.SwitchWorkspaceRelative(-1) },
-}
+```
+keys: [
+  { key: "9", mods: ALT, action: { ShowLauncherArgs: { flags: "FUZZY|WORKSPACES" } } }
+  { key: n, mods: CTRL, action: { SwitchWorkspaceRelative: 1 } }
+  { key: p, mods: CTRL, action: { SwitchWorkspaceRelative: -1 } }
+]
 ```
 

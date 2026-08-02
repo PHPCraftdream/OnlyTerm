@@ -11,17 +11,17 @@ there's not much point adding this to your config unless you also have set
 [disable_default_mouse_bindings](../config/disable_default_mouse_bindings.md)
 to `true`.
 
-```rhai
-config.mouse_bindings = [
-  #{
-    event: #{ Down: #{ streak: 1, button: #{ WheelUp: 1 } } },
+```
+mouse_bindings: [
+  {
+    event: { Down: { streak: 1, button: { WheelUp: 1 } } },
     mods: "NONE",
-    action: act.ScrollByCurrentEventWheelDelta,
+    action: ScrollByCurrentEventWheelDelta,
   },
-  #{
-    event: #{ Down: #{ streak: 1, button: #{ WheelDown: 1 } } },
+  {
+    event: { Down: { streak: 1, button: { WheelDown: 1 } } },
     mods: "NONE",
-    action: act.ScrollByCurrentEventWheelDelta,
+    action: ScrollByCurrentEventWheelDelta,
   },
 ]
 ```

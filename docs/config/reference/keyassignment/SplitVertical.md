@@ -5,13 +5,13 @@
 Splits the current pane in half vertically such that the current pane becomes
 the top half and the new bottom half spawns a new command.
 
-```rhai
-config.keys = [
+```
+keys: [
   // This will create a new split and run your default program inside it
-  #{
+  {
     key: "\"",
     mods: "CTRL|SHIFT|ALT",
-    action: act.SplitVertical(#{ domain: "CurrentPaneDomain" }),
+    action: { SplitVertical: { domain: "CurrentPaneDomain" } },
   },
 ]
 ```
@@ -19,15 +19,15 @@ config.keys = [
 `SplitVertical` requires a [SpawnCommand](../SpawnCommand.md) parameter to
 specify what should be spawned into the new split.
 
-```rhai
-config.keys = [
+```
+keys: [
   // This will create a new split and run the `top` program inside it
-  #{
+  {
     key: "\"",
     mods: "CTRL|SHIFT|ALT",
-    action: act.SplitVertical(#{
+    action: { SplitVertical: {
       args: [ "top" ],
-    }),
+    } },
   },
 ]
 ```

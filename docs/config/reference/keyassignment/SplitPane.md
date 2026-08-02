@@ -11,17 +11,17 @@ This assignment has a number of fields that control the overall action:
 * `command` - the [SpawnCommand](../SpawnCommand.md) that specifies what program to launch into the new pane. If omitted, the [default_prog](../config/default_prog.md) is used
 * `top_level` - if set to `true`, rather than splitting the active pane, the split will be made at the root of the tab and effectively split the entire tab across the full extent possible.  The default is `false`.
 
-```rhai
-config.keys = [
+```
+keys: [
   // This will create a new split and run the `top` program inside it
-  #{
+  {
     key: "%",
     mods: "CTRL|SHIFT|ALT",
-    action: act.SplitPane(#{
+    action: { SplitPane: {
       direction: "Left",
-      command: #{ args: [ "top" ] },
-      size: #{ Percent: 50 },
-    }),
+      command: { args: [ "top" ] },
+      size: { Percent: 50 },
+    } },
   },
 ]
 ```

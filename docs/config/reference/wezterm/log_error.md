@@ -8,6 +8,19 @@ tags:
 
 # `wezterm.log_error(arg, ..)`
 
+!!! danger "Removed: no scripting engine"
+
+    This page documents part of the rhai (and, before that, Lua) **scripting
+    API**, which has been removed entirely. OnlyTerm's configuration format
+    is now [ktav](../../../migration-to-ktav.md), a static `key: value` data
+    format with no expressions, function calls, or callbacks of any kind --
+    there is nothing left in OnlyTerm that could call this function, invoke
+    this method, or construct this object. The description and examples
+    below are kept for historical reference (e.g. if you're migrating a very
+    old config and trying to understand what it used to do), but none of it
+    is callable today. See the [changelog](../../../changelog.md#continuousnightly)
+    for the full rationale.
+
 This function logs the provided message string through wezterm's logging layer
 at 'ERROR' level, which can be displayed via [ShowDebugOverlay](../keyassignment/ShowDebugOverlay.md) action.  If you started wezterm from a terminal that text will print
 to the stdout of that terminal.  If running as a daemon for the multiplexer

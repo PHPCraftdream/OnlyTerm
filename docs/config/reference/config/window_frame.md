@@ -13,8 +13,8 @@ It allows you to customize the colors of the window frame.
 
 Some of these colors are used by the fancy tab bar.
 
-```rhai
-config.window_frame = #{
+```
+window_frame: {
   inactive_titlebar_bg: "#353535",
   active_titlebar_bg: "#2b2042",
   inactive_titlebar_fg: "#cccccc",
@@ -32,8 +32,8 @@ config.window_frame = #{
 
 You may explicitly add a border around the window area:
 
-```rhai
-config.window_frame = #{
+```
+window_frame: {
   border_left_width: "0.5cell",
   border_right_width: "0.5cell",
   border_bottom_height: "0.25cell",
@@ -46,9 +46,9 @@ config.window_frame = #{
 ```
 
 You may specify the font and font size for the tabbar:
-```rhai
-config.window_frame = #{
-  font: font("Roboto"),
+```
+window_frame: {
+  font: { font: [{ family: Roboto }] },
   font_size: 12,
 }
 ```

@@ -5,15 +5,15 @@ WezTerm bundles [JetBrains Mono](https://www.jetbrains.com/lp/mono/),
 [Noto Color Emoji](https://www.google.com/get/noto/help/emoji/) fonts
 and uses those for the default font configuration.
 
-If you wish to use a different font face, then you can use
-the [wezterm.font](reference/wezterm/font.md) function to specify it:
+If you wish to use a different font face, set the `font` option directly to
+a `TextStyle` object (there is no `wezterm.font(...)` helper anymore — see
+[wezterm.font](reference/wezterm/font.md), a removed scripting function):
 
-```lua
-config.font = wezterm.font 'Fira Code'
--- You can specify some parameters to influence the font selection;
--- for example, this selects a Bold, Italic font variant.
-config.font =
-  wezterm.font('JetBrains Mono', { weight = 'Bold', italic = true })
+```
+font: { font: [{ family: "Fira Code" }] }
+// You can specify some parameters to influence the font selection;
+// for example, this selects a Bold, Italic font variant.
+font: { font: [{ family: "JetBrains Mono", weight: Bold, italic: true }] }
 ```
 
 #### Fallback
@@ -31,11 +31,11 @@ You can specify your own fallback; that's useful if you've got a killer
 monospace font, but it doesn't have glyphs for the asian script that you
 sometimes work with:
 
-```lua
-config.font = wezterm.font_with_fallback {
-  'Fira Code',
-  'DengXian',
-}
+```
+font: { font: [
+  { family: "Fira Code" }
+  { family: DengXian }
+] }
 ```
 
 WezTerm will still append its default fallback to whatever list you specify,

@@ -21,9 +21,9 @@ or configure your own key, see [ToggleFullScreen](../keyassignment/ToggleFullScr
 
 Example config:
 
-```rhai
-config.native_macos_fullscreen_mode = false
-config.macos_fullscreen_extend_behind_notch = true
+```
+native_macos_fullscreen_mode: false
+macos_fullscreen_extend_behind_notch: true
 ```
 
 This option only has an effect when running on macOS.

@@ -15,23 +15,19 @@ When set to `false`, the new-tab button will not be drawn into the tab bar.
 This example turns off the tabs and new-tab button, leaving just the left and
 right status areas:
 
-!!! warning "Pending rhai conversion"
-
-    The code example(s) below still use Lua syntax from before OnlyTerm's
-    config engine switched to rhai. The *option names, event names and
-    object/method shapes* are unchanged -- only the scripting syntax differs.
-    See the [migration guide](../../../migration-lua-to-rhai.md) for the Lua-to-rhai
-    syntax mapping to translate this example yourself, or watch for a
-    follow-up documentation pass that rewrites it directly.
-
-```lua
-wezterm.on('update-right-status', function(window, pane)
-  window:set_left_status 'left'
-  window:set_right_status 'right'
-end)
-
-config.use_fancy_tab_bar = false
-config.show_tabs_in_tab_bar = false
-config.show_new_tab_button_in_tab_bar = false
 ```
+use_fancy_tab_bar: false
+show_tabs_in_tab_bar: false
+show_new_tab_button_in_tab_bar: false
+```
+
+!!! note "`update-right-status` no longer exists"
+
+    An earlier version of this example also registered a
+    `wezterm.on('update-right-status', ...)` handler to populate the left
+    and right status areas with static placeholder text (`"left"`/`"right"`).
+    That event hook has been removed along with the rest of the scripting
+    engine — see the [changelog](../../../changelog.md#continuousnightly) —
+    so there is currently no way to set the status bar text from config;
+    only the tab-bar visibility options above still work.
 

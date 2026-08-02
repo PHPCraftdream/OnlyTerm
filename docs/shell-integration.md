@@ -101,13 +101,13 @@ for yourself.
 `cmd.exe` doesn't allow a lot of flexibility in configuring the prompt,
 but fortunately it does allow for emitting escape sequences.  You
 can use the `set_environment_variables` configuration to pre-configure
-the prompt environment in your `.wezterm.rhai`; this example configures
+the prompt environment in your `onlyterm.ktav`; this example configures
 the use of OSC 7 as well as including the time and current directory in
 the visible prompt with green and purple colors, and makes the prompt
 span multiple lines:
 
-```rhai
-config.set_environment_variables = #{
+```
+set_environment_variables: {
   prompt: "$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ",
 }
 ```
@@ -155,24 +155,21 @@ function Invoke-Starship-PreCommand {
 completions and autosuggestions to your Windows cmd.exe experience. If you
 haven't installed clink to be the global default on your system, you can
 configure OnlyTerm to launch clink by setting the `default_prog` configuration
-in your `.wezterm.rhai`; for example, if you have extracted clink to `c:\clink`
-you might configure this:
+in your `onlyterm.ktav`; for example, if you have extracted clink to `c:\clink`
+you might configure this (this file is specific to a single, Windows-only
+machine, so unlike the historical version of this example there is no
+`target_triple()` platform check — ktav has no conditionals, so a
+per-platform config file is simply written for that platform only):
 
-```rhai
-let mut config = #{
-  set_environment_variables: #{},
-};
-
-if target_triple() == "x86_64-pc-windows-msvc" {
+```
+set_environment_variables: {
   // Use OSC 7 as per the above example
-  config.set_environment_variables.prompt = "$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m ";
+  prompt: "$E]7;file://localhost/$P$E\\$E[32m$T$E[0m $E[35m$P$E[36m$_$G$E[0m "
   // use a more ls-like output format for dir
-  config.set_environment_variables.DIRCMD = "/d";
-  // And inject clink into the command prompt
-  config.default_prog = [ "cmd.exe", "/s", "/k", "c:/clink/clink_x64.exe", "inject", "-q" ];
+  DIRCMD: "/d"
 }
-
-config
+// And inject clink into the command prompt
+default_prog: [ "cmd.exe", "/s", "/k", "c:/clink/clink_x64.exe", "inject", "-q" ]
 ```
 
 Now, rather than just running `cmd.exe` on its own, this will cause `cmd.exe`

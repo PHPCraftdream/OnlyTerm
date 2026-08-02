@@ -4,12 +4,12 @@
 
 Toggles the window to remain behind all other windows.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "]",
     mods: "CMD|SHIFT",
-    action: act.ToggleAlwaysOnBottom,
+    action: ToggleAlwaysOnBottom,
   },
 ]
 ```

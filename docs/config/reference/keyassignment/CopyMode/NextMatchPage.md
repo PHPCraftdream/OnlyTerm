@@ -5,14 +5,14 @@
 Move the CopyMode/SearchMode selection to the next matching text on the next
 page of the screen, if any.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     search_mode: [
-      #{
+      {
         key: "PageDown",
         mods: "CTRL",
-        action: act.CopyMode("NextMatchPage"),
+        action: { CopyMode: "NextMatchPage" },
       },
     ],
   },

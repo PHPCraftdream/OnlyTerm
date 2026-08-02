@@ -4,12 +4,12 @@
 
 Activates the Command Palette, a modal overlay that enables discovery and activation of various commands.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "P",
     mods: "CTRL",
-    action: act.ActivateCommandPalette,
+    action: ActivateCommandPalette,
   },
 ]
 ```

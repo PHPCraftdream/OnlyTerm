@@ -16,8 +16,8 @@ additional subcommand arguments equivalent to `wezterm start`.
 If you know that you always want to connect to a particular multiplexer
 domain, then you might consider using this configuration:
 
-```rhai
-config.default_gui_startup_args = [ "connect", "some-domain" ]
+```
+default_gui_startup_args: [ "connect", "some-domain" ]
 ```
 
 which will cause `wezterm` with no additional subcommand arguments to be

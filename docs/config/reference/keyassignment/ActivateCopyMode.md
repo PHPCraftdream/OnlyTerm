@@ -4,9 +4,9 @@
 
 Activates copy mode!
 
-```rhai
-config.keys = [
-  #{ key: "X", mods: "CTRL", action: act.ActivateCopyMode },
+```
+keys: [
+  { key: "X", mods: "CTRL", action: ActivateCopyMode },
 ]
 ```
 

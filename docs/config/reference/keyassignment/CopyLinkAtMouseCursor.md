@@ -13,13 +13,13 @@ a link copies its URL, while left-clicking it continues to open it via
 [OpenLinkAtMouseCursor](OpenLinkAtMouseCursor.md) /
 [CompleteSelectionOrOpenLinkAtMouseCursor](CompleteSelectionOrOpenLinkAtMouseCursor.md).
 
-```rhai
-config.mouse_bindings = [
+```
+mouse_bindings: [
   // Right-click will copy the link under the mouse cursor to the clipboard
-  #{
-    event: #{ Up: #{ streak: 1, button: "Right" } },
+  {
+    event: { Up: { streak: 1, button: "Right" } },
     mods: "NONE",
-    action: act.CopyLinkAtMouseCursor("ClipboardAndPrimarySelection"),
+    action: { CopyLinkAtMouseCursor: "ClipboardAndPrimarySelection" },
   },
 ]
 ```

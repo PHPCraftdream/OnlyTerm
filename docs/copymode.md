@@ -80,13 +80,15 @@ The default key assignments in copy mode are as follows:
 The key assignments for copy mode are specified by the `copy_mode` [Key Table](config/key-tables.md).
 
 You may provide your own definition of this key table if you wish to customize
-it.
-
-You may use
+it, by setting the `copy_mode` key of `key_tables` to a full replacement list
+of key assignments. There is no way to override just part of the table (e.g.
+"the defaults plus one extra binding") from within config: obtaining the
+defaults programmatically previously required calling
 [wezterm.gui.default_key_tables](config/reference/wezterm.gui/default_key_tables.md)
-to obtain the defaults and extend them. In earlier versions of WezTerm there
-wasn't a way to override portions of the key table, only to replace the entire
-table.
+from a scripting config, which no longer works (see the
+[changelog](changelog.md#continuousnightly)). If you want the defaults plus
+your own additions, copy the default table shown below into your config and
+add your own entries to it.
 
 The default configuration at the time that these docs were built (which
 may be more recent than your version of OnlyTerm) is shown below.

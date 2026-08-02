@@ -4,11 +4,11 @@
 
 Move the CopyMode/SearchMode selection to the next matching text, if any.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     search_mode: [
-      #{ key: "n", mods: "CTRL", action: act.CopyMode("NextMatch") },
+      { key: "n", mods: "CTRL", action: { CopyMode: "NextMatch" } },
     ],
   },
 }

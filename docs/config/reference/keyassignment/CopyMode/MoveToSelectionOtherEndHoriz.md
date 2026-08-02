@@ -7,14 +7,14 @@ selection without changing the y-coordinate; if the cursor at the left end and
 the starting point at the right end, then the cursor and starting point are
 swapped, with the cursor now positioned at the right end.
 
-```rhai
-return #{
-  key_tables: #{
+```
+return {
+  key_tables: {
     copy_mode: [
-      #{
+      {
         key: "O",
         mods: "NONE",
-        action: act.CopyMode("MoveToSelectionOtherEndHoriz"),
+        action: { CopyMode: "MoveToSelectionOtherEndHoriz" },
       },
     ],
   },

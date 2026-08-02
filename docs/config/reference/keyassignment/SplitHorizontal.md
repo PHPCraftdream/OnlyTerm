@@ -5,13 +5,13 @@
 Splits the current pane in half horizontally such that the current pane becomes
 the left half and the new right half spawns a new command.
 
-```rhai
-config.keys = [
+```
+keys: [
   // This will create a new split and run your default program inside it
-  #{
+  {
     key: "%",
     mods: "CTRL|SHIFT|ALT",
-    action: act.SplitHorizontal(#{ domain: "CurrentPaneDomain" }),
+    action: { SplitHorizontal: { domain: "CurrentPaneDomain" } },
   },
 ]
 ```
@@ -19,15 +19,15 @@ config.keys = [
 `SplitHorizontal` requires a [SpawnCommand](../SpawnCommand.md) parameter to
 specify what should be spawned into the new split.
 
-```rhai
-config.keys = [
+```
+keys: [
   // This will create a new split and run the `top` program inside it
-  #{
+  {
     key: "%",
     mods: "CTRL|SHIFT|ALT",
-    action: act.SplitHorizontal(#{
+    action: { SplitHorizontal: {
       args: [ "top" ],
-    }),
+    } },
   },
 ]
 ```

@@ -6,12 +6,12 @@ Toggles the zoom state of the current pane.  A Zoomed pane takes up
 all available space in the tab, hiding all other panes while it is zoomed.
 Switching its zoom state off will restore the prior split arrangement.
 
-```rhai
-config.keys = [
-  #{
+```
+keys: [
+  {
     key: "Z",
     mods: "CTRL",
-    action: act.TogglePaneZoomState,
+    action: TogglePaneZoomState,
   },
 ]
 ```

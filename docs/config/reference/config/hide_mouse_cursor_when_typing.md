@@ -12,6 +12,6 @@ hovering over the window.
 
 The default is `true`. Set to `false` to disable this behavior.
 
-```rhai
-config.hide_mouse_cursor_when_typing = true
+```
+hide_mouse_cursor_when_typing: true
 ```
