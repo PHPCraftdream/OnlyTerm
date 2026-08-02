@@ -417,6 +417,35 @@ pub struct TermWindow {
     /// (a race between the scheduled timer and the close completing) is a
     /// no-op instead of double-closing the window.
     render_thread_hang_handled: Cell<bool>,
+    /// Structural (not timing-based) guard against more than one concurrent
+    /// hang-check timer chain existing for this window (task #287).
+    ///
+    /// `schedule_render_thread_hang_check` -> `Timer::at` -> `notify` ->
+    /// `check_render_thread_hang_tick` -> (re-)`schedule_render_thread_hang_check`
+    /// is meant to be a single self-rearming chain per window, terminated
+    /// only when a tick observes `render_thread_hang_handled == true` or
+    /// `render_thread.is_none()`. Relying on that alone is timing-dependent:
+    /// `handle_render_error_recovery` can set `render_thread_hang_handled`
+    /// to suppress the *current* chain's next tick, but
+    /// `finish_renderer_rebuild` later resets it back to `false` and starts
+    /// a brand-new chain via `schedule_render_thread_hang_check`. If the
+    /// old chain's already-pending timer tick fires *after* that reset
+    /// (rather than during the rebuild window, as it normally does, since a
+    /// rebuild takes ~2.3-2.9s against a ~2s poll interval) it observes a
+    /// healthy `render_thread_hang_handled == false` +
+    /// `render_thread == Some(...)` and re-arms itself too, leaving two
+    /// timer chains running in parallel for the same window (and this can
+    /// recur on each subsequent hang episode).
+    ///
+    /// This flag makes single-chained-ness structural instead: set to
+    /// `true` the moment `schedule_render_thread_hang_check` actually arms
+    /// a new timer, cleared to `false` at the very top of
+    /// `check_render_thread_hang_tick` before any other logic runs.
+    /// `schedule_render_thread_hang_check` early-returns without arming a
+    /// new timer if this is already `true`, so even if
+    /// `finish_renderer_rebuild` asks for a new chain while an old tick is
+    /// still in flight, at most one chain is ever pending.
+    hang_check_scheduled: Cell<bool>,
     /// Timestamps of recent in-place renderer rebuilds performed by
     /// `check_render_thread_hang_tick` in response to an observed hang, most
     /// recent last. This is the circuit breaker: `MAX_REBUILDS_PER_WINDOW`
@@ -683,6 +712,7 @@ impl TermWindow {
             webgpu: None,
             render_thread: None,
             render_thread_hang_handled: Cell::new(false),
+            hang_check_scheduled: Cell::new(false),
             rebuild_attempts: RefCell::new(Vec::new()),
             opengl_fallback_relay: Rc::new(RefCell::new(None)),
             permanently_on_opengl: Cell::new(false),
@@ -924,7 +954,7 @@ impl TermWindow {
                         myself.mux_window_id,
                     );
                     if myself.render_thread.is_some() {
-                        Self::schedule_render_thread_hang_check(&window);
+                        myself.schedule_render_thread_hang_check(&window);
                     }
                 }
             }
@@ -948,12 +978,29 @@ impl TermWindow {
     /// exactly like `scheduled_animation`'s `Timer::at` + `notify` pattern in
     /// `paint_impl` reschedules itself.
     ///
-    /// Only ever called (initially from `new_window`, then recursively from
-    /// `check_render_thread_hang_tick`) while running on the GUI thread --
-    /// `promise::spawn::spawn` is GUI-thread-only (it uses `spawn_local`
-    /// under the hood), which holds here since both call sites already run
+    /// Only ever called (initially from `new_window`, then from
+    /// `finish_renderer_rebuild` after a successful rebuild, and recursively
+    /// from `check_render_thread_hang_tick`) while running on the GUI thread
+    /// -- `promise::spawn::spawn` is GUI-thread-only (it uses `spawn_local`
+    /// under the hood), which holds here since all call sites already run
     /// on the GUI thread.
-    fn schedule_render_thread_hang_check(window: &Window) {
+    ///
+    /// Guarded by `hang_check_scheduled` (task #287): if a chain is already
+    /// pending for this window, this is a no-op rather than arming a second,
+    /// concurrent chain. See that field's doc comment for the race this
+    /// closes. The guard is set here, at the point a new timer is actually
+    /// armed, and cleared at the very top of `check_render_thread_hang_tick`
+    /// -- i.e. it tracks "is a tick currently in flight for this window",
+    /// not "has a chain ever been started".
+    fn schedule_render_thread_hang_check(&self, window: &Window) {
+        if self.hang_check_scheduled.get() {
+            // A chain is already pending (its timer tick hasn't fired yet);
+            // do not start a second, concurrent chain. See this call's
+            // doc comment and `hang_check_scheduled`'s own doc comment.
+            return;
+        }
+        self.hang_check_scheduled.set(true);
+
         // Poll at a fraction of the hang threshold, the same style as
         // `window::os::windows::watchdog`'s `poll_interval = (threshold /
         // 4).max(Duration::from_millis(50))`. This check is cheaper than the
@@ -998,6 +1045,19 @@ impl TermWindow {
     /// for another tick. See `schedule_render_thread_hang_check` for the
     /// scheduling half.
     fn check_render_thread_hang_tick(&mut self, window: &Window) {
+        // Clear the "a chain is pending" guard before any other logic in
+        // this tick runs (task #287): this tick *is* that pending chain
+        // firing, so from this point on `schedule_render_thread_hang_check`
+        // must be willing to arm a fresh timer again -- whether that
+        // happens below (the `!hung` re-arm path) or later, from
+        // `finish_renderer_rebuild` once an in-place rebuild triggered by
+        // this same tick completes. Clearing it late (or conditionally)
+        // would reopen the race this flag exists to close: a rebuild
+        // finishing and calling `schedule_render_thread_hang_check` while
+        // this flag was still `true` would be wrongly suppressed, leaving
+        // this window with no supervisor at all.
+        self.hang_check_scheduled.set(false);
+
         // Sweep any WebGpu child HWNDs retired by an earlier
         // `begin_renderer_rebuild` (task #283): destroys the ones whose
         // paired `Weak<WebGpuState>` has since hit zero strong references
@@ -1030,7 +1090,7 @@ impl TermWindow {
             }
         };
         if !hung {
-            Self::schedule_render_thread_hang_check(window);
+            self.schedule_render_thread_hang_check(window);
             return;
         }
 
@@ -1598,7 +1658,7 @@ impl TermWindow {
             self.render_thread =
                 crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id);
             if self.render_thread.is_some() {
-                Self::schedule_render_thread_hang_check(window);
+                self.schedule_render_thread_hang_check(window);
             }
         }
 
