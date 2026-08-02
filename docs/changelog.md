@@ -44,7 +44,15 @@ As features stabilize some brief notes about them will accumulate here.
   of them used to be able to override (tab titles, window titles, status
   text, bell handling, and so on) is unchanged. `ExecDomain`'s `fixup`/`label`
   callbacks are gone for the same reason: an `ExecDomain` can no longer wrap
-  spawned commands. Plugins (which required a scripting engine to evaluate
+  spawned commands. **Because that makes `exec_domains` actively unsafe to
+  load quietly** (it would silently spawn commands un-wrapped, directly on
+  the host, instead of doing whatever the domain used to do, e.g. `docker
+  exec`/`ssh`), a config whose `exec_domains` is non-empty now fails to load
+  with a clear error at config-load time rather than loading and spawning
+  the wrong thing; remove the `exec_domains` entries from your config
+  (`wsl_domains` remains fully supported, since it is implemented natively
+  rather than via scripting, and is the closest still-working alternative
+  for reaching WSL). Plugins (which required a scripting engine to evaluate
   `plugin/init.rhai`) are also gone. If a legacy `.wezterm.rhai`/`.wezterm.lua`
   is found with no `.wezterm.ktav` sibling, WezTerm prints a clear error
   naming the file and pointing at the migration guide. A separate, explicit
@@ -53,6 +61,19 @@ As features stabilize some brief notes about them will accumulate here.
   come back, only that the old rhai-shaped mechanism is gone. See the
   [migration guide](migration-to-ktav.md) for the ktav data-format syntax and
   a side-by-side translation of real configs.
+* Unlike `exec_domains` above, the
+  [PromptInputLine](config/reference/keyassignment/PromptInputLine.md),
+  [InputSelector](config/reference/keyassignment/InputSelector.md), and
+  [Confirmation](config/reference/keyassignment/Confirmation.md) key
+  assignments' `action` callbacks, and the
+  [EmitEvent](config/reference/keyassignment/EmitEvent.md) action, still load
+  without any error — they just silently do nothing (show/dismiss an overlay
+  with no handler left to receive the result, or emit an event nobody is
+  listening for) now that the rhai callback registry they depended on is
+  gone. These are documented as non-functional on their individual reference
+  pages; they were left as silent no-ops rather than load-time errors because,
+  unlike `exec_domains`, a missing callback here does not cause an actively
+  wrong or dangerous outcome, just a missing one.
 * Audited every `unsafe` block in the codebase (~85 files across all crates)
   and either removed it in favor of safe Rust where it wasn't strictly
   necessary, or documented it with a `// SAFETY:` comment explaining the
