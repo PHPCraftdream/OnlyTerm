@@ -11,7 +11,7 @@ use config::MouseEventAltScreen;
 use mux::pane::{Pane, WithPaneLines};
 use mux::tab::SplitDirection;
 use mux::Mux;
-use mux_lua::MuxPane;
+use mux_funcs::MuxPane;
 use std::convert::TryInto;
 use std::ops::Sub;
 use std::sync::Arc;

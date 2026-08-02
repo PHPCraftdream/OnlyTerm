@@ -1,4 +1,4 @@
-use crate::scripting::guiwin::GuiWin;
+use crate::gui_api::guiwin::GuiWin;
 use crate::spawn::SpawnWhere;
 use crate::termwindow::TermWindowNotif;
 use crate::TermWindow;

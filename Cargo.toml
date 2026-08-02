@@ -63,7 +63,7 @@ clap_complete_fig = "4.0"
 clipboard-win = "2.2"
 cocoa = "=0.25.0"
 codec = { path = "crates/codec" }
-color-funcs = { path = "crates/lua-api-crates/color-funcs" }
+color-funcs = { path = "crates/api-crates/color-funcs" }
 colorgrad = "0.6"
 config = { path = "crates/config" }
 core-foundation = "=0.10.0"
@@ -134,7 +134,7 @@ metrics = "0.23"
 miniz_oxide = "0.7"
 mio = "0.8"
 mux = { path = "crates/mux" }
-mux-lua = { path = "crates/lua-api-crates/mux" }
+mux-funcs = { path = "crates/api-crates/mux-funcs" }
 names = { version = "0.12", default-features = false }
 nix = "0.29"
 notify = "5.0.0"
@@ -199,7 +199,7 @@ tempfile = "3.20"
 terminfo = "0.9"
 termios = "0.3"
 termwiz = { version="0.24.0", path = "crates/termwiz" }
-termwiz-funcs = { path = "crates/lua-api-crates/termwiz-funcs" }
+termwiz-funcs = { path = "crates/api-crates/termwiz-funcs" }
 textwrap = "0.16"
 thiserror = "1.0"
 tiny-skia = "0.11"

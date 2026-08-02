@@ -3167,7 +3167,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mux-lua"
+name = "mux-funcs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6399,7 +6399,7 @@ dependencies = [
  "log",
  "metrics",
  "mux",
- "mux-lua",
+ "mux-funcs",
  "nucleo-matcher",
  "ordered-float",
  "parking_lot",

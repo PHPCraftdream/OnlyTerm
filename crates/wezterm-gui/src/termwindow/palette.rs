@@ -11,7 +11,7 @@ use crate::utilsprites::RenderMetrics;
 use config::keyassignment::KeyAssignment;
 use config::Dimension;
 use frecency::Frecency;
-use mux_lua::MuxPane;
+use mux_funcs::MuxPane;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cell::{Ref, RefCell};

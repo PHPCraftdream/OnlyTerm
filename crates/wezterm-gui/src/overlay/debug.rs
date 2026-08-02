@@ -1,4 +1,4 @@
-use crate::scripting::guiwin::GuiWin;
+use crate::gui_api::guiwin::GuiWin;
 use chrono::prelude::*;
 use log::Level;
 use mux::termwiztermtab::TermWizTerminal;
@@ -23,7 +23,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// This overlay used to host a rhai REPL (`MainReplHost`/`ReplEditor`,
 /// backed by the config crate's now-deleted rhai-engine constructor) that
 /// exposed every `register_rhai` binding (`wezterm.mux.*`, `GuiWin`,
-/// `TabInformation`, the `lua-api-crates`, the
+/// `TabInformation`, the crates now under `crates/api-crates`, the
 /// `on`/`add_to_config_reload_watch_list` event surface) for live
 /// evaluation, mirroring what a real `.wezterm.rhai` config callback would
 /// see.

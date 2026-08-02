@@ -1,7 +1,7 @@
-use crate::scripting::guiwin::GuiWin;
+use crate::gui_api::guiwin::GuiWin;
 use config::keyassignment::{Confirmation, KeyAssignment};
 use mux::termwiztermtab::TermWizTerminal;
-use mux_lua::MuxPane;
+use mux_funcs::MuxPane;
 use termwiz::cell::AttributeChange;
 use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, MouseButtons, MouseEvent};

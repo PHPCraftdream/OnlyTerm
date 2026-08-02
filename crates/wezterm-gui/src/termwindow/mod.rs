@@ -8,8 +8,8 @@ use crate::overlay::{
     launcher, start_overlay, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
     QuickSelectOverlay,
 };
+use crate::gui_api::guiwin::GuiWin;
 use crate::resize_increment_calculator::ResizeIncrementCalculator;
-use crate::scripting::guiwin::GuiWin;
 use crate::scrollbar::*;
 use crate::selection::Selection;
 use crate::shapecache::*;
@@ -48,7 +48,7 @@ use mux::tab::{
 };
 use mux::window::WindowId as MuxWindowId;
 use mux::{Mux, MuxNotification};
-use mux_lua::MuxPane;
+use mux_funcs::MuxPane;
 use smol::channel::Sender;
 use smol::Timer;
 use std::cell::{Cell, RefCell, RefMut};
