@@ -1285,6 +1285,43 @@ impl Config {
 
                 let parsed = ktav::parse(text)
                     .map_err(|e| anyhow::anyhow!("Error parsing {}: {}", p.display(), e))?;
+
+                // `ktav::parse` succeeds as long as `text` is *syntactically*
+                // valid ktav, but a config file is additionally expected to
+                // be a top-level `Object` (`key: value` pairs). Some classes
+                // of typo -- e.g. a missing space after the first `:`, which
+                // ktav treats as one bare unquoted string rather than a
+                // `key: value` pair, so a whole document of them parses as a
+                // top-level `Array` of strings -- are still syntactically
+                // valid ktav, just not shaped like a config file. Left
+                // unchecked, that non-Object value flows into
+                // `Config::from_ktav_dynamic` below and fails with an opaque
+                // `NoConversion Array`-style error with no line number and no
+                // hint about what's actually wrong. Catch it here instead,
+                // mirroring the same check `apply_overrides_to_ktav` already
+                // does for the `--config key=value` override path.
+                let kind = match &parsed {
+                    KtavValue::Object(_) => None,
+                    KtavValue::Array(_) => Some("an array"),
+                    KtavValue::String(_) => Some("a single string"),
+                    KtavValue::Integer(_) => Some("a single integer"),
+                    KtavValue::Float(_) => Some("a single float"),
+                    KtavValue::Bool(_) => Some("a single boolean"),
+                    KtavValue::Null => Some("a single null"),
+                };
+                if let Some(kind) = kind {
+                    anyhow::bail!(
+                        "Error parsing {}: the config file must be a top-level ktav \
+                         object (`key: value` pairs), but it parsed successfully as \
+                         {kind} instead. This usually means a line that was meant to \
+                         be a `key: value` pair is missing the space after the `:` \
+                         (so ktav reads it as one bare string rather than a key/value \
+                         pair), or the document has some other unexpected top-level \
+                         structure. Please check the file for a typo like that.",
+                        p.display()
+                    );
+                }
+
                 let config_value = crate::ktav_value::ktav_value_to_dynamic(&parsed);
 
                 let config_value = Config::apply_overrides_to_ktav(config_value)?;
@@ -2829,6 +2866,76 @@ exec_domains: [
             .expect("config with no exec_domains should load fine");
         assert!(cfg.exec_domains.is_empty());
         assert_eq!(cfg.font_size, 12.0);
+    }
+
+    /// Regression test for task #296: a config file that parses
+    /// successfully as *syntactically valid ktav* but not as a top-level
+    /// `Object` -- e.g. because a `key: value` line is missing the space
+    /// after the `:`, so ktav reads the whole line as one bare unquoted
+    /// string rather than a `key`/`value` pair, and the whole document
+    /// parses as a top-level `Array` of strings -- must fail with a clear
+    /// error naming the actual parsed shape and hinting at the likely
+    /// cause, not the old opaque `NoConversion Array`-style error from deep
+    /// inside `wezterm_dynamic`'s `Config::from_dynamic` conversion.
+    #[test]
+    fn malformed_top_level_array_config_produces_actionable_error() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        // Missing space after the first `:` on each line: ktav parses each
+        // line as one bare string rather than a `key: value` pair, so the
+        // whole document parses as a top-level `Array`, not an `Object`.
+        std::fs::write(&config_path, "font_size:14\nterm: screen\n").unwrap();
+
+        let path_item = PathPossibility::required(config_path);
+        let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
+            Err(err) => err,
+            Ok(_) => panic!(
+                "a config document that parses as a top-level array, not an \
+                 object, must fail to load, not be silently accepted"
+            ),
+        };
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("top-level ktav object")
+                && message.contains("an array")
+                && message.contains("missing the space after the `:`"),
+            "error should clearly explain the config parsed as a non-Object \
+             shape and hint at the likely typo, not just show the old opaque \
+             `NoConversion Array` error: {}",
+            message
+        );
+        assert!(
+            !message.contains("NoConversion"),
+            "the new, clearer error should be raised before ever reaching \
+             the opaque wezterm_dynamic NoConversion error: {}",
+            message
+        );
+    }
+
+    /// The common case -- a normal, correctly-formed ktav config file that
+    /// parses as a top-level object -- must be completely unaffected by the
+    /// task #296 shape check: no new error, no false-positive rejection.
+    #[test]
+    fn normal_config_is_unaffected_by_top_level_shape_check() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        std::fs::write(&config_path, "font_size: 14\nterm: screen\n").unwrap();
+
+        let path_item = PathPossibility::required(config_path);
+        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            .expect("try_load should succeed")
+            .expect("a config was found");
+        let cfg = loaded
+            .config
+            .expect("a normal top-level-object ktav config should load fine");
+        assert_eq!(cfg.font_size, 14.0);
+        assert_eq!(cfg.term, "screen");
     }
 
     /// Sanity check for the pure path-diagnostics helper itself: only exact
