@@ -80,7 +80,6 @@ rangeset.workspace = true
 ratelim.workspace = true
 rayon.workspace = true
 regex.workspace = true
-rhai.workspace = true
 sefer-alloc.workspace = true
 serde = {workspace=true, features = ["rc", "derive"]}
 serde_json.workspace = true
