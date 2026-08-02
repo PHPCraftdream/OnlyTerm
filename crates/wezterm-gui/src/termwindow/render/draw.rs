@@ -1,4 +1,5 @@
 use crate::colorease::ColorEaseUniform;
+use crate::quad::{Vertex, VERTICES_PER_CELL};
 use crate::termwindow::webgpu::{GpuDraw, GpuFrame, ShaderUniform};
 use crate::termwindow::RenderFrame;
 use crate::uniforms::UniformBuilder;
@@ -8,6 +9,7 @@ use ::window::glium::uniforms::{
 };
 use ::window::glium::{BlendingFunction, LinearBlendingFactor, Surface};
 use config::FreeTypeLoadTarget;
+use std::time::Instant;
 
 impl crate::TermWindow {
     pub fn call_draw(&mut self, frame: &mut RenderFrame) -> anyhow::Result<()> {
@@ -62,6 +64,20 @@ impl crate::TermWindow {
 
         let mut draws = Vec::new();
 
+        // Instrumentation only (see docs/plans/2026-07-31-remaining-followups.md,
+        // section 1 / item 7): each `recreate()` below allocates a brand new
+        // GPU buffer at the sub-layer's full *capacity* (not the number of
+        // quads actually in use), which costs a `create_buffer` plus a
+        // full-capacity staging-buffer memset + copy, on the GUI thread, once
+        // per non-empty sub-layer per frame. These two histograms measure the
+        // real-world cost so that a future decision is data-driven rather
+        // than estimated: only pursue a buffer-pooling redesign of this loop
+        // if `gui.webgpu_frame.vertex_recreate.size` regularly exceeds ~8MB
+        // per frame, or `gui.webgpu_frame.vertex_recreate.latency` regularly
+        // exceeds ~2ms, on real workloads.
+        let vertex_recreate_start = Instant::now();
+        let mut vertex_recreate_bytes: u64 = 0;
+
         for layer in render_state.layers.borrow().iter() {
             for idx in 0..3 {
                 let vb = &layer.vb.borrow()[idx];
@@ -70,6 +86,8 @@ impl crate::TermWindow {
                     let mut vertices = vb.current_vb_mut();
                     let vertex_buffer = vertices.webgpu_mut().recreate();
                     vertex_buffer.unmap();
+                    vertex_recreate_bytes +=
+                        (vb.capacity * VERTICES_PER_CELL * std::mem::size_of::<Vertex>()) as u64;
                     let index_buffer = wgpu::Buffer::clone(vb.indices.webgpu());
                     draws.push(GpuDraw {
                         vertex_buffer,
@@ -81,6 +99,11 @@ impl crate::TermWindow {
                 vb.next_index();
             }
         }
+
+        metrics::histogram!("gui.webgpu_frame.vertex_recreate.latency")
+            .record(vertex_recreate_start.elapsed());
+        metrics::histogram!("gui.webgpu_frame.vertex_recreate.size")
+            .record(vertex_recreate_bytes as f64);
 
         Ok(GpuFrame {
             draws,
