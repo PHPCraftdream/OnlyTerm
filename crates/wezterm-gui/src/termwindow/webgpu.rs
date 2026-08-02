@@ -478,120 +478,191 @@ impl WebGpuState {
         dimensions: Dimensions,
         config: &ConfigHandle,
     ) -> anyhow::Result<Self> {
-        let backends = wgpu::Backends::all();
+        // `Backends::all()` used to be tried up front, but per-backend
+        // measurements (task #318) on an Intel UHD Windows laptop showed that
+        // is paying for two independent costs that don't need to be paid
+        // together:
+        //   - `Instance::new(DX12)`         ~16ms,  `request_adapter` ~2.0s
+        //   - `Instance::new(VULKAN)`       ~2.2s,  `request_adapter` ~3ms
+        //   - `Instance::new(GL)`           ~0.1s,  `request_adapter` ~0.4ms
+        // i.e. DX12's cost is almost entirely in enumerating/scoring
+        // adapters, while Vulkan's cost is almost entirely in
+        // `Instance::new` loading the Vulkan loader and every installed ICD
+        // (including software/LLVMpipe-style ones) just to then not use any
+        // of them. `Backends::all()` pays both bills even though Windows
+        // only needs one adapter. Since DX12 is the primary native backend
+        // on Windows (Vulkan/GL are only there as a fallback for machines
+        // where DX12 has no usable adapter), try DX12 alone first and only
+        // widen to `Backends::all()` if that comes up empty -- this is the
+        // same "narrow, then widen on failure" shape the preferred-adapter
+        // search already uses below, just applied one level up.
+        #[cfg(windows)]
+        let primary_backends = wgpu::Backends::DX12;
+        // Not measured on macOS/Linux for this task; leave them exactly as
+        // before (full enumeration) rather than guessing at a narrower set
+        // that could regress hardware this change was never tested against.
+        #[cfg(not(windows))]
+        let primary_backends = wgpu::Backends::all();
+
+        // Always used for the diagnostic adapter list on a hard failure
+        // (`compute_compatibility_list` below) and as the final fallback if
+        // `primary_backends` doesn't yield a usable adapter, so that neither
+        // the error message nor a non-default `webgpu_preferred_adapter`
+        // (which may name a Vulkan/GL adapter) ever silently lose visibility
+        // into backends this platform supports.
+        let all_backends = wgpu::Backends::all();
 
         // `Instance::new` and adapter selection together are the expensive
-        // part of WebGpu startup (measured ~4s total on an Intel UHD laptop:
-        // ~2.6s for `Instance::new`'s backend/driver enumeration, ~1.4s for
-        // `request_adapter`; task #311). Neither one touches the window handle: an
-        // adapter is chosen against `compatible_surface: None` here (a
-        // documented no-op outside of WebGL2, which this native build never
-        // targets) rather than the real surface, deferring the actual
-        // surface-compatibility check to right after the (cheap) surface
-        // creation below. That means this whole block has no dependency on
-        // `handle`/`RawHandlePair` (which is `!Send` on account of
-        // `raw-window-handle`'s non-Windows enum variants) and can run on a
-        // dedicated background OS thread via `run_on_background_thread`,
-        // getting it off the GUI thread entirely: every other caller of this
-        // `async fn` (window creation, in-place renderer rebuild) executes on
-        // the GUI thread's single-threaded `promise::spawn` executor, where
-        // an `.await` only yields control back to `run_message_loop` at
-        // points that resolve via a waker -- it does NOT get a fair timeslice
-        // against a call that's synchronously CPU/driver-bound the entire
-        // time, which is exactly what `Instance::new`/`request_adapter` are.
+        // part of WebGpu startup (measured ~4s total on an Intel UHD laptop
+        // with `Backends::all()`; task #311). Neither one touches the window
+        // handle: an adapter is chosen against `compatible_surface: None`
+        // here (a documented no-op outside of WebGL2, which this native
+        // build never targets) rather than the real surface, deferring the
+        // actual surface-compatibility check to right after the (cheap)
+        // surface creation below. That means this whole block has no
+        // dependency on `handle`/`RawHandlePair` (which is `!Send` on
+        // account of `raw-window-handle`'s non-Windows enum variants) and
+        // can run on a dedicated background OS thread via
+        // `run_on_background_thread`, getting it off the GUI thread
+        // entirely: every other caller of this `async fn` (window creation,
+        // in-place renderer rebuild) executes on the GUI thread's
+        // single-threaded `promise::spawn` executor, where an `.await` only
+        // yields control back to `run_message_loop` at points that resolve
+        // via a waker -- it does NOT get a fair timeslice against a call
+        // that's synchronously CPU/driver-bound the entire time, which is
+        // exactly what `Instance::new`/`request_adapter` are.
         let config_for_thread = config.clone();
-        let (instance, adapter) = run_on_background_thread(move || {
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends,
-                ..Default::default()
-            });
+        let (instance, backends, adapter) = run_on_background_thread(move || {
+            // Try the cheap, platform-primary backend set first; only pay
+            // for the rest of `all_backends` (Vulkan's expensive loader/ICD
+            // enumeration on Windows, in particular) if it doesn't pan out.
+            for backends in [primary_backends, all_backends] {
+                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                    backends,
+                    ..Default::default()
+                });
 
-            let mut adapter: Option<wgpu::Adapter> = None;
+                let mut adapter: Option<wgpu::Adapter> = None;
 
-            if let Some(preference) = &config_for_thread.webgpu_preferred_adapter {
-                for a in instance.enumerate_adapters(backends) {
-                    let info = a.get_info();
+                if let Some(preference) = &config_for_thread.webgpu_preferred_adapter {
+                    for a in instance.enumerate_adapters(backends) {
+                        let info = a.get_info();
 
-                    if preference.name != info.name {
-                        continue;
-                    }
-
-                    if preference.device_type != format!("{:?}", info.device_type) {
-                        continue;
-                    }
-
-                    if preference.backend != format!("{:?}", info.backend) {
-                        continue;
-                    }
-
-                    if let Some(driver) = &preference.driver {
-                        if *driver != info.driver {
+                        if preference.name != info.name {
                             continue;
                         }
-                    }
-                    if let Some(vendor) = &preference.vendor {
-                        if *vendor != info.vendor {
+
+                        if preference.device_type != format!("{:?}", info.device_type) {
                             continue;
                         }
-                    }
-                    if let Some(device) = &preference.device {
-                        if *device != info.device {
+
+                        if preference.backend != format!("{:?}", info.backend) {
                             continue;
                         }
-                    }
 
-                    // Note: unlike the pre-#311 code, this can't check
-                    // `is_surface_supported` here (no surface exists yet on
-                    // this background thread) -- that check now happens back
-                    // on the GUI thread, right after the surface is created,
-                    // and falls back to `request_adapter` if it fails.
-                    adapter.replace(a);
-                    break;
-                }
-
-                if adapter.is_none() {
-                    log::warn!(
-                        "Your webgpu preferred adapter '{}' was not found among the \
-                         enumerated adapters (name/device_type/backend/driver/vendor/device \
-                         did not match any of them)",
-                        preference.to_string(),
-                    );
-                }
-            }
-
-            if adapter.is_none() {
-                // This background thread has no async executor of its own,
-                // and doesn't need one: on every native backend (DX12,
-                // Vulkan, Metal), `request_adapter`'s returned future
-                // resolves synchronously the first time it's polled (there's
-                // no actual OS-level waiting involved, just CPU-bound
-                // enumeration), so a single-poll `block_on` is sufficient and
-                // avoids pulling in a whole reactor for one call. `futures`
-                // is already a workspace dependency (used elsewhere in this
-                // crate), so this doesn't add a new one.
-                adapter = Some(futures::executor::block_on(instance.request_adapter(
-                    &wgpu::RequestAdapterOptions {
-                        power_preference: match config_for_thread.webgpu_power_preference {
-                            WebGpuPowerPreference::HighPerformance => {
-                                wgpu::PowerPreference::HighPerformance
+                        if let Some(driver) = &preference.driver {
+                            if *driver != info.driver {
+                                continue;
                             }
-                            WebGpuPowerPreference::LowPower => wgpu::PowerPreference::LowPower,
+                        }
+                        if let Some(vendor) = &preference.vendor {
+                            if *vendor != info.vendor {
+                                continue;
+                            }
+                        }
+                        if let Some(device) = &preference.device {
+                            if *device != info.device {
+                                continue;
+                            }
+                        }
+
+                        // Note: unlike the pre-#311 code, this can't check
+                        // `is_surface_supported` here (no surface exists yet on
+                        // this background thread) -- that check now happens back
+                        // on the GUI thread, right after the surface is created,
+                        // and falls back to `request_adapter` if it fails.
+                        adapter.replace(a);
+                        break;
+                    }
+
+                    if adapter.is_none() && backends == all_backends {
+                        // Only warn once we've exhausted every backend this
+                        // platform supports -- if `backends` is still the
+                        // narrow `primary_backends` set here, the outer loop
+                        // is about to retry with `all_backends`, so a warning
+                        // now would be a false alarm for e.g. a Vulkan/GL
+                        // preferred adapter on Windows.
+                        log::warn!(
+                            "Your webgpu preferred adapter '{}' was not found among the \
+                             enumerated adapters (name/device_type/backend/driver/vendor/device \
+                             did not match any of them)",
+                            preference.to_string(),
+                        );
+                    }
+                }
+
+                // Falling back to "whatever `request_adapter` likes" would
+                // defeat an explicit `webgpu_preferred_adapter` that simply
+                // isn't reachable from the narrow backend set: on Windows a
+                // preference naming a Vulkan or GL adapter finds no match in
+                // the DX12-only pass, and grabbing the DX12 adapter here
+                // would return before the loop ever widens -- silently
+                // ignoring the setting, and skipping the warning above too,
+                // since that only fires on the widened pass. Keep looking
+                // while a preference is configured and backends are still
+                // narrowed.
+                let may_settle_for_any_adapter = config_for_thread.webgpu_preferred_adapter.is_none()
+                    || backends == all_backends;
+
+                if adapter.is_none() && may_settle_for_any_adapter {
+                    // This background thread has no async executor of its own,
+                    // and doesn't need one: on every native backend (DX12,
+                    // Vulkan, Metal), `request_adapter`'s returned future
+                    // resolves synchronously the first time it's polled (there's
+                    // no actual OS-level waiting involved, just CPU-bound
+                    // enumeration), so a single-poll `block_on` is sufficient and
+                    // avoids pulling in a whole reactor for one call. `futures`
+                    // is already a workspace dependency (used elsewhere in this
+                    // crate), so this doesn't add a new one.
+                    adapter = futures::executor::block_on(instance.request_adapter(
+                        &wgpu::RequestAdapterOptions {
+                            power_preference: match config_for_thread.webgpu_power_preference {
+                                WebGpuPowerPreference::HighPerformance => {
+                                    wgpu::PowerPreference::HighPerformance
+                                }
+                                WebGpuPowerPreference::LowPower => {
+                                    wgpu::PowerPreference::LowPower
+                                }
+                            },
+                            // No surface exists yet on this background thread --
+                            // see the doc comment above `run_on_background_thread`'s
+                            // call site. `compatible_surface` is documented as
+                            // only mandatory when targeting WebGL2 (it must be
+                            // `Some` there or `request_adapter` fails outright);
+                            // every other backend treats it as an optional hint.
+                            compatible_surface: None,
+                            force_fallback_adapter: config_for_thread
+                                .webgpu_force_fallback_adapter,
                         },
-                        // No surface exists yet on this background thread --
-                        // see the doc comment above `run_on_background_thread`'s
-                        // call site. `compatible_surface` is documented as
-                        // only mandatory when targeting WebGL2 (it must be
-                        // `Some` there or `request_adapter` fails outright);
-                        // every other backend treats it as an optional hint.
-                        compatible_surface: None,
-                        force_fallback_adapter: config_for_thread.webgpu_force_fallback_adapter,
-                    },
-                ))?);
+                    ))
+                    .ok();
+                }
+
+                if let Some(adapter) = adapter {
+                    return anyhow::Ok((instance, backends, adapter));
+                }
+
+                // Nothing usable on this backend set. If we just tried the
+                // narrow `primary_backends` set, fall through the loop and
+                // retry with `all_backends`; if `all_backends` itself came up
+                // empty there's nothing left to widen to.
+                log::debug!(
+                    "no compatible adapter found among backends {backends:?}; \
+                     widening backend search",
+                );
             }
 
-            let adapter = adapter
-                .ok_or_else(|| anyhow!("no compatible adapter found (enumeration was empty)"))?;
-            anyhow::Ok((instance, adapter))
+            anyhow::bail!("no compatible adapter found (enumeration was empty)")
         })
         .await??;
 
@@ -627,6 +698,16 @@ impl WebGpuState {
         // trivially surface-compatible), so it's fine for it to run
         // synchronously here on the GUI thread rather than round-tripping to
         // the background thread again.
+        //
+        // Note: `instance` may have been built with the narrowed
+        // `primary_backends` set (see above) rather than `all_backends`, if
+        // that's where the chosen `adapter` was found. A surface-incompatible
+        // primary-backend adapter is exactly the "narrow set wasn't enough"
+        // case the backend search above widens for, so this retry -- and the
+        // diagnostic list on total failure -- must go through `all_backends`
+        // too, or a real adapter on a backend outside `primary_backends`
+        // (e.g. a Vulkan-only display path on Windows) would be missed here
+        // even though the earlier widening loop would have found it.
         let adapter = if adapter.is_surface_supported(&surface) {
             adapter
         } else {
@@ -635,6 +716,14 @@ impl WebGpuState {
                  with compatible_surface set",
                 adapter_info_to_gpu_info(adapter.get_info()).to_string()
             );
+            let instance = if backends == all_backends {
+                instance
+            } else {
+                wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                    backends: all_backends,
+                    ..Default::default()
+                })
+            };
             match instance
                 .request_adapter(&wgpu::RequestAdapterOptions {
                     power_preference: match config.webgpu_power_preference {
@@ -650,7 +739,7 @@ impl WebGpuState {
             {
                 Ok(adapter) => adapter,
                 Err(_) => {
-                    let adapters = compute_compatibility_list(&instance, backends, &surface);
+                    let adapters = compute_compatibility_list(&instance, all_backends, &surface);
                     return Err(anyhow!(
                         "no compatible adapter found. Available:\n{}",
                         adapters.join("\n")
