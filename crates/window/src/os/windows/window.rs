@@ -123,6 +123,33 @@ pub(crate) struct WindowInner {
     /// is destroyed. Kept sized/positioned to exactly cover `hwnd`'s client
     /// area by `check_and_call_resize_if_needed`.
     webgpu_child_hwnd: HWindow,
+    /// Old WebGpu child HWNDs that have been superseded by a renderer
+    /// rebuild (see `Window::recreate_webgpu_child_window`) but not yet
+    /// `DestroyWindow`-ed, paired with a type-erased `Weak` handle to the
+    /// `WebGpuState` (owned by `wezterm-gui`, which this crate cannot name
+    /// directly) whose `wgpu::Surface`/DXGI swapchain targets that HWND.
+    ///
+    /// Why defer the destroy at all: `begin_renderer_rebuild`
+    /// (`wezterm-gui`) only *signals* the old render thread to shut down
+    /// (`RenderThreadHandle::shutdown`, by design non-blocking -- joining
+    /// would reintroduce the GUI-thread block this whole architecture
+    /// exists to avoid) before starting the rebuild. If that thread is
+    /// wedged inside `submit_frame`/`present()` -- the whole reason a
+    /// rebuild was triggered -- it can still be holding its own strong
+    /// `Arc<WebGpuState>` (and therefore the live surface) when the rebuild
+    /// reaches this child-window step. `DestroyWindow`-ing the HWND out
+    /// from under a still-live swapchain surface is at best undefined,
+    /// driver-dependent behavior, so instead we hide the old HWND and keep
+    /// it here until the `Weak` reports zero strong references, i.e. until
+    /// the (possibly-late) render thread has actually returned and dropped
+    /// its `Arc`. Swept by `sweep_retired_webgpu_children`, called from
+    /// both `TermWindow::check_render_thread_hang_tick`'s existing ~2s
+    /// timer (normal case) and from `close` (so a full window close doesn't
+    /// leave any of these to `close`'s own `DestroyWindow` cleanup, though
+    /// see the note on `close` -- even if we didn't, `hwnd`'s own
+    /// `WS_CHILD` cleanup would catch them as a backstop, since these are
+    /// still children of `hwnd` for as long as they live).
+    retired_webgpu_children: Vec<(HWindow, std::sync::Weak<dyn Any + Send + Sync>)>,
     events: WindowEventSender,
     gl_state: Option<Rc<glium::backend::Context>>,
     /// Fraction of mouse scroll
@@ -723,6 +750,7 @@ impl Window {
         let inner = Rc::new(RefCell::new(WindowInner {
             hwnd: HWindow(null_mut()),
             webgpu_child_hwnd: HWindow(null_mut()),
+            retired_webgpu_children: Vec::new(),
             appearance,
             events,
             gl_state: None,
@@ -815,7 +843,7 @@ impl Window {
         }
     }
 
-    /// Destroy the existing WebGpu child window (if any) and create a fresh
+    /// Retire the existing WebGpu child window (if any) and create a fresh
     /// one in its place, parented to this window and sized to its current
     /// client area. Used by task #253's in-place renderer rebuild: when a
     /// window's render thread is found stuck inside a GPU submit call, we
@@ -824,7 +852,26 @@ impl Window {
     /// child HWND is the reason that's possible at all -- DXGI only allows
     /// one swapchain per HWND, so recreating a surface on the *same* HWND
     /// that already has a (possibly wedged) swapchain on it doesn't work,
-    /// but destroying and recreating a plain child window is safe and fast.
+    /// but retiring (see below) and creating a fresh plain child window is
+    /// safe and fast.
+    ///
+    /// `old_webgpu_state` is a type-erased `Weak` handle (this crate cannot
+    /// name `wezterm_gui::termwindow::webgpu::WebGpuState` directly, hence
+    /// `dyn Any`) to the `WebGpuState` whose surface targets the *old* child
+    /// HWND, downgraded from the caller's `Arc` right before the caller
+    /// drops its own strong reference (see `begin_renderer_rebuild`). We do
+    /// not immediately `DestroyWindow` the old child here (task #283): if
+    /// the just-shut-down render thread is wedged inside
+    /// `submit_frame`/`present()` -- the whole reason a rebuild was
+    /// triggered -- it can still hold the other strong `Arc<WebGpuState>`
+    /// (`RenderThreadSeed::webgpu`), keeping the live surface/DXGI
+    /// swapchain targeting this HWND alive. Destroying the HWND out from
+    /// under a still-possibly-live swapchain is undefined, driver-dependent
+    /// behavior. Instead the old child is hidden and stashed (see
+    /// `retired_webgpu_children`) until `sweep_retired_webgpu_children`
+    /// observes `old_webgpu_state.strong_count() == 0` (i.e. the render
+    /// thread has actually returned and dropped its `Arc`), at which point
+    /// it's safe to actually destroy.
     ///
     /// `async` and deferred via `promise::spawn::spawn`, mirroring
     /// `enable_opengl` just below: the caller (`TermWindow`'s render-thread
@@ -838,7 +885,10 @@ impl Window {
     /// to a freshly spawned task lets that outer borrow finish and drop
     /// first, exactly like `enable_opengl` already has to for the same
     /// reason during `new_window`.
-    pub async fn recreate_webgpu_child_window(&self) -> anyhow::Result<()> {
+    pub async fn recreate_webgpu_child_window(
+        &self,
+        old_webgpu_state: std::sync::Weak<dyn Any + Send + Sync>,
+    ) -> anyhow::Result<()> {
         let window = self.0;
         promise::spawn::spawn(async move {
             let conn = Connection::get().ok_or_else(|| anyhow::anyhow!("no Connection"))?;
@@ -851,25 +901,28 @@ impl Window {
             if !old_child.is_null() {
                 // SAFETY: `old_child` is a live `WS_CHILD` window handle
                 // created by an earlier `create_webgpu_child_window` call
-                // (or a previous `recreate_webgpu_child_window` call);
-                // destroying it here, on the window's own owning/connection
-                // thread, is the same operation `WindowInner::close`
-                // performs on the top-level HWND. Its child WebGpu surface
-                // (if any) is expected to have already been dropped by the
-                // caller before calling this, since the surface borrows the
-                // HWND.
+                // (or a previous `recreate_webgpu_child_window` call).
+                // `ShowWindow(SW_HIDE)` on the window's own owning/
+                // connection thread merely hides it -- unlike `DestroyWindow`,
+                // this is safe even if the old surface's swapchain might
+                // still be alive/in-use on another thread.
                 unsafe {
-                    DestroyWindow(old_child);
+                    ShowWindow(old_child, SW_HIDE);
                 }
-                // Null out the field immediately, before attempting to
-                // create the replacement. `old_child` is now destroyed (and
-                // Windows is free to recycle its HWND value for an unrelated
-                // window), so leaving the stale handle in place until the
-                // create call below succeeds would let a `?`-triggered early
-                // return leave `webgpu_child_hwnd` pointing at a dead --
-                // possibly recycled -- HWND instead of correctly reporting
-                // "no child window" via `webgpu_child_hwnd()`.
-                handle.borrow_mut().webgpu_child_hwnd = HWindow(null_mut());
+                {
+                    let mut inner = handle.borrow_mut();
+                    inner
+                        .retired_webgpu_children
+                        .push((HWindow(old_child), old_webgpu_state));
+                    // Null out the field immediately, before attempting to
+                    // create the replacement, so a `?`-triggered early
+                    // return below (or `webgpu_child_hwnd()` observed from
+                    // any other thread in the meantime) correctly reports
+                    // "no child window" rather than pointing at a
+                    // now-retired (albeit not yet destroyed) HWND that's no
+                    // longer the one any new surface should target.
+                    inner.webgpu_child_hwnd = HWindow(null_mut());
+                }
             }
 
             let new_child = Self::create_webgpu_child_window(parent)?;
@@ -877,6 +930,29 @@ impl Window {
             Ok(())
         })
         .await
+    }
+
+    /// Destroy any retired WebGpu child HWNDs (see
+    /// `retired_webgpu_children`) whose paired `Weak<WebGpuState>` has hit
+    /// zero strong references, i.e. whose old render thread has actually
+    /// returned and dropped the `Arc` that kept its surface/swapchain
+    /// alive. Called periodically from `TermWindow::check_render_thread_hang_tick`'s
+    /// existing ~2s timer (see that function's doc comment) while a render
+    /// thread exists, and once more from `close` so a full window close
+    /// clears the list eagerly rather than leaving it to `hwnd`'s own
+    /// `WS_CHILD` teardown (still a correct backstop either way -- see
+    /// `retired_webgpu_children`'s doc comment).
+    ///
+    /// Safe to call with no retired windows (no-op) and safe to call
+    /// repeatedly (each entry is only ever destroyed once, then removed).
+    pub fn sweep_retired_webgpu_children(&self) {
+        let Some(conn) = Connection::get() else {
+            return;
+        };
+        let Some(handle) = conn.get_window(self.0) else {
+            return;
+        };
+        handle.borrow_mut().sweep_retired_webgpu_children();
     }
 }
 
@@ -910,7 +986,40 @@ fn schedule_show_window(hwnd: HWindow, show: ShowWindowCommand) {
 }
 
 impl WindowInner {
+    /// Destroy any retired WebGpu child HWNDs whose paired `Weak` has hit
+    /// zero strong references. Shared body for `Window::sweep_retired_webgpu_children`
+    /// (reached via `Connection::get_window`) and `close` below (which
+    /// already holds `&mut self` directly, so it can call this without an
+    /// extra `Connection` round-trip). See `retired_webgpu_children`'s doc
+    /// comment for the full rationale.
+    fn sweep_retired_webgpu_children(&mut self) {
+        self.retired_webgpu_children.retain(|(hwnd, weak)| {
+            if weak.strong_count() > 0 {
+                // Still (possibly) referenced by a not-yet-returned render
+                // thread; leave it hidden and retired for the next sweep.
+                return true;
+            }
+            // SAFETY: `hwnd.0` is a retired `WS_CHILD` window handle that
+            // hasn't been destroyed yet (this closure only runs once per
+            // entry before `retain` drops it), and `weak`'s zero strong
+            // count proves the `WebGpuState`/surface that used to target it
+            // has been fully dropped, so nothing can still be
+            // presenting/configuring against this HWND.
+            unsafe {
+                DestroyWindow(hwnd.0);
+            }
+            false
+        });
+    }
+
     fn close(&mut self) {
+        // Eagerly destroy any retired WebGpu child HWNDs we can right now
+        // (task #283). Not strictly required for correctness -- any left
+        // in `retired_webgpu_children` are still `WS_CHILD` windows of
+        // `self.hwnd`, which Windows destroys automatically as part of
+        // `hwnd`'s own teardown below -- but doing it here avoids relying
+        // on that implicit cleanup when we can just as easily check now.
+        self.sweep_retired_webgpu_children();
         let hwnd = self.hwnd;
         promise::spawn::spawn(async move {
             // SAFETY: `hwnd.0` is a valid window handle; `DestroyWindow` is
