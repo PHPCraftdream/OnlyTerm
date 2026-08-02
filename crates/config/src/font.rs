@@ -363,7 +363,16 @@ pub struct FontAttributes {
     /// Whether the font should be an italic variant
     #[dynamic(default)]
     pub style: FontStyle,
+    /// Bookkeeping for fonts that the font resolver appended itself rather
+    /// than the user asking for them. Never meaningful to write in a config
+    /// file -- but ktav has no constructor functions, so a user's `font` is
+    /// now spelled out as a literal `FontAttributes` object and every field
+    /// without a default becomes mandatory for them to supply. Defaulting
+    /// these two keeps the documented `font: { font: [{ family: X }] }`
+    /// spelling loadable.
+    #[dynamic(default)]
     pub is_fallback: bool,
+    #[dynamic(default)]
     pub is_synthetic: bool,
 
     #[dynamic(default)]
@@ -753,5 +762,41 @@ mod test {
             let style = style.reduce_first_font_to_family();
             assert_eq!(style.font[0].family, "Inconsolata");
         }
+    }
+}
+
+#[cfg(test)]
+mod font_attribute_tests {
+    use super::*;
+
+    /// ktav has no constructor functions, so the only way to configure a
+    /// font is to spell out a `FontAttributes` object literal -- which
+    /// means every field without a `#[dynamic(default)]` becomes something
+    /// the user is forced to write. `is_fallback`/`is_synthetic` are
+    /// internal bookkeeping that no user should ever have to think about,
+    /// and requiring them made the spelling shown throughout the docs
+    /// (`font: { font: [{ family: X }] }`) fail to load, taking the whole
+    /// config down with it.
+    #[test]
+    fn family_alone_is_enough_to_configure_a_font() {
+        let parsed = ktav::parse("font: [{ family: Lucida Console }]").unwrap();
+        let dyn_value = crate::ktav_value::ktav_value_to_dynamic(&parsed);
+        let obj = match dyn_value {
+            wezterm_dynamic::Value::Object(obj) => obj,
+            other => panic!("expected an object, got {other:?}"),
+        };
+        let font = obj
+            .get(&wezterm_dynamic::Value::String("font".to_string()))
+            .expect("font key")
+            .clone();
+
+        let attrs: Vec<FontAttributes> =
+            wezterm_dynamic::FromDynamic::from_dynamic(&font, Default::default())
+                .expect("`{ family: ... }` alone must be a loadable font entry");
+
+        assert_eq!(attrs.len(), 1);
+        assert_eq!(attrs[0].family, "Lucida Console");
+        assert!(!attrs[0].is_fallback);
+        assert!(!attrs[0].is_synthetic);
     }
 }
