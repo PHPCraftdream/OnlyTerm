@@ -217,36 +217,47 @@ impl ParsedFont {
         }
     }
 
-    pub fn lua_name(&self) -> String {
+    /// Render as a ktav `FontAttributes` object literal, e.g.
+    /// `{ family: Lucida Console, weight: Bold, stretch: SemiCondensed, style: Italic }`,
+    /// suitable for pasting directly into a `font.font` array in a ktav config.
+    pub fn ktav_name(&self) -> String {
         format!(
-            "wezterm.font(\"{}\", {{weight={}, stretch=\"{}\", style=\"{}\"}})",
+            "{{ family: {}, weight: {}, stretch: {}, style: {} }}",
             self.names.family, self.weight, self.stretch, self.style
         )
     }
 
-    pub fn lua_fallback(handles: &[Self]) -> String {
-        let mut code = "wezterm.font_with_fallback({\n".to_string();
+    /// Render as a ktav `font: { font: [ ... ] }` block (the shape a `TextStyle`
+    /// takes in a ktav config), with `##` comments describing where each entry
+    /// was resolved from. Intended to be copy-pasted straight into a config file.
+    pub fn ktav_fallback(handles: &[Self]) -> String {
+        let mut code = "font: {\n    font: [\n".to_string();
 
         for p in handles {
-            code.push_str(&format!("  -- {}\n", p.handle.diagnostic_string()));
+            // Paths may contain backslashes (e.g. on Windows); that's fine
+            // inside a `##` comment, which is never parsed as ktav syntax.
+            code.push_str(&format!(
+                "        ## {}\n",
+                p.handle.diagnostic_string()
+            ));
             if p.synthesize_italic {
-                code.push_str("  -- Will synthesize italics\n");
+                code.push_str("        ## Will synthesize italics\n");
             }
             if p.synthesize_bold {
-                code.push_str("  -- Will synthesize bold\n");
+                code.push_str("        ## Will synthesize bold\n");
             } else if p.synthesize_dim {
-                code.push_str("  -- Will synthesize dim\n");
+                code.push_str("        ## Will synthesize dim\n");
             }
             if p.assume_emoji_presentation {
-                code.push_str("  -- Assumed to have Emoji Presentation\n");
+                code.push_str("        ## Assumed to have Emoji Presentation\n");
             }
             if !p.pixel_sizes.is_empty() {
-                code.push_str(&format!("  -- Pixel sizes: {:?}\n", p.pixel_sizes));
+                code.push_str(&format!("        ## Pixel sizes: {:?}\n", p.pixel_sizes));
             }
             if !p.palettes.is_empty() {
                 for pal in &p.palettes {
                     let mut info = format!(
-                        "  -- Palette: {} {}",
+                        "        ## Palette: {} {}",
                         pal.palette_index,
                         pal.name.to_string()
                     );
@@ -261,7 +272,7 @@ impl ParsedFont {
                 }
             }
             for aka in &p.names.aliases {
-                code.push_str(&format!("  -- AKA: \"{}\"\n", aka));
+                code.push_str(&format!("        ## AKA: {}\n", aka));
             }
 
             if p.weight == FontWeight::REGULAR
@@ -273,47 +284,45 @@ impl ParsedFont {
                 && p.harfbuzz_features.is_none()
                 && p.scale.is_none()
             {
-                code.push_str(&format!("  \"{}\",\n", p.names.family));
+                code.push_str(&format!("        {{ family: {} }}\n", p.names.family));
             } else {
-                code.push_str(&format!("  {{family=\"{}\"", p.names.family));
+                code.push_str(&format!("        {{ family: {}", p.names.family));
                 if p.weight != FontWeight::REGULAR {
-                    code.push_str(&format!(", weight={}", p.weight));
+                    code.push_str(&format!(", weight: {}", p.weight));
                 }
                 if p.stretch != FontStretch::Normal {
-                    code.push_str(&format!(", stretch=\"{}\"", p.stretch));
+                    code.push_str(&format!(", stretch: {}", p.stretch));
                 }
                 if p.style != FontStyle::Normal {
-                    code.push_str(&format!(", style=\"{}\"", p.style));
+                    code.push_str(&format!(", style: {}", p.style));
                 }
                 if let Some(scale) = p.scale {
-                    code.push_str(&format!(", scale={}", scale));
+                    code.push_str(&format!(", scale: {}", scale));
                 }
                 if let Some(item) = p.freetype_load_flags {
-                    code.push_str(&format!(", freetype_load_flags=\"{}\"", item.to_string()));
+                    code.push_str(&format!(", freetype_load_flags: {}", item.to_string()));
                 }
                 if let Some(item) = p.freetype_load_target {
-                    code.push_str(&format!(", freetype_load_target=\"{:?}\"", item));
+                    code.push_str(&format!(", freetype_load_target: {:?}", item));
                 }
                 if let Some(item) = p.freetype_render_target {
-                    code.push_str(&format!(", freetype_render_target=\"{:?}\"", item));
+                    code.push_str(&format!(", freetype_render_target: {:?}", item));
                 }
                 if let Some(feat) = &p.harfbuzz_features {
-                    code.push_str(", harfbuzz_features={");
+                    code.push_str(", harfbuzz_features: [");
                     for (idx, f) in feat.iter().enumerate() {
                         if idx > 0 {
                             code.push_str(", ");
                         }
-                        code.push('"');
                         code.push_str(f);
-                        code.push('"');
                     }
-                    code.push('}');
+                    code.push(']');
                 }
-                code.push_str("},\n")
+                code.push_str(" }\n")
             }
             code.push_str("\n");
         }
-        code.push_str("})");
+        code.push_str("    ]\n}");
         code
     }
 

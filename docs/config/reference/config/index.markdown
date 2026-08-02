@@ -5,8 +5,10 @@ search:
 
 # `Config` struct
 
-The `return` statement at the end of your `wezterm.lua` file returns
-a table that is interpreted as the internal `Config` struct type.
+Your `onlyterm.ktav` config file is parsed directly as the internal `Config`
+struct type -- there is no `return` statement or scripting engine involved;
+the whole file *is* the config document (see
+[Migrating to a ktav config](../../../migration-to-ktav.md)).
 
 This section documents the various available fields in the config
 struct.

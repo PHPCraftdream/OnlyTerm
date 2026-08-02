@@ -100,7 +100,7 @@ The default configuration at the time that these docs were built (which
 may be more recent than your version of OnlyTerm) is shown below.
 
 You can see the configuration in your version of OnlyTerm by running
-`onlyterm show-keys --lua --key-table search_mode`.
+`onlyterm show-keys --ktav --key-table search_mode`.
 
 {% include "examples/default-search-mode-key-table.markdown" %}
 
