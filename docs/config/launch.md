@@ -65,7 +65,7 @@ directory you can do so via the config, CLI, and when using
 * Setting the [`default_cwd`](reference/config/default_cwd.md) via the config:
 
   ```
-  default_cwd: "/some/path"
+  default_cwd: /some/path
   ```
 
 * One off program in a specific working directory via the CLI:
@@ -82,9 +82,9 @@ directory you can do so via the config, CLI, and when using
 
   ```
   {
-    label: "List files in /some/path",
-    args: ["ls", "-al"],
-    cwd: "/some/path",
+    label: List files in /some/path
+    args: [ls, -al]
+    cwd: /some/path
   }
   ```
 
@@ -154,7 +154,7 @@ launch_menu: [
     ## if you don't specify one then a default based on the OSC 7
     ## escape sequence will be used (see the Shell Integration
     ## docs), falling back to the home directory.
-    ## cwd: "/some/path"
+    ## cwd: /some/path
 
     ## You can override environment variables just for this command
     ## by setting this here.  It has the same semantics as the main
@@ -182,11 +182,11 @@ launch_menu: [
     ```
     launch_menu: [
       {
-        label: "x64 Native Tools VS 2022"
+        label: x64 Native Tools VS 2022
         args: [
-          "cmd.exe"
-          "/k"
-          "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat"
+          cmd.exe
+          /k
+          C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Auxiliary/Build/vcvars64.bat
         ]
       }
     ]
