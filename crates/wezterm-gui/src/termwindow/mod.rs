@@ -1880,6 +1880,24 @@ impl TermWindow {
                 Ok(true)
             }
             WindowEvent::NeedRepaint => {
+                // Early-show (task #331) means the window can be visible --
+                // and generating `NeedRepaint` events from focus/resize/OS
+                // paint requests -- before either renderer is attached.
+                // `self.gl` and `self.webgpu` are both still `None` from
+                // when they're constructed (see the `myself` initializer
+                // above `new_window`'s `Window::new_window` call) until
+                // `created()` fills in whichever one won the WebGpu/OpenGL
+                // race. This is intentionally *not* treated as an error:
+                // `do_paint_webgpu` is simply unreachable while
+                // `self.webgpu` is `None` (the `else` branch below runs
+                // instead), and `do_paint` handles a `None` `self.gl` by
+                // returning `false` rather than panicking (see its early
+                // return). The client area itself is covered by the
+                // `WM_ERASEBKGND` placeholder brush (task #330) for the
+                // brief window before `created()` runs, so a dropped
+                // repaint here is harmless -- `created()` also forces one
+                // more `window.invalidate()` once a renderer is actually in
+                // place, so nothing is lost, only delayed.
                 if self.resizes_pending > 0 {
                     self.is_repaint_pending = true;
                     Ok(true)
@@ -1941,6 +1959,15 @@ impl TermWindow {
     }
 
     fn do_paint(&mut self, window: &Window) -> bool {
+        // `self.gl` is `None` for the entire span between the window
+        // becoming visible (early show, task #331) and OpenGL actually
+        // winning the WebGpu/OpenGL race in `created()` -- and permanently
+        // `None` on a WebGpu-only run. Both are expected, not error states:
+        // this early return is what makes a `NeedRepaint` delivered to a
+        // renderer-less-but-visible window a safe no-op instead of a panic
+        // (see `WindowEvent::NeedRepaint` above for the fuller picture,
+        // including why nothing is lost -- `created()` forces one more
+        // repaint once a renderer does land).
         let gl = match self.gl.as_ref() {
             Some(gl) => gl,
             None => return false,
