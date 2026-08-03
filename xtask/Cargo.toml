@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Deliberately dependency-free: this binary runs before every check of the
+# tree, so its own build has to take a fraction of a second. Hand-rolling
+# the handful of flags is cheaper than pulling clap in here.
+[dependencies]

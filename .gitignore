@@ -71,3 +71,10 @@ dhat-heap.json
 /bench-run.log
 /bench-history.log
 /bench-run-baselines.txt
+
+# Scratch space for local experiments: probe scripts, throwaway configs,
+# screenshots, captured logs. Lives inside the repo on purpose -- nothing
+# a working session produces should land outside it. The README is kept
+# so the directory (and the rule) survives a fresh clone.
+/tmp/*
+!/tmp/README.md
