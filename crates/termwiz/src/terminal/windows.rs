@@ -11,7 +11,6 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{mem, ptr};
-use winapi::shared::winerror::WAIT_TIMEOUT;
 use winapi::um::consoleapi;
 use winapi::um::synchapi::{CreateEventW, SetEvent, WaitForMultipleObjects};
 use winapi::um::winbase::{INFINITE, WAIT_FAILED, WAIT_OBJECT_0};
@@ -63,6 +62,9 @@ pub trait ConsoleOutputHandle {
     fn get_buffer_contents(&mut self) -> Result<Vec<CHAR_INFO>>;
     fn set_buffer_contents(&mut self, buffer: &[CHAR_INFO]) -> Result<()>;
     fn set_viewport(&mut self, left: i16, top: i16, right: i16, bottom: i16) -> Result<()>;
+    // Mirrors the Windows Console API ScrollConsoleScreenBufferW, which requires
+    // all of these parameters; there is no natural grouping that reduces the count.
+    #[allow(clippy::too_many_arguments)]
     fn scroll_region(
         &mut self,
         left: i16,
@@ -900,7 +902,7 @@ impl Terminal for WindowsTerminal {
                         wait.map(|wait| wait.as_millis() as u32).unwrap_or(INFINITE),
                     )
                 };
-                if result == WAIT_OBJECT_0 + 0 {
+                if result == WAIT_OBJECT_0 {
                     pending = self.input_handle.get_number_of_input_events()?;
                 } else if result == WAIT_OBJECT_0 + 1 {
                     return Ok(Some(InputEvent::Wake));
@@ -909,9 +911,8 @@ impl Terminal for WindowsTerminal {
                         "failed to WaitForMultipleObjects: {}",
                         IoError::last_os_error()
                     );
-                } else if result == WAIT_TIMEOUT {
-                    return Ok(None);
                 } else {
+                    // WAIT_TIMEOUT and any other unexpected value: nothing to report
                     return Ok(None);
                 }
             }

@@ -115,10 +115,7 @@ impl History for BasicHistory {
         let mut idx = idx;
 
         loop {
-            let line = match self.entries.get(idx) {
-                Some(line) => line,
-                None => return None,
-            };
+            let line = self.entries.get(idx)?;
 
             if let Some(cursor) = style.match_against(pattern, line) {
                 return Some(SearchResult {
@@ -128,10 +125,7 @@ impl History for BasicHistory {
                 });
             }
 
-            idx = match direction.next(idx) {
-                None => return None,
-                Some(idx) => idx,
-            };
+            idx = direction.next(idx)?;
         }
     }
 }
