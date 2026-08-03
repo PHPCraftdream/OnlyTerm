@@ -123,8 +123,16 @@ pub struct Config {
     #[dynamic(default)]
     pub bold_brightens_ansi_colors: BoldBrightening,
 
-    /// The color palette
-    #[dynamic(default = "default_colors")]
+    /// The color palette.
+    ///
+    /// Deliberately has no default: this field means "what the user
+    /// explicitly asked for", and `compute_extra_defaults` overlays it on
+    /// top of the resolved color scheme. Giving it a default overlaid that
+    /// default onto every scheme as well, which is how `color_scheme` came
+    /// to have no effect whatsoever. The fork's light default palette now
+    /// applies only when neither `colors` nor `color_scheme` is set -- see
+    /// `compute_extra_defaults`.
+    #[dynamic(default)]
     pub colors: Option<Palette>,
 
     #[dynamic(default)]
@@ -1848,6 +1856,15 @@ impl Config {
 
         if let Some(colors) = &cfg.colors {
             cfg.resolved_palette = cfg.resolved_palette.overlay_with(colors);
+        } else if cfg.color_scheme.is_none() {
+            // Neither an explicit palette nor a scheme: fall back to this
+            // fork's light default. This has to be an `else` branch rather
+            // than a default value on the `colors` field -- as a default it
+            // was overlaid on top of every resolved scheme too, so setting
+            // `color_scheme` had no visible effect at all.
+            if let Some(colors) = default_colors() {
+                cfg.resolved_palette = cfg.resolved_palette.overlay_with(&colors);
+            }
         }
 
         if let Some(bg) = BackgroundLayer::with_legacy(self) {
@@ -2887,6 +2904,64 @@ keys: [
 
         // Clean up global state so other tests in this process aren't affected.
         CONFIG_OVERRIDES.lock().unwrap().clear();
+    }
+
+    /// Regression test for task #336: `color_scheme` used to have no effect
+    /// whatsoever. `colors` carried a non-empty default (this fork's light
+    /// `default_colors` palette), and `compute_extra_defaults` overlays
+    /// `colors` on top of the resolved scheme -- so the default silently
+    /// overwrote every scheme the user asked for. The three cases below
+    /// pin the intended layering.
+    #[test]
+    fn color_scheme_is_not_clobbered_by_the_default_palette() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let load = |body: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let config_path = dir.path().join("onlyterm.ktav");
+            std::fs::write(&config_path, body).unwrap();
+            let path_item = PathPossibility::required(config_path);
+            Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+                .expect("try_load should succeed")
+                .expect("a config was found")
+                .config
+                .expect("config should parse")
+        };
+        let rgba = |hex: &str| {
+            <crate::color::RgbaColor as std::convert::TryFrom<String>>::try_from(hex.to_string())
+                .unwrap()
+        };
+
+        // A scheme alone must actually reach the palette. Batman's
+        // background is #1b1d1e; before the fix this came back white.
+        let cfg = load("color_scheme: Batman
+");
+        assert_eq!(
+            cfg.resolved_palette.background,
+            Some(rgba("#1b1d1e")),
+            "color_scheme must decide the background when `colors` is unset"
+        );
+
+        // An explicit `colors` still wins over the scheme -- that is the
+        // documented override direction.
+        let cfg = load("color_scheme: Batman
+colors: { background: #123456 }
+");
+        assert_eq!(
+            cfg.resolved_palette.background,
+            Some(rgba("#123456")),
+            "explicit colors must override the scheme"
+        );
+
+        // With neither set, the fork's light default still applies.
+        let cfg = load("font_size: 12
+");
+        assert_eq!(
+            cfg.resolved_palette.background,
+            Some(rgba("#ffffff")),
+            "the light default palette must survive when nothing is configured"
+        );
     }
 
     /// Regression test for task #294: ktav object keys are unconditionally
