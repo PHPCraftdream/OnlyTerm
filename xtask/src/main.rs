@@ -93,20 +93,39 @@ fn main() {
     }
 
     // Clippy: capture the output so the remainder can be counted and grouped.
+    //
+    // Deliberately NOT passing `-- -D warnings`, even in Deny mode. Trailing
+    // `--` arguments are part of the build fingerprint of every crate in the
+    // graph, not just the one named by `-p`, so `-D warnings` promotes lints
+    // in unrelated path dependencies to hard errors and the build dies before
+    // it ever reaches the package under test. Denying is our job, not rustc's:
+    // capture the lints, keep only the ones that belong to the requested
+    // scope, and fail on that count.
     let mut args = vec!["clippy".to_string()];
     args.extend(scope.iter().cloned());
     args.extend(all_targets.iter().cloned());
     args.push("--message-format".into());
     args.push("short".into());
-    if opts.strictness == Strictness::Deny {
-        args.push("--".into());
-        args.push("-D".into());
-        args.push("warnings".into());
-    }
 
     println!("\n==> Clippy");
     let clippy = capture(&root, &args);
-    let warnings = summarize(&clippy.output);
+
+    // Same reason in reverse: clippy lints workspace path dependencies too,
+    // so a run scoped to one package still reports everyone else's lints.
+    // Attribute each lint to a directory and keep only ours.
+    // Relative to the workspace root, because that is how clippy spells the
+    // paths it reports.
+    let package_dir = opts.package.as_deref().and_then(|pkg| {
+        package_dir(&root, pkg).map(|dir| {
+            dir.strip_prefix(&root)
+                .map(|p| p.to_path_buf())
+                .unwrap_or(dir)
+        })
+    });
+    if opts.package.is_some() && package_dir.is_none() {
+        println!("    note: could not locate the package directory; counting every lint");
+    }
+    let warnings = summarize(&clippy.output, package_dir.as_deref());
     let total: usize = warnings.values().sum();
 
     if total > 0 {
@@ -121,8 +140,13 @@ fn main() {
         println!("    clean");
     }
 
+    // A non-zero exit here means clippy itself failed to run (or the code
+    // does not compile), which is a failure regardless of strictness.
     if !clippy.ok {
         failures.push("Clippy".into());
+    }
+    if opts.strictness == Strictness::Deny && total > 0 {
+        failures.push(format!("Clippy ({total} lints in scope)"));
     }
 
     // Final proof that the tree actually builds, across every target.
@@ -215,6 +239,59 @@ fn step<S: AsRef<str>>(root: &Path, title: &str, args: &[S], failures: &mut Vec<
     }
 }
 
+/// Directory of the workspace member named `pkg`, relative to `root`.
+///
+/// Cargo knows this, but only via `cargo metadata`, whose answer is JSON and
+/// would drag a parser into a crate that is deliberately dependency-free.
+/// Package names do not reliably match directory names here (`portable-pty`
+/// lives in `crates/pty`, `wezterm-term` in `crates/term`), so the manifests
+/// are read directly. Depth 3 covers `crates/<name>`, `crates/<a>/<b>` and
+/// top-level members like `xtask`.
+fn package_dir(root: &Path, pkg: &str) -> Option<PathBuf> {
+    fn find(dir: &Path, pkg: &str, depth: usize) -> Option<PathBuf> {
+        if depth == 0 {
+            return None;
+        }
+        let manifest = dir.join("Cargo.toml");
+        if manifest.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&manifest) {
+                for line in text.lines() {
+                    let line = line.trim();
+                    // Only the `[package]` name matters. Dependency entries
+                    // are `foo = { ... }`, never `name = "foo"`, so matching
+                    // the `name =` key is enough to avoid false positives.
+                    if let Some(rest) = line.strip_prefix("name") {
+                        let rest = rest.trim_start();
+                        if let Some(rest) = rest.strip_prefix('=') {
+                            if rest.trim().trim_matches('"') == pkg {
+                                return Some(dir.to_path_buf());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let entries = std::fs::read_dir(dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "target" || name.starts_with('.') {
+                continue;
+            }
+            if let Some(found) = find(&path, pkg, depth - 1) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    find(&root.join("crates"), pkg, 3).or_else(|| find(root, pkg, 2))
+}
+
 /// Group `--message-format short` output by lint text.
 ///
 /// Lines look like:
@@ -222,12 +299,30 @@ fn step<S: AsRef<str>>(root: &Path, title: &str, args: &[S], failures: &mut Vec<
 /// Only the text between `warning: ` and the first `: help:` matters, and
 /// anything in backticks is masked out -- otherwise the same lint about two
 /// different variables would count as two distinct categories.
-fn summarize(output: &str) -> BTreeMap<String, usize> {
+fn summarize(output: &str, only_under: Option<&Path>) -> BTreeMap<String, usize> {
+    // Clippy reports paths relative to the workspace root, with the platform
+    // separator. `only_under` is likewise relative to the root (see the call
+    // site), so a plain prefix match is exact -- no substring guessing, which
+    // would confuse `crates/window` with `crates/wezterm-gui/src/window`.
+    let prefix = only_under.map(|dir| {
+        let mut s = dir.to_string_lossy().replace('\\', "/");
+        if !s.ends_with('/') {
+            s.push('/');
+        }
+        s
+    });
+
     let mut map = BTreeMap::new();
     for line in output.lines() {
         let Some(pos) = line.find(": warning: ") else {
             continue;
         };
+        if let Some(prefix) = &prefix {
+            let path = line[..pos].split(':').next().unwrap_or("").replace('\\', "/");
+            if !path.starts_with(prefix.as_str()) {
+                continue;
+            }
+        }
         let rest = &line[pos + ": warning: ".len()..];
         // Skip lines like "warning: `foo` (lib) generated N warnings" --
         // that is a tally, not an individual lint.
