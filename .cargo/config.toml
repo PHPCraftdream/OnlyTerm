@@ -1,3 +1,17 @@
+# One command for everything: formatting, clippy, compilation.
+#
+#   cargo lint                      -- fix what is fixable, report the rest
+#   cargo lint -- --deny            -- treat any clippy lint as a failure
+#   cargo lint -- -p wezterm-gui    -- restrict it to a single package
+#   cargo lint-check                -- change nothing, CI mode
+#
+# Implemented by the `xtask` crate: a plain dependency-free Rust binary, so
+# there is no shell involved and the behavior is identical no matter where
+# it is invoked from.
+[alias]
+lint = "run --quiet -p xtask --"
+lint-check = "run --quiet -p xtask -- --no-fix --deny"
+
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-gcc-ar"
