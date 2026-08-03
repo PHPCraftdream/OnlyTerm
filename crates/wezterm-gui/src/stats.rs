@@ -107,9 +107,9 @@ impl ScaledHistogram {
 
     fn latency_percentiles(&self) -> (Duration, Duration, Duration) {
         let hist = self.hist.lock();
-        let p50 = pctile_latency(&*hist, 50.);
-        let p75 = pctile_latency(&*hist, 75.);
-        let p95 = pctile_latency(&*hist, 95.);
+        let p50 = pctile_latency(&hist, 50.);
+        let p75 = pctile_latency(&hist, 75.);
+        let p95 = pctile_latency(&hist, 95.);
         (p50, p75, p95)
     }
 }

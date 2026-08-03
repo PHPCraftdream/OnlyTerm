@@ -204,10 +204,10 @@ impl crate::TermWindow {
             let bg_color = params.palette.resolve_bg(attrs.background()).to_linear();
 
             let fg_color = resolve_fg_color_attr(
-                &attrs,
+                attrs,
                 attrs.foreground(),
-                &params.palette,
-                &params.config,
+                params.palette,
+                params.config,
                 &Default::default(),
             );
 
@@ -312,10 +312,10 @@ impl crate::TermWindow {
                 let bg_color = params.palette.resolve_bg(attrs.background()).to_linear();
 
                 let fg_color = resolve_fg_color_attr(
-                    &attrs,
+                    attrs,
                     attrs.foreground(),
-                    &params.palette,
-                    &params.config,
+                    params.palette,
+                    params.config,
                     &Default::default(),
                 );
 
@@ -366,7 +366,7 @@ impl crate::TermWindow {
                     let attrs = cursor_cell
                         .as_ref()
                         .map(|cell| cell.attrs().clone())
-                        .unwrap_or_else(|| CellAttributes::blank());
+                        .unwrap_or_else(CellAttributes::blank);
 
                     let glyph = self
                         .resolve_lock_glyph(
@@ -434,7 +434,7 @@ impl crate::TermWindow {
         for item in shaped.iter() {
             let cluster = &item.cluster;
             let glyph_info = &item.glyph_info;
-            let images = cluster.attrs.images().unwrap_or_else(|| vec![]);
+            let images = cluster.attrs.images().unwrap_or_else(std::vec::Vec::new);
             let valign_adjust = match cluster.attrs.vertical_align() {
                 termwiz::cell::VerticalAlign::BaseLine => 0.,
                 termwiz::cell::VerticalAlign::SuperScript => {
@@ -473,7 +473,7 @@ impl crate::TermWindow {
                     for img in &images {
                         if img.z_index() < 0 {
                             self.populate_image_quad(
-                                &img,
+                                img,
                                 gl_state,
                                 layers,
                                 0,
@@ -651,7 +651,7 @@ impl crate::TermWindow {
                             quad.set_alt_color_and_mix_value(fg_color_alt, fg_color_mix);
                             quad.set_texture(texture_rect);
                             quad.set_hsv(if glyph.brightness_adjust != 1.0 {
-                                let hsv = hsv.unwrap_or_else(|| HsbTransform::default());
+                                let hsv = hsv.unwrap_or_else(HsbTransform::default);
                                 Some(HsbTransform {
                                     brightness: hsv.brightness * glyph.brightness_adjust,
                                     ..hsv
@@ -737,7 +737,7 @@ impl crate::TermWindow {
             // Create an updated line with the composition overlaid
             let mut line = params.line.clone();
             let seqno = line.current_seqno();
-            line.overlay_text_with_attribute(*cursor_x, &composing, CellAttributes::blank(), seqno);
+            line.overlay_text_with_attribute(*cursor_x, composing, CellAttributes::blank(), seqno);
             line.cluster_with_wrap_context(bidi_hint, params.is_wrap_continuation)
         } else {
             params
@@ -780,10 +780,10 @@ impl crate::TermWindow {
                 let bg_color = params.palette.resolve_bg(attrs.background()).to_linear();
 
                 let fg_color = resolve_fg_color_attr(
-                    &attrs,
+                    attrs,
                     attrs.foreground(),
-                    &params.palette,
-                    &params.config,
+                    params.palette,
+                    params.config,
                     style,
                 );
                 let (fg_color, bg_color, bg_is_default) = {
@@ -835,7 +835,7 @@ impl crate::TermWindow {
                 let glyph_color = fg_color;
                 let underline_color = match attrs.underline_color() {
                     ColorAttribute::Default => fg_color,
-                    c => resolve_fg_color_attr(&attrs, c, &params.palette, &params.config, style),
+                    c => resolve_fg_color_attr(attrs, c, params.palette, params.config, style),
                 };
 
                 let (bg_r, bg_g, bg_b, _) = bg_color.tuple();
@@ -853,7 +853,7 @@ impl crate::TermWindow {
                 last_style.replace(ClusterStyleCache {
                     attrs,
                     style,
-                    underline_tex_rect: underline_tex_rect.clone(),
+                    underline_tex_rect,
                     bg_color,
                     fg_color: glyph_color,
                     underline_color,
@@ -864,8 +864,8 @@ impl crate::TermWindow {
 
             let glyph_info = self.cached_cluster_shape(
                 style_params.style,
-                &cluster,
-                &gl_state,
+                cluster,
+                gl_state,
                 None,
                 &self.render_metrics,
             )?;

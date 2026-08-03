@@ -259,7 +259,7 @@ pub fn window_button_element(
     };
 
     let element = Element::new(
-        &font,
+        font,
         ElementContent::Poly {
             line_width: metrics.underline_height.max(2),
             poly,
@@ -331,7 +331,7 @@ pub fn window_button_element(
 
     let foreground = config.integrated_title_button_color.clone();
     let background_lightness = {
-        let bg: config::RgbaColor = config.window_frame.active_titlebar_bg.into();
+        let bg: config::RgbaColor = config.window_frame.active_titlebar_bg;
         let (_h, _s, l, _a) = bg.to_hsla();
         l
     };
@@ -344,10 +344,8 @@ pub fn window_button_element(
 
     let colors = window_button_colors_fn(background_lightness, foreground, window_button);
 
-    let element = element
+    element
         .item_type(UIItemType::TabBar(TabBarItem::WindowButton(window_button)))
         .colors(colors.colors)
-        .hover_colors(Some(colors.hover_colors));
-
-    element
+        .hover_colors(Some(colors.hover_colors))
 }

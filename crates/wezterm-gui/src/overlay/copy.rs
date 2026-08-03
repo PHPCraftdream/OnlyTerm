@@ -139,7 +139,7 @@ impl CopyOverlay {
             SAVED_PATTERN
                 .lock()
                 .get(&tab_id)
-                .map(|p| p.clone())
+                .cloned()
                 .unwrap_or(params.pattern)
         } else {
             params.pattern
@@ -242,9 +242,9 @@ impl CopyOverlay {
 impl CopyRenderable {
     fn compute_search_row(&self) -> StableRowIndex {
         let dims = self.delegate.get_dimensions();
-        let top = self.viewport.unwrap_or_else(|| dims.physical_top);
-        let bottom = (top + dims.viewport_rows as StableRowIndex).saturating_sub(1);
-        bottom
+        let top = self.viewport.unwrap_or(dims.physical_top);
+
+        (top + dims.viewport_rows as StableRowIndex).saturating_sub(1)
     }
 
     fn check_for_resize(&mut self) {
@@ -286,7 +286,7 @@ impl CopyRenderable {
                     result_index,
                 };
 
-                let matches = self.by_line.entry(idx).or_insert_with(|| vec![]);
+                let matches = self.by_line.entry(idx).or_default();
                 matches.push(result);
 
                 self.dirty_results.add(idx);
@@ -455,7 +455,7 @@ impl CopyRenderable {
 
     fn activate_match_number(&mut self, n: usize) {
         self.result_pos.replace(n);
-        let result = self.results[n].clone();
+        let result = self.results[n];
         self.cursor.y = result.end_y;
         self.cursor.x = result.end_x.saturating_sub(1);
 
@@ -490,19 +490,11 @@ impl CopyRenderable {
                     let cursor_is_above_start = self.cursor.y < sel_start.y;
 
                     let start = SelectionCoordinate::x_y(
-                        if cursor_is_above_start {
-                            usize::max_value()
-                        } else {
-                            0
-                        },
+                        if cursor_is_above_start { usize::MAX } else { 0 },
                         sel_start.y,
                     );
                     let end = SelectionCoordinate::x_y(
-                        if cursor_is_above_start {
-                            0
-                        } else {
-                            usize::max_value()
-                        },
+                        if cursor_is_above_start { 0 } else { usize::MAX },
                         self.cursor.y,
                     );
                     (start, end)
@@ -562,7 +554,7 @@ impl CopyRenderable {
         } else {
             VERTICAL_GAP
         };
-        let top = self.viewport.unwrap_or_else(|| dims.physical_top);
+        let top = self.viewport.unwrap_or(dims.physical_top);
         Dimensions {
             vertical_gap,
             top,
@@ -788,14 +780,14 @@ impl CopyRenderable {
 
     fn move_to_bottom(&mut self) {
         // This will get fixed up by clamp_cursor_to_scrollback
-        self.cursor.y = isize::max_value();
+        self.cursor.y = isize::MAX;
         self.select_to_cursor_pos();
     }
 
     fn move_to_end_of_line_content(&mut self) {
         let y = self.cursor.y;
         let (top, lines) = self.delegate.get_lines(y..y + 1);
-        if let Some(line) = lines.get(0) {
+        if let Some(line) = lines.first() {
             self.cursor.y = top;
             self.cursor.x = 0;
             for cell in line.visible_cells() {
@@ -810,7 +802,7 @@ impl CopyRenderable {
     fn move_to_start_of_line_content(&mut self) {
         let y = self.cursor.y;
         let (top, lines) = self.delegate.get_lines(y..y + 1);
-        if let Some(line) = lines.get(0) {
+        if let Some(line) = lines.first() {
             self.cursor.y = top;
             self.cursor.x = 0;
             for cell in line.visible_cells() {
@@ -855,16 +847,16 @@ impl CopyRenderable {
 
     fn move_backward_one_word(&mut self) {
         let y = if self.cursor.x == 0 && self.cursor.y > 0 {
-            self.cursor.x = usize::max_value();
+            self.cursor.x = usize::MAX;
             self.cursor.y.saturating_sub(1)
         } else {
             self.cursor.y
         };
 
         let (top, lines) = self.delegate.get_lines(y..y + 1);
-        if let Some(line) = lines.get(0) {
+        if let Some(line) = lines.first() {
             self.cursor.y = top;
-            if self.cursor.x == usize::max_value() {
+            if self.cursor.x == usize::MAX {
                 self.cursor.x = line.len().saturating_sub(1);
             }
             let s = line.columns_as_str(0..self.cursor.x.saturating_add(1));
@@ -900,7 +892,7 @@ impl CopyRenderable {
 
             if last_was_whitespace && self.cursor.y > 0 {
                 // The line begins with whitespace
-                self.cursor.x = usize::max_value();
+                self.cursor.x = usize::MAX;
                 self.cursor.y -= 1;
                 return self.move_backward_one_word();
             }
@@ -911,7 +903,7 @@ impl CopyRenderable {
     fn move_forward_one_word(&mut self) {
         let y = self.cursor.y;
         let (top, lines) = self.delegate.get_lines(y..y + 1);
-        if let Some(line) = lines.get(0) {
+        if let Some(line) = lines.first() {
             self.cursor.y = top;
             let width = line.len();
             let s = line.columns_as_str(self.cursor.x..width + 1);
@@ -943,7 +935,7 @@ impl CopyRenderable {
     fn move_to_end_of_word(&mut self) {
         let y = self.cursor.y;
         let (top, lines) = self.delegate.get_lines(y..y + 1);
-        if let Some(line) = lines.get(0) {
+        if let Some(line) = lines.first() {
             self.cursor.y = top;
             let width = line.len();
             let s = line.columns_as_str(self.cursor.x..width + 1);
@@ -961,17 +953,15 @@ impl CopyRenderable {
 
             if let Some(word) = words.next() {
                 let mut word_end = self.cursor.x + unicode_column_width(word, None);
-                if !is_whitespace_word(word) {
-                    if self.cursor.x == word_end - 1 {
-                        while let Some(next_word) = words.next() {
-                            word_end += unicode_column_width(next_word, None);
-                            if !is_whitespace_word(next_word) {
-                                break;
-                            }
+                if !is_whitespace_word(word) && self.cursor.x == word_end - 1 {
+                    for next_word in words.by_ref() {
+                        word_end += unicode_column_width(next_word, None);
+                        if !is_whitespace_word(next_word) {
+                            break;
                         }
                     }
                 }
-                while let Some(next_word) = words.next() {
+                for next_word in words {
                     if !is_whitespace_word(next_word) {
                         word_end += unicode_column_width(next_word, None);
                     } else {
@@ -1040,12 +1030,12 @@ impl CopyRenderable {
         let y = self.cursor.y;
         let (_top, lines) = self.delegate.get_lines(y..y + 1);
         let target_str = jump.target.to_string();
-        if let Some(line) = lines.get(0) {
+        if let Some(line) = lines.first() {
             // Find the indices of cells with a matching target
             let mut candidates: Vec<usize> = line
                 .visible_cells()
                 .filter_map(|cell| {
-                    if cell.str() == &target_str {
+                    if cell.str() == target_str {
                         Some(cell.cell_index())
                     } else {
                         None
@@ -1439,7 +1429,7 @@ impl Pane for CopyOverlay {
                 with_lines,
                 dims,
                 search_row,
-                renderer: &mut *renderer,
+                renderer: &mut renderer,
             },
         );
 
@@ -1634,9 +1624,8 @@ pub struct SearchOverlayPatternWriter {
 impl std::io::Write for SearchOverlayPatternWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let mut render = self.render.lock();
-        let s = std::str::from_utf8(buf).map_err(|err| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("invalid UTF-8: {err:#}"))
-        })?;
+        let s = std::str::from_utf8(buf)
+            .map_err(|err| std::io::Error::other(format!("invalid UTF-8: {err:#}")))?;
         render.search_line.insert_text(s);
         render.schedule_update_search();
         Ok(buf.len())

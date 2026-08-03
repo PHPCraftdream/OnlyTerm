@@ -42,6 +42,9 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
         No,
     }
 
+    // Closure returns termwiz::Result; Err (termwiz::Error) is an external
+    // 136-byte type, and boxing it would change the closure's type.
+    #[allow(clippy::result_large_err)]
     let render = |term: &mut TermWizTerminal, active: ActiveButton| -> termwiz::Result<()> {
         let mut changes = vec![
             Change::ClearScreen(ColorAttribute::Default),

@@ -276,9 +276,9 @@ fn compute_tab_title(tab: &TabInformation, config: &ConfigHandle) -> TitleText {
 }
 
 fn is_tab_hover(mouse_x: Option<usize>, x: usize, tab_title_len: usize) -> bool {
-    return mouse_x
+    mouse_x
         .map(|mouse_x| mouse_x >= x && mouse_x < x + tab_title_len)
-        .unwrap_or(false);
+        .unwrap_or(false)
 }
 
 impl TabBarState {
@@ -398,6 +398,7 @@ impl TabBarState {
     /// mouse_x is some if the mouse is on the same row as the tab bar.
     /// title_width is the total number of cell columns in the window.
     /// window allows access to the tabs associated with the window.
+    #[allow(clippy::too_many_arguments)] // tab-bar layout: params are the inherent title/mouse/tab context
     pub fn new(
         title_width: usize,
         mouse_x: Option<usize>,
@@ -467,7 +468,7 @@ impl TabBarState {
             title_width.saturating_sub(number_of_tabs.saturating_sub(1) + new_tab.len());
         let tab_width_max = if config.use_fancy_tab_bar || available_cells >= titles_len {
             // We can render each title with its full width
-            usize::max_value()
+            usize::MAX
         } else {
             // We need to clamp the length to balance them out
             available_cells / number_of_tabs
@@ -735,8 +736,8 @@ pub fn parse_status_text(text: &str, default_cell: CellAttributes) -> Line {
             }
             Action::CSI(csi) => {
                 flush_print(&mut print_buffer, &mut cells, &pen);
-                match csi {
-                    CSI::Sgr(sgr) => match sgr {
+                if let CSI::Sgr(sgr) = csi {
+                    match sgr {
                         Sgr::Reset => pen = default_cell.clone(),
                         Sgr::Intensity(i) => {
                             pen.set_intensity(i);
@@ -783,8 +784,7 @@ pub fn parse_status_text(text: &str, default_cell: CellAttributes) -> Line {
                             pen.set_underline_color(col);
                         }
                         Sgr::Font(_) => {}
-                    },
-                    _ => {}
+                    }
                 }
             }
             Action::OperatingSystemCommand(_)
