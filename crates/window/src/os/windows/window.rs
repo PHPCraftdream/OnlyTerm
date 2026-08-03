@@ -1069,6 +1069,27 @@ fn schedule_show_window(hwnd: HWindow, show: ShowWindowCommand) {
                     ShowWindowCommand::Maximize => SW_MAXIMIZE,
                 },
             );
+            // Force a repaint of the whole client area now that the window
+            // is on screen. Making a window visible does *not* invalidate
+            // it: the client area keeps whatever the redirection surface
+            // already held, and any painting we did while it was still
+            // hidden was never composited. Without this, a window shown
+            // before its renderer is up (early show, task #331) sits there
+            // blank -- white, whatever the configured background is --
+            // until something else happens to invalidate it, which for an
+            // idle window is not until the renderer's own first frame
+            // several seconds later. `RDW_ALLCHILDREN` matters as much as
+            // the invalidate itself: the WebGpu child window (created up
+            // front, `WS_VISIBLE`, covering the whole client area) is what
+            // the user actually sees, and a plain `InvalidateRect` on the
+            // parent does not reach it. `RDW_ERASE` so the placeholder fill
+            // runs as part of the resulting paint cycle.
+            RedrawWindow(
+                hwnd.0,
+                null(),
+                null_mut(),
+                RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+            );
         }
     })
     .detach();
@@ -2245,8 +2266,36 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
         },
         rgbReserved: [0; 32],
     };
-    let _ = BeginPaint(hwnd, &mut ps);
-    // Do nothing right now
+    let hdc = BeginPaint(hwnd, &mut ps);
+    // Fill the placeholder background here rather than leaving it to
+    // `wm_erasebkgnd`. That handler can never do it during our own paint
+    // cycle: `BeginPaint` sends `WM_ERASEBKGND` *synchronously*, from
+    // inside this function, while we are still holding `borrow_mut()` on
+    // the same `RefCell` -- so its `try_borrow` always fails and it skips
+    // the fill. (And the repaint we schedule below uses
+    // `InvalidateRect(.., bErase = 0)`, which doesn't request an erase in
+    // the first place.) Doing it here, where `inner` is already borrowed,
+    // is what actually makes a shown-but-not-yet-rendered window come up
+    // in the terminal's background color instead of an unpainted white.
+    if let Some(brush) = inner.placeholder_background_brush {
+        if !hdc.is_null() {
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            // SAFETY: `hwnd` is the valid window handle passed in; `rect`
+            // is a live stack `RECT` that `GetClientRect` only writes into.
+            GetClientRect(hwnd, &mut rect);
+            // SAFETY: `hdc` is the non-null device context just returned by
+            // `BeginPaint` and still live until `EndPaint`; `brush` is a
+            // live `HBRUSH` owned by `inner` (created in
+            // `create_placeholder_background_brush`, deleted only in
+            // `clear_placeholder_background`/`wm_ncdestroy`).
+            FillRect(hdc, &rect, brush);
+        }
+    }
     EndPaint(hwnd, &mut ps);
 
     inner.invalidated = false;
@@ -3807,18 +3856,41 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
+/// The placeholder brush belonging to `child`'s parent top-level window, or
+/// `None` once the renderer is up (or if the parent has no `WindowInner`
+/// yet). Used by `child_wnd_proc` -- the WebGpu child window has no
+/// `WindowInner` of its own, so it borrows its parent's.
+///
+/// # Safety
+/// `child` must be a valid window handle.
+unsafe fn parent_placeholder_brush(child: HWND) -> Option<HBRUSH> {
+    let parent = GetParent(child);
+    if parent.is_null() {
+        return None;
+    }
+    let inner = rc_from_hwnd(parent)?;
+    // `try_borrow` for the same reason the top-level `WM_ERASEBKGND`
+    // handler uses it: this can be reached synchronously from a
+    // `BeginPaint` on a stack frame that already holds the borrow.
+    let inner = inner.try_borrow().ok()?;
+    inner.placeholder_background_brush
+}
+
 /// Window procedure for the small `WS_CHILD` window that hosts the WebGpu
 /// swapchain surface (see `Window::create_webgpu_child_window`).
 ///
 /// This window has no `WindowInner`/`GWLP_USERDATA` of its own -- it is pure
 /// plumbing that exists only so DXGI has a dedicated HWND to attach a
-/// swapchain to. The only message we care about is `WM_NCHITTEST`: returning
+/// swapchain to. Two messages matter. `WM_NCHITTEST`: returning
 /// `HTTRANSPARENT` makes Windows route all mouse input (clicks, drags,
 /// hover, wheel) through to whatever is beneath this window in Z-order --
 /// i.e. the parent top-level window -- exactly as if this child window
 /// didn't exist from an input-routing perspective. Keyboard input is
 /// unaffected by hit-testing and already reaches the parent, since this
 /// child window is never focused (nothing ever calls `SetFocus` on it).
+/// `WM_ERASEBKGND`: paints the parent's placeholder background during the
+/// window between the window being shown and the swapchain's first frame,
+/// see the handler below.
 ///
 /// # Safety
 /// This is the `WNDCLASSW::lpfnWndProc` callback: Win32 supplies a valid
@@ -3832,6 +3904,38 @@ unsafe extern "system" fn child_wnd_proc(
     match std::panic::catch_unwind(|| {
         if msg == WM_NCHITTEST {
             return HTTRANSPARENT as LRESULT;
+        }
+        if msg == WM_ERASEBKGND {
+            // This child window is created up front, together with the
+            // top-level window -- not when WebGpu finishes initializing --
+            // and it is `WS_VISIBLE` from the start, covering the parent's
+            // entire client area. So the parent's own placeholder fill is
+            // painted *underneath* it and never visible, while this window
+            // paints nothing at all until the swapchain presents its first
+            // frame seconds later. That gap is what the user sees as a
+            // blank white rectangle. Fill it with the parent's placeholder
+            // brush; once the renderer is up, `clear_placeholder_background`
+            // drops the brush and this goes back to being a no-op, leaving
+            // the swapchain in sole control of these pixels.
+            if let Some(brush) = parent_placeholder_brush(hwnd) {
+                let hdc = wparam as HDC;
+                let mut rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                // SAFETY: `hwnd` is this valid child window handle; `rect`
+                // is a live stack `RECT` that `GetClientRect` only writes
+                // into.
+                GetClientRect(hwnd, &mut rect);
+                // SAFETY: `hdc` is the device context Win32 passed in
+                // `wparam` of a real `WM_ERASEBKGND`; `brush` is owned by
+                // the parent's `WindowInner` and outlives this call, which
+                // runs on the same (GUI) thread that would destroy it.
+                FillRect(hdc, &rect, brush);
+                return 1;
+            }
         }
         // SAFETY: `hwnd`/`msg`/`wparam`/`lparam` are the values Win32 just
         // supplied to this wndproc; `DefWindowProcW` is always valid to call
