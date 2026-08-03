@@ -71,9 +71,22 @@ pub fn open_text_file(path: &std::path::Path) {
 
     #[cfg(windows)]
     {
+        // Deliberately `CreateProcess` (via `Command`) rather than
+        // `ShellExecuteW`: the shell API kept returning `SE_ERR_FNF` (2)
+        // here regardless of whether notepad was named bare or by absolute
+        // path, and since it launches through the shell there is no error
+        // to inspect beyond that opaque code. Spawning the editor directly
+        // is both simpler and diagnosable -- `spawn()` returns a real
+        // `io::Error` naming what failed.
+        //
         // notepad.exe ships with every Windows install, so unlike a
-        // file-association lookup this cannot come up empty.
-        shell_execute(path, Some("notepad.exe".to_string()));
+        // file-association lookup for our `.ktav` extension this cannot
+        // come up empty.
+        std::thread::spawn(move || {
+            if let Err(err) = std::process::Command::new("notepad.exe").arg(&path).spawn() {
+                log::error!("failed to launch notepad.exe for {path:?}: {err:#}");
+            }
+        });
     }
 
     #[cfg(target_os = "macos")]
@@ -108,6 +121,7 @@ fn shell_execute(url: String, with: Option<String>) {
     std::thread::spawn(move || {
         let operation = wide_string("open");
 
+        let original = url.clone();
         let url = wide_string(&url);
         let with = with.map(|s| wide_string(&s));
 
@@ -123,7 +137,7 @@ fn shell_execute(url: String, with: Option<String>) {
         // call. `hwnd`, `lpDirectory` and (in the plain open-URL case) `lpParameters`
         // are NULL, which MSDN explicitly permits, and `SW_SHOW` is a valid
         // window-show constant.
-        unsafe {
+        let result = unsafe {
             ShellExecuteW(
                 std::ptr::null_mut(),
                 operation.as_ptr(),
@@ -131,6 +145,19 @@ fn shell_execute(url: String, with: Option<String>) {
                 path,
                 std::ptr::null(),
                 winapi::um::winuser::SW_SHOW,
+            )
+        };
+
+        // ShellExecuteW returns a fake HINSTANCE that is only an error code
+        // when it is <= 32. Nothing can be done about a failure from this
+        // detached thread, but saying so beats the previous behaviour of
+        // discarding it: a caller whose launch silently did nothing had no
+        // way at all to find out why.
+        if result as usize <= 32 {
+            log::error!(
+                "ShellExecuteW failed with code {} for {:?}",
+                result as usize,
+                original
             );
         }
     });
