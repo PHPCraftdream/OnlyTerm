@@ -253,11 +253,8 @@ impl ParsedFont {
             }
             if !p.palettes.is_empty() {
                 for pal in &p.palettes {
-                    let mut info = format!(
-                        "        ## Palette: {} {}",
-                        pal.palette_index,
-                        pal.name.to_string()
-                    );
+                    let mut info =
+                        format!("        ## Palette: {} {}", pal.palette_index, pal.name);
                     if pal.usable_with_light_bg {
                         info.push_str(" (with light bg)");
                     }
@@ -317,7 +314,7 @@ impl ParsedFont {
                 }
                 code.push_str(" }\n")
             }
-            code.push_str("\n");
+            code.push('\n');
         }
         code.push_str("    ]\n}");
         code
@@ -359,10 +356,8 @@ impl ParsedFont {
 
         let has_svg = font_info.has_svg();
 
-        if has_svg {
-            if config::configuration().ignore_svg_fonts {
-                anyhow::bail!("skipping svg font because ignore_svg_fonts=true");
-            }
+        if has_svg && config::configuration().ignore_svg_fonts {
+            anyhow::bail!("skipping svg font because ignore_svg_fonts=true");
         }
 
         let has_color = font_info.has_color();
@@ -1014,7 +1009,7 @@ pub(crate) fn parse_and_collect_font_info(
     }
 
     for index in 0..num_faces {
-        if let Err(err) = load_one(&source, &data, index, font_info, &origin) {
+        if let Err(err) = load_one(source, &data, index, font_info, &origin) {
             log::trace!("error while parsing {:?} index {}: {}", source, index, err);
         }
     }

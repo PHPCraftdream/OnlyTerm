@@ -252,7 +252,6 @@ impl FontRasterizer for SwashRasterizer {
             // joiner, etc.), avoiding an unnecessary COLR-parsing
             // round-trip for every whitespace character.
             if has_any_color_data {
-                drop(scaler);
                 drop(context);
                 return self.color_fallback.rasterize_glyph(glyph_pos, size, dpi);
             }

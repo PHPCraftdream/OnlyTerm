@@ -185,7 +185,7 @@ impl FontRasterizer for ColrRasterizer {
 
         // Pass 2: render for real into a pixmap sized to the bbox.
         let mut painter = Painter::new(width, height)?;
-        painter.translate(left as f32 * -1., top as f32 * -1.);
+        painter.translate(-(left as f32), -(top as f32));
         painter.transform(base_transform);
         let mut adapter = ColrGraphPainter::new(&face, &mut painter);
         face.paint_color_glyph(
@@ -207,7 +207,7 @@ impl FontRasterizer for ColrRasterizer {
             height: height as usize,
             width: width as usize,
             bearing_x: PixelLength::new(left.min(0.)),
-            bearing_y: PixelLength::new(top * -1.),
+            bearing_y: PixelLength::new(-top),
             has_color,
             is_scaled: true,
         })

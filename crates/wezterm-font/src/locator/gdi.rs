@@ -161,7 +161,7 @@ pub unsafe fn parse_log_font(log_font: &LOGFONTW, hdc: HDC) -> anyhow::Result<(P
         let source = source?;
 
         let point_size = MulDiv(-log_font.lfHeight, 72, GetDeviceCaps(hdc, LOGPIXELSY)) as f64;
-        let pixel_size = log_font.lfHeight.abs() as u16;
+        let pixel_size = log_font.lfHeight.unsigned_abs() as u16;
 
         let mut attr = FontAttributes::new(&name);
         attr.weight = config::FontWeight::from_opentype_weight(log_font.lfWeight as u16);
@@ -203,7 +203,7 @@ fn handle_from_descriptor(
     // ones they replace hid COM failures; these hand back an `HRESULT`.
     // Nothing here can act on the code itself, but logging it and treating
     // the font as absent beats a silent miss.
-    let font = match collection.font_from_descriptor(&descriptor) {
+    let font = match collection.font_from_descriptor(descriptor) {
         Ok(font) => font?,
         Err(hr) => {
             log::warn!("font_from_descriptor({:?}) failed: {:?}", descriptor, hr);

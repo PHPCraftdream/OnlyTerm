@@ -35,7 +35,7 @@
 //! This writes `/tmp/grinning.png` and `/tmp/grinning.json`.
 
 use clap::{Parser, ValueEnum};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use wezterm_font::locator::{FontDataHandle, FontDataSource, FontOrigin};
 use wezterm_font::parser::ParsedFont;
 use wezterm_font::rasterizer::{new_rasterizer, RasterizedGlyph};
@@ -134,8 +134,8 @@ fn parse_codepoint(input: &str) -> anyhow::Result<char> {
     char::from_u32(value).ok_or_else(|| anyhow::anyhow!("{value:#x} is not a valid codepoint"))
 }
 
-fn load_parsed_font(path: &PathBuf, index: u32) -> anyhow::Result<ParsedFont> {
-    let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+fn load_parsed_font(path: &Path, index: u32) -> anyhow::Result<ParsedFont> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let handle = FontDataHandle {
         source: FontDataSource::OnDisk(path),
         index,
@@ -270,11 +270,11 @@ fn dump_one(
     Ok(())
 }
 
-fn with_extension_ensured(path: &PathBuf, ext: &str) -> PathBuf {
+fn with_extension_ensured(path: &Path, ext: &str) -> PathBuf {
     if path.extension().map(|e| e == ext).unwrap_or(false) {
-        path.clone()
+        path.to_path_buf()
     } else {
-        let mut p = path.clone();
+        let mut p = path.to_path_buf();
         let file_name = p
             .file_name()
             .map(|f| f.to_string_lossy().into_owned())

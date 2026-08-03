@@ -115,6 +115,10 @@ impl<'a> PresentationWidth<'a> {
 
 pub trait FontShaper {
     /// Shape text and return a vector of GlyphInfo
+    // Public trait entry point; its signature is the shaper API consumed
+    // across crates, and a parameter struct would ripple through every
+    // caller and implementor without improving clarity.
+    #[allow(clippy::too_many_arguments)]
     fn shape(
         &self,
         text: &str,

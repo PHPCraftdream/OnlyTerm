@@ -68,7 +68,7 @@ impl FontDataSource {
                 Ok(Cow::Owned(data))
             }
             Self::BuiltIn { data, .. } => Ok(Cow::Borrowed(data)),
-            Self::Memory { data, .. } => Ok(Cow::Borrowed(&*data)),
+            Self::Memory { data, .. } => Ok(Cow::Borrowed(data)),
         }
     }
 }
@@ -159,12 +159,7 @@ impl std::hash::Hash for FontDataHandle {
 
 impl PartialOrd for FontDataHandle {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        (&self.source, self.index, self.variation, &self.origin).partial_cmp(&(
-            &other.source,
-            other.index,
-            other.variation,
-            &other.origin,
-        ))
+        Some(self.cmp(other))
     }
 }
 
