@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 //! This example shows how to make an app that uses parent/child widgets
 #[cfg(feature = "widgets")]
 mod inner {

@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 //! This example shows how to render `Change`s directly to
 //! an instance of `Terminal`.  When used in this way, the
 //! library performas no optimization on the change stream.

@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use termwiz::caps::Capabilities;
 use termwiz::cell::AttributeChange;
 use termwiz::color::AnsiColor;

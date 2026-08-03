@@ -2,6 +2,7 @@ use unicode_segmentation::GraphemeCursor;
 
 use super::actions::Movement;
 
+#[derive(Default)]
 pub struct LineEditBuffer {
     line: String,
     /// byte index into the UTF-8 string data of the insertion
@@ -9,28 +10,19 @@ pub struct LineEditBuffer {
     cursor: usize,
 }
 
-impl Default for LineEditBuffer {
-    fn default() -> Self {
-        Self {
-            line: String::new(),
-            cursor: 0,
-        }
-    }
-}
-
 impl LineEditBuffer {
     pub fn new(line: &str, cursor: usize) -> Self {
         let mut buffer = Self::default();
         buffer.set_line_and_cursor(line, cursor);
-        return buffer;
+        buffer
     }
 
     pub fn get_line(&self) -> &str {
-        return &self.line;
+        &self.line
     }
 
     pub fn get_cursor(&self) -> usize {
-        return self.cursor;
+        self.cursor
     }
 
     pub fn insert_char(&mut self, c: char) {
@@ -137,7 +129,7 @@ impl LineEditBuffer {
                 let mut char_position = char_indices
                     .iter()
                     .position(|(idx, _)| *idx == self.cursor)
-                    .unwrap_or_else(|| char_indices.len());
+                    .unwrap_or(char_indices.len());
 
                 for _ in 0..rep {
                     // Skip any non-whitespace characters

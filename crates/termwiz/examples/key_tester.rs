@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err)]
+
 use termwiz::caps::Capabilities;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers};
 use termwiz::terminal::{new_terminal, Terminal};

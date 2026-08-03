@@ -166,7 +166,7 @@ impl ScreenBuffer {
         if self.cursor_y >= self.rows {
             self.dirty = true;
             let lines_to_scroll = self.cursor_y.saturating_sub(self.rows) + 1;
-            self.scroll(0, self.rows, -1 * lines_to_scroll as isize, out)?;
+            self.scroll(0, self.rows, -(lines_to_scroll as isize), out)?;
             self.dirty = true;
             self.cursor_y -= lines_to_scroll;
             assert!(self.cursor_y < self.rows);
@@ -326,9 +326,7 @@ impl WindowsConsoleRenderer {
         for change in changes {
             match change {
                 Change::ClearScreen(color) => {
-                    let attr = CellAttributes::default()
-                        .set_background(color.clone())
-                        .clone();
+                    let attr = CellAttributes::default().set_background(*color).clone();
 
                     buffer.fill(
                         ' ',
@@ -340,9 +338,7 @@ impl WindowsConsoleRenderer {
                     buffer.set_cursor(0, 0, out)?;
                 }
                 Change::ClearToEndOfLine(color) => {
-                    let attr = CellAttributes::default()
-                        .set_background(color.clone())
-                        .clone();
+                    let attr = CellAttributes::default().set_background(*color).clone();
 
                     buffer.fill(
                         ' ',
@@ -353,9 +349,7 @@ impl WindowsConsoleRenderer {
                     );
                 }
                 Change::ClearToEndOfScreen(color) => {
-                    let attr = CellAttributes::default()
-                        .set_background(color.clone())
-                        .clone();
+                    let attr = CellAttributes::default().set_background(*color).clone();
 
                     buffer.fill(
                         ' ',
@@ -367,14 +361,14 @@ impl WindowsConsoleRenderer {
                 }
                 Change::Text(text) => {
                     buffer.write_text(
-                        &text,
+                        text,
                         to_attr_word(&self.capabilities, &self.pending_attr),
                         out,
                     )?;
                 }
                 Change::CursorPosition { x, y } => {
                     let x = match x {
-                        Position::Absolute(x) => *x as usize,
+                        Position::Absolute(x) => *x,
                         Position::Relative(delta) => {
                             (buffer.cursor_x as isize).saturating_sub(-*delta) as usize
                         }
@@ -384,7 +378,7 @@ impl WindowsConsoleRenderer {
                     // For vertical cursor movement, we constrain the movement to
                     // the viewport.
                     let y = match y {
-                        Position::Absolute(y) => *y as usize,
+                        Position::Absolute(y) => *y,
                         Position::Relative(delta) => {
                             (buffer.cursor_y as isize).saturating_sub(-*delta) as usize
                         }
@@ -450,7 +444,7 @@ impl WindowsConsoleRenderer {
                     region_size,
                     scroll_count,
                 } => {
-                    buffer.scroll(*first_row, *region_size, -1 * *scroll_count as isize, out)?;
+                    buffer.scroll(*first_row, *region_size, -(*scroll_count as isize), out)?;
                 }
                 Change::ScrollRegionDown {
                     first_row,
