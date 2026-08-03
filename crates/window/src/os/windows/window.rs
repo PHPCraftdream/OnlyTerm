@@ -271,7 +271,11 @@ fn rc_from_pointer(lparam: LPVOID) -> Rc<RefCell<WindowInner>> {
     // pointer with a live strong reference. We `from_raw` to borrow it, clone
     // (incrementing the refcount for the caller), then `into_raw` to leave the
     // original strong reference intact so the stored pointer stays valid.
-    let arc = unsafe { Rc::from_raw(std::mem::transmute(lparam)) };
+    let arc = unsafe {
+        Rc::from_raw(std::mem::transmute::<LPVOID, *const RefCell<WindowInner>>(
+            lparam,
+        ))
+    };
     // Add a ref for the caller
     let cloned = Rc::clone(&arc);
 
@@ -297,7 +301,11 @@ fn take_rc_from_pointer(lparam: LPVOID) -> Rc<RefCell<WindowInner>> {
     // SAFETY: `lparam` is an `Rc` raw pointer produced by `rc_to_pointer` with
     // a live strong reference; `from_raw` reclaims that reference (the caller
     // transfers ownership rather than borrowing it, unlike `rc_from_pointer`).
-    unsafe { Rc::from_raw(std::mem::transmute(lparam)) }
+    unsafe {
+        Rc::from_raw(std::mem::transmute::<LPVOID, *const RefCell<WindowInner>>(
+            lparam,
+        ))
+    }
 }
 
 fn callback_behavior() -> glium::debug::DebugCallbackBehavior {
@@ -555,8 +563,6 @@ fn decorations_to_style(decorations: WindowDecorations) -> u32 {
         WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
     } else if decorations == WindowDecorations::NONE {
         WS_POPUP
-    } else if decorations == WindowDecorations::TITLE | WindowDecorations::RESIZE {
-        WS_OVERLAPPEDWINDOW
     } else {
         WS_OVERLAPPEDWINDOW
     }
@@ -673,7 +679,7 @@ impl Window {
                 null_mut(),
                 null_mut(),
                 null_mut(),
-                std::mem::transmute(lparam),
+                std::mem::transmute::<*const RefCell<WindowInner>, LPVOID>(lparam),
             )
         };
 
@@ -881,9 +887,7 @@ impl Window {
             DragAcceptFiles(hwnd.0, winapi::shared::minwindef::TRUE);
         }
 
-        conn.windows
-            .borrow_mut()
-            .insert(hwnd.clone(), Rc::clone(&inner));
+        conn.windows.borrow_mut().insert(hwnd, Rc::clone(&inner));
 
         Ok(window_handle)
     }
@@ -1955,11 +1959,15 @@ fn apply_theme(hwnd: HWND) -> Option<LRESULT> {
     use winapi::um::dwmapi::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute};
     use winapi::um::uxtheme::MARGINS;
 
-    #[allow(non_snake_case)]
+    // Name mirrors the Win32 `WINDOWCOMPOSITIONATTRIB` type; keeping it identical
+    // to the documented API is preferable to the acronym-style rename clippy wants.
+    #[allow(non_snake_case, clippy::upper_case_acronyms)]
     type WINDOWCOMPOSITIONATTRIB = u32;
     const WCA_USEDARKMODECOLORS: WINDOWCOMPOSITIONATTRIB = 26;
 
-    #[allow(non_snake_case)]
+    // Name mirrors the Win32 `WINDOWCOMPOSITIONATTRIBDATA` struct used by
+    // `SetWindowCompositionAttribute`; kept identical to the documented API.
+    #[allow(non_snake_case, clippy::upper_case_acronyms)]
     #[repr(C)]
     pub struct WINDOWCOMPOSITIONATTRIBDATA {
         Attrib: WINDOWCOMPOSITIONATTRIB,
@@ -2296,7 +2304,7 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
             FillRect(hdc, &rect, brush);
         }
     }
-    EndPaint(hwnd, &mut ps);
+    EndPaint(hwnd, &ps);
 
     inner.invalidated = false;
     // Ask the app to repaint in a bit
@@ -2306,7 +2314,7 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
     let window_id = inner.hwnd;
     let max_fps = inner.config.max_fps;
     promise::spawn::spawn(async move {
-        async_io::Timer::after(std::time::Duration::from_millis(1000 / max_fps as u64)).await;
+        async_io::Timer::after(std::time::Duration::from_millis(1000 / max_fps)).await;
         Connection::with_window_inner(window_id, move |inner| {
             inner.paint_throttled = false;
             if inner.invalidated {
@@ -3262,7 +3270,7 @@ impl KeyboardLayoutInfo {
                 if let Some(c) = dead
                     .map
                     .get(&(Self::fixup_mods(key.0), key.1 as u8))
-                    .map(|&c| c)
+                    .copied()
                 {
                     ResolvedDeadKey::Combined(c)
                 } else {

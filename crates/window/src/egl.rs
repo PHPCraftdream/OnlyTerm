@@ -7,7 +7,8 @@ use std::rc::Rc;
 #[allow(
     non_camel_case_types,
     clippy::unreadable_literal,
-    clippy::undocumented_unsafe_blocks
+    clippy::undocumented_unsafe_blocks,
+    clippy::missing_transmute_annotations
 )]
 pub mod ffi {
     // gl_generator emits these weird cyclical and redundant type references;

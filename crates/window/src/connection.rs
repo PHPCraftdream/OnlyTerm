@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 thread_local! {
-    static CONN: RefCell<Option<Rc<Connection>>> = RefCell::new(None);
+    static CONN: RefCell<Option<Rc<Connection>>> = const { RefCell::new(None) };
 }
 
 fn nop_event_handler(_event: ApplicationEvent) {}

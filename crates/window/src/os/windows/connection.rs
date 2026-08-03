@@ -106,7 +106,7 @@ impl ConnectionOps for Connection {
                     // We don't want to call TranslateMessage here
                     // unconditionally.  Instead, we perform translation
                     // in a handful of special cases in window.rs.
-                    DispatchMessageW(&mut msg);
+                    DispatchMessageW(&msg);
                 }
             } else {
                 self.wait_message();
