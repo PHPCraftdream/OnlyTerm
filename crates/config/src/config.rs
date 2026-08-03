@@ -18,7 +18,6 @@ use crate::keys::{Key, LeaderKey, Mouse};
 use ktav::value::Value as KtavValue;
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
-use crate::wsl::WslDomain;
 use crate::{
     default_config_with_overrides_applied, default_one_point_oh, default_one_point_oh_f64,
     default_true, default_win32_acrylic_accent_color, CellWidth, GpuInfo,
@@ -418,8 +417,22 @@ pub struct Config {
     #[dynamic(default)]
     pub webgpu_preferred_adapter: Option<GpuInfo>,
 
-    #[dynamic(default)]
-    pub wsl_domains: Option<Vec<WslDomain>>,
+    /// WSL domain support has been removed from this fork (task #329):
+    /// enumerating installed distros meant shelling out to `wsl.exe -l -v`,
+    /// which cost ~0.6s of startup even for users who never touch WSL (and
+    /// could block for many seconds more on a cold LxssManager/WSL2 utility
+    /// VM -- see the history of `crates/wezterm-mux-server-impl/src/lib.rs`
+    /// and the now-deleted `crates/config/src/wsl.rs`). The field is kept
+    /// (rather than deleted) purely so that existing configs which set
+    /// `wsl_domains` -- including an empty list to opt out of the old
+    /// auto-discovery -- still parse under `unknown_fields: Deny` instead of
+    /// failing to load entirely; the value itself is now ignored.
+    #[dynamic(
+        default,
+        deprecated = "WSL domain support has been removed from this fork; this option no longer \
+                      does anything and the value is ignored"
+    )]
+    pub wsl_domains: Option<Vec<wezterm_dynamic::Value>>,
 
     #[dynamic(default)]
     pub exec_domains: Vec<ExecDomain>,
@@ -1146,14 +1159,6 @@ impl Config {
         Self::load_with_overrides(&wezterm_dynamic::Value::default())
     }
 
-    pub fn wsl_domains(&self) -> Vec<WslDomain> {
-        if let Some(domains) = &self.wsl_domains {
-            domains.clone()
-        } else {
-            WslDomain::default_domains()
-        }
-    }
-
     pub fn update_ulimit(&self) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
@@ -1686,12 +1691,9 @@ impl Config {
                  usable: loading it would silently spawn commands unwrapped, \
                  directly on the host, instead of doing whatever the domain \
                  used to do (e.g. `docker exec`, `ssh`, or similar). Please \
-                 remove the exec_domains entries from your config. If you \
-                 were using an exec domain to reach WSL, `wsl_domains` \
-                 remains fully supported (it is implemented natively, not via \
-                 scripting) and is the closest still-working alternative; \
-                 there is currently no built-in replacement for other \
-                 wrapper commands such as docker/ssh.",
+                 remove the exec_domains entries from your config; there is \
+                 currently no built-in replacement (WSL domain support has \
+                 also been removed from this fork -- see `wsl_domains`).",
                 d.name
             );
         }
@@ -1717,11 +1719,6 @@ impl Config {
         }
         for d in &self.exec_domains {
             check_domain(&d.name, "exec domain")?;
-        }
-        if let Some(domains) = &self.wsl_domains {
-            for d in domains {
-                check_domain(&d.name, "wsl domain")?;
-            }
         }
         Ok(())
     }
