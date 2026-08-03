@@ -39,6 +39,12 @@ impl ClientId {
     }
 }
 
+impl Default for ClientId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
 pub struct ClientInfo {
     pub client_id: Arc<ClientId>,

@@ -23,6 +23,12 @@ impl Activity {
     }
 }
 
+impl Default for Activity {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for Activity {
     fn drop(&mut self) {
         COUNT.fetch_sub(1, Ordering::SeqCst);
