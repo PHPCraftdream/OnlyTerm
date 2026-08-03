@@ -99,7 +99,7 @@ impl LoadedFont {
         {
             let mut handles = self.handles.borrow_mut();
             for h in extra_handles {
-                if !handles.iter().any(|existing| *existing == h) {
+                if !handles.contains(&h) {
                     handles.push(h);
                     loaded = true;
                 }
@@ -111,7 +111,7 @@ impl LoadedFont {
         if loaded {
             if let Some(font_config) = self.font_config.upgrade() {
                 *self.shaper.borrow_mut() =
-                    new_shaper(&*font_config.config.borrow(), &self.handles.borrow())?;
+                    new_shaper(&font_config.config.borrow(), &self.handles.borrow())?;
             }
         }
         Ok(loaded)
@@ -155,6 +155,10 @@ impl LoadedFont {
         }
     }
 
+    // Public shaping entry point carrying two generic callbacks plus shaping
+    // options; bundling the non-callback options into a struct would still
+    // have to be generic over F and FS, so keep the flat signature.
+    #[allow(clippy::too_many_arguments)]
     pub fn shape<F: FnOnce() + Send + 'static, FS: FnOnce(&mut Vec<char>)>(
         &self,
         text: &str,
@@ -177,6 +181,8 @@ impl LoadedFont {
         Ok(res)
     }
 
+    // Mirrors `shape` above; the same flat-signature trade-off applies.
+    #[allow(clippy::too_many_arguments)]
     fn shape_impl<F: FnOnce() + Send + 'static, FS: FnOnce(&mut Vec<char>)>(
         &self,
         text: &str,
@@ -625,7 +631,7 @@ impl FontConfigInner {
         let attributes = text_style.font_with_fallback();
         let (handles, _loaded) = self.resolve_font_helper_impl(&attributes, pixel_size)?;
 
-        let shaper = new_shaper(&*config, &handles)?;
+        let shaper = new_shaper(&config, &handles)?;
 
         let metrics = shaper.metrics(font_size, dpi).with_context(|| {
             format!(
@@ -764,10 +770,10 @@ impl FontConfigInner {
                 if let Some(idx) =
                     ParsedFont::best_matching_index(attr, &named_candidates, pixel_size)
                 {
-                    named_candidates.get(idx).map(|&p| {
+                    if let Some(&p) = named_candidates.get(idx) {
                         loaded.insert(attr.clone());
-                        handles.push(p.clone().synthesize(attr))
-                    });
+                        handles.push(p.clone().synthesize(attr));
+                    }
                 }
             }
 
@@ -784,10 +790,10 @@ impl FontConfigInner {
                     if let Some(idx) =
                         ParsedFont::best_matching_index(attr, &located_candidates, pixel_size)
                     {
-                        located_candidates.get(idx).map(|&p| {
+                        if let Some(&p) = located_candidates.get(idx) {
                             loaded.insert(attr.clone());
-                            handles.push(p.clone().synthesize(attr))
-                        });
+                            handles.push(p.clone().synthesize(attr));
+                        }
                     }
                 }
             }
@@ -854,7 +860,7 @@ impl FontConfigInner {
             }
         }
 
-        Ok((new_shaper(&*config, &handles)?, handles))
+        Ok((new_shaper(config, &handles)?, handles))
     }
 
     /// Given a text style, load (with caching) the font that best
@@ -889,39 +895,36 @@ impl FontConfigInner {
 
         if let Some(def_font) = def_font {
             let def_metrics = def_font.metrics();
-            match (def_metrics.cap_height, metrics.cap_height) {
-                (Some(d), Some(m)) => {
-                    // Scale by the ratio of the pixel heights of the default
-                    // and this font; this causes the `I` glyphs to appear to
-                    // have the same height.
-                    let scale = d.get() / m.get();
-                    if scale != 1.0 {
-                        let scaled_pixel_size = (pixel_size as f64 * scale) as u16;
-                        let scaled_font_size = font_size * scale;
-                        log::trace!(
-                            "using cap height adjusted: pixel_size {} -> {}, font_size {} -> {}, {:?}",
-                            pixel_size,
-                            scaled_pixel_size,
-                            font_size,
-                            scaled_font_size,
-                            metrics,
-                        );
-                        let (alt_shaper, alt_handles) =
-                            self.resolve_font_helper(style, &config, scaled_pixel_size)?;
-                        shaper = alt_shaper;
-                        handles = alt_handles;
+            if let (Some(d), Some(m)) = (def_metrics.cap_height, metrics.cap_height) {
+                // Scale by the ratio of the pixel heights of the default
+                // and this font; this causes the `I` glyphs to appear to
+                // have the same height.
+                let scale = d.get() / m.get();
+                if scale != 1.0 {
+                    let scaled_pixel_size = (pixel_size as f64 * scale) as u16;
+                    let scaled_font_size = font_size * scale;
+                    log::trace!(
+                        "using cap height adjusted: pixel_size {} -> {}, font_size {} -> {}, {:?}",
+                        pixel_size,
+                        scaled_pixel_size,
+                        font_size,
+                        scaled_font_size,
+                        metrics,
+                    );
+                    let (alt_shaper, alt_handles) =
+                        self.resolve_font_helper(style, &config, scaled_pixel_size)?;
+                    shaper = alt_shaper;
+                    handles = alt_handles;
 
-                        metrics = shaper.metrics(scaled_font_size, dpi).with_context(|| {
-                            format!(
-                                "obtaining cap-height adjusted metrics for font_size={} @ dpi {}",
-                                scaled_font_size, dpi
-                            )
-                        })?;
+                    metrics = shaper.metrics(scaled_font_size, dpi).with_context(|| {
+                        format!(
+                            "obtaining cap-height adjusted metrics for font_size={} @ dpi {}",
+                            scaled_font_size, dpi
+                        )
+                    })?;
 
-                        font_size = scaled_font_size;
-                    }
+                    font_size = scaled_font_size;
                 }
-                _ => {}
             }
         }
 

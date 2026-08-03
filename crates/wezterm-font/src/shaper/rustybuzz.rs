@@ -22,7 +22,7 @@
 //!   always reports glyph positions in the font's raw design units
 //!   (`unitsPerEm` space) with no hinting/grid-fitting applied at all. To be
 //!   directly comparable we had to scale ourselves:
-//!       advance_px = raw_units * (point_size * dpi / 72) / units_per_em
+//!   advance_px = raw_units * (point_size * dpi / 72) / units_per_em
 //!   (this is the same formula `SwashFontInfo::selected_font_size` uses to
 //!   compute the nominal pixel height).
 //!
@@ -408,6 +408,11 @@ impl RustybuzzShaper {
         Ok(upem)
     }
 
+    // do_shape threads every value the shaping loop needs independently;
+    // collapsing into a parameter struct would couple the bidi range/
+    // presentation handling recently adjusted for Hebrew rendering, so a
+    // targeted allow is the safer trade here.
+    #[allow(clippy::too_many_arguments)]
     fn do_shape(
         &self,
         mut font_idx: FallbackIdx,
@@ -782,7 +787,7 @@ impl FontShaper for RustybuzzShaper {
         range: Option<Range<usize>>,
         presentation_width: Option<&PresentationWidth>,
     ) -> anyhow::Result<Vec<GlyphInfo>> {
-        let range = range.unwrap_or_else(|| 0..text.len());
+        let range = range.unwrap_or(0..text.len());
 
         log::trace!(
             "rustybuzz shape {range:?} `{}` with presentation={presentation:?}",
@@ -989,7 +994,7 @@ impl<'a> ClusterResolver<'a> {
             Some(pw) => {
                 let cell_idx = pw.byte_to_cell_idx(start);
                 let actual_start = self.start_by_cell_idx.get(&cell_idx)?;
-                self.map.get_mut(&actual_start)
+                self.map.get_mut(actual_start)
             }
             None => self.map.get_mut(&start),
         }
@@ -1000,7 +1005,7 @@ impl<'a> ClusterResolver<'a> {
             Some(pw) => {
                 let cell_idx = pw.byte_to_cell_idx(start);
                 let actual_start = self.start_by_cell_idx.get(&cell_idx)?;
-                self.map.get(&actual_start)
+                self.map.get(actual_start)
             }
             None => self.map.get(&start),
         }

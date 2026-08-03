@@ -88,7 +88,7 @@ fn resolve(db: &FontDatabase, family: &str, is_fallback: bool) -> anyhow::Result
         },
         14,
     )
-    .map(|p| p.clone())
+    .cloned()
     .ok_or_else(|| anyhow::anyhow!("no font found for family {family:?}"))
 }
 
@@ -241,8 +241,8 @@ fn blit(
                 glyph.data[idx + 2] as f32,
             ];
             let dst = canvas.get_pixel_mut(dx as u32, dy as u32);
-            for c in 0..3 {
-                dst.0[c] = ((src[c] * a) + (dst.0[c] as f32 * (1.0 - a))).round() as u8;
+            for (c, &src_val) in src.iter().enumerate() {
+                dst.0[c] = ((src_val * a) + (dst.0[c] as f32 * (1.0 - a))).round() as u8;
             }
         }
     }
