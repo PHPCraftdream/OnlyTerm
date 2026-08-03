@@ -746,10 +746,18 @@ fn main() {
 }
 
 fn maybe_show_configuration_error_window() {
-    let warnings = config::configuration_warnings_and_errors();
-    if !warnings.is_empty() {
-        let err = warnings.join("\n");
+    // Errors only. This opens a whole extra window, which is the right
+    // response to "your config didn't load, here's why" and much too much
+    // for "you set an option that no longer does anything": a deprecation
+    // notice would greet the user with a second window on every single
+    // launch until they edited their config. Warnings still reach the log
+    // and the CLI subcommands that print them.
+    if let Some(err) = config::configuration_error() {
         mux::connui::show_configuration_error_message(&err);
+    }
+
+    for warning in config::configuration_warnings_and_errors() {
+        log::warn!("{warning}");
     }
 }
 
