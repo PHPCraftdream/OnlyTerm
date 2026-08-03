@@ -2865,26 +2865,17 @@ mod tests {
 
     #[test]
     fn defang_paste_no_escape() {
-        assert_eq!(
-            TerminalState::defang_paste("hello world"),
-            "hello world"
-        );
+        assert_eq!(TerminalState::defang_paste("hello world"), "hello world");
     }
 
     #[test]
     fn defang_paste_single_start() {
-        assert_eq!(
-            TerminalState::defang_paste("\x1b[200~hello"),
-            "hello"
-        );
+        assert_eq!(TerminalState::defang_paste("\x1b[200~hello"), "hello");
     }
 
     #[test]
     fn defang_paste_single_end() {
-        assert_eq!(
-            TerminalState::defang_paste("hello\x1b[201~"),
-            "hello"
-        );
+        assert_eq!(TerminalState::defang_paste("hello\x1b[201~"), "hello");
     }
 
     #[test]

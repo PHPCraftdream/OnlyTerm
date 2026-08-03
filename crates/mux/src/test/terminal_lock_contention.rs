@@ -42,7 +42,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 use wezterm_term::color::ColorPalette;
-use wezterm_term::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind, Terminal, TerminalConfiguration, TerminalSize};
+use wezterm_term::{
+    KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind, Terminal,
+    TerminalConfiguration, TerminalSize,
+};
 
 /// A `Child` double that never exits on its own; `LocalPane` only needs
 /// something that implements the trait so it can track process state,
@@ -187,8 +190,21 @@ fn generate_output_batch(rng_state: &mut u64, approx_bytes: usize) -> Vec<u8> {
     }
 
     let words = [
-        "fn", "let", "struct", "impl", "match", "error:", "warning:", "ok", "todo",
-        "lorem", "ipsum", "dolor", "sit", "amet", "consectetur",
+        "fn",
+        "let",
+        "struct",
+        "impl",
+        "match",
+        "error:",
+        "warning:",
+        "ok",
+        "todo",
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
     ];
 
     let mut out = Vec::with_capacity(approx_bytes + 64);
@@ -273,7 +289,13 @@ impl WaitSamples {
 fn run_contention_load(
     duration: Duration,
     render_row_span: std::ops::Range<wezterm_term::StableRowIndex>,
-) -> (WaitSamples, WaitSamples, WaitSamples, WaitSamples, WaitSamples) {
+) -> (
+    WaitSamples,
+    WaitSamples,
+    WaitSamples,
+    WaitSamples,
+    WaitSamples,
+) {
     let pane = make_pane();
     let stop = Arc::new(AtomicBool::new(false));
     let key_input_samples = Arc::new(WaitSamples::new());
@@ -397,7 +419,10 @@ fn terminal_lock_wait_time_under_sustained_output_and_input() {
     // `Mux` singleton installed even though the trait methods normally
     // call `Mux::get().record_input_for_current_identity()`.
     let (key_input, perform_actions, with_lines, perform_actions_hold, with_lines_hold) =
-        run_contention_load(Duration::from_secs(5), 0..(ROWS as wezterm_term::StableRowIndex));
+        run_contention_load(
+            Duration::from_secs(5),
+            0..(ROWS as wezterm_term::StableRowIndex),
+        );
 
     let (n_key, p50_key, p95_key, max_key) = key_input.stats();
     let (n_parse, p50_parse, p95_parse, max_parse) = perform_actions.stats();
@@ -597,7 +622,8 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
     fn dump_all_rows(pane: &Arc<LocalPane>) -> Vec<String> {
         let dims = pane.get_dimensions();
         let (_first_row, lines) = pane.get_lines(
-            dims.scrollback_top..dims.physical_top + dims.viewport_rows as wezterm_term::StableRowIndex,
+            dims.scrollback_top
+                ..dims.physical_top + dims.viewport_rows as wezterm_term::StableRowIndex,
         );
         lines.iter().map(|line| line.as_str().to_string()).collect()
     }

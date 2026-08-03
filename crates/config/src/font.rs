@@ -822,7 +822,11 @@ mod font_attribute_tests {
         let dyn_value = crate::ktav_value::ktav_value_to_dynamic(&parsed);
         let obj = match dyn_value {
             wezterm_dynamic::Value::Object(obj) => obj,
-            other => panic!("expected an object, got {other:?}"),
+            // Explicit argument rather than an inline `{other:?}` capture:
+            // this crate is edition 2018, where implicit format captures
+            // don't exist, so the placeholder would be printed literally
+            // and the offending value never shown.
+            other => panic!("expected an object, got {:?}", other),
         };
         let font = obj
             .get(&wezterm_dynamic::Value::String("font".to_string()))

@@ -702,9 +702,7 @@ impl Domain for LocalDomain {
                 // at all and the writer is a `sink()`, so writing to it
                 // would silently discard the one thing this pane exists to
                 // say.
-                terminal.advance_bytes(format!(
-                    "failed to create a pseudo console: {err:#}\r\n"
-                ));
+                terminal.advance_bytes(format!("failed to create a pseudo console: {err:#}\r\n"));
 
                 let pane: Arc<dyn Pane> = Arc::new(LocalPane::new(
                     pane_id,

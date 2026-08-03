@@ -441,7 +441,10 @@ mod tests {
     fn tiled_combined_with_other_flags_blocks_resize() {
         // Any combination that includes TILED must block resizing, even
         // if none of the legacy blocking bits (FULL_SCREEN/MAXIMIZED) are set.
-        assert!(WindowState::empty().can_resize(), "empty state is resizable");
+        assert!(
+            WindowState::empty().can_resize(),
+            "empty state is resizable"
+        );
         assert!(!(WindowState::TILED | WindowState::ALWAYS_ON_TOP).can_resize());
         assert!(!(WindowState::TILED | WindowState::HIDDEN).can_resize());
         assert!(

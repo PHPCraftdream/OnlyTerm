@@ -630,10 +630,8 @@ mod tests {
     #[test]
     fn inset_texture_coords_shrinks_by_one_texel_each_side() {
         // A 100x200 texture: 1 texel is 0.01 in normalized x, 0.005 in y.
-        let coords = window::bitmaps::TextureRect::new(
-            euclid::point2(0.0, 0.0),
-            euclid::size2(1.0, 1.0),
-        );
+        let coords =
+            window::bitmaps::TextureRect::new(euclid::point2(0.0, 0.0), euclid::size2(1.0, 1.0));
         let inset = inset_texture_coords(coords, 100.0, 200.0);
 
         assert_eq!(inset.origin.x, 0.01);
@@ -647,10 +645,8 @@ mod tests {
     #[test]
     fn inset_texture_coords_preserves_non_zero_origin() {
         // A sub-rectangle of an atlas, not starting at (0, 0).
-        let coords = window::bitmaps::TextureRect::new(
-            euclid::point2(0.5, 0.25),
-            euclid::size2(0.25, 0.25),
-        );
+        let coords =
+            window::bitmaps::TextureRect::new(euclid::point2(0.5, 0.25), euclid::size2(0.25, 0.25));
         let inset = inset_texture_coords(coords, 256.0, 256.0);
 
         let shrink = 1.0 / 256.0;

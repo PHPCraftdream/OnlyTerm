@@ -269,10 +269,7 @@ fn gen_mirroring() -> anyhow::Result<()> {
         f,
         "//! Generated from bidi/data/BidiMirroring.txt by bidi/generate/src/main.rs"
     )?;
-    writeln!(
-        f,
-        "pub const BIDI_MIRRORING: &'static [(char, char)] = &["
-    )?;
+    writeln!(f, "pub const BIDI_MIRRORING: &'static [(char, char)] = &[")?;
     for entry in entries.into_iter() {
         writeln!(
             f,

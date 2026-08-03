@@ -644,7 +644,9 @@ impl crate::TermWindow {
                         let line = &lines[line_idx];
                         let first_cell_is_hebrew = line
                             .get_cell(0)
-                            .map(|c| wezterm_surface::cellcluster::CellCluster::is_hebrew_cell(c.str()))
+                            .map(|c| {
+                                wezterm_surface::cellcluster::CellCluster::is_hebrew_cell(c.str())
+                            })
                             .unwrap_or(false);
                         let is_wrap_continuation = first_cell_is_hebrew
                             && line_idx > 0

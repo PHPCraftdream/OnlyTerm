@@ -15,7 +15,6 @@ use crate::keyassignment::{
     KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger, SpawnCommand,
 };
 use crate::keys::{Key, LeaderKey, Mouse};
-use ktav::value::Value as KtavValue;
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
 use crate::{
@@ -26,6 +25,7 @@ use crate::{
     CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
 };
 use anyhow::Context;
+use ktav::value::Value as KtavValue;
 use portable_pty::CommandBuilder;
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -1618,10 +1618,9 @@ impl Config {
                 anyhow::anyhow!("--config {}={}: error parsing value: {}", key, value, e)
             })?;
             let evaluated = match &parsed {
-                KtavValue::Object(obj) => obj
-                    .get("v")
-                    .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("--config {}={}: internal parse error", key, value))?,
+                KtavValue::Object(obj) => obj.get("v").cloned().ok_or_else(|| {
+                    anyhow::anyhow!("--config {}={}: internal parse error", key, value)
+                })?,
                 other => anyhow::bail!(
                     "--config {}={}: internal parse error (unexpected top-level {other:?})",
                     key,
@@ -2935,8 +2934,10 @@ keys: [
 
         // A scheme alone must actually reach the palette. Batman's
         // background is #1b1d1e; before the fix this came back white.
-        let cfg = load("color_scheme: Batman
-");
+        let cfg = load(
+            "color_scheme: Batman
+",
+        );
         assert_eq!(
             cfg.resolved_palette.background,
             Some(rgba("#1b1d1e")),
@@ -2945,9 +2946,11 @@ keys: [
 
         // An explicit `colors` still wins over the scheme -- that is the
         // documented override direction.
-        let cfg = load("color_scheme: Batman
+        let cfg = load(
+            "color_scheme: Batman
 colors: { background: #123456 }
-");
+",
+        );
         assert_eq!(
             cfg.resolved_palette.background,
             Some(rgba("#123456")),
@@ -2955,8 +2958,10 @@ colors: { background: #123456 }
         );
 
         // With neither set, the fork's light default still applies.
-        let cfg = load("font_size: 12
-");
+        let cfg = load(
+            "font_size: 12
+",
+        );
         assert_eq!(
             cfg.resolved_palette.background,
             Some(rgba("#ffffff")),

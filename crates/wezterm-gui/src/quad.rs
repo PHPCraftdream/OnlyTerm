@@ -371,10 +371,7 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
         // both sides are the same repr and alignment, and the element count
         // (`len() / VERTICES_PER_CELL`) exactly covers the original buffer.
         let src_quads: &[[Vertex; VERTICES_PER_CELL]] = unsafe {
-            std::slice::from_raw_parts(
-                vertices.as_ptr().cast(),
-                vertices.len() / VERTICES_PER_CELL,
-            )
+            std::slice::from_raw_parts(vertices.as_ptr().cast(), vertices.len() / VERTICES_PER_CELL)
         };
 
         for quad in src_quads {

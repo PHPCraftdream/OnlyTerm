@@ -502,8 +502,10 @@ fn adjust_y_size(tree: &mut Tree, y_adjust: isize, cell_dimensions: &TerminalSiz
 
                     adjust_y_size(&mut *right, right_delta, cell_dimensions);
                     data.second.rows = new_second;
-                    data.second.pixel_height =
-                        data.second.rows.saturating_mul(cell_dimensions.pixel_height);
+                    data.second.pixel_height = data
+                        .second
+                        .rows
+                        .saturating_mul(cell_dimensions.pixel_height);
                 }
             }
         }
@@ -1340,10 +1342,7 @@ impl TabInner {
                 SplitDirection::Horizontal => {
                     let width = node.width();
 
-                    let mut cols = node.first.cols as isize;
-                    cols = left_or_top
-                        .max(1)
-                        .min((width as isize).saturating_sub(2));
+                    let cols = left_or_top.max(1).min((width as isize).saturating_sub(2));
                     node.first.cols = cols as usize;
                     node.first.pixel_width =
                         node.first.cols.saturating_mul(cell_dimensions.pixel_width);
@@ -1355,10 +1354,7 @@ impl TabInner {
                 SplitDirection::Vertical => {
                     let height = node.height();
 
-                    let mut rows = node.first.rows as isize;
-                    rows = left_or_top
-                        .max(1)
-                        .min((height as isize).saturating_sub(2));
+                    let rows = left_or_top.max(1).min((height as isize).saturating_sub(2));
                     node.first.rows = rows as usize;
                     node.first.pixel_height =
                         node.first.rows.saturating_mul(cell_dimensions.pixel_height);

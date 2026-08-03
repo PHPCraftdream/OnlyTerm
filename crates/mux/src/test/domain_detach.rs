@@ -246,7 +246,8 @@ fn domain_was_detached_does_not_hold_windows_lock_during_pane_teardown() {
     )
     .expect("split should succeed");
 
-    mux.add_pane(&(Arc::clone(&victim) as Arc<dyn Pane>)).unwrap();
+    mux.add_pane(&(Arc::clone(&victim) as Arc<dyn Pane>))
+        .unwrap();
     mux.add_pane(&(Arc::clone(&survivor) as Arc<dyn Pane>))
         .unwrap();
 

@@ -232,7 +232,9 @@ pub struct SwashPalette {
 /// cases.
 fn cpal_palette_flags(cpal_table: &[u8], num_palettes: u16) -> Vec<u32> {
     let read_u16 = |off: usize| -> Option<u16> {
-        cpal_table.get(off..off + 2).map(|b| u16::from_be_bytes([b[0], b[1]]))
+        cpal_table
+            .get(off..off + 2)
+            .map(|b| u16::from_be_bytes([b[0], b[1]]))
     };
     let read_u32 = |off: usize| -> Option<u32> {
         cpal_table
@@ -1008,7 +1010,9 @@ mod test {
 
             let samples: Vec<char> = ('A'..='Z')
                 .chain('0'..='9')
-                .chain(['—', '–', '\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}', '…', '€'])
+                .chain([
+                    '—', '–', '\u{201c}', '\u{201d}', '\u{2018}', '\u{2019}', '…', '€',
+                ])
                 .collect();
 
             if name != "SymbolsNerdFontMono-Regular.ttf" {
@@ -1079,14 +1083,62 @@ mod test {
             ("JetBrainsMono-Regular.ttf", 10.0, 72, 'M', 6.0),
             ("JetBrainsMono-Regular.ttf", 10.0, 72, 'i', 6.0),
             ("JetBrainsMono-Regular.ttf", 10.0, 72, 'W', 6.0),
-            ("JetBrainsMono-Regular.ttf", 14.0, 96, 'A', 11.199999809265137),
-            ("JetBrainsMono-Regular.ttf", 14.0, 96, 'M', 11.199999809265137),
-            ("JetBrainsMono-Regular.ttf", 14.0, 96, 'i', 11.199999809265137),
-            ("JetBrainsMono-Regular.ttf", 14.0, 96, 'W', 11.199999809265137),
-            ("JetBrainsMono-Regular.ttf", 24.0, 144, 'A', 28.80000114440918),
-            ("JetBrainsMono-Regular.ttf", 24.0, 144, 'M', 28.80000114440918),
-            ("JetBrainsMono-Regular.ttf", 24.0, 144, 'i', 28.80000114440918),
-            ("JetBrainsMono-Regular.ttf", 24.0, 144, 'W', 28.80000114440918),
+            (
+                "JetBrainsMono-Regular.ttf",
+                14.0,
+                96,
+                'A',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                14.0,
+                96,
+                'M',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                14.0,
+                96,
+                'i',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                14.0,
+                96,
+                'W',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                24.0,
+                144,
+                'A',
+                28.80000114440918,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                24.0,
+                144,
+                'M',
+                28.80000114440918,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                24.0,
+                144,
+                'i',
+                28.80000114440918,
+            ),
+            (
+                "JetBrainsMono-Regular.ttf",
+                24.0,
+                144,
+                'W',
+                28.80000114440918,
+            ),
             ("JetBrainsMono-Bold.ttf", 10.0, 72, 'A', 6.0),
             ("JetBrainsMono-Bold.ttf", 10.0, 72, 'M', 6.0),
             ("JetBrainsMono-Bold.ttf", 10.0, 72, 'i', 6.0),
@@ -1103,14 +1155,62 @@ mod test {
             ("JetBrainsMono-Italic.ttf", 10.0, 72, 'M', 6.0),
             ("JetBrainsMono-Italic.ttf", 10.0, 72, 'i', 6.0),
             ("JetBrainsMono-Italic.ttf", 10.0, 72, 'W', 6.0),
-            ("JetBrainsMono-Italic.ttf", 14.0, 96, 'A', 11.199999809265137),
-            ("JetBrainsMono-Italic.ttf", 14.0, 96, 'M', 11.199999809265137),
-            ("JetBrainsMono-Italic.ttf", 14.0, 96, 'i', 11.199999809265137),
-            ("JetBrainsMono-Italic.ttf", 14.0, 96, 'W', 11.199999809265137),
-            ("JetBrainsMono-Italic.ttf", 24.0, 144, 'A', 28.80000114440918),
-            ("JetBrainsMono-Italic.ttf", 24.0, 144, 'M', 28.80000114440918),
-            ("JetBrainsMono-Italic.ttf", 24.0, 144, 'i', 28.80000114440918),
-            ("JetBrainsMono-Italic.ttf", 24.0, 144, 'W', 28.80000114440918),
+            (
+                "JetBrainsMono-Italic.ttf",
+                14.0,
+                96,
+                'A',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                14.0,
+                96,
+                'M',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                14.0,
+                96,
+                'i',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                14.0,
+                96,
+                'W',
+                11.199999809265137,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                24.0,
+                144,
+                'A',
+                28.80000114440918,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                24.0,
+                144,
+                'M',
+                28.80000114440918,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                24.0,
+                144,
+                'i',
+                28.80000114440918,
+            ),
+            (
+                "JetBrainsMono-Italic.ttf",
+                24.0,
+                144,
+                'W',
+                28.80000114440918,
+            ),
             ("Roboto-Regular.ttf", 10.0, 72, 'A', 6.5234375),
             ("Roboto-Regular.ttf", 10.0, 72, 'M', 8.73046875),
             ("Roboto-Regular.ttf", 10.0, 72, 'i', 2.4267578125),
@@ -1462,7 +1562,13 @@ mod test {
     #[test]
     fn cell_metrics_matches_known_values() {
         let expected: &[(&str, f64, u32, f64, f64)] = &[
-            ("JetBrainsMono-Regular.ttf", 10.0, 72, 6.0, 13.199999809265137),
+            (
+                "JetBrainsMono-Regular.ttf",
+                10.0,
+                72,
+                6.0,
+                13.199999809265137,
+            ),
             (
                 "JetBrainsMono-Regular.ttf",
                 14.0,
@@ -1478,7 +1584,13 @@ mod test {
                 11.199999809265137,
                 24.639999389648438,
             ),
-            ("JetBrainsMono-Italic.ttf", 10.0, 72, 6.0, 13.199999809265137),
+            (
+                "JetBrainsMono-Italic.ttf",
+                10.0,
+                72,
+                6.0,
+                13.199999809265137,
+            ),
             (
                 "JetBrainsMono-Italic.ttf",
                 14.0,
@@ -1486,13 +1598,7 @@ mod test {
                 11.199999809265137,
                 24.639999389648438,
             ),
-            (
-                "Roboto-Regular.ttf",
-                10.0,
-                72,
-                8.9794921875,
-                11.71875,
-            ),
+            ("Roboto-Regular.ttf", 10.0, 72, 8.9794921875, 11.71875),
             (
                 "Roboto-Regular.ttf",
                 14.0,
@@ -1501,13 +1607,7 @@ mod test {
                 21.874998092651367,
             ),
             ("Roboto-Bold.ttf", 10.0, 72, 8.9501953125, 11.71875),
-            (
-                "Roboto-Bold.ttf",
-                14.0,
-                96,
-                16.70703125,
-                21.874998092651367,
-            ),
+            ("Roboto-Bold.ttf", 14.0, 96, 16.70703125, 21.874998092651367),
             ("Roboto-Italic.ttf", 10.0, 72, 8.759765625, 11.71875),
             (
                 "Roboto-Italic.ttf",

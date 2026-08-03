@@ -1269,7 +1269,10 @@ mod test {
         // content mismatch) rather than merely panicking on an
         // out-of-bounds slice.
         let phys_range = 0..(total - 1);
-        assert!(phys_range.end > first_len, "range must cross into the second slice");
+        assert!(
+            phys_range.end > first_len,
+            "range must cross into the second slice"
+        );
 
         let mut from_mut: Vec<String> = vec![];
         screen.with_phys_lines_mut(phys_range.clone(), |lines| {

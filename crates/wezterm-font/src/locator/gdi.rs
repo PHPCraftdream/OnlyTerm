@@ -199,10 +199,27 @@ fn handle_from_descriptor(
     descriptor: &FontDescriptor,
     pixel_size: u16,
 ) -> Option<ParsedFont> {
-    let font = collection.get_font_from_descriptor(&descriptor)?;
+    // The non-`get_` spellings are the current dwrote API. The deprecated
+    // ones they replace hid COM failures; these hand back an `HRESULT`.
+    // Nothing here can act on the code itself, but logging it and treating
+    // the font as absent beats a silent miss.
+    let font = match collection.font_from_descriptor(&descriptor) {
+        Ok(font) => font?,
+        Err(hr) => {
+            log::warn!("font_from_descriptor({:?}) failed: {:?}", descriptor, hr);
+            return None;
+        }
+    };
     let face = font.create_font_face();
-    for file in face.get_files() {
-        if let Some(path) = file.get_font_file_path() {
+    let files = match face.files() {
+        Ok(files) => files,
+        Err(hr) => {
+            log::warn!("FontFace::files() failed: {:?}", hr);
+            return None;
+        }
+    };
+    for file in files {
+        if let Ok(path) = file.font_file_path() {
             let family_name = font.family_name();
 
             log::debug!("{} -> {}", family_name, path.display());
@@ -384,10 +401,28 @@ impl FontLocator for GdiFontLocator {
         for family in collection.families_iter() {
             let count = family.get_font_count();
             for idx in 0..count {
-                let font = family.get_font(idx);
+                // Current dwrote spellings; see `handle_from_descriptor`.
+                // A family that fails to yield one of its fonts shouldn't
+                // abort the whole enumeration -- skip it and carry on, so a
+                // single broken installed font can't cost the user every
+                // other one.
+                let font = match family.font(idx) {
+                    Ok(font) => font,
+                    Err(hr) => {
+                        log::warn!("FontFamily::font({}) failed: {:?}", idx, hr);
+                        continue;
+                    }
+                };
                 let face = font.create_font_face();
-                for file in face.get_files() {
-                    if let Some(path) = file.get_font_file_path() {
+                let face_files = match face.files() {
+                    Ok(files) => files,
+                    Err(hr) => {
+                        log::warn!("FontFace::files() failed: {:?}", hr);
+                        continue;
+                    }
+                };
+                for file in face_files {
+                    if let Ok(path) = file.font_file_path() {
                         if files.contains(&path) {
                             continue;
                         }

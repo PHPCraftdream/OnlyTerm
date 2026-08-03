@@ -1463,7 +1463,10 @@ mod test {
             let decoded = Pdu::decode(encoded.as_slice()).unwrap();
             match decoded.pdu {
                 Pdu::SpawnV2(resp) => {
-                    assert_eq!(resp.attach, attach, "attach field did not survive round-trip");
+                    assert_eq!(
+                        resp.attach, attach,
+                        "attach field did not survive round-trip"
+                    );
                 }
                 other => panic!("expected SpawnV2, got {}", other.pdu_name()),
             }
@@ -1479,7 +1482,10 @@ mod test {
         Pdu::SpawnV2(sample_spawn_v2(true))
             .encode(&mut enc_true, 0x10)
             .unwrap();
-        assert_ne!(enc_false, enc_true, "attach value must influence the wire encoding");
+        assert_ne!(
+            enc_false, enc_true,
+            "attach value must influence the wire encoding"
+        );
     }
 
     /// End-to-end round-trip benchmark over a real Unix domain socket (the
@@ -1526,11 +1532,9 @@ mod test {
                 for serial in 0..ITERATIONS {
                     let decoded = decode_raw(&mut stream).expect("server decode");
                     assert_eq!(decoded.serial, serial);
-                    let _resp: GetLinesResponse = deserialize(
-                        std::io::Cursor::new(&decoded.data),
-                        decoded.is_compressed,
-                    )
-                    .expect("server deserialize");
+                    let _resp: GetLinesResponse =
+                        deserialize(std::io::Cursor::new(&decoded.data), decoded.is_compressed)
+                            .expect("server deserialize");
                     encode_raw(0, serial, b"", false, &mut stream).expect("server ack");
                 }
             });
@@ -1548,8 +1552,14 @@ mod test {
                     serialize(response).expect("auto serialize")
                 };
                 total_bytes += data.len();
-                encode_raw(GET_LINES_RESPONSE_IDENT, serial, &data, is_compressed, &mut client)
-                    .expect("client encode");
+                encode_raw(
+                    GET_LINES_RESPONSE_IDENT,
+                    serial,
+                    &data,
+                    is_compressed,
+                    &mut client,
+                )
+                .expect("client encode");
                 let _ack = decode_raw(&mut client).expect("client decode ack");
             }
             let elapsed = start.elapsed();

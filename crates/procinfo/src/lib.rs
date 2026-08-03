@@ -138,9 +138,8 @@ impl Drop for LocalProcessInfo {
         // Default recursive drop-glue for `HashMap<u32, LocalProcessInfo>`
         // would recurse once per level of tree depth. Instead, detach all
         // descendants into a flat work list and drop them iteratively.
-        let mut pending: Vec<LocalProcessInfo> = core::mem::take(&mut self.children)
-            .into_values()
-            .collect();
+        let mut pending: Vec<LocalProcessInfo> =
+            core::mem::take(&mut self.children).into_values().collect();
 
         while let Some(mut node) = pending.pop() {
             pending.extend(core::mem::take(&mut node.children).into_values());

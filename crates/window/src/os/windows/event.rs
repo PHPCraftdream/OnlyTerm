@@ -1,7 +1,11 @@
 use std::io::Error as IoError;
 use std::ptr::{null, null_mut};
 use winapi::um::handleapi::CloseHandle;
-use winapi::um::synchapi::{CreateEventW, ResetEvent, SetEvent, WaitForSingleObject};
+use winapi::um::synchapi::{CreateEventW, ResetEvent, SetEvent};
+// Only `is_signalled` uses these, and it is itself `#[cfg(test)]`.
+#[cfg(test)]
+use winapi::um::synchapi::WaitForSingleObject;
+#[cfg(test)]
 use winapi::um::winbase::WAIT_OBJECT_0;
 use winapi::um::winnt::HANDLE;
 

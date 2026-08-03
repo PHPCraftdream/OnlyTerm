@@ -453,10 +453,8 @@ pub fn allocate(
     // process (or system) file descriptor limit has been exhausted, eg: from
     // repeatedly opening overlays/panes. Propagate the error to the caller
     // instead of panicking and taking down the whole process (#3107).
-    let render_pipe = anyhow::Context::context(
-        Pipe::new(),
-        "allocating pipe for termwiz terminal tab",
-    )?;
+    let render_pipe =
+        anyhow::Context::context(Pipe::new(), "allocating pipe for termwiz terminal tab")?;
 
     let (input_tx, input_rx) = channel();
 
@@ -509,10 +507,8 @@ pub async fn run<
 ) -> anyhow::Result<T> {
     // See the comment in `allocate` above: this can fail under fd exhaustion,
     // and should be reported rather than panicking the whole process (#3107).
-    let render_pipe = anyhow::Context::context(
-        Pipe::new(),
-        "allocating pipe for termwiz terminal tab",
-    )?;
+    let render_pipe =
+        anyhow::Context::context(Pipe::new(), "allocating pipe for termwiz terminal tab")?;
     let render_rx = render_pipe.read;
     let (input_tx, input_rx) = channel();
     let should_close_window = window_id.is_none();
@@ -689,7 +685,9 @@ mod test {
             // this environment) fall back to asserting on the error message
             // path is at least well-formed by closing all of our extra fds;
             // there's nothing further we can assert here.
-            Err(anyhow::anyhow!("could not lower RLIMIT_NOFILE in this environment"))
+            Err(anyhow::anyhow!(
+                "could not lower RLIMIT_NOFILE in this environment"
+            ))
         };
 
         // Restore the fd limit and release our held-open files before making

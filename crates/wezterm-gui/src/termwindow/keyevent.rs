@@ -188,7 +188,11 @@ enum OnlyKeyBindings {
 }
 
 impl super::TermWindow {
-    pub(crate) fn encode_win32_input(&self, pane: &Arc<dyn Pane>, key: &KeyEvent) -> Option<String> {
+    pub(crate) fn encode_win32_input(
+        &self,
+        pane: &Arc<dyn Pane>,
+        key: &KeyEvent,
+    ) -> Option<String> {
         if !self.config.allow_win32_input_mode
             || pane.get_keyboard_encoding() != KeyboardEncoding::Win32
         {
@@ -197,7 +201,11 @@ impl super::TermWindow {
         key.encode_win32_input_mode()
     }
 
-    pub(crate) fn encode_kitty_input(&self, pane: &Arc<dyn Pane>, key: &KeyEvent) -> Option<String> {
+    pub(crate) fn encode_kitty_input(
+        &self,
+        pane: &Arc<dyn Pane>,
+        key: &KeyEvent,
+    ) -> Option<String> {
         if !self.config.enable_kitty_keyboard {
             return None;
         }

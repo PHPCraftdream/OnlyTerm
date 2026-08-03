@@ -432,10 +432,7 @@ impl RenderLayer {
     /// as ordinary local variables in this one function's stack frame,
     /// for exactly as long as `f` runs, so the borrow checker verifies
     /// the whole thing without any transmutes.
-    pub fn with_quad_allocator<R>(
-        &self,
-        f: impl FnOnce(&mut TripleLayerQuadAllocator) -> R,
-    ) -> R {
+    pub fn with_quad_allocator<R>(&self, f: impl FnOnce(&mut TripleLayerQuadAllocator) -> R) -> R {
         let vbs = self.vb.borrow();
         let mut bufs0 = vbs[0].bufs.borrow_mut();
         let mut bufs1 = vbs[1].bufs.borrow_mut();

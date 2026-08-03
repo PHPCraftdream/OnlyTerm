@@ -225,7 +225,13 @@ struct ParseState {
 /// forwards any resulting action batches to the mux. Shared by both the
 /// main receive loop and the hold-timeout/coalescing branches so the
 /// hold/flush logic only lives in one place.
-fn process_chunk(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, state: &mut ParseState, parser: &mut termwiz::escape::parser::Parser, bytes: &[u8]) {
+fn process_chunk(
+    pane: &Weak<dyn Pane>,
+    dead: &Arc<AtomicBool>,
+    state: &mut ParseState,
+    parser: &mut termwiz::escape::parser::Parser,
+    bytes: &[u8],
+) {
     parser.parse(bytes, |action| {
         if state.hold && is_passthrough_query(&action) {
             send_actions_to_mux(pane, dead, vec![action]);

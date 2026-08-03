@@ -357,7 +357,7 @@ impl AsRawSocket for FileDescriptor {
 }
 
 impl AsSocket for FileDescriptor {
-    fn as_socket(&self) -> BorrowedSocket {
+    fn as_socket(&self) -> BorrowedSocket<'_> {
         // SAFETY: `self.as_raw_socket()` returns a valid socket handle; the
         // `BorrowedSocket` borrows it for the lifetime of `self`.
         unsafe { BorrowedSocket::borrow_raw(self.as_raw_socket()) }
@@ -596,14 +596,7 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
         // SAFETY: `getsockname` takes a `*mut SOCKADDR`; same layout-
         // compatibility rationale as `bind` above. `addr_ptr` and `&mut
         // addr_len` are valid out-pointers for the duration of this call.
-        if unsafe {
-            getsockname(
-                s.as_raw_handle() as _,
-                addr_ptr,
-                &mut addr_len,
-            )
-        } != 0
-        {
+        if unsafe { getsockname(s.as_raw_handle() as _, addr_ptr, &mut addr_len) } != 0 {
             return Err(Error::Getsockname(IoError::last_os_error()));
         }
     }
@@ -645,14 +638,7 @@ pub fn socketpair_impl() -> Result<(FileDescriptor, FileDescriptor)> {
         // SAFETY: `connect` takes a `*const SOCKADDR`; same layout-
         // compatibility rationale as `bind` above. `addr_ptr` points at the
         // live `in_addr` local for the duration of this call.
-        if unsafe {
-            connect(
-                client.as_raw_handle() as _,
-                addr_ptr,
-                addr_len,
-            )
-        } != 0
-        {
+        if unsafe { connect(client.as_raw_handle() as _, addr_ptr, addr_len) } != 0 {
             return Err(Error::Connect(IoError::last_os_error()));
         }
     }

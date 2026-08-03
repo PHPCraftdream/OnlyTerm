@@ -311,7 +311,7 @@ fn callback_behavior() -> glium::debug::DebugCallbackBehavior {
 }
 
 impl HasDisplayHandle for WindowInner {
-    fn display_handle(&self) -> Result<DisplayHandle, HandleError> {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         // SAFETY: `WindowsDisplayHandle` is a zero-sized marker with no raw
         // pointers, so borrowing it raw for the lifetime of the handle is sound.
         unsafe {
@@ -323,7 +323,7 @@ impl HasDisplayHandle for WindowInner {
 }
 
 impl HasWindowHandle for WindowInner {
-    fn window_handle(&self) -> Result<WindowHandle, HandleError> {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let mut handle =
             Win32WindowHandle::new(NonZeroIsize::new(self.hwnd.0 as _).expect("non-zero"));
         // SAFETY: passing `null()` for the module name returns the handle of
@@ -1282,7 +1282,7 @@ impl WindowInner {
 }
 
 impl HasDisplayHandle for Window {
-    fn display_handle(&self) -> Result<DisplayHandle, HandleError> {
+    fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         // SAFETY: `WindowsDisplayHandle` is a zero-sized marker with no raw
         // pointers, so borrowing it raw is sound.
         unsafe {
@@ -1294,7 +1294,7 @@ impl HasDisplayHandle for Window {
 }
 
 impl HasWindowHandle for Window {
-    fn window_handle(&self) -> Result<WindowHandle, HandleError> {
+    fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let conn = Connection::get().expect("raw_window_handle only callable on main thread");
         let handle = conn.get_window(self.0).expect("window handle invalid!?");
 
@@ -1916,7 +1916,7 @@ fn get_window_state(hwnd: HWND) -> WindowState {
                     WindowState::default()
                 }
             }
-        },
+        }
     }
 }
 
@@ -2986,9 +2986,9 @@ impl KeyboardLayoutInfo {
     }
 
     /// # Safety
-/// Calls `keybd_event` with synthesized key state; only valid VK/scan codes are
-/// produced from `ToAsciiEx` results.
-unsafe fn clear_key_state() {
+    /// Calls `keybd_event` with synthesized key state; only valid VK/scan codes are
+    /// produced from `ToAsciiEx` results.
+    unsafe fn clear_key_state() {
         let mut out = [0u16; 16];
         let state = [0u8; 256];
         let scan = MapVirtualKeyW(VK_DECIMAL as _, MAPVK_VK_TO_VSC);
@@ -3016,7 +3016,7 @@ unsafe fn clear_key_state() {
     /// and mutates *thread-global* keyboard state (`GetKeyboardState`/
     /// `ToUnicode`), so it must only be called from the UI thread that owns
     /// the keyboard focus, never concurrently from multiple threads.
-unsafe fn probe_alt_gr(&mut self) {
+    unsafe fn probe_alt_gr(&mut self) {
         self.has_alt_gr = false;
 
         let mut state = [0u8; 256];
@@ -3061,7 +3061,7 @@ unsafe fn probe_alt_gr(&mut self) {
     /// Same rationale as `probe_alt_gr` above: no window handle is involved,
     /// but this reads/mutates thread-global keyboard state and must only run
     /// on the UI thread, not concurrently with other callers of these APIs.
-unsafe fn probe_dead_keys(&mut self) {
+    unsafe fn probe_dead_keys(&mut self) {
         self.dead_keys.clear();
 
         let shift_states = [
@@ -3190,7 +3190,7 @@ unsafe fn probe_dead_keys(&mut self) {
     /// Same rationale as `probe_alt_gr`/`probe_dead_keys`: no window handle is
     /// involved; this must only run on the UI thread since it reads/mutates
     /// thread-global keyboard state.
-unsafe fn update(&mut self) {
+    unsafe fn update(&mut self) {
         let current_layout = GetKeyboardLayout(0);
         if current_layout == self.layout {
             // Avoid recomputing this if the layout hasn't changed
@@ -3648,9 +3648,9 @@ unsafe fn key(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<L
                 // way regardless of the active keyboard layout, matching
                 // how every other modifier-based terminal shortcut is
                 // expected to behave.
-                let prefer_physical_for_binding =
-                    (modifiers.contains(Modifiers::CTRL) || modifiers.contains(Modifiers::ALT))
-                        && phys_code.map(|p| p.to_key_code()).is_some();
+                let prefer_physical_for_binding = (modifiers.contains(Modifiers::CTRL)
+                    || modifiers.contains(Modifiers::ALT))
+                    && phys_code.map(|p| p.to_key_code()).is_some();
 
                 let key = if prefer_physical_for_binding {
                     phys_code.map(|p| p.to_key_code())
@@ -3793,7 +3793,7 @@ unsafe fn do_wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
             let layout = lparam as HKL;
             ActivateKeyboardLayout(layout, KLF_REPLACELANG);
             Some(0)
-        },
+        }
         WM_MOUSEMOVE => mouse_move(hwnd, msg, wparam, lparam),
         WM_MOUSELEAVE => mouse_leave(hwnd, msg, wparam, lparam),
         WM_MOUSEHWHEEL | WM_MOUSEWHEEL => mouse_wheel(hwnd, msg, wparam, lparam),

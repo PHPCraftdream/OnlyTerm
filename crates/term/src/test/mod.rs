@@ -780,7 +780,12 @@ fn hebrew_niqqud_and_cantillation_are_stripped() {
     // inconsistent and produces visible rendering glitches, so they are
     // dropped rather than rendered.
     term.print("\u{05e9}\u{0591}\u{05b8}\u{05c1}\u{05dc}\u{05d5}\u{05b9}\u{05dd}");
-    assert_visible_contents(&term, file!(), line!(), &["\u{05e9}\u{05dc}\u{05d5}\u{05dd}"]);
+    assert_visible_contents(
+        &term,
+        file!(),
+        line!(),
+        &["\u{05e9}\u{05dc}\u{05d5}\u{05dd}"],
+    );
 }
 
 /// This test skips over an edge case with cursor positioning,
@@ -1423,12 +1428,7 @@ fn test_resize_reflow_cursor_primary_screen_issue_6623() {
         term.print(format!("{}\r\n", i));
     }
 
-    term.assert_cursor_pos(
-        0,
-        9,
-        Some("cursor on last (blank) row before resize"),
-        None,
-    );
+    term.assert_cursor_pos(0, 9, Some("cursor on last (blank) row before resize"), None);
 
     // "Restore" the window to a smaller size (rows only; columns
     // unchanged, so no line-rewrap is triggered -- this isolates the

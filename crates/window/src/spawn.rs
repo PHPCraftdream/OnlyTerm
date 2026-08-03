@@ -188,7 +188,10 @@ mod test {
             iterations += 1;
             // Guard against an infinite loop turning this test into a hang
             // if `has_any_queued`/`pop_func` ever disagree about queue state.
-            assert!(iterations <= N + 1, "run() did not converge after draining the queue");
+            assert!(
+                iterations <= N + 1,
+                "run() did not converge after draining the queue"
+            );
         }
 
         assert_eq!(counter.load(Ordering::SeqCst), N);

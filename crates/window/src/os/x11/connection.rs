@@ -584,11 +584,11 @@ impl XConnection {
             xcb::Event::Dri2(dri2::Event::BufferSwapComplete(ev)) => {
                 // SAFETY: `ev.as_raw()` is a valid xcb event pointer for this connection.
                 unsafe { self.rewire_event(ev.as_raw()) }
-            },
+            }
             xcb::Event::Dri2(dri2::Event::InvalidateBuffers(ev)) => {
                 // SAFETY: same as the BufferSwapComplete arm above.
                 unsafe { self.rewire_event(ev.as_raw()) }
-            },
+            }
             xcb::Event::RandR(randr) => {
                 log::trace!("{randr:?}");
                 // Clear our cache

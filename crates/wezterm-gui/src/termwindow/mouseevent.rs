@@ -1207,12 +1207,12 @@ mod tests {
 
         // If the Press arrived outside the grace period, nothing is armed,
         // so even a same-position Move afterwards is left untouched.
-        let not_armed =
-            if should_arm_focus_click_move_suppression(Some(Duration::from_millis(200))) {
-                Some(click_coords)
-            } else {
-                None
-            };
+        let not_armed = if should_arm_focus_click_move_suppression(Some(Duration::from_millis(200)))
+        {
+            Some(click_coords)
+        } else {
+            None
+        };
         assert_eq!(not_armed, None);
     }
 

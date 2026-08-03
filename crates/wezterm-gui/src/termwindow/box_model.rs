@@ -860,90 +860,93 @@ impl super::TermWindow {
         // re-borrows the same RefCell -- the previous code expressed that
         // same constraint with an explicit `drop(layers)` before recursing.
         layer.with_quad_allocator(|layers| -> anyhow::Result<()> {
-        self.render_element_background(element, colors, layers, inherited_colors)?;
-        let left = self.dimensions.pixel_width as f32 / -2.0;
-        let top = self.dimensions.pixel_height as f32 / -2.0;
-        match &element.content {
-            ComputedElementContent::Text(cells) => {
-                let mut pos_x = element.content_rect.min_x();
-                for cell in cells {
-                    if pos_x >= element.content_rect.max_x() {
-                        break;
-                    }
-                    match cell {
-                        ElementCell::Sprite(sprite) => {
-                            let width = sprite.coords.width();
-                            let height = sprite.coords.height();
-                            let pos_y = top + element.content_rect.min_y();
-
-                            if pos_x + width as f32 > element.content_rect.max_x() {
-                                break;
-                            }
-
-                            let mut quad = layers.allocate(2)?;
-                            quad.set_position(
-                                pos_x + left,
-                                pos_y,
-                                pos_x + left + width as f32,
-                                pos_y + height as f32,
-                            );
-                            self.resolve_text(colors, inherited_colors).apply(&mut quad);
-                            quad.set_texture(sprite.texture_coords());
-                            quad.set_hsv(None);
-                            pos_x += width as f32;
+            self.render_element_background(element, colors, layers, inherited_colors)?;
+            let left = self.dimensions.pixel_width as f32 / -2.0;
+            let top = self.dimensions.pixel_height as f32 / -2.0;
+            match &element.content {
+                ComputedElementContent::Text(cells) => {
+                    let mut pos_x = element.content_rect.min_x();
+                    for cell in cells {
+                        if pos_x >= element.content_rect.max_x() {
+                            break;
                         }
-                        ElementCell::Glyph(glyph) => {
-                            if let Some(texture) = glyph.texture.as_ref() {
-                                let pos_y = element.content_rect.min_y() as f32 + top
-                                    - (glyph.y_offset + glyph.bearing_y).get() as f32
-                                    + element.baseline;
+                        match cell {
+                            ElementCell::Sprite(sprite) => {
+                                let width = sprite.coords.width();
+                                let height = sprite.coords.height();
+                                let pos_y = top + element.content_rect.min_y();
 
-                                if pos_x + glyph.x_advance.get() as f32
-                                    > element.content_rect.max_x()
-                                {
+                                if pos_x + width as f32 > element.content_rect.max_x() {
                                     break;
                                 }
-                                let pos_x = pos_x + (glyph.x_offset + glyph.bearing_x).get() as f32;
-                                let width = texture.coords.size.width as f32 * glyph.scale as f32;
-                                let height = texture.coords.size.height as f32 * glyph.scale as f32;
 
-                                let mut quad = layers.allocate(1)?;
+                                let mut quad = layers.allocate(2)?;
                                 quad.set_position(
                                     pos_x + left,
                                     pos_y,
-                                    pos_x + left + width,
-                                    pos_y + height,
+                                    pos_x + left + width as f32,
+                                    pos_y + height as f32,
                                 );
                                 self.resolve_text(colors, inherited_colors).apply(&mut quad);
-                                quad.set_texture(texture.texture_coords());
-                                quad.set_has_color(glyph.has_color);
+                                quad.set_texture(sprite.texture_coords());
                                 quad.set_hsv(None);
+                                pos_x += width as f32;
                             }
-                            pos_x += glyph.x_advance.get() as f32;
+                            ElementCell::Glyph(glyph) => {
+                                if let Some(texture) = glyph.texture.as_ref() {
+                                    let pos_y = element.content_rect.min_y() as f32 + top
+                                        - (glyph.y_offset + glyph.bearing_y).get() as f32
+                                        + element.baseline;
+
+                                    if pos_x + glyph.x_advance.get() as f32
+                                        > element.content_rect.max_x()
+                                    {
+                                        break;
+                                    }
+                                    let pos_x =
+                                        pos_x + (glyph.x_offset + glyph.bearing_x).get() as f32;
+                                    let width =
+                                        texture.coords.size.width as f32 * glyph.scale as f32;
+                                    let height =
+                                        texture.coords.size.height as f32 * glyph.scale as f32;
+
+                                    let mut quad = layers.allocate(1)?;
+                                    quad.set_position(
+                                        pos_x + left,
+                                        pos_y,
+                                        pos_x + left + width,
+                                        pos_y + height,
+                                    );
+                                    self.resolve_text(colors, inherited_colors).apply(&mut quad);
+                                    quad.set_texture(texture.texture_coords());
+                                    quad.set_has_color(glyph.has_color);
+                                    quad.set_hsv(None);
+                                }
+                                pos_x += glyph.x_advance.get() as f32;
+                            }
                         }
                     }
                 }
-            }
-            ComputedElementContent::Children(_) => {
-                // handled below, outside of the quad-buffer borrow
-            }
-            ComputedElementContent::Poly { poly, line_width } => {
-                if element.content_rect.width() >= poly.width {
-                    let mut quad = self.poly_quad(
-                        layers,
-                        1,
-                        element.content_rect.origin,
-                        poly.poly,
-                        *line_width,
-                        euclid::size2(poly.width, poly.height),
-                        LinearRgba::TRANSPARENT,
-                    )?;
-                    self.resolve_text(colors, inherited_colors).apply(&mut quad);
+                ComputedElementContent::Children(_) => {
+                    // handled below, outside of the quad-buffer borrow
+                }
+                ComputedElementContent::Poly { poly, line_width } => {
+                    if element.content_rect.width() >= poly.width {
+                        let mut quad = self.poly_quad(
+                            layers,
+                            1,
+                            element.content_rect.origin,
+                            poly.poly,
+                            *line_width,
+                            euclid::size2(poly.width, poly.height),
+                            LinearRgba::TRANSPARENT,
+                        )?;
+                        self.resolve_text(colors, inherited_colors).apply(&mut quad);
+                    }
                 }
             }
-        }
 
-        Ok(())
+            Ok(())
         })?;
 
         if let ComputedElementContent::Children(kids) = &element.content {

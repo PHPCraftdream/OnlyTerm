@@ -4,7 +4,6 @@ use anyhow::{anyhow, bail, Context};
 use async_trait::async_trait;
 use codec::*;
 use config::{configuration, UnixDomain, UnixTarget};
-use futures::AsyncReadExt as _;
 use mux::client::ClientId;
 use mux::connui::ConnectionUI;
 use mux::domain::DomainId;

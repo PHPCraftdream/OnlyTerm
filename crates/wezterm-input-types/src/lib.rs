@@ -2438,8 +2438,7 @@ mod test {
         // With REPORT_ASSOCIATED_TEXT also negotiated, the associated-text
         // field should be present, matching the real CSI-u sequence WezTerm's
         // kitty keyboard protocol emits for this input in practice.
-        let flags_with_text =
-            flags | KittyKeyboardFlags::REPORT_ASSOCIATED_TEXT;
+        let flags_with_text = flags | KittyKeyboardFlags::REPORT_ASSOCIATED_TEXT;
         assert_eq!(
             composed.encode_kitty(flags_with_text),
             "\x1b[9749;1;9749u".to_string()
@@ -2532,7 +2531,10 @@ mod test {
         };
         assert_eq!(plain_enter.encode_kitty(flags), "\r".to_string());
         assert!(ctrl_enter.encode_kitty(flags).starts_with("\x1b["));
-        assert_ne!(plain_enter.encode_kitty(flags), ctrl_enter.encode_kitty(flags));
+        assert_ne!(
+            plain_enter.encode_kitty(flags),
+            ctrl_enter.encode_kitty(flags)
+        );
     }
 
     #[test]

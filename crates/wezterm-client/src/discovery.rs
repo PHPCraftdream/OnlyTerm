@@ -319,7 +319,10 @@ mod windows {
             let holder = NameHolder::new(&path, &class_name).expect("NameHolder::new");
             let resolved = NameHolder::resolve(&class_name).expect("NameHolder::resolve");
 
-            assert_eq!(resolved, path, "resolve must return the full published path");
+            assert_eq!(
+                resolved, path,
+                "resolve must return the full published path"
+            );
             drop(holder);
         }
 

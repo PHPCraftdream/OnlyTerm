@@ -806,9 +806,12 @@ mod tests {
 
         // Mirrors RenderThreadHandle::send_frame's swap-then-check logic,
         // using a unit "frame" (`()`) instead of a real `GpuFrame`.
-        let send_frame = |frame: ()| -> bool {
+        let send_frame = |_frame: ()| -> bool {
             if in_flight.swap(true, Ordering::AcqRel) {
-                drop(frame);
+                // The real `send_frame` drops the rejected `GpuFrame` here,
+                // releasing its GPU resources. The stand-in frame is `()`,
+                // which is `Copy`, so an explicit `drop` would be a no-op
+                // that merely reads as though it did something.
                 repaint_pending.store(true, Ordering::Release);
                 return false;
             }

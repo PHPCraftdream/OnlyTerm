@@ -597,7 +597,10 @@ mod test {
 
     #[test]
     fn has_extension_single_entry() {
-        assert!(has_extension("WGL_EXT_swap_control", "WGL_EXT_swap_control"));
+        assert!(has_extension(
+            "WGL_EXT_swap_control",
+            "WGL_EXT_swap_control"
+        ));
     }
 
     #[test]
