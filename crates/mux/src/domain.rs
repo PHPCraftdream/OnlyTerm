@@ -1,9 +1,8 @@
 //! A Domain represents an instance of a multiplexer.
 //! For example, the gui frontend has its own domain,
 //! and we can connect to a domain hosted by a mux server
-//! that may be local, running "remotely" inside a WSL
-//! container or actually remote, running on the other end
-//! of an ssh session somewhere.
+//! that may be local or actually remote, running on the
+//! other end of an ssh session somewhere.
 
 use crate::localpane::LocalPane;
 use crate::pane::{alloc_pane_id, Pane, PaneId};
@@ -13,11 +12,10 @@ use crate::Mux;
 use anyhow::{bail, Context, Error};
 use async_trait::async_trait;
 use config::keyassignment::RotationDirection;
-use config::{configuration, ExecDomain, SerialDomain, ValueOrFunc, WslDomain};
+use config::{configuration, ExecDomain, SerialDomain, ValueOrFunc};
 use downcast_rs::{impl_downcast, Downcast};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, ExitStatus, MasterPty, PtySize, PtySystem};
-use std::ffi::OsString;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
@@ -242,41 +240,6 @@ impl LocalDomain {
             .cloned()
     }
 
-    fn resolve_wsl_domain(&self) -> Option<WslDomain> {
-        let config = config::configuration();
-
-        // `Config::wsl_domains()` falls back to `WslDomain::default_domains()`
-        // when the user hasn't explicitly configured `wsl_domains`, and that
-        // fallback shells out to `wsl.exe -l -v` synchronously (see
-        // `crates/config/src/wsl.rs`). That subprocess call can take hundreds
-        // of milliseconds to a few seconds (LxssManager/WSL2 VM cold start),
-        // and this function is on the hot path of every single pane spawn
-        // via `build_command`/`fixup_command` -- including for the plain
-        // "local" domain, whose name can never match an auto-discovered
-        // "WSL:<distro>" entry anyway (task #328: this call alone accounted
-        // for ~850ms of `build_command`'s time when spawning a local pane).
-        //
-        // Only pay for the (possibly expensive) enumeration when there is a
-        // real chance of a match:
-        //  - the user explicitly listed `wsl_domains` in their config, which
-        //    is already in-memory and cheap (`Config::wsl_domains()` just
-        //    clones the `Vec` in that case), or
-        //  - `self.name` uses the "WSL:" prefix that auto-discovery always
-        //    assigns (see `WslDomain::default_domains`), which is the only
-        //    way a `LocalDomain` can end up with such a name.
-        // Any other domain name (e.g. "local", exec domains, serial domains)
-        // structurally cannot be a WSL domain, so skip the lookup entirely.
-        if config.wsl_domains.is_none() && !self.name.starts_with("WSL:") {
-            return None;
-        }
-
-        config
-            .wsl_domains()
-            .iter()
-            .find(|d| d.name == self.name)
-            .cloned()
-    }
-
     pub fn with_pty_system(name: &str, pty_system: Box<dyn PtySystem + Send>) -> Self {
         let id = alloc_domain_id();
         Self {
@@ -284,10 +247,6 @@ impl LocalDomain {
             id,
             name: name.to_string(),
         }
-    }
-
-    pub fn new_wsl(wsl: WslDomain) -> Result<Self, Error> {
-        Self::new(&wsl.name)
     }
 
     pub fn new_exec_domain(exec_domain: ExecDomain) -> anyhow::Result<Self> {
@@ -319,49 +278,7 @@ impl LocalDomain {
     }
 
     async fn fixup_command(&self, cmd: &mut CommandBuilder) -> anyhow::Result<()> {
-        if let Some(wsl) = self.resolve_wsl_domain() {
-            let mut args: Vec<OsString> = cmd.get_argv().clone();
-
-            if args.is_empty() {
-                if let Some(def_prog) = &wsl.default_prog {
-                    for arg in def_prog {
-                        args.push(arg.into());
-                    }
-                }
-            }
-
-            let mut argv: Vec<OsString> = vec![
-                "wsl.exe".into(),
-                "--distribution".into(),
-                wsl.distribution
-                    .as_deref()
-                    .unwrap_or(wsl.name.as_str())
-                    .into(),
-            ];
-
-            if let Some(cwd) = cmd.get_cwd() {
-                argv.push("--cd".into());
-                argv.push(cwd.into());
-            }
-
-            if let Some(user) = &wsl.username {
-                argv.push("--user".into());
-                argv.push(user.into());
-            }
-
-            if !args.is_empty() {
-                argv.push("--exec".into());
-                for arg in args {
-                    argv.push(arg);
-                }
-            }
-
-            // TODO: process env list and update WLSENV so that they
-            // get passed through
-
-            cmd.clear_cwd();
-            *cmd.get_argv_mut() = argv;
-        } else if let Some(ed) = self.resolve_exec_domain() {
+        if let Some(ed) = self.resolve_exec_domain() {
             // `ed.fixup_command` used to name a rhai function dispatched
             // here (via `with_rhai_config_on_main_thread`/
             // `emit_async_callback`) to rewrite the command being spawned
@@ -453,24 +370,14 @@ impl LocalDomain {
     ) -> anyhow::Result<CommandBuilder> {
         let config = configuration();
 
-        let wsl = self.resolve_wsl_domain();
-        let default_prog = wsl
-            .as_ref()
-            .map(|wsl| wsl.default_prog.as_ref())
-            .unwrap_or(config.default_prog.as_ref());
+        let default_prog = config.default_prog.as_ref();
 
         let mut cmd = match command {
             Some(mut cmd) => {
                 config.apply_cmd_defaults(&mut cmd, default_prog, config.default_cwd.as_ref());
                 cmd
             }
-            None => config.build_prog(
-                None,
-                default_prog,
-                wsl.as_ref()
-                    .map(|wsl| wsl.default_cwd.as_ref())
-                    .unwrap_or(config.default_cwd.as_ref()),
-            )?,
+            None => config.build_prog(None, default_prog, config.default_cwd.as_ref())?,
         };
         if let Some(dir) = command_dir {
             cmd.cwd(dir);
@@ -890,8 +797,6 @@ impl Domain for LocalDomain {
                 Some(ValueOrFunc::Func(_label_func)) => self.name.to_string(),
                 _ => self.name.to_string(),
             }
-        } else if let Some(wsl) = self.resolve_wsl_domain() {
-            wsl.distribution.unwrap_or_else(|| self.name.to_string())
         } else {
             self.name.to_string()
         }

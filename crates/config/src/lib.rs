@@ -36,7 +36,6 @@ mod units;
 mod unix;
 mod version;
 pub mod window;
-mod wsl;
 
 pub use crate::config::*;
 pub use background::*;
@@ -53,7 +52,6 @@ pub use terminal::*;
 pub use units::*;
 pub use unix::*;
 pub use version::*;
-pub use wsl::*;
 
 type ErrorCallback = fn(&str);
 
