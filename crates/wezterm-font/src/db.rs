@@ -13,6 +13,11 @@ pub struct FontDatabase {
     by_full_name: HashMap<String, Vec<ParsedFont>>,
 }
 
+/// Value cached in `FONT_DIRS_CACHE`: the config generation, the resolved
+/// `font_dirs` list, and the parsed database behind an `Arc` so repeated
+/// construction within one generation is a cheap clone instead of a rescan.
+type FontDirsCacheValue = Option<(usize, Vec<PathBuf>, Arc<FontDatabase>)>;
+
 lazy_static::lazy_static! {
     // Enumerating and parsing every file under `font_dirs` is expensive
     // (hundreds of ms for a system fonts directory with hundreds of
@@ -25,12 +30,18 @@ lazy_static::lazy_static! {
     // config generation and the font_dirs list, so that repeated
     // construction within one generation is a cheap Arc clone instead of
     // a second filesystem scan+parse. See task #312.
-    static ref FONT_DIRS_CACHE: Mutex<Option<(usize, Vec<PathBuf>, Arc<FontDatabase>)>> =
+    static ref FONT_DIRS_CACHE: Mutex<FontDirsCacheValue> =
         Mutex::new(None);
     // The built-in font selection is compiled into the binary and never
     // varies with the user's configuration, so it only ever needs to be
     // parsed once per process.
     static ref BUILT_IN_CACHE: Mutex<Option<Arc<FontDatabase>>> = Mutex::new(None);
+}
+
+impl Default for FontDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FontDatabase {
@@ -45,12 +56,12 @@ impl FontDatabase {
             if let Some(path) = parsed.handle.path_str() {
                 self.by_full_name
                     .entry(path.to_string())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(parsed.clone());
             }
             self.by_full_name
                 .entry(parsed.names().full_name.clone())
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(parsed);
         }
     }

@@ -114,6 +114,10 @@ fn color_stop_to_gradient_stop(stop: &ColorStop) -> GradientStop {
     GradientStop::new(stop.offset as f32, srgba_tuple_to_color(stop.color.into()))
 }
 
+// The eight parameters mirror the OpenType COLR `PaintLinearGradient`
+// record (x0,y0,x1,y1,x2,y2,color_line) one-to-one; bundling them into a
+// struct would obscure that correspondence with the spec.
+#[allow(clippy::too_many_arguments)]
 pub fn paint_linear_gradient(
     painter: &mut Painter,
     x0: f64,
@@ -237,10 +241,7 @@ impl ConicalGradient {
 fn apply_spread(t: f64, extend: SpreadMode) -> f64 {
     match extend {
         SpreadMode::Pad => t.clamp(0.0, 1.0),
-        SpreadMode::Repeat => {
-            let t = t.rem_euclid(1.0);
-            t
-        }
+        SpreadMode::Repeat => t.rem_euclid(1.0),
         SpreadMode::Reflect => {
             let period = t.rem_euclid(2.0);
             if period > 1.0 {
@@ -285,6 +286,10 @@ fn color_at_offset(color_line: &ColorLine, t: f64) -> Color {
     srgba_tuple_to_color(stops[last].color.into())
 }
 
+// Parameters mirror the OpenType COLR `PaintRadialGradient` record
+// (start circle x0,y0,r0 + end circle x1,y1,r1 + color_line) one-to-one;
+// bundling them into a struct would obscure that correspondence with the spec.
+#[allow(clippy::too_many_arguments)]
 pub fn paint_radial_gradient(
     painter: &mut Painter,
     x0: f64,
@@ -437,7 +442,7 @@ fn normalize_color_line(color_line: &mut ColorLine) -> (f64, f64) {
         }
     }
 
-    (smallest as f64, largest as f64)
+    (smallest, largest)
 }
 
 struct ReduceAnchorsIn {
