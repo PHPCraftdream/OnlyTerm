@@ -59,8 +59,8 @@ struct Opt {
 }
 
 fn load_rgba(path: &PathBuf) -> anyhow::Result<RgbaImage> {
-    let img = image::open(path)
-        .map_err(|e| anyhow::anyhow!("failed to open {}: {e}", path.display()))?;
+    let img =
+        image::open(path).map_err(|e| anyhow::anyhow!("failed to open {}: {e}", path.display()))?;
     Ok(img.to_rgba8())
 }
 
@@ -183,10 +183,7 @@ fn main() -> anyhow::Result<()> {
                 let va = meta_a.get(field);
                 let vb = meta_b.get(field);
                 if va != vb {
-                    println!(
-                        "METADATA MISMATCH on `{field}`: a={:?} b={:?}",
-                        va, vb
-                    );
+                    println!("METADATA MISMATCH on `{field}`: a={:?} b={:?}", va, vb);
                     ok = false;
                 }
             }

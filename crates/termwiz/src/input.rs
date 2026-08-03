@@ -2152,14 +2152,15 @@ mod test {
         let cases: &[(KeyCode, wezterm_input_types::KeyCode)] = &[
             (KeyCode::Char('a'), wezterm_input_types::KeyCode::Char('a')),
             (KeyCode::Enter, wezterm_input_types::KeyCode::Char('\r')),
-            (KeyCode::Escape, wezterm_input_types::KeyCode::Char('\u{1b}')),
+            (
+                KeyCode::Escape,
+                wezterm_input_types::KeyCode::Char('\u{1b}'),
+            ),
         ];
 
         for (tw_key, it_key) in cases {
             for is_down in [true, false] {
-                let via_encode = tw_key
-                    .encode(Modifiers::NONE, mode, is_down)
-                    .unwrap();
+                let via_encode = tw_key.encode(Modifiers::NONE, mode, is_down).unwrap();
 
                 let direct = wezterm_input_types::KeyEvent {
                     key: it_key.clone(),

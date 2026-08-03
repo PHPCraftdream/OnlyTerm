@@ -70,8 +70,21 @@ fn generate_output_batch(rng_state: &mut u64, approx_bytes: usize) -> Vec<u8> {
     }
 
     let words = [
-        "fn", "let", "struct", "impl", "match", "error:", "warning:", "ok", "todo", "lorem",
-        "ipsum", "dolor", "sit", "amet", "consectetur",
+        "fn",
+        "let",
+        "struct",
+        "impl",
+        "match",
+        "error:",
+        "warning:",
+        "ok",
+        "todo",
+        "lorem",
+        "ipsum",
+        "dolor",
+        "sit",
+        "amet",
+        "consectetur",
     ];
 
     let mut out = Vec::with_capacity(approx_bytes + 64);

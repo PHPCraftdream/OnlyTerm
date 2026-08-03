@@ -188,8 +188,13 @@ impl FontRasterizer for ColrRasterizer {
         painter.translate(left as f32 * -1., top as f32 * -1.);
         painter.transform(base_transform);
         let mut adapter = ColrGraphPainter::new(&face, &mut painter);
-        face.paint_color_glyph(glyph_id, 0, RgbaColor::new(255, 255, 255, 255), &mut adapter)
-            .ok_or_else(|| anyhow::anyhow!("ColrRasterizer: paint_color_glyph failed on pass 2"))?;
+        face.paint_color_glyph(
+            glyph_id,
+            0,
+            RgbaColor::new(255, 255, 255, 255),
+            &mut adapter,
+        )
+        .ok_or_else(|| anyhow::anyhow!("ColrRasterizer: paint_color_glyph failed on pass 2"))?;
         let has_color = adapter.has_color;
 
         let pixmap = painter
@@ -544,7 +549,13 @@ mod test {
         )
         .unwrap();
 
-        for c in ['\u{1F600}', '\u{1F44D}', '\u{1F308}', '\u{1F929}', '\u{1F970}'] {
+        for c in [
+            '\u{1F600}',
+            '\u{1F44D}',
+            '\u{1F308}',
+            '\u{1F929}',
+            '\u{1F970}',
+        ] {
             let gid = font_info.glyph_id_for_char(c);
             assert_ne!(gid, 0, "no glyph id for {c:?}");
             let glyph = raster.rasterize_glyph(gid as u32, 32.0, 96).unwrap();

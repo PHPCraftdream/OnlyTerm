@@ -38,11 +38,12 @@ impl crate::TermWindow {
         };
 
         // Register the tab bar location
-        self.ui_items_scratch.append(&mut self.tab_bar.compute_ui_items(
-            tab_bar_y as usize,
-            self.render_metrics.cell_size.height as usize,
-            self.render_metrics.cell_size.width as usize,
-        ));
+        self.ui_items_scratch
+            .append(&mut self.tab_bar.compute_ui_items(
+                tab_bar_y as usize,
+                self.render_metrics.cell_size.height as usize,
+                self.render_metrics.cell_size.width as usize,
+            ));
 
         let window_is_transparent =
             !self.window_background.is_empty() || self.config.window_background_opacity != 1.0;

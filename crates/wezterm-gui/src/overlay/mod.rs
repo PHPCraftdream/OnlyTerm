@@ -1,10 +1,10 @@
 use crate::termwindow::TermWindow;
-use mux::pane::{Pane, PaneId};
+use mux::pane::Pane;
 use mux::tab::{Tab, TabId};
 use mux::termwiztermtab::{allocate, TermWizTerminal};
 use std::pin::Pin;
 use std::sync::Arc;
-use wezterm_term::{TerminalConfiguration, TerminalSize};
+use wezterm_term::TerminalConfiguration;
 
 pub mod confirm;
 pub mod copy;
@@ -44,42 +44,6 @@ where
     let future = promise::spawn::spawn_into_new_thread(move || {
         let res = func(tab_id, tw_term);
         TermWindow::schedule_cancel_overlay(window, tab_id, Some(overlay_pane_id));
-        res
-    });
-
-    Ok((tw_tab, Box::pin(future)))
-}
-
-pub fn start_overlay_pane<T, F>(
-    term_window: &TermWindow,
-    pane: &Arc<dyn Pane>,
-    func: F,
-) -> anyhow::Result<(
-    Arc<dyn Pane>,
-    Pin<Box<dyn std::future::Future<Output = anyhow::Result<T>>>>,
-)>
-where
-    T: Send + 'static,
-    F: Send + 'static + FnOnce(PaneId, TermWizTerminal) -> anyhow::Result<T>,
-{
-    let pane_id = pane.pane_id();
-    let dims = pane.get_dimensions();
-    let size = TerminalSize {
-        cols: dims.cols,
-        rows: dims.viewport_rows,
-        pixel_width: term_window.render_metrics.cell_size.width as usize * dims.cols,
-        pixel_height: term_window.render_metrics.cell_size.height as usize * dims.viewport_rows,
-        dpi: dims.dpi,
-    };
-    let term_config: Arc<dyn TerminalConfiguration + Send + Sync> =
-        Arc::new(config::TermConfig::with_config(term_window.config.clone()));
-    let (tw_term, tw_tab) = allocate(size, term_config)?;
-
-    let window = term_window.window.clone().unwrap();
-
-    let future = promise::spawn::spawn_into_new_thread(move || {
-        let res = func(pane_id, tw_term);
-        TermWindow::schedule_cancel_overlay_for_pane(window, pane_id);
         res
     });
 

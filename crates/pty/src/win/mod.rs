@@ -100,7 +100,8 @@ impl WinChild {
 /// so blocking here for up to 5 seconds does not stall the GUI/mux thread.
 fn kill_gracefully_then_forcefully(proc: OwnedHandle, job: Option<OwnedHandle>) {
     // SAFETY: `proc` is a duplicated, valid process handle.
-    let wait_result = unsafe { WaitForSingleObject(proc.as_raw_handle() as _, GRACEFUL_KILL_TIMEOUT_MS) };
+    let wait_result =
+        unsafe { WaitForSingleObject(proc.as_raw_handle() as _, GRACEFUL_KILL_TIMEOUT_MS) };
     const WAIT_OBJECT_0: DWORD = 0;
     if wait_result != WAIT_OBJECT_0 {
         // Still running after the grace period: escalate to a forceful
@@ -158,7 +159,10 @@ impl ChildKiller for WinChildKiller {
     fn kill(&mut self) -> IoResult<()> {
         let proc = match &self.proc {
             Some(proc) => proc.try_clone().map_err(|e| {
-                IoError::new(std::io::ErrorKind::Other, format!("Failed to clone handle: {}", e))
+                IoError::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to clone handle: {}", e),
+                )
             })?,
             // No handle available (eg: because an earlier duplication
             // attempt failed); treat this as a no-op rather than panicking

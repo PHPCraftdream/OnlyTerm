@@ -8,7 +8,7 @@ use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::cmp::Eq;
 use std::fmt::Debug;
-use std::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
+use std::hash::{BuildHasher, BuildHasherDefault, Hash};
 use std::rc::Rc;
 
 struct Entry<K, V> {
@@ -117,9 +117,7 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
     }
 
     fn bucket_for_key<Q: Hash>(&self, k: &Q) -> usize {
-        let mut hasher = self.hasher.build_hasher();
-        k.hash(&mut hasher);
-        (hasher.finish() as usize) % self.buckets.len()
+        (self.hasher.hash_one(k) as usize) % self.buckets.len()
     }
 
     pub fn len(&self) -> usize {
@@ -188,7 +186,7 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
                     .unwrap();
                 {
                     let mut freq = entry.freq.borrow_mut();
-                    *freq = *freq / delta;
+                    *freq /= delta;
                 }
                 self.frequency_index.insert(lfu_entry);
             }
@@ -370,7 +368,7 @@ mod test {
         }
     }
 
-    fn frequency_order<K, V, S>(cache: &LfuCache<K, V, S>) -> Vec<EntryData<K, V>> {
+    fn frequency_order<K, V, S>(cache: &LfuCache<K, V, S>) -> Vec<EntryData<'_, K, V>> {
         let mut entries = vec![];
         for item in cache.frequency_index.iter() {
             entries.push(EntryData::new(item));
@@ -378,7 +376,7 @@ mod test {
         entries
     }
 
-    fn recency_order<K, V, S>(cache: &LfuCache<K, V, S>) -> Vec<EntryData<K, V>> {
+    fn recency_order<K, V, S>(cache: &LfuCache<K, V, S>) -> Vec<EntryData<'_, K, V>> {
         let mut entries = vec![];
         for item in cache.recency_index.iter() {
             entries.push(EntryData::new(item));

@@ -17,6 +17,10 @@ pub struct InputMap {
 }
 
 impl InputMap {
+    /// Only the tests below build an input map from the built-in defaults;
+    /// every real caller has a `ConfigHandle` already and goes through
+    /// `new`.
+    #[cfg(test)]
     pub fn default_input_map() -> Self {
         let config = ConfigHandle::default_config();
         Self::new(&config)
@@ -707,9 +711,10 @@ fn rewrite_dynamic_key_string(s: &str) -> String {
         }
     }) {
         KeyCode::Char(c)
-    } else if let Some(phys) = s.strip_prefix("phys:").and_then(|rest| {
-        <PhysKeyCode as std::convert::TryFrom<&str>>::try_from(rest).ok()
-    }) {
+    } else if let Some(phys) = s
+        .strip_prefix("phys:")
+        .and_then(|rest| <PhysKeyCode as std::convert::TryFrom<&str>>::try_from(rest).ok())
+    {
         KeyCode::Physical(phys)
     } else {
         // Bare key name (e.g. "Enter", "F1") or a form we don't specially

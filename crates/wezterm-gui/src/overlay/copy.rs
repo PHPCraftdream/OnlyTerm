@@ -232,7 +232,10 @@ impl CopyOverlay {
     /// actions inside action.Multiple. See issue #3302.
     pub fn current_selection(&self) -> Option<(SelectionRange, bool)> {
         let render = self.render.lock();
-        Some((*render.selection_range.as_ref()?, render.selection_rectangular))
+        Some((
+            *render.selection_range.as_ref()?,
+            render.selection_rectangular,
+        ))
     }
 }
 

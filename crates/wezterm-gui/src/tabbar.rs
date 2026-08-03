@@ -51,8 +51,6 @@ struct TitleText {
     has_indeterminate: bool,
 }
 
-
-
 /// pct is a percentage in the range 0-100.
 /// We want to map it to one of the nerdfonts:
 ///
@@ -175,16 +173,16 @@ pub(crate) fn basename_of_path(path: &str) -> String {
 
     // Not a URL at all; treat it as a plain filesystem path.
     let trimmed = path.trim_end_matches(['/', '\\']);
-    match std::path::Path::new(trimmed).file_name().and_then(|n| n.to_str()) {
+    match std::path::Path::new(trimmed)
+        .file_name()
+        .and_then(|n| n.to_str())
+    {
         Some(name) => name.to_string(),
         None => path.to_string(),
     }
 }
 
-fn compute_tab_title(
-    tab: &TabInformation,
-    config: &ConfigHandle,
-) -> TitleText {
+fn compute_tab_title(tab: &TabInformation, config: &ConfigHandle) -> TitleText {
     let mut items = vec![];
     let mut len = 0;
     let mut has_indeterminate = false;
@@ -833,22 +831,34 @@ mod tests {
     #[test]
     fn num_padding_cells_zero_cell_width_falls_back_to_10() {
         let params = params_with_padding(64);
-        assert_eq!(TabBarState::compute_num_padding_cells(0.0, Some(&params)), 10);
+        assert_eq!(
+            TabBarState::compute_num_padding_cells(0.0, Some(&params)),
+            10
+        );
     }
 
     #[test]
     fn num_padding_cells_rounds_up() {
         // padding_left=64, cell_width=10: 64 + 0.5*10 = 69; 69/10 = 6.9 -> ceil 7
         let params = params_with_padding(64);
-        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 7);
+        assert_eq!(
+            TabBarState::compute_num_padding_cells(10.0, Some(&params)),
+            7
+        );
 
         // padding_left=70, cell_width=10: 70 + 5 = 75; 75/10 = 7.5 -> ceil 8
         let params = params_with_padding(70);
-        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 8);
+        assert_eq!(
+            TabBarState::compute_num_padding_cells(10.0, Some(&params)),
+            8
+        );
 
         // Exact multiple: 15 + 5 = 20; 20/10 = 2.0 -> ceil 2 (no over-reserve)
         let params = params_with_padding(15);
-        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 2);
+        assert_eq!(
+            TabBarState::compute_num_padding_cells(10.0, Some(&params)),
+            2
+        );
     }
 
     #[test]
@@ -856,8 +866,14 @@ mod tests {
         // Even with no measured button geometry, the half-cell breathing room
         // rounds up to one whole cell.
         let params = Parameters::default();
-        assert_eq!(TabBarState::compute_num_padding_cells(10.0, Some(&params)), 1);
-        assert_eq!(TabBarState::compute_num_padding_cells(7.0, Some(&params)), 1);
+        assert_eq!(
+            TabBarState::compute_num_padding_cells(10.0, Some(&params)),
+            1
+        );
+        assert_eq!(
+            TabBarState::compute_num_padding_cells(7.0, Some(&params)),
+            1
+        );
     }
 
     use super::basename_of_path;

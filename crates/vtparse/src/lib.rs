@@ -1267,7 +1267,11 @@ mod test {
                     byte: b'\\',
                 },
                 VTAction::CsiDispatch {
-                    params: vec![CsiParam::Integer(1), CsiParam::P(b';'), CsiParam::Integer(32)],
+                    params: vec![
+                        CsiParam::Integer(1),
+                        CsiParam::P(b';'),
+                        CsiParam::Integer(32)
+                    ],
                     parameters_truncated: false,
                     byte: b'm',
                 },

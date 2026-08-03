@@ -48,9 +48,7 @@ fn print_new_log_entries(term: &mut TermWizTerminal) -> termwiz::Result<()> {
         LATEST_LOG_ENTRY.lock().unwrap().replace(entry.then);
 
         changes.push(Change::AllAttributes(CellAttributes::default()));
-        changes.push(Change::Text(
-            entry.then.format("%H:%M:%S%.3f ").to_string(),
-        ));
+        changes.push(Change::Text(entry.then.format("%H:%M:%S%.3f ").to_string()));
 
         changes.push(
             AttributeChange::Foreground(match entry.level {

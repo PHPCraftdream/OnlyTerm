@@ -166,7 +166,10 @@ fn resolve_glyph_id(parsed: &ParsedFont, opt: &Opt) -> anyhow::Result<u32> {
             c as u32
         );
     }
-    log::info!("codepoint {c:?} (U+{:04X}) -> glyph id {glyph_id}", c as u32);
+    log::info!(
+        "codepoint {c:?} (U+{:04X}) -> glyph id {glyph_id}",
+        c as u32
+    );
     Ok(glyph_id as u32)
 }
 
@@ -237,7 +240,11 @@ fn dump_one(
         }
     }
     img.save(out_png)?;
-    log::info!("[{}] wrote {}", selection_name(selection), out_png.display());
+    log::info!(
+        "[{}] wrote {}",
+        selection_name(selection),
+        out_png.display()
+    );
 
     let meta = GlyphMetadata {
         rasterizer: selection_name(selection),
@@ -254,7 +261,11 @@ fn dump_one(
     };
     let json = serde_json::to_string_pretty(&meta)?;
     std::fs::write(out_json, json)?;
-    log::info!("[{}] wrote {}", selection_name(selection), out_json.display());
+    log::info!(
+        "[{}] wrote {}",
+        selection_name(selection),
+        out_json.display()
+    );
 
     Ok(())
 }

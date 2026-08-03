@@ -15,13 +15,13 @@ use std::{mem, ptr};
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::{HRESULT, S_OK};
 use winapi::um::handleapi::*;
-use winapi::um::jobapi2::{
-    AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
-};
+use winapi::um::jobapi2::{AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject};
 use winapi::um::processthreadsapi::*;
+// `CREATE_NEW_PROCESS_GROUP` is deliberately not imported: see the note at
+// the `dwCreationFlags` assignment below, and `super::mod`'s commentary on
+// why the CTRL_BREAK_EVENT step was dropped.
 use winapi::um::winbase::{
-    CREATE_NEW_PROCESS_GROUP, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES, STARTUPINFOEXW,
 };
 use winapi::um::wincon::COORD;
 use winapi::um::winnt::{
@@ -317,7 +317,8 @@ impl PseudoCon {
             } else {
                 // SAFETY: Both `job` (from CreateJobObjectW) and `proc`
                 // (from CreateProcessW) are valid handles.
-                let assign_res = unsafe { AssignProcessToJobObject(job, proc.as_raw_handle() as _) };
+                let assign_res =
+                    unsafe { AssignProcessToJobObject(job, proc.as_raw_handle() as _) };
                 if assign_res == 0 {
                     log::warn!(
                         "AssignProcessToJobObject failed: {}; descendant processes of \

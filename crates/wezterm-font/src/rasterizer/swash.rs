@@ -130,10 +130,7 @@ impl SwashRasterizer {
         let handle: &FontDataHandle = &parsed.handle;
         let data = handle.source.load_data()?.into_owned().into_boxed_slice();
         let font = FontRef::from_index(&data, handle.index as usize).ok_or_else(|| {
-            anyhow::anyhow!(
-                "swash failed to parse font face at index {}",
-                handle.index
-            )
+            anyhow::anyhow!("swash failed to parse font face at index {}", handle.index)
         })?;
         let offset = font.offset;
         let key = font.key;
@@ -215,8 +212,14 @@ impl FontRasterizer for SwashRasterizer {
 
         let image = render.render(&mut scaler, glyph_pos as u16);
 
-        let width = image.as_ref().map(|i| i.placement.width as usize).unwrap_or(0);
-        let height = image.as_ref().map(|i| i.placement.height as usize).unwrap_or(0);
+        let width = image
+            .as_ref()
+            .map(|i| i.placement.width as usize)
+            .unwrap_or(0);
+        let height = image
+            .as_ref()
+            .map(|i| i.placement.height as usize)
+            .unwrap_or(0);
 
         if width == 0 || height == 0 {
             // Either `Render::render` couldn't scale a plain outline for
