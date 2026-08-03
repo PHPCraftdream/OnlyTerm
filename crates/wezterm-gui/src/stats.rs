@@ -10,7 +10,11 @@ use tabout::{tabulate_output, Alignment, Column};
 
 static ENABLE_STAT_PRINT: AtomicBool = AtomicBool::new(true);
 lazy_static::lazy_static! {
-    static ref INNER: Arc<Mutex<Inner>> = make_inner();
+    static ref INNER: Arc<Mutex<Inner>> = Arc::new(Mutex::new(Inner {
+        histograms: HashMap::new(),
+        throughput: HashMap::new(),
+        counters: HashMap::new(),
+    }));
 }
 
 struct ThroughputInner {
@@ -266,14 +270,6 @@ impl Inner {
     }
 }
 
-fn make_inner() -> Arc<Mutex<Inner>> {
-    Arc::new(Mutex::new(Inner {
-        histograms: HashMap::new(),
-        throughput: HashMap::new(),
-        counters: HashMap::new(),
-    }))
-}
-
 pub struct Stats {
     inner: Arc<Mutex<Inner>>,
 }
@@ -351,4 +347,3 @@ impl Recorder for Stats {
         }
     }
 }
-

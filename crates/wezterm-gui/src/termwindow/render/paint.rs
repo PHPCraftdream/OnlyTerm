@@ -354,8 +354,9 @@ impl crate::TermWindow {
         // (which may run on a different thread once rendering is moved
         // off the GUI thread) never has to synchronize with the render
         // pass via a lock.
-        self.ui_items
-            .store(std::sync::Arc::new(std::mem::take(&mut self.ui_items_scratch)));
+        self.ui_items.store(std::sync::Arc::new(std::mem::take(
+            &mut self.ui_items_scratch,
+        )));
 
         Ok(())
     }

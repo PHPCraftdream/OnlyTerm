@@ -1,6 +1,6 @@
+use crate::overlay::CopyOverlay;
 use crate::selection::{Selection, SelectionCoordinate, SelectionMode, SelectionRange, SelectionX};
 use ::window::WindowOps;
-use crate::overlay::CopyOverlay;
 use mux::pane::{Pane, PaneId};
 use std::cell::RefMut;
 use std::sync::Arc;

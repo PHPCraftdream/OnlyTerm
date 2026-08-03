@@ -596,10 +596,8 @@ impl Pane for LocalPane {
                     // `writer()` accessor, which is part of the `Pane`
                     // trait's public surface). The real writer is moved
                     // out for deferred dropping, same as the pty.
-                    let mut taken_writer = std::mem::replace(
-                        &mut *self.writer.lock(),
-                        Box::new(std::io::sink()),
-                    );
+                    let mut taken_writer =
+                        std::mem::replace(&mut *self.writer.lock(), Box::new(std::io::sink()));
 
                     // Send the soft signal, and drop the pty/writer once
                     // the grace period has elapsed, all on a detached
@@ -2058,7 +2056,8 @@ mod tests {
 
     impl Drop for FakeMasterPty {
         fn drop(&mut self) {
-            self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.dropped
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -2111,7 +2110,8 @@ mod tests {
 
     impl Drop for TrackedWriter {
         fn drop(&mut self) {
-            self.dropped.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.dropped
+                .store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }
 
@@ -2371,9 +2371,7 @@ mod tests {
         // complete, then give it a moment to actually run.
         drop(guard);
         let mut waited = Duration::ZERO;
-        while !wrote.load(std::sync::atomic::Ordering::SeqCst)
-            && waited < Duration::from_secs(5)
-        {
+        while !wrote.load(std::sync::atomic::Ordering::SeqCst) && waited < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
             waited += Duration::from_millis(10);
         }
@@ -2493,9 +2491,7 @@ mod tests {
         // complete, then give it a moment to actually run.
         drop(guard);
         let mut waited = Duration::ZERO;
-        while !wrote.load(std::sync::atomic::Ordering::SeqCst)
-            && waited < Duration::from_secs(5)
-        {
+        while !wrote.load(std::sync::atomic::Ordering::SeqCst) && waited < Duration::from_secs(5) {
             std::thread::sleep(Duration::from_millis(10));
             waited += Duration::from_millis(10);
         }
@@ -2871,7 +2867,10 @@ mod tests {
         #[cfg(unix)]
         {
             assert_eq!(pane.tty_name(), None);
-            assert_eq!(pane.get_foreground_process_info(CachePolicy::FetchImmediate), None);
+            assert_eq!(
+                pane.get_foreground_process_info(CachePolicy::FetchImmediate),
+                None
+            );
 
             // can_close_without_prompting()'s pty-derived "no leader"
             // check only exists on unix (see the `#[cfg(unix)]` block in

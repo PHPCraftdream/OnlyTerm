@@ -97,7 +97,9 @@ fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
 
     let text = match (&opt.text, &opt.text_file) {
-        (_, Some(path)) => std::fs::read_to_string(path)?.trim_end_matches('\n').to_string(),
+        (_, Some(path)) => std::fs::read_to_string(path)?
+            .trim_end_matches('\n')
+            .to_string(),
         (Some(text), None) => text.clone(),
         (None, None) => anyhow::bail!("either --text or --text-file must be given"),
     };
@@ -180,7 +182,8 @@ fn main() -> anyhow::Result<()> {
                             + info.x_offset.get() as f32
                             + glyph.bearing_x.get() as f32;
                         let top = cell_height
-                            + (descender - (info.y_offset.get() as f32 + glyph.bearing_y.get() as f32));
+                            + (descender
+                                - (info.y_offset.get() as f32 + glyph.bearing_y.get() as f32));
                         blit(&mut canvas, &glyph, px.round() as i32, top.round() as i32);
                     }
                 }

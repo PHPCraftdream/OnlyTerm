@@ -232,7 +232,12 @@ fn clamp_to_char_boundaries(s: &str, range: Range<usize>) -> Range<usize> {
         end = start;
     }
     if start != range.start.min(len) || end != range.end.min(len) {
-        log::warn!("clamp_to_char_boundaries adjusted {:?} -> {:?} in {:?}", range, start..end, s);
+        log::warn!(
+            "clamp_to_char_boundaries adjusted {:?} -> {:?} in {:?}",
+            range,
+            start..end,
+            s
+        );
     }
     start..end
 }
@@ -361,7 +366,10 @@ impl RustybuzzShaper {
 
         let handle = &self.handles[font_idx];
         let data = handle.handle.source.load_data().with_context(|| {
-            format!("loading raw font bytes for rustybuzz face {:?}", handle.handle)
+            format!(
+                "loading raw font bytes for rustybuzz face {:?}",
+                handle.handle
+            )
         })?;
         // `handle.handle.index` is a plain collection index (see
         // `parse_and_collect_font_info`/`ParsedFont::from_face`, which
@@ -370,7 +378,8 @@ impl RustybuzzShaper {
         // way FreeType's own face-index convention used to require).
         let face_index = handle.handle.index;
 
-        let mut owned = OwnedRbFace::from_bytes(data.clone().into_owned().into_boxed_slice(), face_index)?;
+        let mut owned =
+            OwnedRbFace::from_bytes(data.clone().into_owned().into_boxed_slice(), face_index)?;
 
         // Resolve named-instance coordinates (if any) using the same raw
         // bytes, via a transient `ttf_parser::Face` purely to read
@@ -496,7 +505,9 @@ impl RustybuzzShaper {
                     };
 
                     if *pair.last_size_and_dpi.borrow() != Some((point_size, dpi)) {
-                        pair.last_size_and_dpi.borrow_mut().replace((point_size, dpi));
+                        pair.last_size_and_dpi
+                            .borrow_mut()
+                            .replace((point_size, dpi));
                     }
 
                     let pixel_size = point_size * dpi as f64 / 72.0;
@@ -633,8 +644,10 @@ impl RustybuzzShaper {
             let cluster_info = cluster_resolver
                 .get(infos[0].cluster)
                 .expect("assigned above");
-            let sub_range =
-                clamp_to_char_boundaries(s, cluster_info.start..cluster_info.start + cluster_info.byte_len);
+            let sub_range = clamp_to_char_boundaries(
+                s,
+                cluster_info.start..cluster_info.start + cluster_info.byte_len,
+            );
             let substr = &s[sub_range.clone()];
 
             if cluster_info.incomplete && font_idx + 1 < self.handles.len() {
@@ -695,7 +708,13 @@ impl RustybuzzShaper {
             // discarding the shaping of) the base letter it belongs to.
             let total_width: f64 = infos
                 .iter()
-                .map(|info| if info.codepoint == 0 { 0. } else { info.x_advance })
+                .map(|info| {
+                    if info.codepoint == 0 {
+                        0.
+                    } else {
+                        info.x_advance
+                    }
+                })
                 .sum();
             let mut remaining_cells = cluster_info.cell_width;
 
@@ -1236,10 +1255,20 @@ mod test {
 
         let text = "\u{5d4}\u{5b4}\u{5d9}\u{5d0}"; // he + hiriq + yod + alef ("הִיא")
         let config = config::configuration();
-        let shaper = RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+        let shaper =
+            RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
         let mut no_glyphs = vec![];
         let info = shaper
-            .shape(text, 14., 72, &mut no_glyphs, None, Direction::RightToLeft, None, None)
+            .shape(
+                text,
+                14.,
+                72,
+                &mut no_glyphs,
+                None,
+                Direction::RightToLeft,
+                None,
+                None,
+            )
             .unwrap();
 
         let total_cells: usize = info.iter().map(|i| i.num_cells as usize).sum();
@@ -1309,7 +1338,11 @@ mod test {
             for i in &info {
                 eprintln!(
                     "  glyph_pos={} num_cells={} x_advance={:.2} cluster={} only_char={:?}",
-                    i.glyph_pos, i.num_cells, i.x_advance.get(), i.cluster, i.only_char
+                    i.glyph_pos,
+                    i.num_cells,
+                    i.x_advance.get(),
+                    i.cluster,
+                    i.only_char
                 );
             }
             assert_eq!(
@@ -1431,7 +1464,11 @@ mod test {
             // A closing ASCII apostrophe is a quote, not a geresh: it
             // must stay outside the phrase it closes rather than being
             // dragged to the far side of it.
-            ("'", "דע לפני מי אתה עומד", "' / 'знай, перед кем ты стоишь'"),
+            (
+                "'",
+                "דע לפני מי אתה עומד",
+                "' / 'знай, перед кем ты стоишь'",
+            ),
         ] {
             let text = format!("{before}{phrase}{after}");
             let want = format!(
@@ -1643,7 +1680,11 @@ mod test {
         // `Line::from_text`.
         let mut split = Line::new(0);
         for (idx, c) in "שָׁלוֹם".chars().enumerate() {
-            split.set_cell(idx, termwiz::cell::Cell::new(c, CellAttributes::default()), 0);
+            split.set_cell(
+                idx,
+                termwiz::cell::Cell::new(c, CellAttributes::default()),
+                0,
+            );
         }
 
         // Neither JetBrains Mono nor Lucida Console has ANY Hebrew coverage
@@ -1655,7 +1696,11 @@ mod test {
         // starting at byte 0) never did.
         let prefixed = Line::from_text("echo שָׁלוֹם", &CellAttributes::default(), 0, None);
 
-        for (label, line) in [("combined", &combined), ("split", &split), ("prefixed", &prefixed)] {
+        for (label, line) in [
+            ("combined", &combined),
+            ("split", &split),
+            ("prefixed", &prefixed),
+        ] {
             let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
 
             let config = config::configuration();
@@ -1811,27 +1856,63 @@ mod test {
             "abc",
             1.0,
             &[
-                GlyphBaseline { glyph_pos: 189, cluster: 0, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 214, cluster: 1, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 215, cluster: 2, x_advance: 6.0 },
+                GlyphBaseline {
+                    glyph_pos: 189,
+                    cluster: 0,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 214,
+                    cluster: 1,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 215,
+                    cluster: 2,
+                    x_advance: 6.0,
+                },
             ],
         );
         assert_shape_matches_baseline(
             "x x",
             1.0,
             &[
-                GlyphBaseline { glyph_pos: 367, cluster: 0, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 958, cluster: 1, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 367, cluster: 2, x_advance: 6.0 },
+                GlyphBaseline {
+                    glyph_pos: 367,
+                    cluster: 0,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 958,
+                    cluster: 1,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 367,
+                    cluster: 2,
+                    x_advance: 6.0,
+                },
             ],
         );
         assert_shape_matches_baseline(
             "x\u{3000}x",
             1.0,
             &[
-                GlyphBaseline { glyph_pos: 367, cluster: 0, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 958, cluster: 1, x_advance: 10.0 },
-                GlyphBaseline { glyph_pos: 367, cluster: 4, x_advance: 6.0 },
+                GlyphBaseline {
+                    glyph_pos: 367,
+                    cluster: 0,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 958,
+                    cluster: 1,
+                    x_advance: 10.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 367,
+                    cluster: 4,
+                    x_advance: 6.0,
+                },
             ],
         );
     }
@@ -1857,23 +1938,47 @@ mod test {
         assert_shape_matches_baseline(
             "<",
             1.0,
-            &[GlyphBaseline { glyph_pos: 1052, cluster: 0, x_advance: 6.0 }],
+            &[GlyphBaseline {
+                glyph_pos: 1052,
+                cluster: 0,
+                x_advance: 6.0,
+            }],
         );
         assert_shape_matches_baseline(
             "<-",
             1.0,
             &[
-                GlyphBaseline { glyph_pos: 1742, cluster: 0, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 1588, cluster: 1, x_advance: 6.0 },
+                GlyphBaseline {
+                    glyph_pos: 1742,
+                    cluster: 0,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 1588,
+                    cluster: 1,
+                    x_advance: 6.0,
+                },
             ],
         );
         assert_shape_matches_baseline(
             "<--",
             1.0,
             &[
-                GlyphBaseline { glyph_pos: 1742, cluster: 0, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 1742, cluster: 1, x_advance: 6.0 },
-                GlyphBaseline { glyph_pos: 1589, cluster: 2, x_advance: 6.0 },
+                GlyphBaseline {
+                    glyph_pos: 1742,
+                    cluster: 0,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 1742,
+                    cluster: 1,
+                    x_advance: 6.0,
+                },
+                GlyphBaseline {
+                    glyph_pos: 1589,
+                    cluster: 2,
+                    x_advance: 6.0,
+                },
             ],
         );
     }

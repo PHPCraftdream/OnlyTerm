@@ -271,9 +271,7 @@ impl crate::TermWindow {
                 return;
             }
             _ => {
-                self.scheduled_budget_repaint
-                    .borrow_mut()
-                    .replace(next_due);
+                self.scheduled_budget_repaint.borrow_mut().replace(next_due);
             }
         }
 

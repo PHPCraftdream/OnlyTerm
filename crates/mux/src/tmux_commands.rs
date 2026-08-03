@@ -680,10 +680,8 @@ fn parse_pane_line(line: &str) -> anyhow::Result<PaneItem> {
     // so skip those prior to parsing them
     let session_id =
         parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing session_id"))?)?;
-    let window_id =
-        parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing window_id"))?)?;
-    let pane_id =
-        parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing pane_id"))?)?;
+    let window_id = parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing window_id"))?)?;
+    let pane_id = parse_sigil_number(fields.next().ok_or_else(|| anyhow!("missing pane_id"))?)?;
     let _pane_index = fields
         .next()
         .ok_or_else(|| anyhow!("missing pane_index"))?

@@ -1668,6 +1668,11 @@ impl WcLookupTable {
 
 #[cfg(test)]
 mod test {
+    // This file is also pulled into `benches/wcwidth.rs` via `include!`, and
+    // there `super` is the bench binary's root rather than this module, so
+    // the glob brings in nothing and is reported as unused. It is genuinely
+    // needed for the normal library build.
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]

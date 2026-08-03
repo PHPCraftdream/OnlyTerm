@@ -87,8 +87,8 @@ impl Cache {
     /// the cache table exists.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
-        let db =
-            Database::create(path).with_context(|| format!("opening redb cache {}", path.display()))?;
+        let db = Database::create(path)
+            .with_context(|| format!("opening redb cache {}", path.display()))?;
         // Create the table up front so reads never have to.
         let txn = db.begin_write().context("opening redb write transaction")?;
         {
@@ -120,12 +120,7 @@ impl Topic {
 
     /// Stores `value` under `key`, expiring after `ttl`.
     pub fn set(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
-        write_entry(
-            &self.db,
-            &storage_key_for(&self.topic, key),
-            value,
-            ttl,
-        )
+        write_entry(&self.db, &storage_key_for(&self.topic, key), value, ttl)
     }
 
     /// Looks up `key`, returning a [`KeyUpdater`] plus the cached value if a
@@ -234,12 +229,7 @@ mod tests {
     /// Mirrors the fetch/refresh decision made by `main::fetch_url`: a miss
     /// calls the (mock) network and records the value; a hit returns the
     /// cached body without touching the network counter.
-    async fn fetch(
-        cache: &Cache,
-        url: &str,
-        ttl: Duration,
-        fetch_calls: &mut u32,
-    ) -> Vec<u8> {
+    async fn fetch(cache: &Cache, url: &str, ttl: Duration, fetch_calls: &mut u32) -> Vec<u8> {
         let topic = cache.topic("data-by-url").expect("topic");
         let (updater, item) = topic.get_for_update(url).await.expect("get_for_update");
         if let Some(item) = item {
@@ -298,7 +288,9 @@ mod tests {
 
         let (updater, item) = topic.get_for_update("k1").await.expect("get_for_update");
         assert!(item.is_none(), "cold key must be a miss");
-        updater.write(b"v1", Duration::from_secs(3600)).expect("write");
+        updater
+            .write(b"v1", Duration::from_secs(3600))
+            .expect("write");
 
         // The synchronous `get` used by base16 sync must see the same value.
         let hit = topic.get("k1").expect("get").expect("should be a hit");
@@ -332,7 +324,9 @@ mod tests {
 
         let (updater, item) = topic.get_for_update("k1").await.expect("get_for_update");
         assert!(item.is_none(), "unrelated key must be a miss");
-        updater.write(b"v1", Duration::from_secs(3600)).expect("write");
+        updater
+            .write(b"v1", Duration::from_secs(3600))
+            .expect("write");
 
         let (_, k1_again) = topic.get_for_update("k1").await.expect("get_for_update k1");
         let (_, k2) = topic.get_for_update("k2").await.expect("get_for_update k2");
@@ -347,10 +341,7 @@ mod tests {
         let t2 = cache.topic("topic-two").expect("topic");
         t1.set("same-key", b"from-one", Duration::from_secs(3600))
             .expect("set");
-        assert_eq!(
-            t1.get("same-key").expect("get").unwrap().data,
-            b"from-one"
-        );
+        assert_eq!(t1.get("same-key").expect("get").unwrap().data, b"from-one");
         assert!(
             t2.get("same-key").expect("get").is_none(),
             "topics must be isolated"

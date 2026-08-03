@@ -197,15 +197,15 @@ impl XWindowInner {
                 conn.gl_connection
                     .borrow_mut()
                     .replace(Rc::clone(state.get_connection()));
-            Ok(glium::backend::Context::new(
-                Rc::clone(&state),
-                true,
-                if cfg!(debug_assertions) {
-                    glium::debug::DebugCallbackBehavior::DebugMessageOnError
-                } else {
-                    glium::debug::DebugCallbackBehavior::Ignore
-                },
-            )?)
+                Ok(glium::backend::Context::new(
+                    Rc::clone(&state),
+                    true,
+                    if cfg!(debug_assertions) {
+                        glium::debug::DebugCallbackBehavior::DebugMessageOnError
+                    } else {
+                        glium::debug::DebugCallbackBehavior::Ignore
+                    },
+                )?)
             }
         })?;
 

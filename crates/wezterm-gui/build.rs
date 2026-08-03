@@ -8,7 +8,11 @@ fn main() {
         use std::path::Path;
         let repo_dir = std::env::current_dir()
             .ok()
-            .and_then(|cwd| cwd.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
+            .and_then(|cwd| {
+                cwd.parent()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+            })
             .unwrap();
         // Derive the actual target/<profile> directory from OUT_DIR
         // (<target_dir>/<profile>/build/<pkg>-<hash>/out) rather than
@@ -166,7 +170,11 @@ END
         let profile = std::env::var("PROFILE").unwrap();
         let repo_dir = std::env::current_dir()
             .ok()
-            .and_then(|cwd| cwd.parent().and_then(|p| p.parent()).map(|p| p.to_path_buf()))
+            .and_then(|cwd| {
+                cwd.parent()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+            })
             .unwrap();
 
         // We need to copy the plist to avoid the UNUserNotificationCenter asserting

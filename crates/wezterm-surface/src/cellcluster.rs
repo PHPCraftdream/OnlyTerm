@@ -136,7 +136,8 @@ impl CellCluster {
                             only_whitespace = false;
                         }
 
-                        let force_break = !only_whitespace && (whitespace_run > 2 || was_whitespace);
+                        let force_break =
+                            !only_whitespace && (whitespace_run > 2 || was_whitespace);
 
                         if force_break {
                             clusters.push(last);
@@ -199,9 +200,8 @@ impl CellCluster {
     /// in is load-bearing, so they must never be shuffled within a row.
     fn is_glue_cell(s: &str) -> bool {
         !s.is_empty()
-            && s.chars().all(|c| {
-                !c.is_alphanumeric() && !(0x2500..=0x259F).contains(&(c as u32))
-            })
+            && s.chars()
+                .all(|c| !c.is_alphanumeric() && !(0x2500..=0x259F).contains(&(c as u32)))
     }
 
     /// Reorders `cells` so that terminal rendering can always grow
@@ -252,7 +252,10 @@ impl CellCluster {
         _continues_next: bool,
     ) -> (Vec<usize>, Vec<bool>) {
         let n = cells.len();
-        let mut is_heb: Vec<bool> = cells.iter().map(|c| CellCluster::is_hebrew_cell(c.str())).collect();
+        let mut is_heb: Vec<bool> = cells
+            .iter()
+            .map(|c| CellCluster::is_hebrew_cell(c.str()))
+            .collect();
 
         // An ASCII apostrophe standing in for a geresh (`א'`, the Hebrew
         // numeral notation) belongs to the letter in front of it and has
@@ -567,7 +570,10 @@ mod test {
         // closing paren (physical cell 3).
         for c in &clusters {
             let has_paren = c.text.contains('(') || c.text.contains(')');
-            let has_hebrew = c.text.chars().any(|ch| CellCluster::is_hebrew_cell(&ch.to_string()));
+            let has_hebrew = c
+                .text
+                .chars()
+                .any(|ch| CellCluster::is_hebrew_cell(&ch.to_string()));
             assert!(
                 !(has_paren && has_hebrew),
                 "a cluster must not mix punctuation with reversed Hebrew content: {:?}",
@@ -583,7 +589,11 @@ mod test {
         let mut heb_text = String::new();
         let mut heb_clusters: Vec<&CellCluster> = clusters
             .iter()
-            .filter(|c| c.text.chars().any(|ch| CellCluster::is_hebrew_cell(&ch.to_string())))
+            .filter(|c| {
+                c.text
+                    .chars()
+                    .any(|ch| CellCluster::is_hebrew_cell(&ch.to_string()))
+            })
             .collect();
         heb_clusters.sort_by_key(|c| c.first_cell_idx);
         for c in heb_clusters {

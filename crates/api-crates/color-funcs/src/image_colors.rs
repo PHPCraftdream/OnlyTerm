@@ -190,9 +190,7 @@ pub fn extract_colors_from_image_impl(
 
     let modified = std::fs::metadata(&file_name)
         .and_then(|m| m.modified())
-        .map_err(|err| {
-            anyhow::anyhow!("error getting modified time for {file_name}: {err:#}")
-        })?;
+        .map_err(|err| anyhow::anyhow!("error getting modified time for {file_name}: {err:#}"))?;
 
     let mut cache = IMG_COLOR_CACHE.lock().unwrap();
     if let Some(hit) = cache.get(&(file_name.clone(), params)) {

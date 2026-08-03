@@ -236,10 +236,7 @@ impl ParsedFont {
         for p in handles {
             // Paths may contain backslashes (e.g. on Windows); that's fine
             // inside a `##` comment, which is never parsed as ktav syntax.
-            code.push_str(&format!(
-                "        ## {}\n",
-                p.handle.diagnostic_string()
-            ));
+            code.push_str(&format!("        ## {}\n", p.handle.diagnostic_string()));
             if p.synthesize_italic {
                 code.push_str("        ## Will synthesize italics\n");
             }
@@ -826,7 +823,9 @@ pub(crate) fn load_built_in_fonts(font_info: &mut Vec<ParsedFont>) -> anyhow::Re
             font!("../../../assets/fonts/CascadiaMono-Bold.ttf"),
         ],
         #[cfg(any(test, feature = "vendor-nerd-font-symbols"))]
-        &[font!("../../../assets/fonts/SymbolsNerdFontMono-Regular.ttf")],
+        &[font!(
+            "../../../assets/fonts/SymbolsNerdFontMono-Regular.ttf"
+        )],
     ];
     for bundle in built_ins {
         for (data, name) in bundle.iter() {

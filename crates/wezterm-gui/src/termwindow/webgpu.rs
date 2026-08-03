@@ -5,12 +5,12 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use window::bitmaps::Texture2d;
+#[cfg(windows)]
+use window::raw_window_handle::Win32WindowHandle;
 use window::raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WindowHandle,
 };
-#[cfg(windows)]
-use window::raw_window_handle::Win32WindowHandle;
 use window::{BitmapImage, Dimensions, Rect, Window, WindowOps};
 
 #[repr(C)]
@@ -438,37 +438,41 @@ impl WebGpuState {
         // one" instead of "is the window still alive".
         let win = window.clone();
         let is_current = Arc::clone(&state.is_current);
-        state.device.set_device_lost_callback(move |reason, message| {
-            if !is_current.load(std::sync::atomic::Ordering::Acquire) {
-                // Stale event from an abandoned device (already superseded
-                // by a rebuild, or this window has already permanently
-                // fallen back to OpenGL): the recovery machinery this event
-                // would otherwise trigger no longer applies to this device,
-                // so just log and drop it.
-                log::debug!(
-                    "wgpu device lost ({:?}): {}; ignoring -- this device was already \
+        state
+            .device
+            .set_device_lost_callback(move |reason, message| {
+                if !is_current.load(std::sync::atomic::Ordering::Acquire) {
+                    // Stale event from an abandoned device (already superseded
+                    // by a rebuild, or this window has already permanently
+                    // fallen back to OpenGL): the recovery machinery this event
+                    // would otherwise trigger no longer applies to this device,
+                    // so just log and drop it.
+                    log::debug!(
+                        "wgpu device lost ({:?}): {}; ignoring -- this device was already \
                      abandoned (superseded by a rebuild or a permanent OpenGL fallback)",
+                        reason,
+                        message
+                    );
+                    return;
+                }
+                log::error!(
+                    "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
+                 (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
                     reason,
                     message
                 );
-                return;
-            }
-            log::error!(
-                "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
-                 (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
-                reason,
-                message
-            );
-            metrics::counter!("gui.render_thread.device_lost").increment(1);
-            let win2 = win.clone();
-            let reason_msg =
-                format!("this window's wgpu device was lost ({:?}): {}", reason, message);
-            win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                move |tw| {
-                    tw.handle_render_error_recovery(&win2, &reason_msg);
-                },
-            )));
-        });
+                metrics::counter!("gui.render_thread.device_lost").increment(1);
+                let win2 = win.clone();
+                let reason_msg = format!(
+                    "this window's wgpu device was lost ({:?}): {}",
+                    reason, message
+                );
+                win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                    move |tw| {
+                        tw.handle_render_error_recovery(&win2, &reason_msg);
+                    },
+                )));
+            });
 
         Ok(state)
     }
@@ -611,8 +615,9 @@ impl WebGpuState {
                 // since that only fires on the widened pass. Keep looking
                 // while a preference is configured and backends are still
                 // narrowed.
-                let may_settle_for_any_adapter = config_for_thread.webgpu_preferred_adapter.is_none()
-                    || backends == all_backends;
+                let may_settle_for_any_adapter =
+                    config_for_thread.webgpu_preferred_adapter.is_none()
+                        || backends == all_backends;
 
                 if adapter.is_none() && may_settle_for_any_adapter {
                     // This background thread has no async executor of its own,
@@ -630,9 +635,7 @@ impl WebGpuState {
                                 WebGpuPowerPreference::HighPerformance => {
                                     wgpu::PowerPreference::HighPerformance
                                 }
-                                WebGpuPowerPreference::LowPower => {
-                                    wgpu::PowerPreference::LowPower
-                                }
+                                WebGpuPowerPreference::LowPower => wgpu::PowerPreference::LowPower,
                             },
                             // No surface exists yet on this background thread --
                             // see the doc comment above `run_on_background_thread`'s
@@ -641,8 +644,7 @@ impl WebGpuState {
                             // `Some` there or `request_adapter` fails outright);
                             // every other backend treats it as an optional hint.
                             compatible_surface: None,
-                            force_fallback_adapter: config_for_thread
-                                .webgpu_force_fallback_adapter,
+                            force_fallback_adapter: config_for_thread.webgpu_force_fallback_adapter,
                         },
                     ))
                     .ok();
@@ -997,7 +999,9 @@ impl WebGpuState {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-        let texture_view = frame.atlas.create_view(&wgpu::TextureViewDescriptor::default());
+        let texture_view = frame
+            .atlas
+            .create_view(&wgpu::TextureViewDescriptor::default());
 
         let texture_linear_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout: &self.texture_bind_group_layout,
@@ -1014,20 +1018,21 @@ impl WebGpuState {
             label: Some("linear bind group"),
         });
 
-        let texture_nearest_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.texture_nearest_sampler),
-                },
-            ],
-            label: Some("nearest bind group"),
-        });
+        let texture_nearest_bind_group =
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.texture_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.texture_nearest_sampler),
+                    },
+                ],
+                label: Some("nearest bind group"),
+            });
 
         let mut cleared = false;
 

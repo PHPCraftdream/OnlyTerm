@@ -3,12 +3,12 @@ use super::renderstate::*;
 use super::utilsprites::RenderMetrics;
 use crate::colorease::ColorEase;
 use crate::frontend::{front_end, try_front_end};
+use crate::gui_api::guiwin::GuiWin;
 use crate::inputmap::InputMap;
 use crate::overlay::{
     launcher, start_overlay, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
     QuickSelectOverlay,
 };
-use crate::gui_api::guiwin::GuiWin;
 use crate::resize_increment_calculator::ResizeIncrementCalculator;
 use crate::scrollbar::*;
 use crate::selection::Selection;
@@ -38,9 +38,7 @@ use config::{
     GeometryOrigin, GuiPosition, TermConfig,
 };
 use lfucache::*;
-use mux::pane::{
-    CachePolicy, Pane, PaneId, Pattern as MuxPattern, PerformAssignmentResult,
-};
+use mux::pane::{CachePolicy, Pane, PaneId, Pattern as MuxPattern, PerformAssignmentResult};
 use mux::renderable::RenderableDimensions;
 use mux::tab::{
     PositionedPane, PositionedSplit, SplitDirection, SplitRequest, SplitSize as MuxSplitSize, Tab,
@@ -507,7 +505,8 @@ pub struct TermWindow {
     /// *per window*: `render_thread_hang_handled`'s one-shot guard still
     /// ensures `begin_opengl_fallback` isn't re-entered for a given window
     /// while a previous attempt's result hasn't been consumed yet.
-    opengl_fallback_relay: Rc<RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>>>,
+    opengl_fallback_relay:
+        Rc<RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>>>,
     /// Set once (task #267) by `finish_opengl_fallback` the moment this
     /// window has *successfully* completed its one-shot OpenGL fallback
     /// (task #255): this window is done trying WebGpu again, permanently,
@@ -622,10 +621,8 @@ impl TermWindow {
             }
             Err(err) => {
                 log::error!("failed to create RenderState: {}", err);
-                return Err(err).context(format!(
-                    "failed to create RenderState for {}",
-                    render_info
-                ));
+                return Err(err)
+                    .context(format!("failed to create RenderState for {}", render_info));
             }
         }
 
@@ -1397,11 +1394,15 @@ impl TermWindow {
     /// #265 -- per-window, so a concurrently-falling-back sibling window
     /// can never clobber or empty this window's slot).
     fn finish_opengl_fallback(&mut self, window: &Window) {
-        let result = self.opengl_fallback_relay.borrow_mut().take().unwrap_or_else(|| {
-            Err(anyhow::anyhow!(
-                "internal error: opengl_fallback_relay was empty in finish_opengl_fallback"
-            ))
-        });
+        let result = self
+            .opengl_fallback_relay
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| {
+                Err(anyhow::anyhow!(
+                    "internal error: opengl_fallback_relay was empty in finish_opengl_fallback"
+                ))
+            });
         let gl = match result {
             Ok(gl) => gl,
             Err(err) => {
@@ -1628,11 +1629,7 @@ impl TermWindow {
     /// naturally either retries WebGpu again (if attempts remain) or, once
     /// the breaker trips, falls back to OpenGL (see that function) before
     /// ever reaching the destructive close.
-    fn finish_renderer_rebuild(
-        &mut self,
-        window: &Window,
-        result: anyhow::Result<WebGpuState>,
-    ) {
+    fn finish_renderer_rebuild(&mut self, window: &Window, result: anyhow::Result<WebGpuState>) {
         // Opportunistic extra sweep (task #283): by the time `WebGpuState::new`
         // (real adapter/device/surface setup work, not instantaneous) has
         // resolved, the old render thread this rebuild abandoned has
@@ -2821,20 +2818,14 @@ impl TermWindow {
             // title does.
             let pane_title = if self.config.use_cwd_basename_as_tab_title {
                 match &pos.current_working_dir {
-                    Some(cwd) if !cwd.is_empty() => {
-                        crate::tabbar::basename_of_path(cwd)
-                    }
+                    Some(cwd) if !cwd.is_empty() => crate::tabbar::basename_of_path(cwd),
                     _ => pos.title.clone(),
                 }
             } else {
                 pos.title.clone()
             };
             if num_tabs == 1 {
-                format!(
-                    "{}{}",
-                    if pos.is_zoomed { "[Z] " } else { "" },
-                    pane_title
-                )
+                format!("{}{}", if pos.is_zoomed { "[Z] " } else { "" }, pane_title)
             } else {
                 format!(
                     "{}[{}/{}] {}",
