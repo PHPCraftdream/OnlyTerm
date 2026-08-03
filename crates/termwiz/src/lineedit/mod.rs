@@ -203,7 +203,7 @@ impl<'term> LineEditor<'term> {
             let x = (cursor_x + delta) % screen_cols;
 
             let row = cursor_y + y as isize;
-            let col = x.max(0) as usize;
+            let col = x;
 
             (col, row)
         }
@@ -279,7 +279,7 @@ impl<'term> LineEditor<'term> {
 
         self.move_to_editor_start.replace(Change::CursorPosition {
             x: Position::Absolute(0),
-            y: Position::Relative(-1 * cursor_position.1),
+            y: Position::Relative(-cursor_position.1),
         });
 
         self.move_to_editor_end.replace(Change::CursorPosition {

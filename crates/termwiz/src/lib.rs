@@ -1,4 +1,12 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
+// termwiz::Error wraps the InternalError enum, which is inherently large
+// (~136 bytes) because it carries io::Error, anyhow::Error, and similar.
+// These errors are returned on cold/failure paths, never in hot loops, so the
+// stack size cost is irrelevant. Boxing the error would change the public Error
+// type's layout and ripple into every caller across the workspace for zero
+// practical benefit. Sibling crates (wezterm-gui) already allow this lint
+// locally for the same reason.
+#![allow(clippy::result_large_err)]
 //! # Terminal Wizardry
 //!
 //! This is a rust crate that provides a number of support functions
