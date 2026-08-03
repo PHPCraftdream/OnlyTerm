@@ -341,38 +341,51 @@ fn parse_buffered_data(
             }
             Ok(bytes) => {
                 process_chunk(&pane, &dead, &mut state, &mut parser, &bytes);
-                if !state.actions.is_empty() && !state.hold {
-                    // If we haven't accumulated too much data,
-                    // pause for a short while to increase the chances
-                    // that we coalesce a full "frame" from an unoptimized
-                    // TUI program
-                    if state.action_size < configuration().mux_output_parser_buffer_size {
-                        let poll_delay = match deadline {
-                            None => {
-                                deadline.replace(Instant::now() + delay);
-                                Some(delay)
-                            }
-                            Some(target) => target.checked_duration_since(Instant::now()),
-                        };
-                        if let Some(poll_delay) = poll_delay {
-                            if let Ok(more) = rx.recv_timeout(poll_delay) {
-                                // We can read now without blocking, so accumulate
-                                // more data into actions
-                                process_chunk(&pane, &dead, &mut state, &mut parser, &more);
-                                continue;
-                            }
 
-                            // Not readable in time (or the reader thread has
-                            // disconnected): let the data we have flow into
-                            // the terminal model. A disconnect will be
-                            // observed by the next `rx.recv()` above.
+                // If we haven't accumulated too much data, pause for a
+                // short while to increase the chances that we coalesce a
+                // full "frame" from an unoptimized TUI program.
+                //
+                // This must be a loop that ends in the flush below, not a
+                // `continue` back to the top: the blocking `rx.recv()` up
+                // there would strand whatever is already parsed until the
+                // pty produces MORE bytes. That's not hypothetical -- it
+                // held the answers to ConPTY's startup DSR/DA1 queries
+                // hostage while ConPTY sat silent waiting for exactly
+                // those answers, a mutual wait broken only by ConPTY's
+                // 3000ms WaitUntilDA1 timeout, i.e. a 3 second stall on
+                // every single pane spawn (task #328). The upstream code
+                // this was ported from could `continue` safely because it
+                // used poll(), which only *checks* readiness -- the data
+                // stayed queued for the outer read. `recv_timeout`
+                // *consumes* the message, so the outer recv blocks on an
+                // empty channel instead.
+                while !state.actions.is_empty()
+                    && !state.hold
+                    && state.action_size < configuration().mux_output_parser_buffer_size
+                {
+                    let target = *deadline.get_or_insert_with(|| Instant::now() + delay);
+                    let remaining = match target.checked_duration_since(Instant::now()) {
+                        Some(remaining) => remaining,
+                        // Deadline already passed: flush what we have.
+                        None => break,
+                    };
+                    match rx.recv_timeout(remaining) {
+                        Ok(more) => {
+                            process_chunk(&pane, &dead, &mut state, &mut parser, &more);
                         }
+                        // Timeout or disconnect: flush what we have. A
+                        // disconnect will be observed by the next
+                        // `rx.recv()` above.
+                        Err(_) => break,
                     }
+                }
 
+                if !state.actions.is_empty() && !state.hold {
                     send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
-                    deadline = None;
                     state.action_size = 0;
                 }
+                deadline = None;
 
                 let config = configuration();
                 delay = Duration::from_millis(config.mux_output_parser_coalesce_delay_ms);
@@ -436,7 +449,6 @@ fn read_from_pane_pty(
             }
             Ok(size) => {
                 histogram!("read_from_pane_pty.bytes.rate").record(size as f64);
-                log::trace!("read_pty pane {pane_id} read {size} bytes");
                 // Send received data to this pane's parser thread. This
                 // blocks if the channel is full, which is the intended
                 // backpressure: it bounds how far the pty reader can run
