@@ -75,7 +75,7 @@ impl crate::TermWindow {
                                 AllowImage::Scale(2) => AllowImage::Scale(4),
                                 AllowImage::Scale(4) => AllowImage::Scale(8),
                                 AllowImage::Scale(8) => AllowImage::No,
-                                AllowImage::No | _ => {
+                                _ => {
                                     log::error!(
                                         "Failed to {} texture: {}",
                                         if pass == 0 { "clear" } else { "resize" },
@@ -137,7 +137,7 @@ impl crate::TermWindow {
                     }
                     _ => {
                         self.scheduled_animation.borrow_mut().replace(next_due);
-                        let window = self.window.clone().take().unwrap();
+                        let window = self.window.clone().unwrap();
                         promise::spawn::spawn(async move {
                             Timer::at(next_due).await;
                             let win = window.clone();
@@ -162,7 +162,7 @@ impl crate::TermWindow {
                 let mut ui_items = computed.ui_items();
 
                 let gl_state = self.render_state.as_ref().unwrap();
-                self.render_element(&computed, gl_state, None)?;
+                self.render_element(computed, gl_state, None)?;
 
                 self.ui_items_scratch.append(&mut ui_items);
             }

@@ -186,7 +186,7 @@ impl SelectionRange {
                 return Self {
                     start: SelectionCoordinate::x_y(0, logical.first_row),
                     end: SelectionCoordinate::x_y(
-                        usize::max_value(),
+                        usize::MAX,
                         logical.first_row + (logical.physical_lines.len() - 1) as StableRowIndex,
                     ),
                 };
@@ -347,10 +347,10 @@ impl SelectionRange {
                 SelectionX::Cell(0).range(norm.end.x.saturating_add(1))
             } else if row == norm.start.y {
                 // first line of multi-line
-                norm.start.x.range(SelectionX::Cell(usize::max_value()))
+                norm.start.x.range(SelectionX::Cell(usize::MAX))
             } else {
                 // some "middle" line of multi-line
-                0..usize::max_value()
+                0..usize::MAX
             }
         }
     }

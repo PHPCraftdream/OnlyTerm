@@ -254,7 +254,7 @@ impl MatchResult {
                 // Pump up the score for an exact match, otherwise
                 // the order may be undesirable if there are a lot
                 // of candidates with the same score
-                u32::max_value()
+                u32::MAX
             } else {
                 score
             },
@@ -302,7 +302,7 @@ fn compute_matches(selection: &str, aliases: &[Alias], group: CharSelectGroup) -
                                 glyph,
                                 MatchResult {
                                     row_idx,
-                                    score: u32::max_value(),
+                                    score: u32::MAX,
                                 },
                             ))
                         } else {
@@ -376,6 +376,7 @@ impl CharSelector {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // overlay layout: params are the inherent element/grid context
     fn compute(
         term_window: &mut TermWindow,
         selection: &str,
@@ -474,9 +475,7 @@ impl CharSelector {
 
         let element = Element::new(&font, ElementContent::Children(elements))
             .colors(ElementColors {
-                border: BorderColor::new(
-                    term_window.config.char_select_bg_color.to_linear().into(),
-                ),
+                border: BorderColor::new(term_window.config.char_select_bg_color.to_linear()),
                 bg: term_window.config.char_select_bg_color.to_linear().into(),
                 text: term_window.config.char_select_fg_color.to_linear().into(),
             })

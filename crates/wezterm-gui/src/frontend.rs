@@ -173,7 +173,7 @@ impl GuiFrontEnd {
                                  as allow_download_protocols=false",
                             name
                         );
-                    } else if let Err(err) = crate::download::save_to_downloads(name, &*data) {
+                    } else if let Err(err) = crate::download::save_to_downloads(name, &data) {
                         log::error!("save_to_downloads: {:#}", err);
                     }
                 }
@@ -226,7 +226,7 @@ impl GuiFrontEnd {
         match event {
             ApplicationEvent::OpenCommandScript(file_name) => {
                 let quoted_file_name = match shlex::try_quote(&file_name) {
-                    Ok(name) => name.to_owned().to_string(),
+                    Ok(name) => name.to_string(),
                     Err(_) => {
                         log::error!(
                             "OpenCommandScript: {file_name} has embedded NUL bytes and
@@ -268,7 +268,7 @@ impl GuiFrontEnd {
                         Ok((_tab, pane, _window_id)) => {
                             log::trace!("Spawned {file_name} as pane_id {}", pane.pane_id());
                             let mut writer = pane.writer();
-                            write!(writer, "{quoted_file_name} ; exit\n").ok();
+                            writeln!(writer, "{quoted_file_name} ; exit").ok();
                         }
                         Err(err) => {
                             log::error!("Failed to spawn {file_name}: {err:#?}");
@@ -285,7 +285,7 @@ impl GuiFrontEnd {
 
                 fn spawn_command(spawn: &SpawnCommand, spawn_where: SpawnWhere) {
                     let config = config::configuration();
-                    let dpi = config.dpi.unwrap_or_else(|| ::window::default_dpi());
+                    let dpi = config.dpi.unwrap_or_else(::window::default_dpi);
                     let size =
                         config.initial_size(dpi as u32, crate::cell_pixel_dims(&config, dpi).ok());
                     let term_config = Arc::new(config::TermConfig::with_config(config));
@@ -411,7 +411,7 @@ impl GuiFrontEnd {
 
         // then spawn any new windows that are needed
         promise::spawn::spawn(async move {
-            while let Some(mux_window_id) = mux_windows.next() {
+            for mux_window_id in mux_windows.by_ref() {
                 if front_end().has_mux_window(mux_window_id)
                     || front_end()
                         .spawned_mux_window
@@ -480,7 +480,7 @@ impl GuiFrontEnd {
 }
 
 thread_local! {
-    static FRONT_END: RefCell<Option<Rc<GuiFrontEnd>>> = RefCell::new(None);
+    static FRONT_END: RefCell<Option<Rc<GuiFrontEnd>>> = const { RefCell::new(None) };
 }
 
 pub fn try_front_end() -> Option<Rc<GuiFrontEnd>> {

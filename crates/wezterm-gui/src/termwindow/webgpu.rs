@@ -370,7 +370,7 @@ fn compute_compatibility_list(
         .into_iter()
         .map(|a| {
             let info = adapter_info_to_gpu_info(a.get_info());
-            let compatible = a.is_surface_supported(&surface);
+            let compatible = a.is_surface_supported(surface);
             format!(
                 "{}, compatible={}",
                 info.to_string(),

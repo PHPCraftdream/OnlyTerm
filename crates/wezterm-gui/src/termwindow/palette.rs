@@ -118,7 +118,7 @@ fn build_commands(
             (None, None) => {}
         }
 
-        match a.menubar.cmp(&b.menubar) {
+        match a.menubar.cmp(b.menubar) {
             Ordering::Equal => a.brief.cmp(&b.brief),
             ordering => ordering,
         }
@@ -141,7 +141,7 @@ impl MatchResult {
                 // Pump up the score for an exact match, otherwise
                 // the order may be undesirable if there are a lot
                 // of candidates with the same score
-                u32::max_value()
+                u32::MAX
             } else {
                 score
             },
@@ -310,9 +310,9 @@ impl CommandPalette {
                         let mut score: usize = mods.bits() as usize;
                         // Prefer keys with CMD on macOS, but not on other systems,
                         // where CMD tends to be reserved by the desktop environment
-                        if cfg!(target_os = "macos") && mods.contains(Modifiers::SUPER) {
-                            score += 1000;
-                        } else if !cfg!(target_os = "macos") && !mods.contains(Modifiers::SUPER) {
+                        if (cfg!(target_os = "macos") && mods.contains(Modifiers::SUPER))
+                            || (!cfg!(target_os = "macos") && !mods.contains(Modifiers::SUPER))
+                        {
                             score += 1000;
                         }
                         score
@@ -326,7 +326,7 @@ impl CommandPalette {
                         ordering => return ordering,
                     }
 
-                    a_key.cmp(&b_key)
+                    a_key.cmp(b_key)
                 });
 
                 let separator = if term_window.config.ui_key_cap_rendering
@@ -412,13 +412,7 @@ impl CommandPalette {
 
         let element = Element::new(&font, ElementContent::Children(elements))
             .colors(ElementColors {
-                border: BorderColor::new(
-                    term_window
-                        .config
-                        .command_palette_bg_color
-                        .to_linear()
-                        .into(),
-                ),
+                border: BorderColor::new(term_window.config.command_palette_bg_color.to_linear()),
                 bg: term_window
                     .config
                     .command_palette_bg_color

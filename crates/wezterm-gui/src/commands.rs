@@ -16,6 +16,9 @@ use KeyAssignment::*;
 /// The intent is for this to be used when filtering the items
 /// that should be shown in eg: a context menu.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+// "Active" prefix is meaningful: these target the active pane/tab/window,
+// distinguishing them from non-active command targets in filtering/menus.
+#[allow(clippy::enum_variant_names)]
 pub enum ArgType {
     /// Operates on the active pane
     ActivePane,
@@ -160,7 +163,7 @@ impl CommandDef {
                 .resolve(config.key_map_preference)
                 .clone();
 
-            let ukey = DeferredKeyCode::try_from(us_layout_shift(&label))
+            let ukey = DeferredKeyCode::try_from(us_layout_shift(label))
                 .unwrap()
                 .resolve(config.key_map_preference)
                 .clone();
@@ -240,8 +243,8 @@ impl CommandDef {
                     def.permute_keys(config)
                 };
                 Some(ExpandedCommand {
-                    brief: def.brief.into(),
-                    doc: def.doc.into(),
+                    brief: def.brief,
+                    doc: def.doc,
                     keys,
                     action,
                     menubar: def.menubar,
@@ -394,8 +397,8 @@ impl CommandDef {
             }
             if let Some(cmd) = derive_command_from_key_assignment(&entry.action) {
                 result.push(ExpandedCommand {
-                    brief: cmd.brief.into(),
-                    doc: cmd.doc.into(),
+                    brief: cmd.brief,
+                    doc: cmd.doc,
                     keys: vec![(*mods, keycode.clone())],
                     action: entry.action.clone(),
                     menubar: cmd.menubar,
@@ -414,8 +417,8 @@ impl CommandDef {
                 }
                 if let Some(cmd) = derive_command_from_key_assignment(&entry.action) {
                     result.push(ExpandedCommand {
-                        brief: cmd.brief.into(),
-                        doc: cmd.doc.into(),
+                        brief: cmd.brief,
+                        doc: cmd.doc,
                         keys: vec![],
                         action: entry.action.clone(),
                         menubar: cmd.menubar,
@@ -1093,14 +1096,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         ActivateTab(n) => {
             let n = *n;
             let ordinal = english_ordinal(n + 1);
-            let mut keys = if n >= 0 && n <= 7 {
+            let mut keys = if (0..=7).contains(&n) {
                 vec![(Modifiers::SUPER, (n + 1).to_string())]
             } else {
                 vec![]
             };
             // Windows/Linux: Alt+1..Alt+9 activate tabs 1-9 (indices 0-8),
             // and Alt+0 activates the 10th tab (index 9).
-            if n >= 0 && n <= 8 {
+            if (0..=8).contains(&n) {
                 keys.push((Modifiers::ALT, (n + 1).to_string()));
             } else if n == 9 {
                 keys.push((Modifiers::ALT, "0".into()));
@@ -1127,11 +1130,9 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             }
         }
         SetPaneZoomState(true) => CommandDef {
-            brief: format!("Zooms the current Pane").into(),
-            doc: format!(
-                "Places the current pane into the zoomed state, \
-                             filling all of the space in the tab"
-            )
+            brief: "Zooms the current Pane".to_string().into(),
+            doc: "Places the current pane into the zoomed state, \
+                             filling all of the space in the tab".to_string()
             .into(),
             keys: vec![],
             args: &[ArgType::ActiveWindow],
@@ -1139,8 +1140,8 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             icon: Some("md_fullscreen"),
         },
         SetPaneZoomState(false) => CommandDef {
-            brief: format!("Un-Zooms the current Pane").into(),
-            doc: format!("Takes the current pane out of the zoomed state").into(),
+            brief: "Un-Zooms the current Pane".to_string().into(),
+            doc: "Takes the current pane out of the zoomed state".to_string().into(),
             keys: vec![],
             args: &[ArgType::ActiveWindow],
             menubar: &[],
@@ -1148,10 +1149,8 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         },
         EmitEvent(name) => CommandDef {
             brief: format!("Emit event `{name}`").into(),
-            doc: format!(
-                "Emits the named event, causing any \
-                             associated event handler(s) to trigger"
-            )
+            doc: "Emits the named event, causing any \
+                             associated event handler(s) to trigger".to_string()
             .into(),
             keys: vec![],
             args: &[ArgType::ActiveWindow],
@@ -1998,15 +1997,11 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             name: None,
             spawn: None,
         } => CommandDef {
-            brief: format!(
-                "Spawn the default program into a new \
-                           workspace and switch to it"
-            )
+            brief: "Spawn the default program into a new \
+                           workspace and switch to it".to_string()
             .into(),
-            doc: format!(
-                "Spawn the default program into a new \
-                         workspace and switch to it"
-            )
+            doc: "Spawn the default program into a new \
+                         workspace and switch to it".to_string()
             .into(),
             keys: vec![],
             args: &[],
@@ -2163,7 +2158,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
 /// included in the default key assignments and command palette.
 fn compute_default_actions() -> Vec<KeyAssignment> {
     // These are ordered by their position within the various menus
-    return vec![
+    vec![
         // ----------------- OnlyTerm
         ReloadConfiguration,
         #[cfg(target_os = "macos")]
@@ -2295,5 +2290,5 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         OpenConfigFile,
         // ----------------- Misc
         OpenLinkAtMouseCursor,
-    ];
+    ]
 }

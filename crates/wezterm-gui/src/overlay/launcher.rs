@@ -65,6 +65,7 @@ pub struct LauncherArgs {
 
 impl LauncherArgs {
     /// Must be called on the Mux thread!
+    #[allow(clippy::too_many_arguments)] // launcher overlay: params are the inherent search/callback context
     pub async fn new(
         title: &str,
         flags: LauncherFlags,
@@ -136,7 +137,7 @@ impl LauncherArgs {
             for dom in domains.into_iter() {
                 let name = dom.domain_name();
                 let label = dom.domain_label().await;
-                let label = if name == label || label == "" {
+                let label = if name == label || label.is_empty() {
                     format!("domain `{}`", name)
                 } else {
                     format!("domain `{}` - {}", name, label)
@@ -364,6 +365,7 @@ impl LauncherState {
         }
     }
 
+    #[allow(clippy::result_large_err)] // returns termwiz::Result; Err (termwiz::Error) is an external 136-byte type, boxing ripples through callers
     fn render(&mut self, term: &mut TermWizTerminal) -> termwiz::Result<()> {
         let size = term.get_screen_size()?;
         let max_width = size.cols.saturating_sub(6);
@@ -391,7 +393,7 @@ impl LauncherState {
 
         let labels = &self.labels;
         let max_label_len = labels.iter().map(|s| s.len()).max().unwrap_or(0);
-        let mut labels_iter = labels.into_iter();
+        let mut labels_iter = labels.iter();
 
         let config = configuration();
         let colors = &config.resolved_palette;
@@ -465,7 +467,7 @@ impl LauncherState {
                 },
                 Change::ClearToEndOfLine(ColorAttribute::Default),
                 Change::Text(truncate_right(
-                    &format!("{}{}", &self.fuzzy_help_text, self.filter_term),
+                    &format!("{}{}", self.fuzzy_help_text, self.filter_term),
                     max_width,
                 )),
             ]);
@@ -514,7 +516,7 @@ impl LauncherState {
                         // since the number of labels is always <= self.max_items
                         // by construction, we have pos as usize <= self.max_items
                         // for free
-                        self.active_idx = self.top_row + pos as usize;
+                        self.active_idx = self.top_row + pos;
                         if self.launch(self.active_idx) {
                             break;
                         }
@@ -616,10 +618,8 @@ impl LauncherState {
                     if y > 0 && y as usize <= self.filtered_entries.len() {
                         self.active_idx = self.top_row + y as usize - 1;
 
-                        if mouse_buttons == MouseButtons::LEFT {
-                            if self.launch(self.active_idx) {
-                                break;
-                            }
+                        if mouse_buttons == MouseButtons::LEFT && self.launch(self.active_idx) {
+                            break;
                         }
                     }
                     if mouse_buttons != MouseButtons::NONE {
@@ -630,10 +630,8 @@ impl LauncherState {
                 InputEvent::Key(KeyEvent {
                     key: KeyCode::Enter,
                     ..
-                }) => {
-                    if self.launch(self.active_idx) {
-                        break;
-                    }
+                }) if self.launch(self.active_idx) => {
+                    break;
                 }
                 _ => {}
             }

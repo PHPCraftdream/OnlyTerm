@@ -122,6 +122,9 @@ impl RenderContext {
     }
 }
 
+// Dual-backend enum (OpenGL/WebGPU); the size difference is inherent to
+// wrapping two buffer backends in one type, allocated once per frame.
+#[allow(clippy::large_enum_variant)]
 pub enum IndexBuffer {
     Glium(GliumIndexBuffer<u32>),
     WebGpu(WebGpuIndexBuffer),
@@ -142,6 +145,9 @@ impl IndexBuffer {
     }
 }
 
+// Dual-backend enum (OpenGL/WebGPU); the size difference is inherent to
+// wrapping two buffer backends in one type, allocated once per frame.
+#[allow(clippy::large_enum_variant)]
 pub enum VertexBuffer {
     Glium(GliumVertexBuffer<Vertex>),
     WebGpu(WebGpuVertexBuffer),
@@ -475,8 +481,7 @@ impl RenderLayer {
             num_quads,
             verts.len() * std::mem::size_of::<Vertex>()
         );
-        let mut indices = vec![];
-        indices.reserve(num_quads * INDICES_PER_CELL);
+        let mut indices = Vec::with_capacity(num_quads * INDICES_PER_CELL);
 
         for q in 0..num_quads {
             let idx = (q * VERTICES_PER_CELL) as u32;
@@ -551,12 +556,12 @@ impl RenderState {
     ) -> anyhow::Result<Self> {
         loop {
             let glyph_cache = RefCell::new(GlyphCache::new_gl(&context, fonts, atlas_size)?);
-            let result = UtilSprites::new(&mut *glyph_cache.borrow_mut(), metrics);
+            let result = UtilSprites::new(&mut glyph_cache.borrow_mut(), metrics);
             match result {
                 Ok(util_sprites) => {
                     let glyph_prog = match &context {
                         RenderContext::Glium(context) => {
-                            Some(Self::compile_prog(&context, Self::glyph_shader)?)
+                            Some(Self::compile_prog(context, Self::glyph_shader)?)
                         }
                         RenderContext::WebGpu(_) => None,
                     };
@@ -600,7 +605,7 @@ impl RenderState {
 
         // Keep the layers sorted by zindex so that they are rendered in
         // the correct order when the layers array is iterated.
-        layers.sort_by(|a, b| a.zindex.cmp(&b.zindex));
+        layers.sort_by_key(|a| a.zindex);
 
         Ok(layer)
     }

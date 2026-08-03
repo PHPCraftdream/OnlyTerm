@@ -259,6 +259,7 @@ impl super::TermWindow {
             .map(|entry| (entry, None))
     }
 
+    #[allow(clippy::too_many_arguments)] // key dispatch: params carry the full input context the handler needs
     fn process_key(
         &mut self,
         pane: &Arc<dyn Pane>,
@@ -273,7 +274,7 @@ impl super::TermWindow {
     ) -> bool {
         if is_down && !leader_active {
             // Check to see if this key-press is the leader activating
-            if let Some(duration) = self.input_map.is_leader(&keycode, raw_modifiers) {
+            if let Some(duration) = self.input_map.is_leader(keycode, raw_modifiers) {
                 // Yes; record its expiration
                 let target = std::time::Instant::now() + duration;
                 self.leader_is_down.replace(target);
@@ -308,12 +309,9 @@ impl super::TermWindow {
                 }
             }
 
-            if let Some((entry, table_name)) = self.lookup_key(
-                pane,
-                &keycode,
-                raw_modifiers | leader_mod,
-                only_key_bindings,
-            ) {
+            if let Some((entry, table_name)) =
+                self.lookup_key(pane, keycode, raw_modifiers | leader_mod, only_key_bindings)
+            {
                 if self.config.debug_key_events {
                     log::info!(
                         "{}{:?} {:?} -> perform {:?}",
@@ -328,7 +326,7 @@ impl super::TermWindow {
                 }
 
                 self.key_table_state.did_process_key();
-                let handled = match self.perform_key_assignment(&pane, &entry.action) {
+                let handled = match self.perform_key_assignment(pane, &entry.action) {
                     Ok(PerformAssignmentResult::Handled) => true,
                     Err(_) => true,
                     Ok(_) => false,
@@ -385,7 +383,7 @@ impl super::TermWindow {
 
                     let mut did_encode = false;
                     if let Some(key_event) = key_event {
-                        if let Some(encoded) = self.encode_win32_input(&pane, &key_event) {
+                        if let Some(encoded) = self.encode_win32_input(pane, key_event) {
                             if self.config.debug_key_events {
                                 log::info!("win32: Encoded input as {:?}", encoded);
                             }
@@ -394,7 +392,7 @@ impl super::TermWindow {
                                 .context("sending win32-input-mode encoded data")
                                 .ok();
                             did_encode = true;
-                        } else if let Some(encoded) = self.encode_kitty_input(&pane, &key_event) {
+                        } else if let Some(encoded) = self.encode_kitty_input(pane, key_event) {
                             if self.config.debug_key_events {
                                 log::info!("kitty: Encoded input as {:?}", encoded);
                             }
@@ -429,7 +427,7 @@ impl super::TermWindow {
                             && !keycode.is_modifier()
                             && self.pane_state(pane.pane_id()).overlay.is_none()
                         {
-                            self.maybe_scroll_to_bottom_for_input(&pane);
+                            self.maybe_scroll_to_bottom_for_input(pane);
                         }
                         if is_down
                             && self.config.hide_mouse_cursor_when_typing
@@ -496,7 +494,7 @@ impl super::TermWindow {
             if self.process_key(
                 &pane,
                 context,
-                &phys_key,
+                phys_key,
                 key.modifiers,
                 leader_active,
                 leader_mod,

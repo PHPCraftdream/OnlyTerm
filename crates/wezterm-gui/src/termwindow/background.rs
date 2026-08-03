@@ -57,7 +57,7 @@ impl CachedGradient {
         // visible color banding.  The default 64 was selected
         // because it it was the smallest value on my mac where
         // the banding wasn't obvious.
-        let noise_amount = g.noise.unwrap_or_else(|| {
+        let noise_amount = g.noise.unwrap_or({
             if matches!(g.orientation, GradientOrientation::Radial { .. }) {
                 16
             } else {
@@ -69,7 +69,7 @@ impl CachedGradient {
             if noise_amount == 0 {
                 0.
             } else {
-                rng.usize(0..noise_amount) as f64 * -1.
+                -(rng.usize(0..noise_amount) as f64)
             }
         }
 
@@ -445,8 +445,8 @@ impl crate::TermWindow {
         let tex_width = sprite.coords.width() as f32;
         let tex_height = sprite.coords.height() as f32;
 
-        let scale_width = pixel_width / tex_width as f32;
-        let scale_height = pixel_height / tex_height as f32;
+        let scale_width = pixel_width / tex_width;
+        let scale_height = pixel_height / tex_height;
 
         let h_context = DimensionContext {
             dpi: self.dimensions.dpi as f32,
@@ -473,14 +473,14 @@ impl crate::TermWindow {
         };
 
         let width = match layer.def.width {
-            BackgroundSize::Contain => min_aspect_width as f32,
-            BackgroundSize::Cover => max_aspect_width as f32,
+            BackgroundSize::Contain => min_aspect_width,
+            BackgroundSize::Cover => max_aspect_width,
             BackgroundSize::Dimension(n) => n.evaluate_as_pixels(h_context),
         };
 
         let height = match layer.def.height {
-            BackgroundSize::Contain => min_aspect_height as f32,
-            BackgroundSize::Cover => max_aspect_height as f32,
+            BackgroundSize::Contain => min_aspect_height,
+            BackgroundSize::Cover => max_aspect_height,
             BackgroundSize::Dimension(n) => n.evaluate_as_pixels(v_context),
         };
 

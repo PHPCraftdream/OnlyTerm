@@ -19,6 +19,9 @@ pub use debug::show_debug_overlay;
 pub use launcher::{launcher, LauncherArgs, LauncherFlags};
 pub use quickselect::QuickSelectOverlay;
 
+// Async-over-sync bridge return type used in exactly one place; a type alias
+// would add indirection without any reuse benefit.
+#[allow(clippy::type_complexity)]
 pub fn start_overlay<T, F>(
     term_window: &TermWindow,
     tab: &Arc<Tab>,
