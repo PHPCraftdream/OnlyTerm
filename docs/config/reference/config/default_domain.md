@@ -14,32 +14,12 @@ When starting the GUI (not using the `serial` or `connect` subcommands), by defa
 
 The `"local"` domain represents processes that are spawned directly on the local system.
 
-Windows users, particularly those who use
-[WSL](https://docs.microsoft.com/en-us/windows/wsl/about), may wish to override
-the default domain to instead use a particular WSL distribution so that wezterm
-launches directly into a Linux shell rather than having to manually invoke
-`wsl.exe`.  Using a [WslDomain](../WslDomain.md) for this has the advantage
-that wezterm can then use [shell integration](../../../shell-integration.md) to
-track the current directory inside WSL and use it when splitting new panes or
-spawning new tabs.
+`default_domain` will accept the name of any of the available
+[multiplexing domains](../../../multiplexing.md).
 
-For example, if:
-
-```
-; wsl -l -v
-  NAME            STATE           VERSION
-* Ubuntu-18.04    Running         1
-```
-
-then wezterm will by default create a `WslDomain` with the name `"WSL:Ubuntu-18.04"`
-and if I set my config like this:
-
-```
-default_domain: WSL:Ubuntu-18.04
-```
-
-then when wezterm starts up, it will open with a shell running inside that Ubuntu
-distribution rather than using the default `cmd` or `powershell`.
-
-While these examples are WSL-centric, `default_domain` will accept the name
-of any of the available [multiplexing domains](../../../multiplexing.md).
+!!! note
+    WSL domain support has been removed from this fork: it required
+    shelling out to `wsl.exe -l -v` to enumerate distributions, which added
+    measurable startup latency even for users who never touch WSL. To
+    launch a WSL distribution's shell, invoke `wsl.exe` directly as your
+    `default_prog`/`SpawnCommand` instead.
