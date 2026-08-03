@@ -253,6 +253,7 @@ impl PtyFd {
         // sigprocmask, setsid, ioctl, umask) are all async-signal-safe.
         // `self.as_stdio()?` duplicates the fd so it is valid for the child.
         unsafe {
+            cmd.stdin(self.as_stdio()?)
                 .stdout(self.as_stdio()?)
                 .stderr(self.as_stdio()?)
                 .pre_exec(move || {
