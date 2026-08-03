@@ -325,6 +325,12 @@ pub fn configuration_warnings_and_errors() -> Vec<String> {
     CONFIG.get_warnings_and_errors()
 }
 
+/// Just the hard error from loading the preferred configuration, without
+/// the warnings. See `Configuration::get_error`.
+pub fn configuration_error() -> Option<String> {
+    CONFIG.get_error()
+}
+
 struct ConfigInner {
     config: Arc<Config>,
     error: Option<String>,

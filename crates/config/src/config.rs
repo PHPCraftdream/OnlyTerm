@@ -417,23 +417,6 @@ pub struct Config {
     #[dynamic(default)]
     pub webgpu_preferred_adapter: Option<GpuInfo>,
 
-    /// WSL domain support has been removed from this fork (task #329):
-    /// enumerating installed distros meant shelling out to `wsl.exe -l -v`,
-    /// which cost ~0.6s of startup even for users who never touch WSL (and
-    /// could block for many seconds more on a cold LxssManager/WSL2 utility
-    /// VM -- see the history of `crates/wezterm-mux-server-impl/src/lib.rs`
-    /// and the now-deleted `crates/config/src/wsl.rs`). The field is kept
-    /// (rather than deleted) purely so that existing configs which set
-    /// `wsl_domains` -- including an empty list to opt out of the old
-    /// auto-discovery -- still parse under `unknown_fields: Deny` instead of
-    /// failing to load entirely; the value itself is now ignored.
-    #[dynamic(
-        default,
-        deprecated = "WSL domain support has been removed from this fork; this option no longer \
-                      does anything and the value is ignored"
-    )]
-    pub wsl_domains: Option<Vec<wezterm_dynamic::Value>>,
-
     #[dynamic(default)]
     pub exec_domains: Vec<ExecDomain>,
 
@@ -1693,7 +1676,7 @@ impl Config {
                  used to do (e.g. `docker exec`, `ssh`, or similar). Please \
                  remove the exec_domains entries from your config; there is \
                  currently no built-in replacement (WSL domain support has \
-                 also been removed from this fork -- see `wsl_domains`).",
+                 also been removed from this fork).",
                 d.name
             );
         }

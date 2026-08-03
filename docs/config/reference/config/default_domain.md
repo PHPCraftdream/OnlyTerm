@@ -19,7 +19,7 @@ The `"local"` domain represents processes that are spawned directly on the local
 
 !!! note
     WSL domain support has been removed from this fork: it required
-    shelling out to `wsl.exe -l -v` to enumerate distributions, which added
+    enumerating distributions, which added
     measurable startup latency even for users who never touch WSL. To
-    launch a WSL distribution's shell, invoke `wsl.exe` directly as your
+    launch a WSL distribution's shell, invoke it directly as your
     `default_prog`/`SpawnCommand` instead.
