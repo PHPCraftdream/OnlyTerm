@@ -44,7 +44,7 @@ use winapi::um::sysinfoapi::{GetTickCount, GetVersionExW};
 use winapi::um::uxtheme::{
     CloseThemeData, GetThemeFont, GetThemeSysFont, OpenThemeData, SetWindowTheme,
 };
-use winapi::um::wingdi::{LOGFONTW, MAKEPOINTS};
+use winapi::um::wingdi::{CreateSolidBrush, DeleteObject, LOGFONTW, MAKEPOINTS, RGB};
 use winapi::um::winnt::OSVERSIONINFOW;
 use winapi::um::winuser::*;
 use windows::UI::Color as WUIColor;
@@ -170,6 +170,22 @@ pub(crate) struct WindowInner {
     config: ConfigHandle,
     paint_throttled: bool,
     invalidated: bool,
+
+    /// A solid brush matching the effective config palette's terminal
+    /// background color, used only by `WM_ERASEBKGND` to paint the client
+    /// area before the first real GPU frame lands. The window class is
+    /// registered with `hbrBackground: null_mut()` (see `create_window`) so
+    /// that a *working* renderer never gets an extra background erase on
+    /// every resize; this brush exists purely to cover the gap between
+    /// `ShowWindow` and the renderer's first frame, where the alternative is
+    /// whatever garbage happened to be in that region of the framebuffer, or
+    /// (worse, on a dark theme) a stark white flash from an unpainted
+    /// client area. Cleared via `clear_placeholder_background` as soon as
+    /// `TermWindow::created` installs a working `RenderState`, at which
+    /// point the renderer itself is responsible for every subsequent frame
+    /// and `WM_ERASEBKGND` goes back to being a no-op (returning 1 without
+    /// painting, matching today's behavior of a null-brush class).
+    placeholder_background_brush: Option<HBRUSH>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -177,6 +193,40 @@ pub struct Window(HWindow);
 
 fn wuicolor_to_linearrgba(color: WUIColor) -> LinearRgba {
     LinearRgba::with_srgba(color.R, color.G, color.B, 255)
+}
+
+/// Build the `WM_ERASEBKGND` placeholder brush for a not-yet-rendered
+/// window, colored from the config's effective, fully-resolved palette
+/// (color scheme merged with any explicit `colors` overrides -- the exact
+/// same `resolved_palette` field that `TermConfig::color_palette` hands to
+/// the terminal model, see `crates/config/src/terminal.rs`). When the
+/// palette doesn't specify a background (`None`), fall back to the same
+/// default the terminal itself would use: `wezterm_term::color::
+/// ColorPalette::default().background`, which is plain black. That default
+/// is duplicated here as a literal rather than depending on the `term`
+/// crate (this `window` crate intentionally has no such dependency) --
+/// black is also the safe conservative choice if the two ever drifted,
+/// since it matches `hbrBackground: null_mut()`'s previous de-facto
+/// behavior of leaving stale (usually dark) framebuffer contents visible
+/// on unpainted, freshly-allocated window surfaces.
+///
+/// # Safety
+/// Always safe to call: only reads plain config values and calls
+/// `CreateSolidBrush`, which cannot fail in a way that produces an invalid
+/// non-null handle.
+fn create_placeholder_background_brush(config: &ConfigHandle) -> HBRUSH {
+    let (r, g, b, _a) = config
+        .resolved_palette
+        .background
+        .map(|c| c.as_rgba_u8())
+        .unwrap_or((0, 0, 0, 0xff));
+    // SAFETY: `RGB` is a pure macro over three `u8`s; `CreateSolidBrush`
+    // takes a plain `COLORREF` value and returns either a valid `HBRUSH` or
+    // null on failure (e.g. GDI handle exhaustion), which is an accepted,
+    // extremely unlikely degenerate case here -- see `WM_ERASEBKGND`'s
+    // handler, which already tolerates a null brush by falling back to "no
+    // paint" instead of dereferencing it.
+    unsafe { CreateSolidBrush(RGB(r, g, b)) }
 }
 
 fn rect_width(r: &RECT) -> i32 {
@@ -747,6 +797,20 @@ impl Window {
         };
         let appearance = get_appearance();
 
+        // Create the `WM_ERASEBKGND` placeholder brush up front, from the
+        // *effective* palette (color scheme + explicit overrides already
+        // resolved into `config.resolved_palette`, exactly like
+        // `TermConfig::color_palette` does for the terminal model itself --
+        // see `crates/config/src/terminal.rs`), not a hardcoded color. This
+        // is the same background the terminal will actually paint once the
+        // renderer comes up, so a placeholder-colored window handed to the
+        // user before the first GPU frame is indistinguishable from (or at
+        // worst a same-color no-op blend with) the real thing. Hardcoding
+        // e.g. white here would be invisible for this fork's light-theme
+        // default but would flash white on every dark theme -- precisely
+        // the defect this placeholder exists to prevent.
+        let placeholder_background_brush = Some(create_placeholder_background_brush(&config));
+
         let inner = Rc::new(RefCell::new(WindowInner {
             hwnd: HWindow(null_mut()),
             webgpu_child_hwnd: HWindow(null_mut()),
@@ -767,6 +831,7 @@ impl Window {
             config: config.clone(),
             paint_throttled: false,
             invalidated: true,
+            placeholder_background_brush,
         }));
 
         // Careful: `raw` owns a ref to inner, but there is no Drop impl
@@ -1034,6 +1099,27 @@ impl WindowInner {
             }
             false
         });
+    }
+
+    /// Drop the `WM_ERASEBKGND` placeholder brush (see
+    /// `placeholder_background_brush`'s doc comment) once a working
+    /// renderer is in place and responsible for painting every frame.
+    /// Idempotent: safe to call more than once (e.g. once from
+    /// `TermWindow::created` on the happy path, and once more as a backstop
+    /// from `wm_ncdestroy` if the window is closed before a renderer ever
+    /// came up) -- `Option::take` makes the second call a no-op.
+    fn clear_placeholder_background(&mut self) {
+        if let Some(brush) = self.placeholder_background_brush.take() {
+            // SAFETY: `brush` was created by `CreateSolidBrush` in
+            // `create_placeholder_background_brush` and is not shared with
+            // any other GDI object or in use by an in-flight `FillRect`
+            // call (both `WM_ERASEBKGND` and this method only ever run on
+            // this window's single GUI/message-loop thread), so deleting it
+            // now cannot race a concurrent use.
+            unsafe {
+                DeleteObject(brush as _);
+            }
+        }
     }
 
     fn close(&mut self) {
@@ -1318,6 +1404,13 @@ impl WindowOps for Window {
         }
     }
 
+    fn clear_placeholder_background(&self) {
+        Connection::with_window_inner(self.0, move |inner| {
+            inner.clear_placeholder_background();
+            Ok(())
+        });
+    }
+
     fn set_title(&self, title: &str) {
         let title = title.to_owned();
         Connection::with_window_inner(self.0, move |inner| {
@@ -1590,6 +1683,12 @@ unsafe fn wm_ncdestroy(
         let mut inner = inner.borrow_mut();
         inner.events.dispatch(WindowEvent::Destroyed);
         inner.hwnd = HWindow(null_mut());
+        // Backstop in case this window is closed before a renderer ever
+        // came up (so `TermWindow::created` never ran and never called
+        // `clear_placeholder_background` itself): make sure the brush is
+        // always deleted rather than leaked. No-op if it was already
+        // cleared.
+        inner.clear_placeholder_background();
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     }
 
@@ -2170,6 +2269,78 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
     .detach();
 
     Some(0)
+}
+
+/// Handles `WM_ERASEBKGND`.
+///
+/// The window class is registered with `hbrBackground: null_mut()` (see
+/// `create_window`), so ordinarily this message would go straight to
+/// `DefWindowProc`, which does nothing with a null brush -- that's exactly
+/// the behavior we want to preserve for a window whose renderer is already
+/// up: no extra background erase (and therefore no flicker) on every
+/// resize. The one gap is the window between `ShowWindow` and the
+/// renderer's first real frame: with nothing painting the client area at
+/// all, it would show whatever was previously in that region of the
+/// framebuffer (garbage, or another window's content underneath).
+///
+/// While `placeholder_background_brush` is set, fill `rcPaint` with it and
+/// report the background as erased (return 1). Once
+/// `clear_placeholder_background` has dropped the brush (called from
+/// `TermWindow::created` after a working `RenderState` is installed), fall
+/// straight back to returning 1 without painting -- identical to today's
+/// null-brush behavior.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle and `wparam` the `HDC` passed by
+/// the real `WM_ERASEBKGND` message.
+unsafe fn wm_erasebkgnd(
+    hwnd: HWND,
+    _msg: UINT,
+    wparam: WPARAM,
+    _lparam: LPARAM,
+) -> Option<LRESULT> {
+    let inner = match rc_from_hwnd(hwnd) {
+        Some(inner) => inner,
+        // No `WindowInner` yet (e.g. during early window-creation messages
+        // before `WM_NCCREATE` has stashed it) -- nothing to paint with,
+        // but still claim the erase happened so `DefWindowProc`'s no-op
+        // null-brush path isn't reached either.
+        None => return Some(1),
+    };
+
+    // `try_borrow`, not `borrow`: this message is not only posted by the
+    // system, it is also sent *synchronously by `BeginPaint`* when the
+    // update region was invalidated with erasing requested -- and
+    // `wm_paint` calls `BeginPaint` while holding `borrow_mut()` on this
+    // same `RefCell`. A plain `borrow()` would panic there. Nothing is lost
+    // by skipping the fill in that case: we are already inside a paint
+    // cycle that is about to produce a real frame.
+    let inner = match inner.try_borrow() {
+        Ok(inner) => inner,
+        Err(_) => return Some(1),
+    };
+
+    if let Some(brush) = inner.placeholder_background_brush {
+        let hdc = wparam as HDC;
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: `hwnd` is the valid window handle passed in; `rect` is a
+        // live stack `RECT` that `GetClientRect` only writes into.
+        GetClientRect(hwnd, &mut rect);
+        // SAFETY: `hdc` comes from `wparam` of a real `WM_ERASEBKGND`
+        // message and is therefore a valid device context for this window;
+        // `brush` is a live `HBRUSH` owned by `inner` (created in
+        // `create_placeholder_background_brush`, deleted only in
+        // `clear_placeholder_background`/`wm_ncdestroy`) and `rect` is the
+        // just-populated client rect.
+        FillRect(hdc, &rect, brush);
+    }
+
+    Some(1)
 }
 
 fn mods_and_buttons(wparam: WPARAM) -> (Modifiers, MouseButtons) {
@@ -3582,7 +3753,7 @@ unsafe fn do_wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
             mouse_button(hwnd, msg, wparam, lparam)
         }
         WM_DROPFILES => drop_files(hwnd, msg, wparam, lparam),
-        WM_ERASEBKGND => Some(1),
+        WM_ERASEBKGND => wm_erasebkgnd(hwnd, msg, wparam, lparam),
         WM_CLOSE => {
             if let Some(inner) = rc_from_hwnd(hwnd) {
                 let mut inner = inner.borrow_mut();
