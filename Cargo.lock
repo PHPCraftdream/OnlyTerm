@@ -6515,6 +6515,7 @@ dependencies = [
 name = "wezterm-open-url"
 version = "0.1.0"
 dependencies = [
+ "log",
  "winapi",
 ]
 

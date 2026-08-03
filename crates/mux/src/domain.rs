@@ -243,7 +243,34 @@ impl LocalDomain {
     }
 
     fn resolve_wsl_domain(&self) -> Option<WslDomain> {
-        config::configuration()
+        let config = config::configuration();
+
+        // `Config::wsl_domains()` falls back to `WslDomain::default_domains()`
+        // when the user hasn't explicitly configured `wsl_domains`, and that
+        // fallback shells out to `wsl.exe -l -v` synchronously (see
+        // `crates/config/src/wsl.rs`). That subprocess call can take hundreds
+        // of milliseconds to a few seconds (LxssManager/WSL2 VM cold start),
+        // and this function is on the hot path of every single pane spawn
+        // via `build_command`/`fixup_command` -- including for the plain
+        // "local" domain, whose name can never match an auto-discovered
+        // "WSL:<distro>" entry anyway (task #328: this call alone accounted
+        // for ~850ms of `build_command`'s time when spawning a local pane).
+        //
+        // Only pay for the (possibly expensive) enumeration when there is a
+        // real chance of a match:
+        //  - the user explicitly listed `wsl_domains` in their config, which
+        //    is already in-memory and cheap (`Config::wsl_domains()` just
+        //    clones the `Vec` in that case), or
+        //  - `self.name` uses the "WSL:" prefix that auto-discovery always
+        //    assigns (see `WslDomain::default_domains`), which is the only
+        //    way a `LocalDomain` can end up with such a name.
+        // Any other domain name (e.g. "local", exec domains, serial domains)
+        // structurally cannot be a WSL domain, so skip the lookup entirely.
+        if config.wsl_domains.is_none() && !self.name.starts_with("WSL:") {
+            return None;
+        }
+
+        config
             .wsl_domains()
             .iter()
             .find(|d| d.name == self.name)
