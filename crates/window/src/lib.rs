@@ -282,6 +282,16 @@ pub trait WindowOps {
     /// be repainted shortly
     fn invalidate(&self);
 
+    /// Release any placeholder background painted before the renderer's
+    /// first frame (Windows-only concern -- see
+    /// `os::windows::window::WindowInner::placeholder_background_brush`'s
+    /// doc comment for the full rationale). No-op default for platforms
+    /// that never needed a placeholder: on those, the window either isn't
+    /// shown before the renderer is ready, or its native window class
+    /// doesn't leave the client area unpainted the way Windows'
+    /// `hbrBackground: null_mut()` class does.
+    fn clear_placeholder_background(&self) {}
+
     /// Change the titlebar text for the window
     fn set_title(&self, title: &str);
 

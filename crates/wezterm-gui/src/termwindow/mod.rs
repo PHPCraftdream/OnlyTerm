@@ -597,6 +597,21 @@ impl TermWindow {
                     config::wezterm_version(),
                 );
                 self.render_state.replace(render_state);
+
+                // A working renderer is now installed and will paint every
+                // subsequent frame, so the Windows `WM_ERASEBKGND`
+                // placeholder (task #330; see `WindowOps::
+                // clear_placeholder_background`'s doc comment) is no longer
+                // needed. `created` is the single funnel every renderer
+                // (re)build path goes through -- initial `new_window`
+                // creation, `finish_opengl_fallback`, and
+                // `finish_renderer_rebuild` all call it -- so clearing here
+                // covers all three without duplicating the call at each
+                // site. No-op on non-Windows platforms and idempotent if a
+                // later rebuild calls `created` again.
+                if let Some(window) = self.window.as_ref() {
+                    window.clear_placeholder_background();
+                }
             }
             Err(err) => {
                 log::error!("failed to create RenderState: {}", err);
