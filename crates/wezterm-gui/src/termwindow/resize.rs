@@ -78,12 +78,12 @@ impl super::TermWindow {
         while self.resizes_pending == 0 {
             match self.pending_scale_changes.pop_front() {
                 Some(ScaleChange::Relative(change)) => {
-                    if let Some(window) = self.window.as_ref().map(|w| w.clone()) {
+                    if let Some(window) = self.window.clone() {
                         self.adjust_font_scale(self.fonts.get_font_scale() * change, &window);
                     }
                 }
                 Some(ScaleChange::Absolute(change)) => {
-                    if let Some(window) = self.window.as_ref().map(|w| w.clone()) {
+                    if let Some(window) = self.window.clone() {
                         self.adjust_font_scale(change, &window);
                     }
                 }
@@ -203,31 +203,31 @@ impl super::TermWindow {
             let padding_top = config.window_padding.top.evaluate_as_pixels(v_context) as usize;
             let padding_bottom =
                 config.window_padding.bottom.evaluate_as_pixels(v_context) as usize;
-            let padding_right = effective_right_padding(&config, h_context);
+            let padding_right = effective_right_padding(config, h_context);
 
             let pixel_height = (rows * self.render_metrics.cell_size.height as usize)
                 + (padding_top + padding_bottom)
-                + (border.top + border.bottom).get() as usize
+                + (border.top + border.bottom).get()
                 + tab_bar_height as usize;
 
             let pixel_width = (cols * self.render_metrics.cell_size.width as usize)
                 + (padding_left + padding_right)
-                + (border.left + border.right).get() as usize;
+                + (border.left + border.right).get();
 
             let dims = Dimensions {
-                pixel_width: pixel_width as usize,
-                pixel_height: pixel_height as usize,
+                pixel_width,
+                pixel_height,
                 dpi: dimensions.dpi,
             };
 
             let ri_calc = ResizeIncrementCalculator {
                 x: self.render_metrics.cell_size.width as u16,
                 y: self.render_metrics.cell_size.height as u16,
-                padding_left: padding_left,
-                padding_top: padding_top,
-                padding_right: padding_right,
-                padding_bottom: padding_bottom,
-                border: border,
+                padding_left,
+                padding_top,
+                padding_right,
+                padding_bottom,
+                border,
                 tab_bar_height: tab_bar_height as usize,
             };
 
@@ -249,18 +249,14 @@ impl super::TermWindow {
             let padding_top = config.window_padding.top.evaluate_as_pixels(v_context) as usize;
             let padding_bottom =
                 config.window_padding.bottom.evaluate_as_pixels(v_context) as usize;
-            let padding_right = effective_right_padding(&config, h_context);
+            let padding_right = effective_right_padding(config, h_context);
 
             let avail_width = dimensions.pixel_width.saturating_sub(
-                (padding_left + padding_right) as usize
-                    + (border.left + border.right).get() as usize,
+                (padding_left + padding_right) + (border.left + border.right).get(),
             );
             let avail_height = dimensions
                 .pixel_height
-                .saturating_sub(
-                    (padding_top + padding_bottom) as usize
-                        + (border.top + border.bottom).get() as usize,
-                )
+                .saturating_sub((padding_top + padding_bottom) + (border.top + border.bottom).get())
                 .saturating_sub(tab_bar_height as usize);
 
             let rows = avail_height / self.render_metrics.cell_size.height as usize;
@@ -281,11 +277,11 @@ impl super::TermWindow {
             let ri_calc = ResizeIncrementCalculator {
                 x: self.render_metrics.cell_size.width as u16,
                 y: self.render_metrics.cell_size.height as u16,
-                padding_left: padding_left,
-                padding_top: padding_top,
-                padding_right: padding_right,
-                padding_bottom: padding_bottom,
-                border: border,
+                padding_left,
+                padding_top,
+                padding_right,
+                padding_bottom,
+                border,
                 tab_bar_height: tab_bar_height as usize,
             };
 
@@ -365,8 +361,8 @@ impl super::TermWindow {
 
     pub fn current_cell_dimensions(&self) -> RowsAndCols {
         RowsAndCols {
-            rows: self.terminal_size.rows as usize,
-            cols: self.terminal_size.cols as usize,
+            rows: self.terminal_size.rows,
+            cols: self.terminal_size.cols,
         }
     }
 
@@ -531,12 +527,12 @@ impl super::TermWindow {
         let padding_bottom = config.window_padding.bottom.evaluate_as_pixels(v_context) as usize;
 
         let dimensions = Dimensions {
-            pixel_width: ((terminal_size.cols as usize * render_metrics.cell_size.width as usize)
+            pixel_width: ((terminal_size.cols * render_metrics.cell_size.width as usize)
                 + padding_left
-                + effective_right_padding(&config, h_context)),
-            pixel_height: ((terminal_size.rows as usize * render_metrics.cell_size.height as usize)
+                + effective_right_padding(config, h_context)),
+            pixel_height: ((terminal_size.rows * render_metrics.cell_size.height as usize)
                 + padding_top
-                + padding_bottom) as usize
+                + padding_bottom)
                 + tab_bar_height,
             dpi: self.dimensions.dpi,
         };
@@ -545,8 +541,8 @@ impl super::TermWindow {
         self.apply_dimensions(
             &dimensions,
             Some(RowsAndCols {
-                rows: size.rows as usize,
-                cols: size.cols as usize,
+                rows: size.rows,
+                cols: size.cols,
             }),
             window,
         );

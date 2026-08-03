@@ -83,9 +83,7 @@ impl PaneSelector {
             };
             let element = Element::new(&font, ElementContent::Text(caption))
                 .colors(ElementColors {
-                    border: BorderColor::new(
-                        term_window.config.pane_select_bg_color.to_linear().into(),
-                    ),
+                    border: BorderColor::new(term_window.config.pane_select_bg_color.to_linear()),
                     bg: term_window.config.pane_select_bg_color.to_linear().into(),
                     text: term_window.config.pane_select_fg_color.to_linear().into(),
                 })

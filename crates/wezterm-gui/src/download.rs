@@ -6,7 +6,7 @@ use std::path::PathBuf;
 /// Simple heuristics to try to avoid obvious trickery with
 /// the name provided by the remote system
 fn neuter_name(name: &str) -> Option<&str> {
-    let name = match name.rsplit_once(|c| c == '/' || c == '\\') {
+    let name = match name.rsplit_once(['/', '\\']) {
         Some((_, base)) => base,
         None => name,
     };
@@ -37,7 +37,7 @@ fn resolve_file_name(name: Option<&str>) -> anyhow::Result<(PathBuf, File)> {
         let candidate = if n == 0 {
             download_dir.join(name)
         } else {
-            download_dir.join(&format!("{}.{}", name, n))
+            download_dir.join(format!("{}.{}", name, n))
         };
 
         if let Ok(file) = OpenOptions::new()

@@ -35,6 +35,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// environment) plus a live tail of the application's own log ring buffer
 /// (see [`print_new_log_entries`]), which has nothing to do with rhai and is
 /// still useful for troubleshooting.
+#[allow(clippy::result_large_err)] // returns termwiz::Result; Err (termwiz::Error) is an external 136-byte type, boxing ripples through callers
 fn print_new_log_entries(term: &mut TermWizTerminal) -> termwiz::Result<()> {
     let entries = env_bootstrap::ringlog::get_entries();
     let mut changes = vec![];

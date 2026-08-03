@@ -602,7 +602,7 @@ impl Pane for QuickSelectOverlay {
                 with_lines,
                 dims,
                 search_row,
-                renderer: &mut *renderer,
+                renderer: &mut renderer,
             },
         );
 
@@ -679,7 +679,7 @@ impl Pane for QuickSelectOverlay {
                                 let mut attr = line
                                     .get_cell(idx)
                                     .map(|cell| cell.attrs().clone())
-                                    .unwrap_or_else(|| CellAttributes::default());
+                                    .unwrap_or_default();
                                 attr.set_background(
                                     colors
                                         .quick_select_label_bg
@@ -771,7 +771,7 @@ impl Pane for QuickSelectOverlay {
                         let mut attr = line
                             .get_cell(idx)
                             .map(|cell| cell.attrs().clone())
-                            .unwrap_or_else(|| CellAttributes::default());
+                            .unwrap_or_else(CellAttributes::default);
                         attr.set_background(
                             colors
                                 .quick_select_label_bg
@@ -801,9 +801,9 @@ impl Pane for QuickSelectOverlay {
 impl QuickSelectRenderable {
     fn compute_search_row(&self) -> StableRowIndex {
         let dims = self.delegate.get_dimensions();
-        let top = self.viewport.unwrap_or_else(|| dims.physical_top);
-        let bottom = (top + dims.viewport_rows as StableRowIndex).saturating_sub(1);
-        bottom
+        let top = self.viewport.unwrap_or(dims.physical_top);
+
+        (top + dims.viewport_rows as StableRowIndex).saturating_sub(1)
     }
 
     fn close(&self) {
@@ -903,7 +903,7 @@ impl QuickSelectRenderable {
                     label: label.clone(),
                 };
 
-                let matches = self.by_line.entry(idx).or_insert_with(|| vec![]);
+                let matches = self.by_line.entry(idx).or_default();
                 matches.push(result);
 
                 self.dirty_results.add(idx);
@@ -998,7 +998,7 @@ impl QuickSelectRenderable {
     }
 
     fn select_and_copy_match_number(&mut self, n: usize, paste: bool) {
-        let result = self.results[n].clone();
+        let result = self.results[n];
 
         let pane_id = self.delegate.pane_id();
         let action = self.args.action.clone();
@@ -1047,7 +1047,7 @@ impl QuickSelectRenderable {
 
     fn activate_match_number(&mut self, n: usize) {
         self.result_pos.replace(n);
-        let result = self.results[n].clone();
+        let result = self.results[n];
         self.set_viewport(Some(result.start_y));
     }
 }

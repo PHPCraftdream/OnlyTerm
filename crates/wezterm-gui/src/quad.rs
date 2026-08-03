@@ -309,6 +309,12 @@ impl BoxedQuad {
 }
 
 #[derive(Default)]
+// `vec_box` wants `Vec<BoxedQuad>` here. That is exactly the layout
+// `BoxedQuad`'s own doc comment above explains this code is avoiding: a
+// single contiguous allocation in the megabyte range, gnarly to grow and
+// prone to wasting several MB in unused capacity. The extra indirection is
+// the point, not an oversight.
+#[allow(clippy::vec_box)]
 pub struct HeapQuadAllocator {
     layer0: Vec<Box<BoxedQuad>>,
     layer1: Vec<Box<BoxedQuad>>,
