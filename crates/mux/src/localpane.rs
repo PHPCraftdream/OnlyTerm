@@ -818,7 +818,7 @@ impl Pane for LocalPane {
                     |term| term.send_paste("detach\n"),
                 )?;
             }
-            return Ok(());
+            Ok(())
         } else {
             lock_terminal_timed(
                 &self.terminal,
@@ -1333,7 +1333,7 @@ impl Pane for LocalPane {
                 .binary_search_by(|ele| ele.byte_idx.cmp(&idx))
                 .or_else(|i| -> Result<usize, usize> { Ok(i) })
                 .unwrap();
-            let coord = coords.get(c).map(|c| *c).unwrap_or_else(|| {
+            let coord = coords.get(c).copied().unwrap_or_else(|| {
                 let last = coords.last().unwrap();
                 Coord {
                     grapheme_idx: last.grapheme_idx + 1,
@@ -1426,9 +1426,9 @@ impl wezterm_term::DeviceControlHandler for LocalPaneDCSHandler {
             }
             DeviceControlMode::TmuxEvents(events) => {
                 if let Some(tmux) = self.tmux_domain.as_ref() {
-                    tmux.advance(events);
+                    tmux.advance(&events);
                 } else {
-                    log::warn!("unhandled DeviceControlMode::TmuxEvents {:?}", &events);
+                    log::warn!("unhandled DeviceControlMode::TmuxEvents {:?}", events);
                 }
             }
             _ => {
@@ -1782,11 +1782,8 @@ impl LocalPane {
 
     #[allow(dead_code)]
     fn divine_foreground_process(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
-        if let Some(info) = self.divine_process_list(policy) {
-            Some(info.foreground.clone())
-        } else {
-            None
-        }
+        self.divine_process_list(policy)
+            .map(|info| info.foreground.clone())
     }
 
     /// Test-only escape hatch that measures `terminal.lock()` wait time

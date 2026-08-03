@@ -151,13 +151,13 @@ impl SplitDirectionAndSize {
     fn top_of_second(&self) -> usize {
         match self.direction {
             SplitDirection::Horizontal => 0,
-            SplitDirection::Vertical => self.first.rows as usize + 1,
+            SplitDirection::Vertical => self.first.rows + 1,
         }
     }
 
     fn left_of_second(&self) -> usize {
         match self.direction {
-            SplitDirection::Horizontal => self.first.cols as usize + 1,
+            SplitDirection::Horizontal => self.first.cols + 1,
             SplitDirection::Vertical => 0,
         }
     }
@@ -219,6 +219,7 @@ fn is_pane(pane: &Arc<dyn Pane>, other: &Option<&Arc<dyn Pane>>) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // private recursive tree-builder; builder-struct refactor adds churn for no behavioral gain
 fn pane_tree(
     tree: &Tree,
     tab_id: TabId,
@@ -235,10 +236,10 @@ fn pane_tree(
             let data = data.unwrap();
             PaneNode::Split {
                 left: Box::new(pane_tree(
-                    &*left, tab_id, window_id, active, zoomed, workspace, left_col, top_row,
+                    left, tab_id, window_id, active, zoomed, workspace, left_col, top_row,
                 )),
                 right: Box::new(pane_tree(
-                    &*right,
+                    right,
                     tab_id,
                     window_id,
                     active,
@@ -514,15 +515,15 @@ fn adjust_y_size(tree: &mut Tree, y_adjust: isize, cell_dimensions: &TerminalSiz
 
 fn apply_sizes_from_splits(tree: &Tree, size: &TerminalSize) {
     match tree {
-        Tree::Empty => return,
-        Tree::Node { data: None, .. } => return,
+        Tree::Empty => {}
+        Tree::Node { data: None, .. } => {}
         Tree::Node {
             left,
             right,
             data: Some(data),
         } => {
-            apply_sizes_from_splits(&*left, &data.first);
-            apply_sizes_from_splits(&*right, &data.second);
+            apply_sizes_from_splits(left, &data.first);
+            apply_sizes_from_splits(right, &data.second);
         }
         Tree::Leaf(pane) => {
             pane.resize(*size).ok();
@@ -558,12 +559,12 @@ impl Tab {
         let mut inner = self.inner.lock();
         if inner.title != title {
             inner.title = title.to_string();
-            Mux::try_get().map(|mux| {
+            if let Some(mux) = Mux::try_get() {
                 mux.notify(MuxNotification::TabTitleChanged {
                     tab_id: inner.id,
                     title: title.to_string(),
                 })
-            });
+            }
         }
     }
 
@@ -951,7 +952,9 @@ impl TabInner {
                 self.zoomed.replace(pane);
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn contains_pane(&self, pane: PaneId) -> bool {
@@ -1009,7 +1012,9 @@ impl TabInner {
                 }
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn local_rotate_clockwise(&mut self) {
@@ -1041,7 +1046,9 @@ impl TabInner {
                 }
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn iter_panes_impl(&mut self, respect_zoom_state: bool) -> Vec<PositionedPane> {
@@ -1056,10 +1063,10 @@ impl TabInner {
                     is_zoomed: true,
                     left: 0,
                     top: 0,
-                    width: size.cols.into(),
-                    pixel_width: size.pixel_width.into(),
-                    height: size.rows.into(),
-                    pixel_height: size.pixel_height.into(),
+                    width: size.cols,
+                    pixel_width: size.pixel_width,
+                    height: size.rows,
+                    pixel_height: size.pixel_height,
                     pane: Arc::clone(zoomed),
                 });
                 return panes;
@@ -1094,7 +1101,7 @@ impl TabInner {
                 }
 
                 let pane = Arc::clone(cursor.leaf_mut().unwrap());
-                let dims = parent_size.unwrap_or_else(|| root_size);
+                let dims = parent_size.unwrap_or(root_size);
 
                 panes.push(PositionedPane {
                     index,
@@ -1145,8 +1152,8 @@ impl TabInner {
                 }
                 if let Ok(Some(node)) = cursor.node_mut() {
                     match node.direction {
-                        SplitDirection::Horizontal => left += node.first.cols as usize,
-                        SplitDirection::Vertical => top += node.first.rows as usize,
+                        SplitDirection::Horizontal => left += node.first.cols,
+                        SplitDirection::Vertical => top += node.first.rows,
                     }
 
                     dividers.push(PositionedSplit {
@@ -1155,9 +1162,9 @@ impl TabInner {
                         left,
                         top,
                         size: if node.direction == SplitDirection::Horizontal {
-                            node.height() as usize
+                            node.height()
                         } else {
-                            node.width() as usize
+                            node.width()
                         },
                     })
                 }
@@ -1223,7 +1230,9 @@ impl TabInner {
             apply_sizes_from_splits(self.pane.as_mut().unwrap(), &size);
         }
 
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn apply_pane_size(&mut self, pane_size: TerminalSize, cursor: &mut Cursor) {
@@ -1299,7 +1308,9 @@ impl TabInner {
                 self.size = size;
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn resize_split_to(&mut self, split_index: usize, left_or_top: isize) {
@@ -1332,7 +1343,9 @@ impl TabInner {
         // Now cursor is looking at the split
         self.adjust_node_at_cursor(&mut cursor, left_or_top);
         self.cascade_size_from_cursor(cursor);
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn adjust_node_at_cursor(&mut self, cursor: &mut Cursor, left_or_top: isize) {
@@ -1407,7 +1420,9 @@ impl TabInner {
                 }
             }
         }
-        Mux::try_get().map(|mux| mux.notify(MuxNotification::TabReflowed(self.id)));
+        if let Some(mux) = Mux::try_get() {
+            mux.notify(MuxNotification::TabReflowed(self.id));
+        }
     }
 
     fn adjust_pane_size(&mut self, direction: PaneDirection, amount: usize) {
@@ -1771,8 +1786,7 @@ impl TabInner {
         }
 
         self.iter_panes_ignoring_zoom()
-            .iter()
-            .nth(self.active)
+            .get(self.active)
             .map(|p| Arc::clone(&p.pane))
     }
 
@@ -1930,14 +1944,12 @@ impl TabInner {
             let size = self.size;
 
             let ((width1, width2), (height1, height2)) = match request.direction {
-                SplitDirection::Horizontal => (
-                    split_dimension(size.cols as usize, request),
-                    (size.rows as usize, size.rows as usize),
-                ),
-                SplitDirection::Vertical => (
-                    (size.cols as usize, size.cols as usize),
-                    split_dimension(size.rows as usize, request),
-                ),
+                SplitDirection::Horizontal => {
+                    (split_dimension(size.cols, request), (size.rows, size.rows))
+                }
+                SplitDirection::Vertical => {
+                    ((size.cols, size.cols), split_dimension(size.rows, request))
+                }
             };
 
             return Some(SplitDirectionAndSize {
@@ -1963,7 +1975,7 @@ impl TabInner {
         // a bogus split state (https://github.com/wezterm/wezterm/issues/723)
         self.set_zoomed(false);
 
-        self.iter_panes().iter().nth(pane_index).map(|pos| {
+        self.iter_panes().get(pane_index).map(|pos| {
             let ((width1, width2), (height1, height2)) = match request.direction {
                 SplitDirection::Horizontal => (
                     split_dimension(pos.width, request),
@@ -2042,9 +2054,9 @@ impl TabInner {
                 // match the target size; it's easier to reuse
                 // existing resize logic that way
                 if request.target_is_second {
-                    self.resize(split_info.first.clone());
+                    self.resize(split_info.first);
                 } else {
-                    self.resize(split_info.second.clone());
+                    self.resize(split_info.second);
                 }
                 // Resize the tab back to the original tab size
                 // to avoid leaving unusable space within the tab
@@ -2098,7 +2110,7 @@ impl TabInner {
             };
 
             pane1.resize(split_info.first)?;
-            pane2.resize(split_info.second.clone())?;
+            pane2.resize(split_info.second)?;
 
             *cursor.leaf_mut().unwrap() = pane1;
 
@@ -2223,15 +2235,15 @@ impl From<Url> for SerdeUrl {
     }
 }
 
-impl Into<Url> for SerdeUrl {
-    fn into(self) -> Url {
-        self.url
+impl From<SerdeUrl> for Url {
+    fn from(s: SerdeUrl) -> Url {
+        s.url
     }
 }
 
-impl Into<String> for SerdeUrl {
-    fn into(self) -> String {
-        self.url.as_str().into()
+impl From<SerdeUrl> for String {
+    fn from(s: SerdeUrl) -> String {
+        s.url.as_str().into()
     }
 }
 
@@ -2259,6 +2271,7 @@ mod test {
     }
 
     impl FakePane {
+        #[allow(clippy::new_ret_no_self)] // test-only factory deliberately returning Arc<dyn Pane>
         fn new(id: PaneId, size: TerminalSize) -> Arc<dyn Pane> {
             Arc::new(Self {
                 id,
@@ -2378,7 +2391,7 @@ mod test {
         let panes = tab.iter_panes();
         assert_eq!(1, panes.len());
         assert_eq!(0, panes[0].index);
-        assert_eq!(true, panes[0].is_active);
+        assert!(panes[0].is_active);
         assert_eq!(0, panes[0].left);
         assert_eq!(0, panes[0].top);
         assert_eq!(80, panes[0].width);
@@ -2470,7 +2483,7 @@ mod test {
         assert_eq!(2, panes.len());
 
         assert_eq!(0, panes[0].index);
-        assert_eq!(false, panes[0].is_active);
+        assert!(!panes[0].is_active);
         assert_eq!(0, panes[0].left);
         assert_eq!(0, panes[0].top);
         assert_eq!(39, panes[0].width);
@@ -2480,7 +2493,7 @@ mod test {
         assert_eq!(1, panes[0].pane.pane_id());
 
         assert_eq!(1, panes[1].index);
-        assert_eq!(true, panes[1].is_active);
+        assert!(panes[1].is_active);
         assert_eq!(40, panes[1].left);
         assert_eq!(0, panes[1].top);
         assert_eq!(40, panes[1].width);
@@ -2516,7 +2529,7 @@ mod test {
         assert_eq!(3, panes.len());
 
         assert_eq!(0, panes[0].index);
-        assert_eq!(false, panes[0].is_active);
+        assert!(!panes[0].is_active);
         assert_eq!(0, panes[0].left);
         assert_eq!(0, panes[0].top);
         assert_eq!(39, panes[0].width);
@@ -2526,7 +2539,7 @@ mod test {
         assert_eq!(1, panes[0].pane.pane_id());
 
         assert_eq!(1, panes[1].index);
-        assert_eq!(true, panes[1].is_active);
+        assert!(panes[1].is_active);
         assert_eq!(0, panes[1].left);
         assert_eq!(12, panes[1].top);
         assert_eq!(39, panes[1].width);
@@ -2536,7 +2549,7 @@ mod test {
         assert_eq!(3, panes[1].pane.pane_id());
 
         assert_eq!(2, panes[2].index);
-        assert_eq!(false, panes[2].is_active);
+        assert!(!panes[2].is_active);
         assert_eq!(40, panes[2].left);
         assert_eq!(0, panes[2].top);
         assert_eq!(40, panes[2].width);
@@ -2928,6 +2941,7 @@ mod test {
         Mux::shutdown();
     }
 
+    #[allow(clippy::extra_unused_type_parameters)] // T is a compile-time Send+Sync assertion via is_send_and_sync::<Tab>(); removing it breaks call sites
     fn is_send_and_sync<T: Send + Sync>() -> bool {
         true
     }

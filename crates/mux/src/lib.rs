@@ -95,6 +95,8 @@ pub enum MuxNotification {
 
 static LAST_SUBSCRIBER_ID: AtomicUsize = AtomicUsize::new(0);
 
+type MuxSubscriber = Arc<dyn Fn(MuxNotification) -> bool + Send + Sync>;
+
 pub struct Mux {
     tabs: RwLock<HashMap<TabId, Arc<Tab>>>,
     panes: RwLock<HashMap<PaneId, Arc<dyn Pane>>>,
@@ -102,7 +104,7 @@ pub struct Mux {
     default_domain: RwLock<Option<Arc<dyn Domain>>>,
     domains: RwLock<HashMap<DomainId, Arc<dyn Domain>>>,
     domains_by_name: RwLock<HashMap<String, Arc<dyn Domain>>>,
-    subscribers: RwLock<HashMap<usize, Arc<dyn Fn(MuxNotification) -> bool + Send + Sync>>>,
+    subscribers: RwLock<HashMap<usize, MuxSubscriber>>,
     banner: RwLock<Option<String>>,
     clients: RwLock<HashMap<ClientId, ClientInfo>>,
     identity: RwLock<Option<Arc<ClientId>>>,
@@ -313,13 +315,13 @@ fn parse_buffered_data(
                         // deadline/state) rather than falling through to
                         // the unconditional `rx.recv()` below, which would
                         // otherwise consume a second, unrelated message.
-                        process_chunk(&pane, &dead, &mut state, &mut parser, &bytes);
+                        process_chunk(&pane, dead, &mut state, &mut parser, &bytes);
                         continue;
                     }
                     Err(RecvTimeoutError::Disconnected) => {
                         dead.store(true, Ordering::Relaxed);
                         if !state.actions.is_empty() {
-                            send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
+                            send_actions_to_mux(&pane, dead, std::mem::take(&mut state.actions));
                         }
                         return;
                     }
@@ -333,7 +335,7 @@ fn parse_buffered_data(
                 state.hold = false;
                 state.hold_deadline = None;
                 if !state.actions.is_empty() {
-                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
+                    send_actions_to_mux(&pane, dead, std::mem::take(&mut state.actions));
                     state.action_size = 0;
                 }
                 continue;
@@ -346,7 +348,7 @@ fn parse_buffered_data(
                 break;
             }
             Ok(bytes) => {
-                process_chunk(&pane, &dead, &mut state, &mut parser, &bytes);
+                process_chunk(&pane, dead, &mut state, &mut parser, &bytes);
 
                 // If we haven't accumulated too much data, pause for a
                 // short while to increase the chances that we coalesce a
@@ -378,7 +380,7 @@ fn parse_buffered_data(
                     };
                     match rx.recv_timeout(remaining) {
                         Ok(more) => {
-                            process_chunk(&pane, &dead, &mut state, &mut parser, &more);
+                            process_chunk(&pane, dead, &mut state, &mut parser, &more);
                         }
                         // Timeout or disconnect: flush what we have. A
                         // disconnect will be observed by the next
@@ -388,7 +390,7 @@ fn parse_buffered_data(
                 }
 
                 if !state.actions.is_empty() && !state.hold {
-                    send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
+                    send_actions_to_mux(&pane, dead, std::mem::take(&mut state.actions));
                     state.action_size = 0;
                 }
                 deadline = None;
@@ -405,7 +407,7 @@ fn parse_buffered_data(
     // for very short lived commands so that we don't forget to
     // display what they displayed.
     if !state.actions.is_empty() {
-        send_actions_to_mux(&pane, &dead, std::mem::take(&mut state.actions));
+        send_actions_to_mux(&pane, dead, std::mem::take(&mut state.actions));
     }
 }
 
@@ -445,7 +447,7 @@ fn read_from_pane_pty(
     // Read data from the pane pty and send it to the parser thread via tx/rx.
     while !dead.load(Ordering::Relaxed) {
         match reader.read(&mut buf) {
-            Ok(size) if size == 0 => {
+            Ok(0) => {
                 log::trace!("read_pty EOF: pane_id {}", pane_id);
                 break;
             }
@@ -705,11 +707,7 @@ impl Mux {
     }
 
     pub fn iter_clients(&self) -> Vec<ClientInfo> {
-        self.clients
-            .read()
-            .values()
-            .map(|info| info.clone())
-            .collect()
+        self.clients.read().values().cloned().collect()
     }
 
     /// Returns a list of the unique workspace names known to the mux.
@@ -745,7 +743,7 @@ impl Mux {
             .and_then(|ident| {
                 self.clients
                     .read()
-                    .get(&ident)
+                    .get(ident)
                     .and_then(|info| info.active_workspace.clone())
             })
             .unwrap_or_else(|| self.get_default_workspace())
@@ -755,14 +753,14 @@ impl Mux {
     pub fn active_workspace_for_client(&self, ident: &Arc<ClientId>) -> String {
         self.clients
             .read()
-            .get(&ident)
+            .get(ident)
             .and_then(|info| info.active_workspace.clone())
             .unwrap_or_else(|| self.get_default_workspace())
     }
 
     pub fn set_active_workspace_for_client(&self, ident: &Arc<ClientId>, workspace: &str) {
         let mut clients = self.clients.write();
-        if let Some(info) = clients.get_mut(&ident) {
+        if let Some(info) = clients.get_mut(ident) {
             info.active_workspace.replace(workspace.to_string());
             self.notify(MuxNotification::ActiveWorkspaceChanged(ident.clone()));
         }
@@ -864,7 +862,7 @@ impl Mux {
         // `Box<Fn>`) is what makes a cheap snapshot possible without
         // moving the callbacks out of the map, so a second pass can later
         // reconcile the live set using the same ids.
-        let snapshot: Vec<(usize, Arc<dyn Fn(MuxNotification) -> bool + Send + Sync>)> = {
+        let snapshot: Vec<(usize, MuxSubscriber)> = {
             let subscribers = self.subscribers.read();
             subscribers
                 .iter()
@@ -1268,11 +1266,7 @@ impl Mux {
     }
 
     pub fn iter_panes(&self) -> Vec<Arc<dyn Pane>> {
-        self.panes
-            .read()
-            .iter()
-            .map(|(_, v)| Arc::clone(v))
-            .collect()
+        self.panes.read().values().map(Arc::clone).collect()
     }
 
     pub fn iter_windows_in_workspace(&self, workspace: &str) -> Vec<WindowId> {
@@ -1326,7 +1320,7 @@ impl Mux {
 
         {
             let mut windows = self.windows.write();
-            for (_, win) in windows.iter_mut() {
+            for win in windows.values_mut() {
                 for tab in win.iter() {
                     tab.kill_panes_in_domain(domain);
                 }
@@ -1405,20 +1399,18 @@ impl Mux {
             SpawnTabDomain::DomainId(domain_id) => self
                 .get_domain(*domain_id)
                 .ok_or_else(|| anyhow!("domain id {} is invalid", domain_id))?,
-            SpawnTabDomain::DomainName(name) => {
-                self.get_domain_by_name(&name).ok_or_else(|| {
-                    let names: Vec<String> = self
-                        .domains_by_name
-                        .read()
-                        .keys()
-                        .map(|name| format!("\"{name}\""))
-                        .collect();
-                    anyhow!(
-                        "domain name \"{name}\" is invalid. Possible names are {}.",
-                        names.join(", ")
-                    )
-                })?
-            }
+            SpawnTabDomain::DomainName(name) => self.get_domain_by_name(name).ok_or_else(|| {
+                let names: Vec<String> = self
+                    .domains_by_name
+                    .read()
+                    .keys()
+                    .map(|name| format!("\"{name}\""))
+                    .collect();
+                anyhow!(
+                    "domain name \"{name}\" is invalid. Possible names are {}.",
+                    names.join(", ")
+                )
+            })?,
         };
         Ok(domain)
     }
@@ -1589,7 +1581,7 @@ impl Mux {
         // This makes the assumption that a tab contains only panes from a single local domain,
         // though that is also an assumption that ClientDomain makes when syncing tab panes.
         let tab_panes = tab.iter_panes();
-        let pos_pane = match tab_panes.iter().nth(0) {
+        let pos_pane = match tab_panes.first() {
             Some(pos_pane) => pos_pane,
             None => anyhow::bail!("Tab contains no panes: {}", tab_id),
         };
@@ -1641,6 +1633,7 @@ impl Mux {
         tab.local_swap_active_with_index(with_pane_index, keep_focus);
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)] // public async API; reordering/merging params would break callers across the workspace
     pub async fn spawn_tab_or_window(
         &self,
         window_id: Option<WindowId>,

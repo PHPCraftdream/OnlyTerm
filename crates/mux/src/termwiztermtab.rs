@@ -201,8 +201,8 @@ impl Pane for TermWizTerminalPane {
 
     fn resize(&self, size: TerminalSize) -> anyhow::Result<()> {
         self.input_tx.send(InputEvent::Resized {
-            rows: size.rows as usize,
-            cols: size.cols as usize,
+            rows: size.rows,
+            cols: size.cols,
         })?;
 
         self.terminal.lock().resize(size);
@@ -340,6 +340,7 @@ impl termwiz::render::RenderTty for TermWizTerminalRenderTty {
 }
 
 impl TermWizTerminal {
+    #[allow(clippy::result_large_err)] // returns termwiz::Result (alias from the external termwiz crate); boxing the Err changes the return type and ripples to callers for no runtime benefit
     fn do_input_poll(&mut self, wait: Option<Duration>) -> termwiz::Result<Option<InputEvent>> {
         if let Some(timeout) = wait {
             match self.input_rx.recv_timeout(timeout) {
@@ -432,7 +433,7 @@ impl termwiz::terminal::Terminal for TermWizTerminal {
                     key: KeyCode::Char(c.to_ascii_uppercase()),
                     modifiers: Modifiers::CTRL,
                 })),
-                i @ _ => i,
+                i => i,
             }
         })
     }
@@ -464,10 +465,10 @@ pub fn allocate(
         render_tx: TermWizTerminalRenderTty {
             render_tx: BufWriter::new(render_pipe.write),
             screen_size: ScreenSize {
-                cols: size.cols as usize,
-                rows: size.rows as usize,
-                xpixel: (size.pixel_width / size.cols) as usize,
-                ypixel: (size.pixel_height / size.rows) as usize,
+                cols: size.cols,
+                rows: size.rows,
+                xpixel: (size.pixel_width / size.cols),
+                ypixel: (size.pixel_height / size.rows),
             },
         },
         input_rx,
@@ -519,10 +520,10 @@ pub async fn run<
         render_tx: TermWizTerminalRenderTty {
             render_tx: BufWriter::new(render_pipe.write),
             screen_size: ScreenSize {
-                cols: size.cols as usize,
-                rows: size.rows as usize,
-                xpixel: (size.pixel_width / size.cols) as usize,
-                ypixel: (size.pixel_height / size.rows) as usize,
+                cols: size.cols,
+                rows: size.rows,
+                xpixel: (size.pixel_width / size.cols),
+                ypixel: (size.pixel_height / size.rows),
             },
         },
         input_rx,

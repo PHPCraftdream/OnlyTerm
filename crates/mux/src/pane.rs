@@ -522,6 +522,10 @@ pub fn impl_get_logical_lines_via_get_lines<P: Pane + ?Sized>(
     // Now process this stuff into logical lines
     let mut lines = vec![];
     for (idx, line) in phys.into_iter().enumerate() {
+        // The `if` here has an `else` branch, so collapsing it into a match
+        // guard would duplicate the `Some(prior)` pattern for the else arm;
+        // keeping the explicit if/else is clearer and behavior-identical.
+        #[allow(clippy::collapsible_match)]
         match lines.last_mut() {
             None => {
                 let logical = line.clone();
@@ -713,7 +717,7 @@ mod test {
                 .chars()
                 .collect::<Vec<char>>()
                 .chunks(width)
-                .map(|c| c.into_iter().collect::<String>())
+                .map(|c| c.iter().collect::<String>())
                 .collect::<Vec<String>>();
             let n_chunks = chunks.len();
             for (idx, chunk) in chunks.into_iter().enumerate() {
