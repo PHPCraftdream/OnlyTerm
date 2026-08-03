@@ -611,6 +611,13 @@ impl TermWindow {
                 // later rebuild calls `created` again.
                 if let Some(window) = self.window.as_ref() {
                     window.clear_placeholder_background();
+                    // The window may already be visible (task #331/early
+                    // show) with nothing queued to trigger a repaint yet.
+                    // Force one now so the first real frame appears
+                    // immediately instead of waiting for some unrelated
+                    // event (focus change, resize, blink tick, ...) to
+                    // eventually invalidate the window.
+                    window.invalidate();
                 }
             }
             Err(err) => {
@@ -889,6 +896,25 @@ impl TermWindow {
 
         Self::apply_icon(&window)?;
 
+        // Show the window now, before WebGpu adapter/device/pipeline
+        // initialization, instead of waiting for `RenderState` to be ready
+        // further down. On Windows with the WebGpu/DX12 default this
+        // initialization alone can take several seconds; the user should not
+        // stare at nothing that whole time. The client area is safe to show
+        // unpainted because the Windows window class fills it with the
+        // terminal's background color via `WM_ERASEBKGND` until the first
+        // real frame clears that placeholder in `created()` below (task
+        // #330). `NeedRepaint` before the renderer exists is already a no-op
+        // (`do_paint` bails out when `self.gl` is `None`, and
+        // `do_paint_webgpu` is unreachable until `self.webgpu` is set in
+        // `created()`), and pane input keeps flowing to the pty regardless of
+        // whether a renderer is attached yet, so there is nothing unsafe
+        // about a visible-but-not-yet-rendering window.
+        window.show();
+        if config.start_maximized {
+            window.maximize();
+        }
+
         let config_subscription = config::subscribe_to_config_reload({
             let window = window.clone();
             move || {
@@ -982,10 +1008,6 @@ impl TermWindow {
                 }
             }
             myself.load_os_parameters();
-            window.show();
-            if config.start_maximized {
-                window.maximize();
-            }
             myself.subscribe_to_pane_updates();
         }
 
