@@ -5,6 +5,10 @@ use termwiz::cell::{grapheme_column_width, UnicodeVersion};
 
 include!("../src/widechar_width.rs");
 
+// `include!` above inlines widechar_width.rs, whose trailing `#[cfg(test)] mod
+// test` precedes this `main`; main cannot precede the include because it uses
+// the included items. Suppress the resulting items-after-test-module lint.
+#[allow(clippy::items_after_test_module)]
 fn main() {
     let table = Rc::new(WcLookupTable::new());
 
