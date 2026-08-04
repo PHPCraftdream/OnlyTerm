@@ -283,6 +283,9 @@ impl TerminalState {
     }
 
     /// cache recent images and avoid assigning a new id for repeated data!
+    // The large Err variant is termwiz::error::InternalError, a foreign type;
+    // boxing it would change this function's return signature for no benefit.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn raw_image_to_image_data(
         &mut self,
         data: ImageDataType,

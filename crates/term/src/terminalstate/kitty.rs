@@ -485,8 +485,6 @@ impl TerminalState {
                     frame.composition_mode,
                 )?;
 
-                drop(dest);
-
                 *hash = ImageDataType::hash_bytes(data);
             }
             ImageDataType::AnimRgba8 {
@@ -529,7 +527,6 @@ impl TerminalState {
                     frame.composition_mode,
                 )?;
 
-                drop(dest);
                 hashes[target_frame - 1] = ImageDataType::hash_bytes(&frames[target_frame - 1]);
             }
         }
@@ -638,7 +635,6 @@ impl TerminalState {
 
                         blit(&mut anim_img, &img, x, y, frame.composition_mode)?;
 
-                        drop(anim_img);
                         *hash = ImageDataType::hash_bytes(data);
                     }
                     Some(2) | None => {
@@ -731,7 +727,6 @@ impl TerminalState {
 
                     blit(&mut anim_img, &img, x, y, frame.composition_mode)?;
 
-                    drop(anim_img);
                     hashes[frame_no - 1] = ImageDataType::hash_bytes(&frames[frame_no - 1]);
                 }
             }

@@ -59,6 +59,9 @@ pub(crate) enum CharSet {
 pub(crate) enum MouseEncoding {
     X10,
     Utf8,
+    // SGR is the standard xterm/VT abbreviation for "Select Graphic Rendition";
+    // renaming it would diverge from the spec terminology used across the codebase.
+    #[allow(clippy::upper_case_acronyms)]
     SGR,
     SgrPixels,
 }
@@ -78,21 +81,11 @@ impl TabStop {
     }
 
     fn find_prev_tab_stop(&self, col: usize) -> Option<usize> {
-        for i in (0..col.min(self.tabs.len())).rev() {
-            if self.tabs[i] {
-                return Some(i);
-            }
-        }
-        None
+        (0..col.min(self.tabs.len())).rev().find(|&i| self.tabs[i])
     }
 
     fn find_next_tab_stop(&self, col: usize) -> Option<usize> {
-        for i in col + 1..self.tabs.len() {
-            if self.tabs[i] {
-                return Some(i);
-            }
-        }
-        None
+        (col + 1..self.tabs.len()).find(|&i| self.tabs[i])
     }
 
     /// Respond to the terminal resizing.
@@ -950,7 +943,7 @@ impl TerminalState {
                     .saved_cursor
                     .as_ref()
                     .map(|s| s.position)
-                    .unwrap_or_else(CursorPosition::default),
+                    .unwrap_or_default(),
                 self.cursor,
             )
         } else {
@@ -961,7 +954,7 @@ impl TerminalState {
                     .saved_cursor
                     .as_ref()
                     .map(|s| s.position)
-                    .unwrap_or_else(CursorPosition::default),
+                    .unwrap_or_default(),
             )
         };
 
@@ -1194,7 +1187,7 @@ impl TerminalState {
         } else {
             y + 1
         };
-        self.set_cursor_pos(&Position::Absolute(x as i64), &Position::Absolute(y as i64));
+        self.set_cursor_pos(&Position::Absolute(x as i64), &Position::Absolute(y));
     }
 
     /// Moves the cursor down one line in the same column.
@@ -1272,10 +1265,7 @@ impl TerminalState {
     }
 
     fn set_hyperlink(&mut self, link: Option<Hyperlink>) {
-        self.pen.set_hyperlink(match link {
-            Some(hyperlink) => Some(Arc::new(hyperlink)),
-            None => None,
-        });
+        self.pen.set_hyperlink(link.map(Arc::new));
     }
 
     /// <https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95>
@@ -1286,7 +1276,7 @@ impl TerminalState {
         for name in &names {
             res.push_str("\x1bP");
 
-            let encoded_name = hex::encode_upper(&name);
+            let encoded_name = hex::encode_upper(name);
             match name.as_str() {
                 "TN" | "name" => {
                     res.push_str("1+r");
@@ -1320,7 +1310,7 @@ impl TerminalState {
                         res.push('=');
                         let value = match value {
                             Value::True => hex::encode_upper("1"),
-                            Value::Number(n) => hex::encode_upper(&n.to_string()),
+                            Value::Number(n) => hex::encode_upper(n.to_string()),
                             Value::String(s) => hex::encode_upper(s),
                         };
                         res.push_str(&value);
@@ -1921,10 +1911,7 @@ impl TerminalState {
                 self.decqrm_response(
                     mode,
                     true,
-                    match self.mouse_encoding {
-                        MouseEncoding::SGR => true,
-                        _ => false,
-                    },
+                    matches!(self.mouse_encoding, MouseEncoding::SGR),
                 );
             }
             Mode::SetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::SGRPixelsMouse)) => {
@@ -1939,10 +1926,7 @@ impl TerminalState {
                 self.decqrm_response(
                     mode,
                     true,
-                    match self.mouse_encoding {
-                        MouseEncoding::SgrPixels => true,
-                        _ => false,
-                    },
+                    matches!(self.mouse_encoding, MouseEncoding::SgrPixels),
                 );
             }
 
@@ -1958,10 +1942,7 @@ impl TerminalState {
                 self.decqrm_response(
                     mode,
                     true,
-                    match self.mouse_encoding {
-                        MouseEncoding::Utf8 => true,
-                        _ => false,
-                    },
+                    matches!(self.mouse_encoding, MouseEncoding::Utf8),
                 );
             }
 
@@ -2255,7 +2236,7 @@ impl TerminalState {
 
                     let blank_attr = self.pen.clone_sgr_only();
                     let screen = self.screen_mut();
-                    for _ in x..limit as usize {
+                    for _ in x..limit {
                         screen.erase_cell(x, y, right_margin, seqno, blank_attr.clone());
                     }
                 }
@@ -2285,7 +2266,7 @@ impl TerminalState {
                 {
                     let blank = Cell::blank_with_attrs(self.pen.clone_sgr_only());
                     let screen = self.screen_mut();
-                    for x in x..limit as usize {
+                    for x in x..limit {
                         screen.set_cell(x, y, &blank, seqno);
                     }
                 }
@@ -2417,8 +2398,8 @@ impl TerminalState {
         // screen mode (DECLRMM) is set.
         if self.left_and_right_margin_mode {
             let cols = self.screen().physical_cols as u32;
-            let left = left.as_zero_based().min(cols - 1).max(0) as usize;
-            let right = right.as_zero_based().min(cols - 1).max(0) as usize;
+            let left = left.as_zero_based().min(cols - 1) as usize;
+            let right = right.as_zero_based().min(cols - 1) as usize;
 
             // The value of the left margin (Pl) must be less than the right margin (Pr).
             if left >= right {
@@ -2472,10 +2453,10 @@ impl TerminalState {
             }
             Cursor::BackwardTabulation(n) => {
                 for _ in 0..n {
-                    let x = match self.tabs.find_prev_tab_stop(self.cursor.x) {
-                        Some(x) => x,
-                        None => 0,
-                    };
+                    let x = self
+                        .tabs
+                        .find_prev_tab_stop(self.cursor.x)
+                        .unwrap_or_default();
                     self.set_cursor_pos(&Position::Absolute(x as i64), &Position::Relative(0));
                 }
             }
