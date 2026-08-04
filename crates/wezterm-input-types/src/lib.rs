@@ -124,24 +124,24 @@ pub enum KeyCode {
 impl KeyCode {
     /// Return true if the key represents a modifier key.
     pub fn is_modifier(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::Hyper
-            | Self::CapsLock
-            | Self::Super
-            | Self::Meta
-            | Self::Shift
-            | Self::LeftShift
-            | Self::RightShift
-            | Self::Control
-            | Self::LeftControl
-            | Self::RightControl
-            | Self::Alt
-            | Self::LeftAlt
-            | Self::RightAlt
-            | Self::LeftWindows
-            | Self::RightWindows => true,
-            _ => false,
-        }
+                | Self::CapsLock
+                | Self::Super
+                | Self::Meta
+                | Self::Shift
+                | Self::LeftShift
+                | Self::RightShift
+                | Self::Control
+                | Self::LeftControl
+                | Self::RightControl
+                | Self::Alt
+                | Self::LeftAlt
+                | Self::RightAlt
+                | Self::LeftWindows
+                | Self::RightWindows
+        )
     }
 
     pub fn normalize_shift(&self, modifiers: Modifiers) -> (KeyCode, Modifiers) {
@@ -450,16 +450,16 @@ impl TryFrom<&str> for KeyCode {
     }
 }
 
-impl ToString for KeyCode {
-    fn to_string(&self) -> String {
+impl core::fmt::Display for KeyCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
-            Self::RawCode(n) => format!("raw:{}", n),
-            Self::Char(c) => format!("mapped:{}", c),
-            Self::Physical(phys) => phys.to_string(),
-            Self::Composed(s) => s.to_string(),
-            Self::Numpad(n) => format!("Numpad{}", n),
-            Self::Function(n) => format!("F{}", n),
-            other => format!("{:?}", other),
+            Self::RawCode(n) => write!(f, "raw:{}", n),
+            Self::Char(c) => write!(f, "mapped:{}", c),
+            Self::Physical(phys) => write!(f, "{}", phys),
+            Self::Composed(s) => write!(f, "{}", s),
+            Self::Numpad(n) => write!(f, "Numpad{}", n),
+            Self::Function(n) => write!(f, "F{}", n),
+            other => write!(f, "{:?}", other),
         }
     }
 }
@@ -472,19 +472,20 @@ bitflags! {
     }
 }
 
-impl ToString for KeyboardLedStatus {
-    fn to_string(&self) -> String {
-        let mut s = String::new();
+impl core::fmt::Display for KeyboardLedStatus {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        let mut wrote_any = false;
         if self.contains(Self::CAPS_LOCK) {
-            s.push_str("CAPS_LOCK");
+            f.write_str("CAPS_LOCK")?;
+            wrote_any = true;
         }
         if self.contains(Self::NUM_LOCK) {
-            if !s.is_empty() {
-                s.push('|');
+            if wrote_any {
+                f.write_char('|')?;
             }
-            s.push_str("NUM_LOCK");
+            f.write_str("NUM_LOCK")?;
         }
-        s
+        Ok(())
     }
 }
 
@@ -530,7 +531,7 @@ impl TryFrom<String> for Modifiers {
                 mods |= Modifiers::SUPER;
             } else if ele == "LEADER" {
                 mods |= Modifiers::LEADER;
-            } else if ele == "NONE" || ele == "" {
+            } else if ele == "NONE" || ele.is_empty() {
                 mods |= Modifiers::NONE;
             } else {
                 return Err(format!("invalid modifier name {} in {}", ele, s));
@@ -716,13 +717,13 @@ impl Modifiers {
     }
 }
 
-impl ToString for Modifiers {
-    fn to_string(&self) -> String {
-        self.to_string_with_separator(ModifierToStringArgs {
+impl core::fmt::Display for Modifiers {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str(&self.to_string_with_separator(ModifierToStringArgs {
             separator: "|",
             want_none: true,
             ui_key_cap_rendering: None,
-        })
+        }))
     }
 }
 
@@ -871,17 +872,17 @@ pub enum PhysKeyCode {
 
 impl PhysKeyCode {
     pub fn is_modifier(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::LeftShift
-            | Self::LeftControl
-            | Self::LeftWindows
-            | Self::LeftAlt
-            | Self::RightShift
-            | Self::RightControl
-            | Self::RightWindows
-            | Self::RightAlt => true,
-            _ => false,
-        }
+                | Self::LeftControl
+                | Self::LeftWindows
+                | Self::LeftAlt
+                | Self::RightShift
+                | Self::RightControl
+                | Self::RightWindows
+                | Self::RightAlt
+        )
     }
 
     pub fn to_key_code(self) -> KeyCode {
@@ -1174,7 +1175,7 @@ impl PhysKeyCode {
     fn name_to_code(name: &str) -> Option<Self> {
         #[cfg(feature = "std")]
         {
-            return PHYSKEYCODE_MAP.get(name).copied();
+            PHYSKEYCODE_MAP.get(name).copied()
         }
         #[cfg(not(feature = "std"))]
         {
@@ -1191,10 +1192,10 @@ impl PhysKeyCode {
         }
     }
 
-    fn to_name(&self) -> Option<String> {
+    fn name(&self) -> Option<String> {
         #[cfg(feature = "std")]
         {
-            return INV_PHYSKEYCODE_MAP.get(self).cloned();
+            INV_PHYSKEYCODE_MAP.get(self).cloned()
         }
         #[cfg(not(feature = "std"))]
         {
@@ -1230,12 +1231,12 @@ impl TryFrom<&str> for PhysKeyCode {
     }
 }
 
-impl ToString for PhysKeyCode {
-    fn to_string(&self) -> String {
-        if let Some(s) = self.to_name() {
-            s.to_string()
+impl core::fmt::Display for PhysKeyCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        if let Some(s) = self.name() {
+            write!(f, "{}", s)
         } else {
-            format!("{:?}", self)
+            write!(f, "{:?}", self)
         }
     }
 }
@@ -1282,6 +1283,12 @@ pub struct MouseEvent {
 
 #[derive(Debug, Clone)]
 pub struct Handled(Arc<AtomicBool>);
+
+impl Default for Handled {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Handled {
     pub fn new() -> Self {
@@ -2118,26 +2125,26 @@ bitflags! {
     }
 }
 
-impl Into<String> for &WindowDecorations {
-    fn into(self) -> String {
+impl From<&WindowDecorations> for String {
+    fn from(val: &WindowDecorations) -> Self {
         let mut s = vec![];
-        if self.contains(WindowDecorations::TITLE) {
+        if val.contains(WindowDecorations::TITLE) {
             s.push("TITLE");
         }
-        if self.contains(WindowDecorations::RESIZE) {
+        if val.contains(WindowDecorations::RESIZE) {
             s.push("RESIZE");
         }
-        if self.contains(WindowDecorations::INTEGRATED_BUTTONS) {
+        if val.contains(WindowDecorations::INTEGRATED_BUTTONS) {
             s.push("INTEGRATED_BUTTONS");
         }
-        if self.contains(WindowDecorations::MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR) {
+        if val.contains(WindowDecorations::MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR) {
             s.push("MACOS_USE_BACKGROUND_COLOR_AS_TITLEBAR_COLOR")
         }
-        if self.contains(WindowDecorations::MACOS_FORCE_ENABLE_SHADOW) {
+        if val.contains(WindowDecorations::MACOS_FORCE_ENABLE_SHADOW) {
             s.push("MACOS_FORCE_ENABLE_SHADOW");
-        } else if self.contains(WindowDecorations::MACOS_FORCE_DISABLE_SHADOW) {
+        } else if val.contains(WindowDecorations::MACOS_FORCE_DISABLE_SHADOW) {
             s.push("MACOS_FORCE_DISABLE_SHADOW");
-        } else if self.contains(WindowDecorations::MACOS_FORCE_SQUARE_CORNERS) {
+        } else if val.contains(WindowDecorations::MACOS_FORCE_SQUARE_CORNERS) {
             s.push("MACOS_FORCE_SQUARE_CORNERS");
         }
         if s.is_empty() {

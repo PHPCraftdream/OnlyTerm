@@ -71,6 +71,14 @@ impl SplitPane {
     pub async fn run(self, client: Client) -> anyhow::Result<()> {
         let pane_id = client.resolve_pane_id(self.pane_id).await?;
 
+        // The `self.top || self.bottom` and fallback (no direction flag given) arms
+        // both yield `Vertical` today, which triggers clippy::if_same_then_else.
+        // They are kept as separate arms deliberately: the middle arm documents that
+        // --top/--bottom explicitly request Vertical, while the trailing arm is the
+        // "--bottom is the default" case described in the `bottom` field's doc comment.
+        // Collapsing them would obscure that these are two different reasons for the
+        // same outcome, which matters if either flag's target direction changes later.
+        #[allow(clippy::if_same_then_else)]
         let direction = if self.left || self.right || self.horizontal {
             SplitDirection::Horizontal
         } else if self.top || self.bottom {
