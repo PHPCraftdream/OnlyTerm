@@ -1,0 +1,1943 @@
+use super::*;
+use crate::utilsprites::RenderMetrics;
+use crate::colorease::ColorEase;
+use crate::frontend::front_end;
+use crate::inputmap::InputMap;
+use crate::overlay::{
+    CopyOverlay,
+    QuickSelectOverlay,
+};
+use crate::resize_increment_calculator::ResizeIncrementCalculator;
+use crate::tabbar::TabBarState;
+use crate::termwindow::background::load_background_image;
+use crate::termwindow::keyevent::KeyTableState;
+use crate::termwindow::render::paint::AllowImage;
+use crate::termwindow::webgpu::WebGpuState;
+use anyhow::{anyhow, Context};
+use config::{
+    configuration, AudibleBell, Dimension, DimensionContext, FrontEndSelection,
+    GeometryOrigin,
+};
+use mux::pane::{Pane, PaneId};
+use mux::renderable::RenderableDimensions;
+use mux::window::WindowId as MuxWindowId;
+use mux::{Mux, MuxNotification};
+use smol::Timer;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, LinkedList};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use wezterm_font::FontConfiguration;
+use wezterm_term::{Alert, StableRowIndex, TerminalSize};
+use super::prevcursor::PrevCursorPos;
+
+impl TermWindow {
+    pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
+        let config = configuration();
+        let dpi = config.dpi.unwrap_or_else(::window::default_dpi) as usize;
+        let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
+
+        let mux = Mux::get();
+        let size = match mux.get_active_tab_for_window(mux_window_id) {
+            Some(tab) => tab.get_size(),
+            None => {
+                log::debug!("new_window has no tabs... yet?");
+                Default::default()
+            }
+        };
+        let physical_rows = size.rows as usize;
+        let physical_cols = size.cols as usize;
+
+        let render_metrics = RenderMetrics::new(&fontconfig)?;
+        log::trace!("using render_metrics {:#?}", render_metrics);
+
+        // Initially we have only a single tab, so take that into account
+        // for the tab bar state.
+        let show_tab_bar = config.enable_tab_bar && !config.hide_tab_bar_if_only_one_tab;
+        let tab_bar_height = if show_tab_bar {
+            Self::tab_bar_pixel_height_impl(&config, &fontconfig, &render_metrics)? as usize
+        } else {
+            0
+        };
+
+        let terminal_size = TerminalSize {
+            rows: physical_rows,
+            cols: physical_cols,
+            pixel_width: (render_metrics.cell_size.width as usize * physical_cols),
+            pixel_height: (render_metrics.cell_size.height as usize * physical_rows),
+            dpi: dpi as u32,
+        };
+
+        if terminal_size != size {
+            // DPI is different from the default assumed DPI when the mux
+            // created the pty. We need to inform the kernel of the revised
+            // pixel geometry now
+            log::trace!(
+                "Initial geometry was {:?} but dpi-adjusted geometry \
+                        is {:?}; update the kernel pixel geometry for the ptys!",
+                size,
+                terminal_size,
+            );
+            if let Some(window) = mux.get_window(mux_window_id) {
+                for tab in window.iter() {
+                    tab.resize(terminal_size);
+                }
+            };
+        }
+
+        let h_context = DimensionContext {
+            dpi: dpi as f32,
+            pixel_max: terminal_size.pixel_width as f32,
+            pixel_cell: render_metrics.cell_size.width as f32,
+        };
+        let padding_left = config.window_padding.left.evaluate_as_pixels(h_context) as usize;
+        let padding_right = resize::effective_right_padding(&config, h_context) as usize;
+        let v_context = DimensionContext {
+            dpi: dpi as f32,
+            pixel_max: terminal_size.pixel_height as f32,
+            pixel_cell: render_metrics.cell_size.height as f32,
+        };
+        let padding_top = config.window_padding.top.evaluate_as_pixels(v_context) as usize;
+        let padding_bottom = config.window_padding.bottom.evaluate_as_pixels(v_context) as usize;
+
+        let mut dimensions = Dimensions {
+            pixel_width: (terminal_size.pixel_width + padding_left + padding_right) as usize,
+            pixel_height: ((terminal_size.rows * render_metrics.cell_size.height as usize)
+                + padding_top
+                + padding_bottom) as usize
+                + tab_bar_height,
+            dpi,
+        };
+
+        let border = Self::get_os_border_impl(&None, &config, &dimensions, &render_metrics);
+
+        dimensions.pixel_height += (border.top + border.bottom).get() as usize;
+        dimensions.pixel_width += (border.left + border.right).get() as usize;
+
+        let window_background = load_background_image(&config, &dimensions, &render_metrics);
+
+        log::trace!(
+            "TermWindow::new_window called with mux_window_id {} {:?} {:?}",
+            mux_window_id,
+            terminal_size,
+            dimensions
+        );
+
+        let render_state = None;
+
+        let connection_name = Connection::get().unwrap().name();
+
+        let myself = Self {
+            created: Instant::now(),
+            connection_name,
+            last_fps_check_time: Instant::now(),
+            num_frames: 0,
+            last_frame_duration: Duration::ZERO,
+            fps: 0.,
+            config_subscription: None,
+            os_parameters: None,
+            gl: None,
+            webgpu: None,
+            render_thread: None,
+            render_thread_hang_handled: Cell::new(false),
+            hang_check_scheduled: Cell::new(false),
+            rebuild_attempts: RefCell::new(Vec::new()),
+            opengl_fallback_relay: Rc::new(RefCell::new(None)),
+            permanently_on_opengl: Cell::new(false),
+            window: None,
+            window_background,
+            config: config.clone(),
+            config_overrides: wezterm_dynamic::Value::default(),
+            palette: None,
+            focused: None,
+            mux_window_id,
+            mux_window_id_for_subscriptions: Arc::new(Mutex::new(mux_window_id)),
+            mux_subscription_dead: Arc::new(AtomicBool::new(false)),
+            fonts: Rc::clone(&fontconfig),
+            render_metrics,
+            dimensions,
+            window_state: WindowState::default(),
+            resizes_pending: 0,
+            is_repaint_pending: false,
+            pending_scale_changes: LinkedList::new(),
+            terminal_size,
+            render_state,
+            input_map: InputMap::new(&config),
+            leader_is_down: None,
+            dead_key_status: DeadKeyStatus::None,
+            show_tab_bar,
+            show_scroll_bar: config.enable_scroll_bar,
+            tab_bar: TabBarState::default(),
+            fancy_tab_bar: None,
+            right_status: String::new(),
+            left_status: String::new(),
+            last_mouse_coords: (0, -1),
+            suppress_move_after_focus_click: None,
+            window_drag_position: None,
+            current_mouse_event: None,
+            current_modifier_and_leds: Default::default(),
+            prev_cursor: PrevCursorPos::new(),
+            last_scroll_info: RenderableDimensions::default(),
+            tab_state: RefCell::new(HashMap::new()),
+            pane_state: RefCell::new(HashMap::new()),
+            current_mouse_buttons: vec![],
+            current_mouse_capture: None,
+            last_mouse_click: None,
+            current_highlight: None,
+            quad_generation: 0,
+            shape_generation: 0,
+            shape_cache: RefCell::new(LfuCache::new(
+                "shape_cache.hit.rate",
+                "shape_cache.miss.rate",
+                |config| config.shape_cache_size,
+                &config,
+            )),
+            line_state_cache: RefCell::new(LfuCacheU64::new(
+                "line_state_cache.hit.rate",
+                "line_state_cache.miss.rate",
+                |config| config.line_state_cache_size,
+                &config,
+            )),
+            next_line_state_id: 0,
+            line_quad_cache: RefCell::new(LfuCache::new(
+                "line_quad_cache.hit.rate",
+                "line_quad_cache.miss.rate",
+                |config| config.line_quad_cache_size,
+                &config,
+            )),
+            line_to_ele_shape_cache: RefCell::new(LfuCache::new(
+                "line_to_ele_shape_cache.hit.rate",
+                "line_to_ele_shape_cache.miss.rate",
+                |config| config.line_to_ele_shape_cache_size,
+                &config,
+            )),
+            last_status_call: Instant::now(),
+            cursor_blink_state: RefCell::new(ColorEase::new(
+                config.cursor_blink_rate,
+                config.cursor_blink_ease_in,
+                config.cursor_blink_rate,
+                config.cursor_blink_ease_out,
+                None,
+            )),
+            blink_state: RefCell::new(ColorEase::new(
+                config.text_blink_rate,
+                config.text_blink_ease_in,
+                config.text_blink_rate,
+                config.text_blink_ease_out,
+                None,
+            )),
+            rapid_blink_state: RefCell::new(ColorEase::new(
+                config.text_blink_rate_rapid,
+                config.text_blink_rapid_ease_in,
+                config.text_blink_rate_rapid,
+                config.text_blink_rapid_ease_out,
+                None,
+            )),
+            event_states: HashMap::new(),
+            current_event: None,
+            has_animation: RefCell::new(None),
+            scheduled_animation: RefCell::new(None),
+            scheduled_budget_repaint: RefCell::new(None),
+            allow_images: AllowImage::Yes,
+            semantic_zones: HashMap::new(),
+            ui_items_scratch: vec![],
+            ui_items: arc_swap::ArcSwap::new(std::sync::Arc::new(Vec::new())),
+            dragging: None,
+            last_ui_item: None,
+            is_click_to_focus_window: false,
+            key_table_state: KeyTableState::default(),
+            modal: RefCell::new(None),
+            opengl_info: None,
+        };
+
+        let tw = Rc::new(RefCell::new(myself));
+        let tw_event = Rc::clone(&tw);
+
+        let mut x = None;
+        let mut y = None;
+        let mut origin = GeometryOrigin::default();
+
+        if let Some(position) = mux
+            .get_window(mux_window_id)
+            .and_then(|window| window.get_initial_position().clone())
+            .or_else(|| POSITION.lock().unwrap().take())
+        {
+            x.replace(position.x);
+            y.replace(position.y);
+            origin = position.origin;
+        }
+
+        let geometry = RequestedWindowGeometry {
+            width: Dimension::Pixels(dimensions.pixel_width as f32),
+            height: Dimension::Pixels(dimensions.pixel_height as f32),
+            x,
+            y,
+            origin,
+        };
+        log::trace!("{:?}", geometry);
+
+        let window = Window::new_window(
+            &get_window_class(),
+            "OnlyTerm",
+            geometry,
+            Some(&config),
+            Rc::clone(&fontconfig),
+            move |event, window| {
+                let mut tw = tw_event.borrow_mut();
+                if let Err(err) = tw.dispatch_window_event(event, window) {
+                    log::error!("dispatch_window_event: {:#}", err);
+                }
+            },
+        )
+        .await?;
+        tw.borrow_mut().window.replace(window.clone());
+
+        Self::apply_icon(&window)?;
+
+        // Show the window now, before WebGpu adapter/device/pipeline
+        // initialization, instead of waiting for `RenderState` to be ready
+        // further down. On Windows with the WebGpu/DX12 default this
+        // initialization alone can take several seconds; the user should not
+        // stare at nothing that whole time. The client area is safe to show
+        // unpainted because the Windows window class fills it with the
+        // terminal's background color via `WM_ERASEBKGND` until the first
+        // real frame clears that placeholder in `created()` below (task
+        // #330). `NeedRepaint` before the renderer exists is already a no-op
+        // (`do_paint` bails out when `self.gl` is `None`, and
+        // `do_paint_webgpu` is unreachable until `self.webgpu` is set in
+        // `created()`), and pane input keeps flowing to the pty regardless of
+        // whether a renderer is attached yet, so there is nothing unsafe
+        // about a visible-but-not-yet-rendering window.
+        window.show();
+        if config.start_maximized {
+            window.maximize();
+        }
+
+        let config_subscription = config::subscribe_to_config_reload({
+            let window = window.clone();
+            move || {
+                window.notify(TermWindowNotif::Apply(Box::new(|tw| {
+                    tw.config_was_reloaded()
+                })));
+                true
+            }
+        });
+
+        // Attempt WebGpu first (if requested) so that we can fall back to
+        // OpenGL when adapter/device creation fails, rather than hard-failing
+        // window creation. Only construct `gl` afterwards, and only if
+        // WebGpu wasn't requested or just failed.
+        let mut webgpu = None;
+        if config.front_end == FrontEndSelection::WebGpu {
+            match WebGpuState::new(&window, dimensions, &config).await {
+                Ok(state) => {
+                    webgpu.replace(Arc::new(state));
+                }
+                Err(err) => {
+                    // WebGpu adapter/device creation can fail in RDP
+                    // sessions, on old/software-only GPUs, in VMs without
+                    // GPU passthrough, or due to driver mismatches. Rather
+                    // than failing to open the window at all, fall back to
+                    // OpenGL below.
+                    log::error!(
+                        "Failed to initialize WebGpu ({:#}); falling back to OpenGL rendering",
+                        err
+                    );
+                }
+            }
+        }
+
+        let gl = if webgpu.is_none() {
+            Some(window.enable_opengl().await?)
+        } else {
+            None
+        };
+
+        {
+            let mut myself = tw.borrow_mut();
+            myself.config_subscription.replace(config_subscription);
+            if config.use_resize_increments {
+                window.set_resize_increments(
+                    ResizeIncrementCalculator {
+                        x: myself.render_metrics.cell_size.width as u16,
+                        y: myself.render_metrics.cell_size.height as u16,
+                        padding_left,
+                        padding_top,
+                        padding_right,
+                        padding_bottom,
+                        border,
+                        tab_bar_height,
+                    }
+                    .into(),
+                );
+            }
+
+            if let Some(gl) = gl {
+                myself.gl.replace(Rc::clone(&gl));
+                myself.created(RenderContext::Glium(Rc::clone(&gl)))?;
+            }
+            if let Some(webgpu) = webgpu {
+                myself.webgpu.replace(Arc::clone(&webgpu));
+                myself.created(RenderContext::WebGpu(Arc::clone(&webgpu)))?;
+
+                if config.webgpu_render_thread {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let repaint_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let window_destroyed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
+                    let seed = crate::renderthread::RenderThreadSeed {
+                        window: window.clone(),
+                        webgpu: Arc::clone(&webgpu),
+                        rx,
+                        in_flight,
+                        repaint_pending,
+                        window_destroyed,
+                        submit_started_at,
+                    };
+                    myself.render_thread = crate::renderthread::RenderThreadHandle::spawn(
+                        seed,
+                        tx,
+                        myself.mux_window_id,
+                    );
+                    if myself.render_thread.is_some() {
+                        myself.schedule_render_thread_hang_check(&window);
+                    }
+                }
+            }
+            myself.load_os_parameters();
+            myself.subscribe_to_pane_updates();
+        }
+
+        crate::update::start_update_checker();
+        front_end().record_known_window(window, mux_window_id);
+
+        Ok(())
+    }
+
+    /// Schedules the next tick of this window's render-thread hang
+    /// supervisor. Self-rearming: each tick either closes the window (if its
+    /// render thread is hung) or calls this again to schedule the next tick,
+    /// exactly like `scheduled_animation`'s `Timer::at` + `notify` pattern in
+    /// `paint_impl` reschedules itself.
+    ///
+    /// Only ever called (initially from `new_window`, then from
+    /// `finish_renderer_rebuild` after a successful rebuild, and recursively
+    /// from `check_render_thread_hang_tick`) while running on the GUI thread
+    /// -- `promise::spawn::spawn` is GUI-thread-only (it uses `spawn_local`
+    /// under the hood), which holds here since all call sites already run
+    /// on the GUI thread.
+    ///
+    /// Guarded by `hang_check_scheduled` (task #287): if a chain is already
+    /// pending for this window, this is a no-op rather than arming a second,
+    /// concurrent chain. See that field's doc comment for the race this
+    /// closes. The guard is set here, at the point a new timer is actually
+    /// armed, and cleared at the very top of `check_render_thread_hang_tick`
+    /// -- i.e. it tracks "is a tick currently in flight for this window",
+    /// not "has a chain ever been started".
+    fn schedule_render_thread_hang_check(&self, window: &Window) {
+        if self.hang_check_scheduled.get() {
+            // A chain is already pending (its timer tick hasn't fired yet);
+            // do not start a second, concurrent chain. See this call's
+            // doc comment and `hang_check_scheduled`'s own doc comment.
+            return;
+        }
+        self.hang_check_scheduled.set(true);
+
+        // Poll at a fraction of the hang threshold, the same style as
+        // `window::os::windows::watchdog`'s `poll_interval = (threshold /
+        // 4).max(Duration::from_millis(50))`. This check is cheaper than the
+        // GUI watchdog's (just a `Mutex<Option<Instant>>` read, no syscalls),
+        // so a smaller minimum is fine, but we still don't want a
+        // misconfigured (very low) threshold to turn into a busy-poll.
+        let threshold =
+            Duration::from_millis(config::configuration().render_thread_hang_threshold_ms);
+        let poll_interval = (threshold / 2).max(Duration::from_millis(500));
+        let next_check = Instant::now() + poll_interval;
+
+        let window = window.clone();
+        promise::spawn::spawn(async move {
+            Timer::at(next_check).await;
+            let win = window.clone();
+            window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.check_render_thread_hang_tick(&win);
+            })));
+        })
+        .detach();
+    }
+
+    /// Circuit breaker thresholds for the in-place renderer rebuild
+    /// performed by `check_render_thread_hang_tick`. If rebuilding the
+    /// renderer doesn't actually fix things -- the GPU/driver/adapter is
+    /// fundamentally broken rather than having suffered a one-off transient
+    /// stall -- the render thread will simply hang again almost
+    /// immediately after each rebuild. `3` rebuilds within `30` seconds is
+    /// enough slack for a couple of unlucky-but-unrelated stalls (e.g. two
+    /// independent brief driver hiccups minutes apart would never trip
+    /// this), while still catching an immediate re-hang loop quickly: three
+    /// full rebuild-and-rehang cycles within half a minute is well outside
+    /// what a real transient stall looks like.
+    const MAX_REBUILDS_PER_WINDOW: usize = 3;
+    const REBUILD_WINDOW: Duration = Duration::from_secs(30);
+
+    /// One tick of the render-thread hang supervisor: if this window's
+    /// render thread appears hung, rebuild the renderer in place (new
+    /// WebGpu device/surface, new render thread) so the window and all its
+    /// tabs/panes survive -- unless the circuit breaker has tripped, in
+    /// which case fall back to the old destructive close. Otherwise re-arms
+    /// for another tick. See `schedule_render_thread_hang_check` for the
+    /// scheduling half.
+    fn check_render_thread_hang_tick(&mut self, window: &Window) {
+        // Clear the "a chain is pending" guard before any other logic in
+        // this tick runs (task #287): this tick *is* that pending chain
+        // firing, so from this point on `schedule_render_thread_hang_check`
+        // must be willing to arm a fresh timer again -- whether that
+        // happens below (the `!hung` re-arm path) or later, from
+        // `finish_renderer_rebuild` once an in-place rebuild triggered by
+        // this same tick completes. Clearing it late (or conditionally)
+        // would reopen the race this flag exists to close: a rebuild
+        // finishing and calling `schedule_render_thread_hang_check` while
+        // this flag was still `true` would be wrongly suppressed, leaving
+        // this window with no supervisor at all.
+        self.hang_check_scheduled.set(false);
+
+        // Sweep any WebGpu child HWNDs retired by an earlier
+        // `begin_renderer_rebuild` (task #283): destroys the ones whose
+        // paired `Weak<WebGpuState>` has since hit zero strong references
+        // (i.e. the old render thread has actually returned), leaving any
+        // others -- still possibly referenced by a render thread that
+        // hasn't unwedged yet -- in place for the next tick. Runs
+        // unconditionally, before the early-return guards below, so this
+        // ~2s cadence is what actually reclaims a retired HWND promptly
+        // instead of leaving it until the window closes; see
+        // `Window::sweep_retired_webgpu_children`'s doc comment for the
+        // full rationale, including why leaving one unswept is never a
+        // leak (the top-level window's own `WS_CHILD` teardown is a
+        // backstop).
+        #[cfg(windows)]
+        window.sweep_retired_webgpu_children();
+
+        if self.render_thread_hang_handled.get() {
+            // Already rebuilding/closing this window for a hang detected on
+            // an earlier tick; a tick that fires after that (a race between
+            // the scheduled timer and the rebuild/close actually completing)
+            // must be a no-op, not a double-rebuild or double-close.
+            return;
+        }
+        let hung = match self.render_thread.as_ref() {
+            Some(rt) => rt.render_thread_is_hung(),
+            None => {
+                // Render thread is gone (e.g. window already tearing down);
+                // nothing left to supervise.
+                return;
+            }
+        };
+        if !hung {
+            self.schedule_render_thread_hang_check(window);
+            return;
+        }
+
+        self.attempt_renderer_rebuild_or_close(
+            window,
+            "this window's render thread appears stuck inside a GPU submit/reconfigure \
+             call (not the whole app -- just this window's GPU driver call)",
+            "this window's render thread has hung and been rebuilt",
+            "gui.render_thread.window_renderer_rebuilt",
+        );
+    }
+
+    /// Re-entry point (via `TermWindowNotif::Apply`) for render-error
+    /// recovery signals raised from the render thread that aren't a plain
+    /// hang: a `wgpu::SurfaceError` variant other than `Lost`/`Outdated`
+    /// (see `renderthread::submit_one_frame`'s `other` branch), or a genuine
+    /// wgpu device-lost event (see `WebGpuState::new`'s
+    /// `set_device_lost_callback` registration). Both signals mean this
+    /// window's GPU device/surface is in a broken state that a fresh
+    /// `submit_frame` call won't recover from on its own, so this reuses
+    /// exactly the same in-place rebuild (and circuit breaker) that
+    /// `check_render_thread_hang_tick` uses for a stuck render thread --
+    /// from the GUI thread's point of view, "the renderer needs rebuilding"
+    /// is the same recovery action regardless of which symptom (hang vs.
+    /// repeated surface error vs. device-lost) triggered it.
+    ///
+    /// Unlike `check_render_thread_hang_tick`, this does not check
+    /// `render_thread_is_hung()` (the render thread may not be hung at all
+    /// -- `submit_frame` returned promptly with an error, or the device-lost
+    /// callback fired inline during a call that itself returned) and does
+    /// not self-reschedule (it's not a polling loop; each call corresponds
+    /// to one observed error event). It still honors
+    /// `render_thread_hang_handled` as a one-shot-per-episode guard, exactly
+    /// like the hang path, so a burst of repeated `SurfaceError::Other`
+    /// values across several frames (or an error arriving while a
+    /// hang-triggered rebuild is already in flight) collapses into a single
+    /// rebuild attempt rather than one per event.
+    pub(crate) fn handle_render_error_recovery(&mut self, window: &Window, reason: &str) {
+        if self.render_thread_hang_handled.get() {
+            // A rebuild (or close) for an earlier episode -- hang or error --
+            // is already in flight; this event is redundant.
+            return;
+        }
+        self.attempt_renderer_rebuild_or_close(
+            window,
+            reason,
+            "this window's renderer has failed and been rebuilt",
+            "gui.render_thread.window_renderer_rebuilt_after_error",
+        );
+    }
+
+    /// Shared circuit-breaker bookkeeping + rebuild-or-close decision, used
+    /// by both the render-thread hang supervisor
+    /// (`check_render_thread_hang_tick`) and the render-error recovery entry
+    /// point (`handle_render_error_recovery`). Callers are responsible for
+    /// their own "should we even consider recovering right now" checks
+    /// (hang detection, one-shot guard) before calling this; this function
+    /// always sets the one-shot guard, records an attempt, and either
+    /// rebuilds or closes.
+    ///
+    /// `log_reason` describes what was observed (used in the "rebuilding..."
+    /// log line); `circuit_breaker_log_reason` is the shorter phrase used in
+    /// the circuit-breaker-tripped log line; `rebuilt_metric` is the counter
+    /// incremented when a rebuild is actually attempted, so the two call
+    /// sites (hang vs. error recovery) remain distinguishable in metrics
+    /// even though they now share this implementation.
+    fn attempt_renderer_rebuild_or_close(
+        &mut self,
+        window: &Window,
+        log_reason: &str,
+        circuit_breaker_log_reason: &str,
+        rebuilt_metric: &'static str,
+    ) {
+        if self.permanently_on_opengl.get() {
+            // This window has already successfully, permanently fallen back
+            // to OpenGL (task #255/#267): it is done trying WebGpu again by
+            // design, so no recovery-triggering event -- including a late
+            // device-lost callback from the old, now-abandoned WebGpu device
+            // (see `WebGpuState::mark_stale`) that arrives well after the
+            // fallback completed, once `rebuild_attempts` has been pruned
+            // back down and would otherwise pass the circuit breaker's count
+            // check -- may begin a new renderer rebuild attempt and tear
+            // down this window's healthy, currently in-use OpenGL
+            // `render_state`/`gl`. Just log and drop it.
+            log::debug!(
+                "{}; ignoring -- this window has already permanently fallen back to \
+                 OpenGL rendering and will not attempt a WebGpu rebuild again",
+                log_reason,
+            );
+            return;
+        }
+
+        // Set the one-shot guard immediately: everything below this point
+        // (the circuit breaker check, the async rebuild, the fallback close)
+        // must not race with another recovery trigger for this same
+        // episode. It gets reset to `false` once a rebuild actually
+        // succeeds (see `finish_renderer_rebuild`), so a *later*, separate
+        // failure can also be recovered from -- this is "one-shot per
+        // episode", not "one-shot ever".
+        self.render_thread_hang_handled.set(true);
+
+        let now = Instant::now();
+        {
+            let mut attempts = self.rebuild_attempts.borrow_mut();
+            attempts.retain(|t| now.duration_since(*t) < Self::REBUILD_WINDOW);
+            attempts.push(now);
+        }
+        let attempts_in_window = self.rebuild_attempts.borrow().len();
+
+        if attempts_in_window > Self::MAX_REBUILDS_PER_WINDOW {
+            log::error!(
+                "{} {} times in the last {:?}; giving up on rebuilding WebGpu (the \
+                 GPU/driver/adapter looks fundamentally broken, not just transiently \
+                 stuck); attempting a one-time fallback to OpenGL for this window \
+                 before resorting to closing it",
+                circuit_breaker_log_reason,
+                attempts_in_window,
+                Self::REBUILD_WINDOW,
+            );
+            metrics::counter!("gui.render_thread.rebuild_circuit_breaker_tripped").increment(1);
+            // No additional explicit backoff/delay is inserted here on
+            // purpose: the circuit breaker already spaces out WebGpu
+            // rebuild attempts by however long each rebuild-then-rehang
+            // cycle actually takes in practice (observed ~2.3-2.9s per
+            // cycle during task #253's manual testing, driven by real
+            // HWND recreation + WebGpuState::new work, not a busy loop).
+            // A synthetic sleep here would only add user-visible lag to a
+            // window that's already visibly degraded, with no reliability
+            // benefit -- the OpenGL fallback below is a one-shot attempt,
+            // not something that benefits from spacing against itself.
+            self.begin_opengl_fallback(window);
+            return;
+        }
+
+        log::error!(
+            "{}; rebuilding this window's renderer in place (attempt {} of {} allowed \
+             within {:?}) so its tabs/panes survive",
+            log_reason,
+            attempts_in_window,
+            Self::MAX_REBUILDS_PER_WINDOW,
+            Self::REBUILD_WINDOW,
+        );
+        metrics::counter!(rebuilt_metric).increment(1);
+
+        self.begin_renderer_rebuild(window);
+    }
+
+    /// The destructive fallback: kill this window's panes (and their child
+    /// processes) before destroying the OS window, otherwise the
+    /// shells/programs running in them are orphaned with no controlling
+    /// terminal left. This is the same sequence `close_requested` and the
+    /// original (pre-#253) hang handler used; it's now the true last resort,
+    /// reached only when the in-place WebGpu rebuild's circuit breaker trips
+    /// *and* the OpenGL fallback (`begin_opengl_fallback`, task #255) also
+    /// fails.
+    fn close_window_for_unrecoverable_render_hang(&mut self, window: &Window) {
+        let mux = Mux::get();
+        mux.kill_window(self.mux_window_id);
+        window.close();
+        front_end().forget_known_window(window);
+        metrics::counter!("gui.render_thread.window_closed_for_hang").increment(1);
+    }
+
+    /// Last-resort renderer fallback (task #255), tried once the WebGpu
+    /// in-place rebuild circuit breaker has tripped (`MAX_REBUILDS_PER_WINDOW`
+    /// rebuilds within `REBUILD_WINDOW` all failed to produce a
+    /// working/stable renderer): abandon WebGpu entirely for this window and
+    /// switch it to OpenGL, exactly like the startup-time
+    /// WebGpu->OpenGL fallback in `new_window` (task #221.8) does when
+    /// `WebGpuState::new` fails on initial window creation. The difference
+    /// here is that this window already has a live `RenderState`/render
+    /// thread built on WebGpu that must be torn down first, and success
+    /// permanently downgrades the window for the rest of its lifetime
+    /// (there's no further attempt to go back to WebGpu).
+    ///
+    /// `enable_opengl` is `async`, so -- exactly like `begin_renderer_rebuild`
+    /// bridges the async `WebGpuState::new` call -- the rest of the work
+    /// happens in a spawned task that re-enters via `TermWindowNotif::Apply`
+    /// (see `finish_opengl_fallback`). Unlike the WebGpu rebuild, no
+    /// WebGpu-child-HWND recreation dance is needed first: `enable_opengl`
+    /// (all platforms) operates on the main window/surface directly and
+    /// doesn't touch `webgpu_child_hwnd` at all.
+    fn begin_opengl_fallback(&mut self, window: &Window) {
+        // Abandon the old WebGpu render thread and GPU resources, the same
+        // careful way `begin_renderer_rebuild` does: shutdown (detach, don't
+        // join -- a stuck driver call must not block the GUI thread), then
+        // drop render_state before the device/surface it was built from.
+        if let Some(rt) = self.render_thread.take() {
+            rt.shutdown();
+        }
+        self.render_state.take();
+        self.gl.take();
+        // Mark the outgoing device stale (task #267) before dropping it: its
+        // `set_device_lost_callback` closure can't be unregistered, so a
+        // late device-lost event firing after this window has moved to
+        // OpenGL must be able to tell it's no longer current and no-op
+        // instead of dragging this window back into the WebGpu rebuild
+        // dance. See `WebGpuState::mark_stale`'s doc comment.
+        if let Some(webgpu) = self.webgpu.take() {
+            webgpu.mark_stale();
+        }
+
+        let window_for_async = window.clone();
+        // Clone this window's own relay slot (not a process-global one --
+        // see the field's doc comment and task #265) so the spawned task
+        // below can hand the result back to *this* window specifically,
+        // with no risk of a concurrently-falling-back sibling window
+        // clobbering or stealing it.
+        let relay = Rc::clone(&self.opengl_fallback_relay);
+
+        promise::spawn::spawn(async move {
+            let result = window_for_async.enable_opengl().await;
+            let win = window_for_async.clone();
+            // `Rc<glium::backend::Context>` is not `Send`/`Sync` (unlike
+            // `Arc<WebGpuState>` in the WebGpu rebuild path), but
+            // `TermWindowNotif::Apply` requires its closure to be
+            // `Send + Sync` -- `notify()`'s signature is generic over any
+            // caller thread, even though in practice `promise::spawn::spawn`
+            // is `spawn_local` and this closure only ever runs back on this
+            // same GUI thread. Rather than reach for `unsafe impl Send`
+            // (unsound in general, and unjustifiable here since
+            // `glium::backend::Context` is genuinely thread-affine GL
+            // state), relay the `Rc` itself through this window's own
+            // GUI-thread-only relay slot (see `opengl_fallback_relay`'s doc
+            // comment) and send only a `Send`-safe ok/err signal through
+            // `notify`.
+            relay.borrow_mut().replace(result);
+            window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.finish_opengl_fallback(&win);
+            })));
+        })
+        .detach();
+    }
+
+    /// Re-entry point (via `TermWindowNotif::Apply`) once the async half of
+    /// the OpenGL fallback (`enable_opengl`) has resolved.
+    ///
+    /// On success: rebuild `RenderState` against the new OpenGL context and
+    /// log clearly that this window has permanently downgraded away from
+    /// WebGpu, since -- per task #222's documented architectural decision --
+    /// OpenGL rendering on this window is now synchronous on the GUI thread
+    /// with none of WebGpu's render-thread/hang-detection/rebuild isolation.
+    /// No render thread is (re-)armed and `schedule_render_thread_hang_check`
+    /// is never scheduled again for this window: there's no render thread
+    /// left to supervise. This is a deliberate, accepted tradeoff (a
+    /// strictly less resilient renderer, chosen over closing the window and
+    /// losing its tabs' child processes).
+    ///
+    /// On failure: this really is the end of the road -- both WebGpu and
+    /// OpenGL failed to produce a working renderer for this window -- so
+    /// fall back to the destructive close.
+    ///
+    /// Takes no `result` parameter: the actual `Rc<GliumContext>` (or
+    /// error) was stashed in this window's own `opengl_fallback_relay` by
+    /// `begin_opengl_fallback`'s spawned task just before this was
+    /// `notify()`-ed, since a non-`Send` `Rc` cannot ride along in the
+    /// `TermWindowNotif::Apply` closure itself. See that relay's doc
+    /// comment for why this is safe (GUI-thread-only, and -- since task
+    /// #265 -- per-window, so a concurrently-falling-back sibling window
+    /// can never clobber or empty this window's slot).
+    fn finish_opengl_fallback(&mut self, window: &Window) {
+        let result = self
+            .opengl_fallback_relay
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| {
+                Err(anyhow::anyhow!(
+                    "internal error: opengl_fallback_relay was empty in finish_opengl_fallback"
+                ))
+            });
+        let gl = match result {
+            Ok(gl) => gl,
+            Err(err) => {
+                log::error!(
+                    "OpenGL fallback also failed for this window after the WebGpu rebuild \
+                     circuit breaker tripped ({:#}); no renderer is available, closing this \
+                     window",
+                    err
+                );
+                metrics::counter!("gui.render_thread.opengl_fallback_failed").increment(1);
+                self.close_window_for_unrecoverable_render_hang(window);
+                return;
+            }
+        };
+
+        self.gl.replace(Rc::clone(&gl));
+        if let Err(err) = self.created(RenderContext::Glium(Rc::clone(&gl))) {
+            log::error!(
+                "OpenGL fallback's RenderState build failed for this window ({:#}); no \
+                 renderer is available, closing this window",
+                err
+            );
+            metrics::counter!("gui.render_thread.opengl_fallback_failed").increment(1);
+            self.close_window_for_unrecoverable_render_hang(window);
+            return;
+        }
+
+        // Success: this window is now permanently on OpenGL. No render
+        // thread to spawn/supervise for it any more (WebGpu-only
+        // machinery), so -- unlike `finish_renderer_rebuild` -- there is no
+        // `schedule_render_thread_hang_check` call here.
+        self.render_thread_hang_handled.set(false);
+
+        // This window has genuinely, successfully moved to OpenGL for good
+        // (task #267): from this point on, no recovery-triggering event --
+        // including a late device-lost callback from the old, now-abandoned
+        // WebGpu device (see `WebGpuState::mark_stale`) -- may start a new
+        // WebGpu rebuild attempt for this window. See
+        // `attempt_renderer_rebuild_or_close`'s guard and this flag's own
+        // doc comment.
+        self.permanently_on_opengl.set(true);
+
+        // One-shot sweep of any WebGpu child HWNDs retired by the failed
+        // rebuild attempts that led to this fallback (task #292, issue 2):
+        // once this window is permanently on OpenGL, `schedule_render_thread_hang_check`
+        // is never armed again (see this function's own doc comment), so the
+        // `check_render_thread_hang_tick` cadence that normally sweeps
+        // `retired_webgpu_children` promptly (task #283) will never run
+        // again for this window either -- without this call, up to
+        // `MAX_REBUILDS_PER_WINDOW` retired HWNDs from the rebuild attempts
+        // above would sit hidden-but-technically-alive until the window
+        // itself closes (still not a real leak, since `hwnd`'s own
+        // `WS_CHILD` teardown is a backstop -- see
+        // `retired_webgpu_children`'s doc comment -- just not reclaimed
+        // promptly). A single sweep here is sufficient and nothing needs to
+        // keep polling afterward: WebGpu rebuilds have stopped for this
+        // window permanently, so no *new* HWNDs will ever be retired after
+        // this point. Safe to call even if nothing was retired (plain
+        // no-op per `sweep_retired_webgpu_children`'s doc comment).
+        #[cfg(windows)]
+        window.sweep_retired_webgpu_children();
+
+        window.invalidate();
+
+        log::warn!(
+            "this window has permanently fallen back to OpenGL rendering after repeated \
+             WebGpu renderer rebuild failures (circuit breaker tripped {} times within \
+             {:?}); OpenGL rendering on this window is synchronous on the GUI thread with \
+             none of WebGpu's render-thread isolation/hang-detection/rebuild machinery \
+             (see task #222) -- this is an accepted resilience tradeoff to keep the window \
+             and its tabs' processes alive rather than closing it",
+            Self::MAX_REBUILDS_PER_WINDOW,
+            Self::REBUILD_WINDOW,
+        );
+        metrics::counter!("gui.render_thread.window_fallen_back_to_opengl").increment(1);
+    }
+
+    /// Kick off the async half of the in-place renderer rebuild (abandoning
+    /// the old render thread and dropping the old GPU resources are cheap
+    /// and synchronous, so they happen here; `WebGpuState::new` is `async`,
+    /// so the rest is done in a spawned task, mirroring the established
+    /// pattern in `schedule_render_thread_hang_check` for bridging sync
+    /// code -> async GUI-thread-only work -> re-entry via
+    /// `TermWindowNotif::Apply`).
+    fn begin_renderer_rebuild(&mut self, window: &Window) {
+        // Grab the outgoing render thread's teardown sentinel (task #292)
+        // *before* taking/shutting it down below: `RenderThreadHandle::
+        // teardown_sentinel` only exists on the handle itself, so this has
+        // to happen while `self.render_thread` still holds it. See that
+        // method's doc comment for why this -- not a `Weak` obtained by
+        // downgrading `self.webgpu` -- is the correct signal for
+        // `recreate_webgpu_child_window`/`sweep_retired_webgpu_children` to
+        // poll: a `Weak<WebGpuState>`'s strong count can read zero while
+        // `WebGpuState::drop` (and the `wgpu::Surface`/DXGI swapchain
+        // teardown inside it) is still running on the render thread, since
+        // `Arc::drop` decrements the strong count before running the
+        // value's own `drop_in_place`. The sentinel instead only reports
+        // zero strong references once the render thread has fully returned
+        // from `render_thread_loop`, strictly after every `Arc<WebGpuState>`
+        // clone it held has already been dropped.
+        //
+        // Only actually consumed on Windows (`recreate_webgpu_child_window`
+        // below), since that's the only platform with a dedicated WebGpu
+        // child HWND to retire in the first place; the `#[allow]` avoids an
+        // unused-variable warning on other platforms where it's computed
+        // but never read.
+        #[allow(unused_variables)]
+        let old_webgpu_weak: std::sync::Weak<dyn std::any::Any + Send + Sync> = self
+            .render_thread
+            .as_ref()
+            .map(|rt| rt.teardown_sentinel())
+            .unwrap_or_else(|| {
+                std::sync::Weak::<()>::new() as std::sync::Weak<dyn std::any::Any + Send + Sync>
+            });
+
+        // Step 1: abandon the old render thread. Detach, don't join --
+        // exactly like the `Destroyed` handler: a stuck GPU driver call
+        // can't freeze the GUI thread, so blocking here via `.join()` would
+        // defeat the whole purpose of having a separate render thread.
+        // Sending `Shutdown` (which also sets `window_destroyed` on the
+        // shared flag) is enough to let the thread's `recv()` loop end on
+        // its own, whenever the driver call it may currently be stuck in
+        // eventually returns.
+        if let Some(rt) = self.render_thread.take() {
+            rt.shutdown();
+        }
+
+        // Step 2: drop the old GPU resources in the same order the
+        // `Destroyed` handler documents: render_state first (its Drop
+        // deletes programs/buffers/textures/glyph atlas via the context),
+        // then the context itself (gl) / device+surface (webgpu). The old
+        // `webgpu` Arc may still be referenced by the just-shutdown render
+        // thread until its `recv()` loop actually observes the disconnect,
+        // but that's fine -- `Arc` keeps it alive until the last reference
+        // (here, or on that thread) drops it, and the render thread will
+        // never issue another GPU call against it once `window_destroyed`
+        // is set (see `RenderThreadHandle::shutdown`'s doc comment).
+        self.render_state.take();
+        self.gl.take();
+        // Mark the outgoing device stale (task #267) before dropping it, for
+        // the same reason `begin_opengl_fallback` does: its
+        // `set_device_lost_callback` closure keeps living (wgpu gives no way
+        // to unregister it) for as long as the underlying `wgpu::Device`
+        // handle does, so a *late* device-lost event from this now-abandoned
+        // device must be able to tell it's stale and no-op, instead of
+        // charging a spurious rebuild attempt against the freshly-rebuilt,
+        // perfectly healthy device that replaces it below.
+        if let Some(webgpu) = self.webgpu.take() {
+            webgpu.mark_stale();
+        }
+
+        let window_for_async = window.clone();
+        let dimensions = self.dimensions;
+        let config = self.config.clone();
+
+        promise::spawn::spawn(async move {
+            // Step 3: retire the old WebGpu child HWND and create a fresh
+            // one, *before* rebuilding `WebGpuState` below. This has to
+            // happen ahead of the `WebGpuState::new` call, not after it:
+            // `WebGpuState::new` picks whichever child HWND
+            // `window.webgpu_child_hwnd()` currently returns, so rebuilding
+            // the surface against the *old* child HWND (the one whose
+            // swapchain may itself be the thing that's wedged) would defeat
+            // the entire point of task #252's dedicated child HWND.
+            //
+            // This can't run synchronously back in `begin_renderer_rebuild`
+            // (unlike steps 1-2 above): `Window::recreate_webgpu_child_window`
+            // needs to borrow this window's `WindowInner`, but
+            // `begin_renderer_rebuild` is always reached synchronously from
+            // inside `notify()`'s dispatch, which is itself invoked from
+            // `Connection::with_window_inner` while that exact `WindowInner`
+            // is already mutably borrowed -- a synchronous re-borrow here
+            // panics with "already mutably borrowed" (hit in this task's own
+            // manual verification). `recreate_webgpu_child_window` is
+            // `async` and internally defers its borrow via
+            // `promise::spawn::spawn` for exactly this reason (see its doc
+            // comment), so awaiting it here, one spawned task removed from
+            // the original `notify()` call, is what actually avoids the
+            // re-entrant borrow.
+            #[cfg(windows)]
+            if let Err(err) = window_for_async
+                .recreate_webgpu_child_window(old_webgpu_weak)
+                .await
+            {
+                let win = window_for_async.clone();
+                window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                    tw.finish_renderer_rebuild(&win, Err(err));
+                })));
+                return;
+            }
+
+            let result = WebGpuState::new(&window_for_async, dimensions, &config).await;
+            let win = window_for_async.clone();
+            window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.finish_renderer_rebuild(&win, result);
+            })));
+        })
+        .detach();
+    }
+
+    /// Re-entry point (via `TermWindowNotif::Apply`) once the async half of
+    /// the rebuild (`WebGpuState::new`) has resolved. On success, rebuilds
+    /// `RenderState` against the new device and spawns a fresh render
+    /// thread, mirroring `new_window`'s original setup sequence.
+    ///
+    /// There are two sequential failure points here -- `WebGpuState::new`
+    /// itself failing, and (task #272) `self.created` (i.e. `RenderState::new`:
+    /// shader compilation, glyph atlas allocation, etc.) failing even though
+    /// `WebGpuState::new` just succeeded -- and both re-enter the same
+    /// circuit-breaker-gated path (`attempt_renderer_rebuild_or_close`) that
+    /// got us here, rather than closing the window immediately. Rationale
+    /// (task #255, extended by #272): either failure is, from the circuit
+    /// breaker's point of view, just another WebGpu rebuild attempt that
+    /// didn't pan out -- exactly like a rebuild that "succeeds" (returns a
+    /// device) but then immediately re-hangs, which the breaker already
+    /// tolerates up to `MAX_REBUILDS_PER_WINDOW` times. Treating either of
+    /// these failures differently (skip straight to close, bypassing the
+    /// retry budget entirely) would be an inconsistency with no real
+    /// justification: all three symptoms mean "this WebGpu attempt didn't
+    /// produce a working renderer", and the breaker's 3-attempts/30s budget
+    /// is exactly the mechanism designed to decide when to stop retrying and
+    /// fall back. So a failure at either point counts as one attempt against
+    /// that same budget, and re-calling `attempt_renderer_rebuild_or_close`
+    /// naturally either retries WebGpu again (if attempts remain) or, once
+    /// the breaker trips, falls back to OpenGL (see that function) before
+    /// ever reaching the destructive close.
+    fn finish_renderer_rebuild(&mut self, window: &Window, result: anyhow::Result<WebGpuState>) {
+        // Opportunistic extra sweep (task #283): by the time `WebGpuState::new`
+        // (real adapter/device/surface setup work, not instantaneous) has
+        // resolved, the old render thread this rebuild abandoned has
+        // usually already observed the shutdown signal and returned,
+        // dropping its `Arc<WebGpuState>`. Sweeping here means the common
+        // case -- a healthy render thread that wasn't really wedged, just
+        // slow -- gets its retired HWND destroyed right away instead of
+        // waiting for the next ~2s `check_render_thread_hang_tick`. Not
+        // load-bearing: if the old thread is still wedged, this is a
+        // harmless no-op and the next tick (or eventually window close)
+        // will catch it once it's safe.
+        #[cfg(windows)]
+        window.sweep_retired_webgpu_children();
+
+        let webgpu = match result {
+            Ok(state) => Arc::new(state),
+            Err(err) => {
+                // Same failure modes `WebGpuState::new` can hit at initial
+                // window creation: RDP session, no GPU passthrough in a VM,
+                // a driver mismatch, etc. Retry through the circuit
+                // breaker (see doc comment above) instead of closing
+                // immediately; `render_thread_hang_handled` is still `true`
+                // from the original `attempt_renderer_rebuild_or_close`
+                // call that led here, so this is safe to re-enter directly
+                // without re-checking it.
+                log::error!(
+                    "failed to rebuild WebGpu renderer after a render-thread hang ({:#}); \
+                     retrying through the rebuild circuit breaker",
+                    err
+                );
+                metrics::counter!("gui.render_thread.rebuild_failed").increment(1);
+                self.attempt_renderer_rebuild_or_close(
+                    window,
+                    "the previous WebGpu rebuild attempt itself failed to create a device/surface",
+                    "the WebGpu rebuild attempt has failed",
+                    "gui.render_thread.window_renderer_rebuilt",
+                );
+                return;
+            }
+        };
+
+        // The WebGpu child HWND was already retired and a fresh one
+        // recreated (task #283 onward: the old HWND is *retired*, not
+        // destroyed here -- it's swept later once the outgoing render
+        // thread's `WebGpuState` has actually dropped, see
+        // `sweep_retired_webgpu_children` above) via the spawned task in
+        // `begin_renderer_rebuild` that awaits
+        // `recreate_webgpu_child_window`, before `WebGpuState::new` was even
+        // called. So the surface/device just resolved above already targets
+        // the fresh child HWND. Nothing left to do for the HWND here.
+        self.webgpu.replace(Arc::clone(&webgpu));
+        if let Err(err) = self.created(RenderContext::WebGpu(Arc::clone(&webgpu))) {
+            // Same reasoning as the `WebGpuState::new` failure arm above
+            // (task #272): the device/surface rebuild itself just
+            // succeeded, so this is a `RenderState::new` failure (shader
+            // compilation, glyph atlas allocation, etc.) on top of a
+            // healthy device -- still just another WebGpu rebuild attempt
+            // that didn't pan out, from the circuit breaker's point of
+            // view. Retry through it instead of closing immediately, so a
+            // transient failure right after a device rebuild gets the same
+            // retry/OpenGL-fallback chance as any other rebuild hiccup.
+            // `self.created` already reset `self.render_state` to `None` on
+            // this failure, and the next `begin_renderer_rebuild` (if the
+            // breaker allows another attempt) will mark this `self.webgpu`
+            // stale and clear it before creating a fresh one, so no stale
+            // partial state is left around for a subsequent attempt to trip
+            // over.
+            log::error!(
+                "failed to rebuild RenderState after a successful WebGpu device/surface \
+                 rebuild ({:#}); retrying through the rebuild circuit breaker",
+                err
+            );
+            metrics::counter!("gui.render_thread.rebuild_failed").increment(1);
+            self.attempt_renderer_rebuild_or_close(
+                window,
+                "RenderState build failed after a successful device/surface rebuild",
+                "the WebGpu rebuild attempt has failed",
+                "gui.render_thread.window_renderer_rebuilt",
+            );
+            return;
+        }
+
+        let config = config::configuration();
+        if config.webgpu_render_thread {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let in_flight = Arc::new(AtomicBool::new(false));
+            let repaint_pending = Arc::new(AtomicBool::new(false));
+            let window_destroyed = Arc::new(AtomicBool::new(false));
+            let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
+            let seed = crate::renderthread::RenderThreadSeed {
+                window: window.clone(),
+                webgpu: Arc::clone(&webgpu),
+                rx,
+                in_flight,
+                repaint_pending,
+                window_destroyed,
+                submit_started_at,
+            };
+            self.render_thread =
+                crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id);
+            if self.render_thread.is_some() {
+                self.schedule_render_thread_hang_check(window);
+            }
+        }
+
+        // The rebuild succeeded and a fresh render thread (if configured)
+        // is running: re-arm the one-shot guard so a later, separate hang
+        // on this same window can also be recovered from.
+        self.render_thread_hang_handled.set(false);
+
+        // The old frame's content is gone (new device, new/blank surface);
+        // force a full repaint rather than waiting for the next organic
+        // invalidate.
+        window.invalidate();
+
+        log::info!(
+            "successfully rebuilt this window's WebGpu renderer in place after a \
+             render-thread hang; window and all its tabs/panes survived"
+        );
+    }
+
+    fn dispatch_window_event(
+        &mut self,
+        event: WindowEvent,
+        window: &Window,
+    ) -> anyhow::Result<bool> {
+        log::debug!("{event:?}");
+        match event {
+            WindowEvent::Destroyed => {
+                // Ensure that we cancel any overlays we had running, so
+                // that the mux can empty out, otherwise the mux keeps
+                // the TermWindow alive via the frontend even though
+                // the window is gone and we'll linger forever.
+                // <https://github.com/wezterm/wezterm/issues/3522>
+                self.clear_all_overlays();
+                // Drop OpenGL/render resources while the window surface is still
+                // alive, before NSView dealloc invalidates the GPU drawable.
+                // If deferred until TermWindow::drop, glium's Drop impls
+                // (RawProgram, Context, VertexBuffer, etc.) call make_current
+                // which triggers NSOpenGLContext update on a stale IOSurface,
+                // causing SIGABRT.
+                // Order matters: render_state first (its Drop deletes programs,
+                // buffers, textures via the context), then gl (drops the
+                // context itself, which does FBO/VAO/sampler cleanup).
+                self.render_state.take();
+                self.gl.take();
+                // Detach, don't join: the whole point of the render
+                // thread is that a stuck GPU driver call can't freeze the
+                // GUI thread, so blocking window-close on that same thread
+                // via .join() would defeat the purpose. Sending Shutdown
+                // (and, failing that, dropping the handle's Sender, which
+                // disconnects the channel) is enough to let the thread's
+                // recv() loop end on its own, whenever the driver call it
+                // may currently be stuck in eventually returns.
+                if let Some(rt) = self.render_thread.take() {
+                    rt.shutdown();
+                }
+                Ok(false)
+            }
+            WindowEvent::CloseRequested => {
+                self.close_requested(window);
+                Ok(true)
+            }
+            WindowEvent::AppearanceChanged(appearance) => {
+                log::debug!("Appearance is now {:?}", appearance);
+                // This is a bit fugly; we get per-window notifications
+                // for appearance changes which successfully updates the
+                // per-window config, but we need to explicitly tell the
+                // global config to reload, otherwise things that acces
+                // the config via config::configuration() will see the
+                // prior version of the config.
+                // What's fugly about this is that we'll reload the
+                // global config here once per window, which could
+                // be nasty for folks with a lot of windows.
+                // <https://github.com/wezterm/wezterm/issues/2295>
+                config::reload();
+                self.config_was_reloaded();
+                Ok(true)
+            }
+            WindowEvent::PerformKeyAssignment(action) => {
+                if let Some(pane) = self.get_active_pane_or_overlay() {
+                    self.perform_key_assignment(&pane, &action)?;
+                    window.invalidate();
+                }
+                Ok(true)
+            }
+            WindowEvent::FocusChanged(focused) => {
+                self.focus_changed(focused, window);
+                Ok(true)
+            }
+            WindowEvent::MouseEvent(event) => {
+                self.mouse_event_impl(event, window);
+                Ok(true)
+            }
+            WindowEvent::MouseLeave => {
+                self.mouse_leave_impl(window);
+                Ok(true)
+            }
+            WindowEvent::Resized {
+                dimensions,
+                window_state,
+                live_resizing,
+            } => {
+                self.resize(dimensions, window_state, window, live_resizing);
+                Ok(true)
+            }
+            WindowEvent::SetInnerSizeCompleted => {
+                self.resizes_pending -= 1;
+                if self.is_repaint_pending {
+                    self.is_repaint_pending = false;
+                    if self.webgpu.is_some() {
+                        self.do_paint_webgpu()?;
+                    } else {
+                        self.do_paint(window);
+                    }
+                }
+                self.apply_pending_scale_changes();
+                Ok(true)
+            }
+            WindowEvent::AdviseModifiersLedStatus(modifiers, leds) => {
+                self.current_modifier_and_leds = (modifiers, leds);
+                self.update_title();
+                window.invalidate();
+                Ok(true)
+            }
+            WindowEvent::RawKeyEvent(event) => {
+                self.raw_key_event_impl(event, window);
+                Ok(true)
+            }
+            WindowEvent::KeyEvent(event) => {
+                self.key_event_impl(event, window);
+                Ok(true)
+            }
+            WindowEvent::AdviseDeadKeyStatus(status) => {
+                if self.config.debug_key_events {
+                    log::info!("DeadKeyStatus now: {:?}", status);
+                } else {
+                    log::trace!("DeadKeyStatus now: {:?}", status);
+                }
+                self.dead_key_status = status;
+                self.update_title();
+                // Ensure that we repaint so that any composing
+                // text is updated
+                window.invalidate();
+                Ok(true)
+            }
+            WindowEvent::NeedRepaint => {
+                // Early-show (task #331) means the window can be visible --
+                // and generating `NeedRepaint` events from focus/resize/OS
+                // paint requests -- before either renderer is attached.
+                // `self.gl` and `self.webgpu` are both still `None` from
+                // when they're constructed (see the `myself` initializer
+                // above `new_window`'s `Window::new_window` call) until
+                // `created()` fills in whichever one won the WebGpu/OpenGL
+                // race. This is intentionally *not* treated as an error:
+                // `do_paint_webgpu` is simply unreachable while
+                // `self.webgpu` is `None` (the `else` branch below runs
+                // instead), and `do_paint` handles a `None` `self.gl` by
+                // returning `false` rather than panicking (see its early
+                // return). The client area itself is covered by the
+                // `WM_ERASEBKGND` placeholder brush (task #330) for the
+                // brief window before `created()` runs, so a dropped
+                // repaint here is harmless -- `created()` also forces one
+                // more `window.invalidate()` once a renderer is actually in
+                // place, so nothing is lost, only delayed.
+                if self.resizes_pending > 0 {
+                    self.is_repaint_pending = true;
+                    Ok(true)
+                } else if self.webgpu.is_some() {
+                    self.do_paint_webgpu()
+                } else {
+                    Ok(self.do_paint(window))
+                }
+            }
+            WindowEvent::Notification(item) => {
+                if let Ok(notif) = item.downcast::<TermWindowNotif>() {
+                    self.dispatch_notif(*notif, window)
+                        .context("dispatch_notif")?;
+                }
+                Ok(true)
+            }
+            WindowEvent::DroppedString(text) => {
+                let pane = match self.get_active_pane_or_overlay() {
+                    Some(pane) => pane,
+                    None => return Ok(true),
+                };
+                pane.send_paste(text.as_str())?;
+                Ok(true)
+            }
+            WindowEvent::DroppedUrl(urls) => {
+                let pane = match self.get_active_pane_or_overlay() {
+                    Some(pane) => pane,
+                    None => return Ok(true),
+                };
+                let urls = urls
+                    .iter()
+                    .map(|url| self.config.quote_dropped_files.escape(url.as_ref()))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    + " ";
+                pane.send_paste(urls.as_str())?;
+                Ok(true)
+            }
+            WindowEvent::DroppedFile(paths) => {
+                let pane = match self.get_active_pane_or_overlay() {
+                    Some(pane) => pane,
+                    None => return Ok(true),
+                };
+                let paths = paths
+                    .iter()
+                    .map(|path| {
+                        self.config
+                            .quote_dropped_files
+                            .escape(&path.to_string_lossy())
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    + " ";
+                pane.send_paste(&paths)?;
+                Ok(true)
+            }
+            WindowEvent::DraggedFile(_) => Ok(true),
+        }
+    }
+
+    fn do_paint(&mut self, window: &Window) -> bool {
+        // `self.gl` is `None` for the entire span between the window
+        // becoming visible (early show, task #331) and OpenGL actually
+        // winning the WebGpu/OpenGL race in `created()` -- and permanently
+        // `None` on a WebGpu-only run. Both are expected, not error states:
+        // this early return is what makes a `NeedRepaint` delivered to a
+        // renderer-less-but-visible window a safe no-op instead of a panic
+        // (see `WindowEvent::NeedRepaint` above for the fuller picture,
+        // including why nothing is lost -- `created()` forces one more
+        // repaint once a renderer does land).
+        let gl = match self.gl.as_ref() {
+            Some(gl) => gl,
+            None => return false,
+        };
+
+        if gl.is_context_lost() {
+            log::error!("opengl context was lost; should reinit");
+            // Mirror close_requested's teardown: kill this window's panes
+            // (and their child processes) before destroying the OS window,
+            // otherwise the shells/programs running in them are orphaned
+            // with no controlling terminal left.
+            let mux = Mux::get();
+            mux.kill_window(self.mux_window_id);
+            window.close();
+            front_end().forget_known_window(window);
+            return false;
+        }
+
+        let mut frame = glium::Frame::new(
+            Rc::clone(gl),
+            (
+                self.dimensions.pixel_width as u32,
+                self.dimensions.pixel_height as u32,
+            ),
+        );
+        self.paint_impl(&mut RenderFrame::Glium(&mut frame));
+        window.finish_frame(frame).is_ok()
+    }
+
+    fn do_paint_webgpu(&mut self) -> anyhow::Result<bool> {
+        let dims = self.dimensions;
+        self.resize_webgpu_surface(dims);
+        match self.do_paint_webgpu_impl() {
+            Ok(ok) => Ok(ok),
+            Err(err) => {
+                // Note: with a render thread active, `do_paint_webgpu_impl`
+                // (via `paint_impl` -> `call_draw` -> `call_draw_webgpu`,
+                // see 221.5) never actually returns a `SurfaceError` --
+                // frames are handed off to `send_frame` and this always
+                // returns `Ok(())`. So this retry branch is effectively
+                // dead code in render-thread mode; it remains the
+                // correct/only recovery path when the render thread is
+                // inactive (flag off, non-Windows, or spawn failed), so
+                // it's left in place rather than removed.
+                if let Some(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) =
+                    err.downcast_ref::<wgpu::SurfaceError>()
+                {
+                    let dims = self.dimensions;
+                    self.resize_webgpu_surface(dims);
+                    return self.do_paint_webgpu_impl();
+                }
+                Err(err)
+            }
+        }
+    }
+
+    fn do_paint_webgpu_impl(&mut self) -> anyhow::Result<bool> {
+        self.paint_impl(&mut RenderFrame::WebGpu);
+        Ok(true)
+    }
+
+    fn dispatch_notif(&mut self, notif: TermWindowNotif, window: &Window) -> anyhow::Result<()> {
+        match notif {
+            TermWindowNotif::InvalidateShapeCache => {
+                self.shape_generation += 1;
+                self.shape_cache.borrow_mut().clear();
+                self.invalidate_modal();
+                window.invalidate();
+            }
+            TermWindowNotif::PerformAssignment {
+                pane_id,
+                assignment,
+                tx,
+            } => {
+                let mux = Mux::get();
+                let result = || -> anyhow::Result<()> {
+                    // The CopyMode overlay doesn't exist in the mux, but aliases
+                    // itself with the overlaid pane's pane_id.
+                    // So we do a bit of fancy footwork here to resolve the overlay
+                    // and use that if it has the same pane_id, but otherwise fall
+                    // back to what we get from the mux.
+                    // <https://github.com/wezterm/wezterm/issues/3209>
+                    let active_pane = self
+                        .get_active_pane_or_overlay()
+                        .ok_or_else(|| anyhow!("there is no active pane!?"))?;
+                    let pane = if active_pane.pane_id() == pane_id {
+                        active_pane
+                    } else {
+                        mux.get_pane(pane_id)
+                            .ok_or_else(|| anyhow!("pane id {} is not valid", pane_id))?
+                    };
+                    self.perform_key_assignment(&pane, &assignment)
+                        .context("perform_key_assignment")?;
+                    Ok(())
+                }();
+                window.invalidate();
+                if let Some(tx) = tx {
+                    tx.try_send(result).ok();
+                }
+            }
+            TermWindowNotif::CancelOverlayForPane(pane_id) => {
+                self.cancel_overlay_for_pane(pane_id);
+            }
+            TermWindowNotif::CancelOverlayForTab { tab_id, pane_id } => {
+                self.cancel_overlay_for_tab(tab_id, pane_id);
+            }
+            TermWindowNotif::MuxNotification(n) => match n {
+                MuxNotification::Alert {
+                    alert: Alert::SetUserVar { name, value },
+                    pane_id,
+                } => {
+                    self.emit_user_var_event(pane_id, name, value);
+                }
+                MuxNotification::WindowTitleChanged { .. }
+                | MuxNotification::Alert {
+                    alert:
+                        Alert::OutputSinceFocusLost
+                        | Alert::CurrentWorkingDirectoryChanged
+                        | Alert::WindowTitleChanged(_)
+                        | Alert::TabTitleChanged(_)
+                        | Alert::IconTitleChanged(_)
+                        | Alert::Progress(_),
+                    ..
+                } => {
+                    self.update_title();
+                }
+                MuxNotification::Alert {
+                    alert: Alert::PaletteChanged,
+                    pane_id,
+                } => {
+                    // Shape cache includes color information, so
+                    // ensure that we invalidate that as part of
+                    // this overall invalidation for the palette
+                    self.dispatch_notif(TermWindowNotif::InvalidateShapeCache, window)?;
+                    self.mux_pane_output_event(pane_id);
+                }
+                MuxNotification::Alert {
+                    alert: Alert::Bell,
+                    pane_id,
+                } => {
+                    if !self.window_contains_pane(pane_id) {
+                        return Ok(());
+                    }
+
+                    match self.config.audible_bell {
+                        AudibleBell::SystemBeep => {
+                            Connection::get().expect("on main thread").beep();
+                        }
+                        AudibleBell::Disabled => {}
+                    }
+
+                    log::trace!("Ding! (this is the bell) in pane {}", pane_id);
+
+                    let mut per_pane = self.pane_state(pane_id);
+                    per_pane.bell_start.replace(Instant::now());
+                    window.invalidate();
+                }
+                MuxNotification::Alert {
+                    alert: Alert::ToastNotification { .. },
+                    ..
+                } => {}
+                MuxNotification::TabAddedToWindow {
+                    window_id: _,
+                    tab_id,
+                } => {
+                    let mux = Mux::get();
+                    let mut size = self.terminal_size;
+                    if let Some(tab) = mux.get_tab(tab_id) {
+                        // If we attached to a remote domain and loaded in
+                        // a tab async, we need to fixup its size, either
+                        // by resizing it or resizes ourselves.
+                        // The strategy here is to adjust both by taking
+                        // the maximal size in both horizontal and vertical
+                        // dimensions and applying that. In practice that
+                        // means that a new local client will resize larger
+                        // to adjust to the size of an existing client.
+                        let tab_size = tab.get_size();
+                        size.rows = size.rows.max(tab_size.rows);
+                        size.cols = size.cols.max(tab_size.cols);
+
+                        if size.rows != self.terminal_size.rows
+                            || size.cols != self.terminal_size.cols
+                            || size.pixel_width != self.terminal_size.pixel_width
+                            || size.pixel_height != self.terminal_size.pixel_height
+                        {
+                            self.set_window_size(size, window)?;
+                        } else if tab_size.dpi == 0 {
+                            log::debug!("fixup dpi in newly added tab");
+                            tab.resize(self.terminal_size);
+                        }
+                    }
+                }
+                MuxNotification::PaneOutput(pane_id) => {
+                    self.mux_pane_output_event(pane_id);
+                }
+                MuxNotification::WindowInvalidated(_) => {
+                    window.invalidate();
+                    self.update_title_post_status();
+                }
+                MuxNotification::WindowRemoved(_window_id) => {
+                    // Handled by frontend
+                }
+                MuxNotification::AssignClipboard { .. } => {
+                    // Handled by frontend
+                }
+                MuxNotification::SaveToDownloads { .. } => {
+                    // Handled by frontend
+                }
+                MuxNotification::PaneFocused(_) => {
+                    // Also handled by clientpane
+                    self.update_title_post_status();
+                }
+                MuxNotification::TabReflowed(_) => {
+                    // Also handled by wezterm-client
+                    self.update_title_post_status();
+                }
+                MuxNotification::TabTitleChanged { .. } => {
+                    self.update_title_post_status();
+                }
+                MuxNotification::PaneAdded(_)
+                | MuxNotification::WorkspaceRenamed { .. }
+                | MuxNotification::PaneRemoved(_)
+                | MuxNotification::WindowWorkspaceChanged(_)
+                | MuxNotification::ActiveWorkspaceChanged(_)
+                | MuxNotification::Empty
+                | MuxNotification::WindowCreated(_) => {}
+            },
+            TermWindowNotif::EmitStatusUpdate => {
+                self.emit_status_event();
+            }
+            TermWindowNotif::Apply(func) => {
+                func(self);
+            }
+            TermWindowNotif::SwitchToMuxWindow(mux_window_id) => {
+                self.mux_window_id = mux_window_id;
+                *self.mux_window_id_for_subscriptions.lock().unwrap() = mux_window_id;
+
+                self.clear_all_overlays();
+                self.current_highlight.take();
+                self.invalidate_fancy_tab_bar();
+                self.invalidate_modal();
+
+                let mux = Mux::get();
+                if let Some(window) = mux.get_window(self.mux_window_id) {
+                    for tab in window.iter() {
+                        tab.resize(self.terminal_size);
+                    }
+                };
+                self.update_title();
+                window.invalidate();
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn set_inner_size(&mut self, window: &Window, width: usize, height: usize) {
+        self.resizes_pending += 1;
+        window.set_inner_size(width, height);
+    }
+
+    /// Take care to remove our panes from the mux, otherwise
+    /// we can leave the mux with no windows but some panes
+    /// and it won't believe that we are empty.
+    pub(super) fn clear_all_overlays(&mut self) {
+        let overlay_panes_to_cancel = self
+            .pane_state
+            .borrow()
+            .values()
+            .filter_map(|state| state.overlay.as_ref().map(|overlay| overlay.pane.pane_id()))
+            .collect::<Vec<_>>();
+
+        for pane_id in overlay_panes_to_cancel {
+            self.cancel_overlay_for_pane(pane_id);
+        }
+
+        let tab_overlays_to_cancel = self
+            .tab_state
+            .borrow()
+            .iter()
+            .filter_map(|(tab_id, state)| state.overlay.as_ref().map(|_| *tab_id))
+            .collect::<Vec<_>>();
+
+        for tab_id in tab_overlays_to_cancel {
+            self.cancel_overlay_for_tab(tab_id, None);
+        }
+
+        self.pane_state.borrow_mut().clear();
+        self.tab_state.borrow_mut().clear();
+    }
+
+    fn apply_icon(window: &Window) -> anyhow::Result<()> {
+        let image = image::load_from_memory(ICON_DATA)?.into_rgba8();
+        let (width, height) = image.dimensions();
+        window.set_icon(Image::with_rgba32(
+            width as usize,
+            height as usize,
+            width as usize * 4,
+            image.as_raw(),
+        ));
+        Ok(())
+    }
+
+    pub(super) fn schedule_status_update(&self) {
+        if let Some(window) = self.window.as_ref() {
+            window.notify(TermWindowNotif::EmitStatusUpdate);
+        }
+    }
+
+    fn is_pane_visible(&mut self, pane_id: PaneId) -> bool {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return false,
+        };
+
+        let tab_id = tab.tab_id();
+        if let Some(tab_overlay) = self
+            .tab_state(tab_id)
+            .overlay
+            .as_ref()
+            .map(|overlay| overlay.pane.clone())
+        {
+            return tab_overlay.pane_id() == pane_id;
+        }
+
+        tab.contains_pane(pane_id)
+    }
+
+    fn mux_pane_output_event(&mut self, pane_id: PaneId) {
+        metrics::histogram!("mux.pane_output_event.rate").record(1.);
+        if self.is_pane_visible(pane_id) {
+            if let Some(ref win) = self.window {
+                win.invalidate();
+            }
+        }
+    }
+
+    fn mux_pane_output_event_callback(
+        n: MuxNotification,
+        window: &Window,
+        mux_window_id: MuxWindowId,
+        dead: &Arc<AtomicBool>,
+    ) -> bool {
+        if dead.load(Ordering::Relaxed) {
+            // Subscription cancelled asynchronously
+            return false;
+        }
+
+        match n {
+            MuxNotification::Alert {
+                pane_id,
+                alert:
+                    Alert::OutputSinceFocusLost
+                    | Alert::CurrentWorkingDirectoryChanged
+                    | Alert::WindowTitleChanged(_)
+                    | Alert::TabTitleChanged(_)
+                    | Alert::IconTitleChanged(_)
+                    | Alert::Progress(_)
+                    | Alert::SetUserVar { .. }
+                    | Alert::Bell,
+            }
+            | MuxNotification::PaneFocused(pane_id)
+            | MuxNotification::PaneRemoved(pane_id)
+            | MuxNotification::PaneOutput(pane_id) => {
+                // Check window validity and propagate to the window event handler
+                // that will do the full pane visibility check.
+                let mux = Mux::get();
+                if mux.get_window(mux_window_id).is_none() {
+                    // If the window is not found, the mux_window_id may be stale during
+                    // a workspace switch - skip this notif but keep the subscription.
+                    // (next notifs should finish the workspace switch & reconcile the state)
+                    return true;
+                }
+                let _ = pane_id;
+            }
+            MuxNotification::PaneAdded(_pane_id) => {
+                // If some other client spawns a pane inside this window, this
+                // gives us an opportunity to attach it to the clipboard.
+                let mux = Mux::get();
+                return mux.get_window(mux_window_id).is_some();
+            }
+            MuxNotification::TabAddedToWindow { window_id, .. }
+            | MuxNotification::WindowTitleChanged { window_id, .. }
+            | MuxNotification::WindowInvalidated(window_id) => {
+                if window_id != mux_window_id {
+                    return true;
+                }
+            }
+            MuxNotification::WindowRemoved(window_id) => {
+                if window_id != mux_window_id {
+                    return true;
+                }
+                // The removed window matches our current mux_window_id.
+                // During workspace switches, mux_window_id may be stale.
+                // Skip this notification but keep the subscription alive.
+                // (next notifs should finish the workspace switch & reconcile the state)
+                return true;
+            }
+            MuxNotification::TabReflowed(tab_id)
+            | MuxNotification::TabTitleChanged { tab_id, .. } => {
+                let mux = Mux::get();
+                if mux.window_containing_tab(tab_id) == Some(mux_window_id) {
+                    // fall through
+                } else {
+                    return true;
+                }
+            }
+            MuxNotification::Alert {
+                alert: Alert::ToastNotification { .. },
+                ..
+            }
+            | MuxNotification::AssignClipboard { .. }
+            | MuxNotification::SaveToDownloads { .. }
+            | MuxNotification::WindowCreated(_)
+            | MuxNotification::ActiveWorkspaceChanged(_)
+            | MuxNotification::WorkspaceRenamed { .. }
+            | MuxNotification::Empty
+            | MuxNotification::WindowWorkspaceChanged(_) => return true,
+            MuxNotification::Alert {
+                alert: Alert::PaletteChanged,
+                ..
+            } => {
+                // fall through
+            }
+        }
+
+        window.notify(TermWindowNotif::MuxNotification(n));
+
+        true
+    }
+
+    fn subscribe_to_pane_updates(&self) {
+        let window = self.window.clone().expect("window to be valid on startup");
+        let mux_window_id = Arc::clone(&self.mux_window_id_for_subscriptions);
+        let mux = Mux::get();
+        let dead = Arc::clone(&self.mux_subscription_dead);
+        mux.subscribe(move |n| {
+            if dead.load(Ordering::Relaxed) {
+                // Unsubscribe this handler from the mux
+                return false;
+            }
+            let mux_window_id = *mux_window_id.lock().unwrap();
+            let window = window.clone();
+            let dead = dead.clone();
+            promise::spawn::spawn_into_main_thread(async move {
+                Self::mux_pane_output_event_callback(n, &window, mux_window_id, &dead)
+            })
+            .detach();
+            true
+        });
+    }
+
+    fn emit_status_event(&mut self) {
+        // update-right-status/update-status events were dispatched to rhai
+        // handlers; with the scripting layer removed they have no consumers.
+    }
+
+    /// Named window events (`window-resized`, the generic `EmitEvent(name)`
+    /// key assignment, etc.) used to be dispatched here to a rhai handler
+    /// registered via `wezterm.on(name, ...)`. With the scripting layer
+    /// removed there is no handler registry left to receive them, so this
+    /// just immediately marks the event as finished (`again: false`, the
+    /// same outcome `do_event` used to report when no rhai config was
+    /// loaded) without spawning anything. The `EventState`
+    /// queueing/de-duplication in [`Self::emit_window_event`] and
+    /// [`Self::finish_window_event`] is kept as-is so a queued re-entrant
+    /// call is still drained correctly.
+    fn schedule_window_event(&mut self, name: &str, _pane_id: Option<PaneId>) {
+        self.finish_window_event(name, false);
+    }
+
+    /// Called as part of finishing up a window event dispatch.
+    /// If again==false it means that there isn't a handler
+    /// to execute against, so we should just mark as done.
+    /// Otherwise, if there is a queued item, schedule it now.
+    fn finish_window_event(&mut self, name: &str, again: bool) {
+        let state = self
+            .event_states
+            .entry(name.to_string())
+            .or_insert(EventState::None);
+        if again {
+            match state {
+                EventState::InProgress => {
+                    *state = EventState::None;
+                }
+                EventState::InProgressWithQueued(pane) => {
+                    let pane = *pane;
+                    *state = EventState::InProgress;
+                    self.schedule_window_event(name, pane);
+                }
+                EventState::None => {}
+            }
+        } else {
+            *state = EventState::None;
+        }
+    }
+
+    pub fn emit_window_event(&mut self, name: &str, pane_id: Option<PaneId>) {
+        if self.get_active_pane_or_overlay().is_none() || self.window.is_none() {
+            return;
+        }
+
+        let state = self
+            .event_states
+            .entry(name.to_string())
+            .or_insert(EventState::None);
+        match state {
+            EventState::InProgress => {
+                // Flag that we want to run again when the currently
+                // executing event calls finish_window_event().
+                *state = EventState::InProgressWithQueued(pane_id);
+            }
+            EventState::InProgressWithQueued(other_pane) => {
+                // We've already got one copy executing and another
+                // pending dispatch, so don't queue another.
+                if pane_id != *other_pane {
+                    log::warn!(
+                        "Cannot queue {} event for pane {:?}, as \
+                         there is already an event queued for pane {:?} \
+                         in the same window",
+                        name,
+                        pane_id,
+                        other_pane
+                    );
+                }
+            }
+            EventState::None => {
+                // Nothing pending, so schedule a call now
+                *state = EventState::InProgress;
+                self.schedule_window_event(name, pane_id);
+            }
+        }
+    }
+
+    pub(super) fn check_for_dirty_lines_and_invalidate_selection(&mut self, pane: &Arc<dyn Pane>) {
+        let dims = pane.get_dimensions();
+        let viewport = self
+            .get_viewport(pane.pane_id())
+            .unwrap_or(dims.physical_top);
+        let visible_range = viewport..viewport + dims.viewport_rows as StableRowIndex;
+        let seqno = self.selection(pane.pane_id()).seqno;
+        let dirty = pane.get_changed_since(visible_range, seqno);
+
+        if dirty.is_empty() {
+            return;
+        }
+        if pane.downcast_ref::<CopyOverlay>().is_none()
+            && pane.downcast_ref::<QuickSelectOverlay>().is_none()
+        {
+            // If any of the changed lines intersect with the
+            // selection, then we need to clear the selection, but not
+            // when the search overlay is active; the search overlay
+            // marks lines as dirty to force invalidate them for
+            // highlighting purpose but also manipulates the selection
+            // and we want to allow it to retain the selection it made!
+
+            let clear_selection =
+                if let Some(selection_range) = self.selection(pane.pane_id()).range.as_ref() {
+                    let selection_rows = selection_range.rows();
+                    selection_rows.into_iter().any(|row| dirty.contains(row))
+                } else {
+                    false
+                };
+
+            if clear_selection {
+                self.selection(pane.pane_id()).range.take();
+                self.selection(pane.pane_id()).origin.take();
+                self.selection(pane.pane_id()).seqno = pane.get_current_seqno();
+            }
+        }
+    }
+}
