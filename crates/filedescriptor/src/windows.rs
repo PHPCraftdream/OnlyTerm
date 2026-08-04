@@ -38,19 +38,14 @@ const STD_INPUT_HANDLE: u32 = 4294967286; // -10
 const STD_OUTPUT_HANDLE: u32 = 4294967285; // -11
 const STD_ERROR_HANDLE: u32 = 4294967284; // -12
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum HandleType {
     Char,
     Disk,
     Pipe,
     Socket,
+    #[default]
     Unknown,
-}
-
-impl Default for HandleType {
-    fn default() -> Self {
-        HandleType::Unknown
-    }
 }
 
 impl<T: AsRawHandle> AsRawFileDescriptor for T {
@@ -167,7 +162,7 @@ impl OwnedHandle {
 
 impl Drop for OwnedHandle {
     fn drop(&mut self) {
-        if self.handle != INVALID_HANDLE_VALUE as _ && !self.handle.is_null() {
+        if !std::ptr::eq(self.handle, INVALID_HANDLE_VALUE as _) && !self.handle.is_null() {
             // SAFETY: `self.handle` was checked non-null and non-INVALID;
             // `is_socket_handle` determines the correct close function.
             unsafe {
@@ -196,7 +191,7 @@ impl OwnedHandle {
     #[inline]
     pub(crate) fn dup_impl<F: AsRawFileDescriptor>(f: &F, handle_type: HandleType) -> Result<Self> {
         let handle = f.as_raw_file_descriptor();
-        if handle == INVALID_HANDLE_VALUE as _ || handle.is_null() {
+        if std::ptr::eq(handle, INVALID_HANDLE_VALUE as _) || handle.is_null() {
             return Ok(OwnedHandle {
                 handle,
                 handle_type,

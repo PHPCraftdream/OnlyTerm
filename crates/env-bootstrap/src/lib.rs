@@ -24,7 +24,6 @@ pub fn fixup_snap() {
         // This list may change over time, so for simplicity, assume
         // anything in the SNAP_* namespace is set by snapd, and unset it.
         std::env::vars_os()
-            .into_iter()
             .filter(|(key, _)| {
                 key.to_str()
                     .filter(|key| key.starts_with("SNAP_"))

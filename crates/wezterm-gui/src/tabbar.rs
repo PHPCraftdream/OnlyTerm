@@ -507,7 +507,7 @@ impl TabBarState {
         }
 
         let left_status_line = parse_status_text(left_status, black_cell.attrs().clone());
-        if left_status_line.len() > 0 {
+        if !left_status_line.is_empty() {
             items.push(TabEntry {
                 item: TabBarItem::LeftStatus,
                 title: left_status_line.clone(),

@@ -20,6 +20,13 @@ pub struct UmaskSaver {
     mask: mode_t,
 }
 
+// `UmaskSaver::new()` is not a plain value constructor: it mutates the
+// process-wide umask as a side effect and relies on RAII (`Drop`) to
+// restore the prior mask. Adding a `Default` impl would let it be
+// constructed implicitly (e.g. via `Option::unwrap_or_default()`), which
+// would silently and unexpectedly change process-global state; requiring
+// an explicit `UmaskSaver::new()` call is deliberate.
+#[allow(clippy::new_without_default)]
 impl UmaskSaver {
     pub fn new() -> Self {
         let me = Self {

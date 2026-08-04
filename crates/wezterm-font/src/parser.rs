@@ -294,7 +294,7 @@ impl ParsedFont {
                     code.push_str(&format!(", scale: {}", scale));
                 }
                 if let Some(item) = p.freetype_load_flags {
-                    code.push_str(&format!(", freetype_load_flags: {}", item.to_string()));
+                    code.push_str(&format!(", freetype_load_flags: {}", item));
                 }
                 if let Some(item) = p.freetype_load_target {
                     code.push_str(&format!(", freetype_load_target: {:?}", item));

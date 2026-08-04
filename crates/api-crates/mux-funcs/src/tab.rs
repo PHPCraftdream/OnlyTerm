@@ -5,7 +5,7 @@ use std::sync::Arc;
 pub struct MuxTab(pub TabId);
 
 impl MuxTab {
-    pub fn resolve<'a>(&self, mux: &'a Arc<Mux>) -> anyhow::Result<Arc<Tab>> {
+    pub fn resolve(&self, mux: &Arc<Mux>) -> anyhow::Result<Arc<Tab>> {
         mux.get_tab(self.0)
             .ok_or_else(|| anyhow::anyhow!(format!("tab id {} not found in mux", self.0)))
     }

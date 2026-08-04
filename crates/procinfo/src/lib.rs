@@ -357,11 +357,8 @@ mod tests {
         // with the right identity, confirming the iterative clone
         // attached every level rather than silently truncating.
         let mut node = &cloned;
-        loop {
-            match node.children.values().next() {
-                Some(child) => node = child,
-                None => break,
-            }
+        while let Some(child) = node.children.values().next() {
+            node = child;
         }
         assert_eq!(node.pid, TEST_DEPTH);
 

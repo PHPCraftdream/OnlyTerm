@@ -124,6 +124,10 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Grow the hash buckets in the pursuit of reducing potential
     /// key collisions in any given bucket
     fn grow_hash(&mut self) {
@@ -230,10 +234,9 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
         self.len = 0;
     }
 
-    pub fn get<'a, Q: ?Sized + Debug>(&'a mut self, k: &Q) -> Option<&'a V>
+    pub fn get<'a, Q: ?Sized + Debug + Hash + Eq>(&'a mut self, k: &Q) -> Option<&'a V>
     where
         K: Borrow<Q>,
-        Q: Hash + Eq,
     {
         let bucket = self.bucket_for_key(&k);
         let mut cursor = self.buckets.get_mut(bucket)?.front_mut();

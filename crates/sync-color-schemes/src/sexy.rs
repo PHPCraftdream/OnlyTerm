@@ -2,10 +2,7 @@ use super::*;
 use tar::Archive;
 use tempfile::NamedTempFile;
 
-fn load_sexy_file<P: AsRef<Path>>(path: P) -> anyhow::Result<Scheme>
-where
-    P: std::fmt::Debug,
-{
+fn load_sexy_file<P: AsRef<Path> + std::fmt::Debug>(path: P) -> anyhow::Result<Scheme> {
     let mut scheme = color_funcs::schemes::sexy::Sexy::load_file(&path)?;
     let name = format!("{} (terminal.sexy)", scheme.metadata.name.unwrap());
     scheme.metadata.name = Some(name.clone());

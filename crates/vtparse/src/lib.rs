@@ -364,19 +364,16 @@ impl OscState {
             }
         } else if !self.full {
             let mut buf = [0u8; 8];
-            let extend_result = self
-                .buffer
-                .extend_from_slice(param.encode_utf8(&mut buf).as_bytes());
+            let bytes = param.encode_utf8(&mut buf).as_bytes();
 
-            #[cfg(all(not(feature = "std"), not(feature = "alloc")))]
-            {
-                if extend_result.is_err() {
-                    self.full = true;
-                    return;
-                }
+            #[cfg(any(feature = "std", feature = "alloc"))]
+            self.buffer.extend_from_slice(bytes);
+
+            #[cfg(not(any(feature = "std", feature = "alloc")))]
+            if self.buffer.extend_from_slice(bytes).is_err() {
+                self.full = true;
+                return;
             }
-
-            let _ = extend_result;
 
             if self.num_params == 0 {
                 self.num_params = 1;
@@ -994,7 +991,7 @@ mod test {
         assert_eq!(
             parse_as_vec(input.as_bytes()),
             vec![VTAction::CsiDispatch {
-                params: params,
+                params,
                 parameters_truncated: false,
                 byte: b'p'
             }]

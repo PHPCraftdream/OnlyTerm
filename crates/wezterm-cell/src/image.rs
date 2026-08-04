@@ -121,6 +121,12 @@ impl ImageCell {
         self.placement_id.hash(hasher);
     }
 
+    // `with_z_index` is a public constructor used across crates (term,
+    // wezterm-client) with these exact positional arguments. Regrouping the
+    // padding/id parameters into a struct or builder would be a breaking
+    // public API change to all call sites; not worth it just to silence the
+    // arg-count lint.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_z_index(
         top_left: TextureCoordinate,
         bottom_right: TextureCoordinate,
@@ -176,8 +182,8 @@ impl ImageCell {
     }
 
     /// negative z_index is rendered beneath the text layer.
-    /// >= 0 is rendered above the text.
-    /// negative z_index < INT32_MIN/2 will be drawn under cells
+    /// A z_index that is greater than or equal to 0 is rendered above the text.
+    /// A negative z_index less than INT32_MIN/2 will be drawn under cells
     /// with non-default background colors
     pub fn z_index(&self) -> i32 {
         self.z_index
@@ -331,13 +337,10 @@ impl ImageDataType {
     /// if the speed_factor is negative, non-finite or the result
     /// overflows the allow Duration range.
     pub fn adjust_speed(&mut self, speed_factor: f32) {
-        match self {
-            Self::AnimRgba8 { durations, .. } => {
-                for d in durations {
-                    *d = d.mul_f32(1. / speed_factor);
-                }
+        if let Self::AnimRgba8 { durations, .. } = self {
+            for d in durations {
+                *d = d.mul_f32(1. / speed_factor);
             }
-            _ => {}
         }
     }
 
@@ -392,12 +395,12 @@ impl ImageDataType {
                 match format {
                     ImageFormat::Gif => image::codecs::gif::GifDecoder::new(cursor)
                         .and_then(|decoder| decoder.into_frames().collect_frames())
-                        .and_then(|frames| {
+                        .map(|frames| {
                             if frames.is_empty() {
                                 log::error!("decoded image has 0 frames, using placeholder");
-                                Ok(Self::placeholder())
+                                Self::placeholder()
                             } else {
-                                Ok(Self::decode_frames(frames))
+                                Self::decode_frames(frames)
                             }
                         })
                         .unwrap_or_else(|err| {
@@ -576,6 +579,10 @@ impl ImageData {
             ImageDataType::Rgba8 { data, .. } => data.len(),
             ImageDataType::AnimRgba8 { frames, .. } => frames.len() * frames[0].len(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     pub fn data(&self) -> MutexGuard<'_, ImageDataType> {

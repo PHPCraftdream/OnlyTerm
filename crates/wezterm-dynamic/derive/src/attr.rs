@@ -98,7 +98,12 @@ impl<'a> FieldInfo<'a> {
         }
     }
 
-    pub fn from_dynamic(&self, struct_name: &str) -> TokenStream {
+    /// Generates the code that converts this field from a `Value` when
+    /// deriving `FromDynamic`. Named `gen_from_dynamic` (rather than
+    /// `from_dynamic`) to avoid colliding with the naming convention clippy
+    /// expects for `from_*` constructors; this is a codegen helper, not a
+    /// constructor.
+    pub fn gen_from_dynamic(&self, struct_name: &str) -> TokenStream {
         let name = &self.name;
         let ident = &self.field.ident;
         let ty = &self.field.ty;

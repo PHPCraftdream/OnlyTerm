@@ -373,7 +373,7 @@ fn compute_compatibility_list(
             let compatible = a.is_surface_supported(surface);
             format!(
                 "{}, compatible={}",
-                info.to_string(),
+                info,
                 if compatible { "yes" } else { "NO" }
             )
         })
@@ -600,7 +600,7 @@ impl WebGpuState {
                             "Your webgpu preferred adapter '{}' was not found among the \
                              enumerated adapters (name/device_type/backend/driver/vendor/device \
                              did not match any of them)",
-                            preference.to_string(),
+                            preference,
                         );
                     }
                 }
@@ -716,7 +716,7 @@ impl WebGpuState {
             log::warn!(
                 "{} is not compatible with the window surface; falling back to request_adapter \
                  with compatible_surface set",
-                adapter_info_to_gpu_info(adapter.get_info()).to_string()
+                adapter_info_to_gpu_info(adapter.get_info())
             );
             let instance = if backends == all_backends {
                 instance

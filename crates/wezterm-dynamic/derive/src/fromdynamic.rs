@@ -65,7 +65,7 @@ fn derive_struct(input: &DeriveInput, fields: &FieldsNamed) -> Result<TokenStrea
 
     let placements = placements
         .into_iter()
-        .map(|f| f.from_dynamic(&literal))
+        .map(|f| f.gen_from_dynamic(&literal))
         .collect::<Vec<_>>();
 
     let bound = parse_quote!(wezterm_dynamic::FromDynamic);
@@ -195,7 +195,7 @@ fn derive_enum(input: &DeriveInput, enumeration: &DataEnum) -> Result<TokenStrea
                             .iter()
                             .map(|f| {
                                 let info = attr::field_info(f).unwrap();
-                                info.from_dynamic(&literal)
+                                info.gen_from_dynamic(&literal)
                             })
                         .collect::<Vec<_>>();
 

@@ -27,7 +27,7 @@ pub fn update_mux_domains_for_server(config: &ConfigHandle) -> anyhow::Result<()
 fn update_mux_domains_impl(config: &ConfigHandle, is_standalone_mux: bool) -> anyhow::Result<()> {
     let mux = Mux::get();
 
-    for client_config in client_domains(&config) {
+    for client_config in client_domains(config) {
         if mux.get_domain_by_name(client_config.name()).is_some() {
             continue;
         }
