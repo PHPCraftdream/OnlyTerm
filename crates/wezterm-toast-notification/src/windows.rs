@@ -77,8 +77,14 @@ fn show_notif_impl(toast: TN) -> Result<(), Box<dyn std::error::Error>> {
     }))?;
     */
 
+    // Must match the AppUserModelID that `main.rs` assigns to this process
+    // via `SetCurrentProcessExplicitAppUserModelID`, and that the installer
+    // registers on the Start Menu shortcut (`ci/windows-installer.iss`).
+    // Windows resolves the toast's displayed name and icon by looking up
+    // this ID's registered shortcut; a mismatch falls back to whatever
+    // (unrelated) app happens to own the unmatched ID.
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(HSTRING::from(
-        "org.wezfurlong.wezterm",
+        "org.wezfurlong.onlyterm",
     ))?;
 
     notifier.Show(&notif)?;
