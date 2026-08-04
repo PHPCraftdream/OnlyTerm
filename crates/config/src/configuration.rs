@@ -1,0 +1,630 @@
+use anyhow::{bail, Context, Error};
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use wezterm_dynamic::{FromDynamic, FromDynamicOptions, UnknownFieldAction, Value};
+use wezterm_term::UnicodeVersion;
+
+use crate::Config;
+use crate::CellWidth;
+use crate::FontLocatorSelection;
+
+pub(crate) type ErrorCallback = fn(&str);
+
+lazy_static! {
+    static ref CONFIG: Configuration = Configuration::new();
+    pub(crate) static ref CONFIG_FILE_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+    pub(crate) static ref CONFIG_SKIP: AtomicBool = AtomicBool::new(false);
+    pub(crate) static ref CONFIG_OVERRIDES: Mutex<Vec<(String, String)>> = Mutex::new(vec![]);
+    static ref SHOW_ERROR: Mutex<Option<ErrorCallback>> =
+        Mutex::new(Some(|e| log::error!("{}", e)));
+}
+
+#[must_use = "Cancels the subscription when dropped"]
+pub struct ConfigSubscription(usize);
+
+impl Drop for ConfigSubscription {
+    fn drop(&mut self) {
+        CONFIG.unsub(self.0);
+    }
+}
+
+pub fn subscribe_to_config_reload<F>(subscriber: F) -> ConfigSubscription
+where
+    F: Fn() -> bool + 'static + Send,
+{
+    ConfigSubscription(CONFIG.subscribe(subscriber))
+}
+
+pub(crate) fn default_config_with_overrides_applied() -> anyhow::Result<Config> {
+    // Cause the default config to be re-evaluated with the overrides applied.
+    // There is no config file in this path (this backs `Config::try_default`,
+    // used when no `.ktav` config file was found at all), so we start from
+    // an empty object and let `apply_overrides_to_ktav` (see `config.rs`)
+    // splice in any `--config key=value` command line overrides, the same
+    // way `Config::try_load` does for a real config file.
+    let table = Value::Object(Default::default());
+    let dyn_config = Config::apply_overrides_to_ktav(table).context("apply_overrides_to_ktav")?;
+
+    let cfg: Config = Config::from_dynamic(
+        &dyn_config,
+        FromDynamicOptions {
+            unknown_fields: UnknownFieldAction::Deny,
+            deprecated_fields: UnknownFieldAction::Warn,
+        },
+    )
+    .context("Error converting overrides to Config struct")?;
+    // Compute but discard the key bindings here so that we raise any
+    // problems earlier than we use them.
+    let _ = cfg.key_bindings();
+
+    cfg.check_consistency().context("check_consistency")?;
+
+    Ok(cfg)
+}
+
+pub fn common_init(
+    config_file: Option<&OsString>,
+    overrides: &[(String, String)],
+    skip_config: bool,
+) -> anyhow::Result<()> {
+    if let Some(config_file) = config_file {
+        set_config_file_override(Path::new(config_file));
+    } else if skip_config {
+        CONFIG_SKIP.store(true, Ordering::Relaxed);
+    }
+
+    set_config_overrides(overrides).context("common_init: set_config_overrides")?;
+    reload();
+    Ok(())
+}
+
+pub fn assign_error_callback(cb: ErrorCallback) {
+    let mut factory = SHOW_ERROR.lock().unwrap();
+    factory.replace(cb);
+}
+
+pub fn show_error(err: &str) {
+    let factory = SHOW_ERROR.lock().unwrap();
+    if let Some(cb) = factory.as_ref() {
+        cb(err)
+    }
+}
+
+pub fn set_config_file_override(path: &Path) {
+    CONFIG_FILE_OVERRIDE
+        .lock()
+        .unwrap()
+        .replace(path.to_path_buf());
+}
+
+pub fn set_config_overrides(items: &[(String, String)]) -> anyhow::Result<()> {
+    *CONFIG_OVERRIDES.lock().unwrap() = items.to_vec();
+
+    let _ = default_config_with_overrides_applied()?;
+    Ok(())
+}
+
+pub fn is_config_overridden() -> bool {
+    CONFIG_SKIP.load(Ordering::Relaxed)
+        || !CONFIG_OVERRIDES.lock().unwrap().is_empty()
+        || CONFIG_FILE_OVERRIDE.lock().unwrap().is_some()
+}
+
+/// Discard the current configuration and replace it with
+/// the default configuration
+pub fn use_default_configuration() {
+    CONFIG.use_defaults();
+}
+
+/// Use a config that doesn't depend on the user's
+/// environment and is suitable for unit testing
+pub fn use_test_configuration() {
+    CONFIG.use_test();
+}
+
+pub fn use_this_configuration(config: Config) {
+    CONFIG.use_this_config(config);
+}
+
+/// Returns a handle to the current configuration
+pub fn configuration() -> ConfigHandle {
+    CONFIG.get()
+}
+
+/// Returns a version of the config (loaded from the config file)
+/// with some field overridden based on the supplied overrides object.
+pub fn overridden_config(overrides: &Value) -> Result<ConfigHandle, Error> {
+    CONFIG.overridden(overrides)
+}
+
+pub fn reload() {
+    CONFIG.reload();
+}
+
+/// If there was an error loading the preferred configuration,
+/// return it, otherwise return the current configuration
+pub fn configuration_result() -> Result<ConfigHandle, Error> {
+    if let Some(error) = CONFIG.get_error() {
+        bail!("{}", error);
+    }
+    Ok(CONFIG.get())
+}
+
+/// Returns the combined set of errors + warnings encountered
+/// while loading the preferred configuration
+pub fn configuration_warnings_and_errors() -> Vec<String> {
+    CONFIG.get_warnings_and_errors()
+}
+
+/// Just the hard error from loading the preferred configuration, without
+/// the warnings. See `Configuration::get_error`.
+pub fn configuration_error() -> Option<String> {
+    CONFIG.get_error()
+}
+
+struct ConfigInner {
+    config: Arc<Config>,
+    error: Option<String>,
+    warnings: Vec<String>,
+    generation: usize,
+    watcher: Option<notify::RecommendedWatcher>,
+    subscribers: HashMap<usize, Box<dyn Fn() -> bool + Send>>,
+}
+
+impl ConfigInner {
+    fn new() -> Self {
+        Self {
+            config: Arc::new(Config::default_config()),
+            error: None,
+            warnings: vec![],
+            generation: 0,
+            watcher: None,
+            subscribers: HashMap::new(),
+        }
+    }
+
+    fn subscribe<F>(&mut self, subscriber: F) -> usize
+    where
+        F: Fn() -> bool + 'static + Send,
+    {
+        static SUB_ID: AtomicUsize = AtomicUsize::new(0);
+        let sub_id = SUB_ID.fetch_add(1, Ordering::Relaxed);
+        self.subscribers.insert(sub_id, Box::new(subscriber));
+        sub_id
+    }
+
+    fn unsub(&mut self, sub_id: usize) {
+        self.subscribers.remove(&sub_id);
+    }
+
+    fn notify(&mut self) {
+        self.subscribers.retain(|_, notify| notify());
+    }
+
+    fn watch_path(&mut self, path: PathBuf) {
+        if self.watcher.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            const DELAY: Duration = Duration::from_millis(200);
+            let watcher = notify::recommended_watcher(tx).unwrap();
+            let path = path.clone();
+
+            std::thread::spawn(move || {
+                // block until we get an event
+                use notify::EventKind;
+
+                fn extract_path(event: notify::Event) -> Vec<PathBuf> {
+                    match event.kind {
+                        EventKind::Modify(_) | EventKind::Create(_) | EventKind::Remove(_) => {
+                            event.paths
+                        }
+                        _ => vec![],
+                    }
+                }
+
+                while let Ok(event) = rx.recv() {
+                    log::debug!("event:{:?}", event);
+                    match event {
+                        Ok(event) => {
+                            let mut paths = extract_path(event);
+                            if !paths.is_empty() {
+                                // Grace period to allow events to settle
+                                std::thread::sleep(DELAY);
+                                // Drain any other immediately ready events
+                                while let Ok(Ok(event)) = rx.try_recv() {
+                                    paths.append(&mut extract_path(event));
+                                }
+                                paths.sort();
+                                paths.dedup();
+                                log::debug!("paths {:?} changed, reload config", path);
+                                reload();
+                            }
+                        }
+                        Err(_) => {
+                            reload();
+                        }
+                    }
+                }
+            });
+            self.watcher.replace(watcher);
+        }
+        if let Some(watcher) = self.watcher.as_mut() {
+            use notify::Watcher;
+            watcher
+                .watch(&path, notify::RecursiveMode::NonRecursive)
+                .ok();
+        }
+    }
+
+    /// Attempt to load the user's configuration.
+    /// On success, clear any error and replace the current
+    /// configuration.
+    /// On failure, retain the existing configuration but
+    /// replace any captured error message.
+    ///
+    /// `loaded` must have been produced by a call to `Config::load()` made
+    /// *before* the `Configuration`'s mutex was locked (see
+    /// `Configuration::reload`): `Config::load()` runs config parsing and
+    /// validation (`Config::try_default`/`try_load`) which is arbitrary,
+    /// non-trivial code, and nothing about it is guaranteed to never call
+    /// back into `config::subscribe_to_config_reload`/`subscribe`, which
+    /// locks this same `Configuration`'s mutex. Calling `Config::load()`
+    /// while already holding that mutex would self-deadlock if such a call
+    /// path is ever added (`std::sync::Mutex` is not reentrant) -- see BUG8.
+    /// Accepting the already-loaded result here keeps that computation
+    /// entirely outside of the lock, regardless of what it does internally.
+    fn reload(&mut self, loaded: LoadedConfig) {
+        let LoadedConfig {
+            config,
+            file_name,
+            warnings,
+        } = loaded;
+
+        self.warnings = warnings;
+
+        // Before we process the success/failure, extract and update
+        // any paths that we should be watching
+        let mut watch_paths = vec![];
+        if let Some(path) = file_name {
+            // Let's also watch the parent directory for folks that do
+            // things with symlinks:
+            if let Some(parent) = path.parent() {
+                // But avoid watching the home dir itself, so that we
+                // don't keep reloading every time something in the
+                // home dir changes!
+                // <https://github.com/wezterm/wezterm/issues/1895>
+                if parent != *crate::HOME_DIR {
+                    watch_paths.push(parent.to_path_buf());
+                }
+            }
+            watch_paths.push(path);
+        }
+
+        match config {
+            Ok(config) => {
+                self.config = Arc::new(config);
+                self.error.take();
+                self.generation += 1;
+
+                log::debug!("Reloaded configuration! generation={}", self.generation);
+            }
+            Err(err) => {
+                let err = format!("{:#}", err);
+                if self.generation > 0 {
+                    // Only generate the message for an actual reload
+                    show_error(&err);
+                }
+                self.error.replace(err);
+            }
+        }
+
+        self.notify();
+        if self.config.automatically_reload_config {
+            for path in watch_paths {
+                self.watch_path(path);
+            }
+        }
+    }
+
+    /// Discard the current configuration and any recorded
+    /// error message; replace them with the default
+    /// configuration
+    fn use_defaults(&mut self) {
+        self.config = Arc::new(Config::default_config());
+        self.error.take();
+        self.generation += 1;
+    }
+
+    fn use_this_config(&mut self, cfg: Config) {
+        self.config = Arc::new(cfg);
+        self.error.take();
+        self.generation += 1;
+    }
+
+    fn overridden(&mut self, overrides: &Value) -> Result<ConfigHandle, Error> {
+        let config = Config::load_with_overrides(overrides);
+        Ok(ConfigHandle {
+            config: Arc::new(config.config?),
+            generation: self.generation,
+        })
+    }
+
+    fn use_test(&mut self) {
+        let mut config = Config::default_config();
+        config.font_locator = FontLocatorSelection::ConfigDirsOnly;
+        let exe_name = std::env::current_exe().unwrap();
+        let exe_dir = exe_name.parent().unwrap();
+        config.font_dirs.push(exe_dir.join("../../../assets/fonts"));
+        // If we're building for a specific target, the dir
+        // level is one deeper.
+        #[cfg(target_os = "macos")]
+        config
+            .font_dirs
+            .push(exe_dir.join("../../../../assets/fonts"));
+        // Specify the same DPI used on non-mac systems so
+        // that we have consistent values regardless of the
+        // operating system that we're running tests on
+        config.dpi.replace(96.0);
+        self.config = Arc::new(config);
+        self.error.take();
+        self.generation += 1;
+    }
+}
+
+pub struct Configuration {
+    inner: Mutex<ConfigInner>,
+}
+
+impl Configuration {
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(ConfigInner::new()),
+        }
+    }
+
+    /// Returns the effective configuration.
+    pub fn get(&self) -> ConfigHandle {
+        let inner = self.inner.lock().unwrap();
+        ConfigHandle {
+            config: Arc::clone(&inner.config),
+            generation: inner.generation,
+        }
+    }
+
+    /// Subscribe to config reload events
+    fn subscribe<F>(&self, subscriber: F) -> usize
+    where
+        F: Fn() -> bool + 'static + Send,
+    {
+        let mut inner = self.inner.lock().unwrap();
+        inner.subscribe(subscriber)
+    }
+
+    fn unsub(&self, sub_id: usize) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.unsub(sub_id);
+    }
+
+    /// Reset the configuration to defaults
+    pub fn use_defaults(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.use_defaults();
+    }
+
+    fn use_this_config(&self, cfg: Config) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.use_this_config(cfg);
+    }
+
+    fn overridden(&self, overrides: &Value) -> Result<ConfigHandle, Error> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.overridden(overrides)
+    }
+
+    /// Use a config that doesn't depend on the user's
+    /// environment and is suitable for unit testing
+    pub fn use_test(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.use_test();
+    }
+
+    /// Reload the configuration
+    pub fn reload(&self) {
+        // Deliberately computed *before* taking the lock below: `Config::load()`
+        // runs config parsing/validation, and nothing guarantees that code
+        // path will never call back into this `Configuration` (e.g. via
+        // `subscribe_to_config_reload` -> `subscribe`, below) to lock the same
+        // mutex. Since `std::sync::Mutex` is not reentrant, doing the load
+        // while holding the lock would deadlock the very first time any
+        // process loads its config. See BUG8 and the doc comment on
+        // `ConfigInner::reload`.
+        let loaded = Config::load();
+        let mut inner = self.inner.lock().unwrap();
+        inner.reload(loaded);
+    }
+
+    /// Returns a copy of any captured error message.
+    /// The error message is not cleared.
+    pub fn get_error(&self) -> Option<String> {
+        let inner = self.inner.lock().unwrap();
+        inner.error.as_ref().cloned()
+    }
+
+    pub fn get_warnings_and_errors(&self) -> Vec<String> {
+        let mut result = vec![];
+        let inner = self.inner.lock().unwrap();
+        if let Some(error) = &inner.error {
+            result.push(error.clone());
+        }
+        for warning in &inner.warnings {
+            result.push(warning.clone());
+        }
+        result
+    }
+
+    /// Returns any captured error message, and clears
+    /// it from the config state.
+    #[allow(dead_code)]
+    pub fn clear_error(&self) -> Option<String> {
+        let mut inner = self.inner.lock().unwrap();
+        inner.error.take()
+    }
+}
+
+impl Default for Configuration {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ConfigHandle {
+    config: Arc<Config>,
+    generation: usize,
+}
+
+impl ConfigHandle {
+    /// Returns the generation number for the configuration,
+    /// allowing consuming code to know whether the config
+    /// has been reloading since they last derived some
+    /// information from the configuration
+    pub fn generation(&self) -> usize {
+        self.generation
+    }
+
+    pub fn default_config() -> Self {
+        Self {
+            config: Arc::new(Config::default_config()),
+            generation: 0,
+        }
+    }
+
+    pub fn unicode_version(&self) -> UnicodeVersion {
+        UnicodeVersion {
+            version: self.config.unicode_version,
+            ambiguous_are_wide: self.config.treat_east_asian_ambiguous_width_as_wide,
+            cell_widths: CellWidth::compile_to_map(self.config.cell_widths.clone()),
+        }
+    }
+}
+
+impl std::ops::Deref for ConfigHandle {
+    type Target = Config;
+    fn deref(&self) -> &Config {
+        &self.config
+    }
+}
+
+pub struct LoadedConfig {
+    pub config: anyhow::Result<Config>,
+    pub file_name: Option<PathBuf>,
+    pub warnings: Vec<String>,
+}
+
+#[cfg(test)]
+mod reload_notify_test {
+    use super::*;
+    use std::sync::atomic::AtomicUsize as StdAtomicUsize;
+
+    /// Build a minimal `LoadedConfig` carrying the default `Config`, as if
+    /// `Config::load()` had succeeded, without touching the filesystem or the
+    /// process-wide `CONFIG`/`CONFIG_OVERRIDES` singletons that other tests in
+    /// this crate serialize on (see `CONFIG_OVERRIDES_TEST_LOCK` in
+    /// `config.rs`). This lets the notification-fanout behavior below be
+    /// exercised against a private `Configuration` instance in complete
+    /// isolation.
+    fn loaded_default() -> LoadedConfig {
+        LoadedConfig {
+            config: Ok(Config::default_config()),
+            file_name: None,
+            warnings: vec![],
+        }
+    }
+
+    /// UP-46 investigation: every live TermWindow subscribes to config
+    /// reloads via `subscribe_to_config_reload` (see
+    /// `wezterm-gui/src/termwindow/mod.rs`'s `TermWindow::new_window`), and
+    /// *every* reload trigger -- the config-file watcher, the OS
+    /// `AppearanceChanged` notification handler, and manual
+    /// Ctrl+Shift+R -- funnels through this same
+    /// `Configuration::reload`/`ConfigInner::reload` -> `ConfigInner::notify`
+    /// path (`config::reload()` at the top of this module just calls
+    /// `CONFIG.reload()`, which is this method).
+    ///
+    /// The reported symptom for UP-46 (upstream #3328/#5451/#6607/#2446/#4437)
+    /// is that a live theme/appearance change doesn't reach every open
+    /// window. This test locks in that the shared fanout mechanism itself is
+    /// not the culprit: a single `reload()` call synchronously invokes every
+    /// subscriber registered so far -- there is no "notify only the window
+    /// that triggered the reload" shortcut, no skip based on subscription
+    /// order, and no silently dropped subscriber. If this ever regresses (for
+    /// example, someone reintroduces an early-return once `find` on the
+    /// map hits one match, or a `HashMap` iteration accidentally gets bounded)
+    /// this test fails immediately, without needing multiple live OS windows.
+    ///
+    /// What this test deliberately does NOT and CANNOT establish (see the
+    /// UP-46 session notes): whether every OS-level window HWND actually
+    /// receives its own `WM_SETTINGCHANGE`/`AppearanceChanged` notification in
+    /// the same tick, and whether each window's own
+    /// `on("window-config-reloaded", ...)` handler (which
+    /// independently calls `window.get_appearance()` and
+    /// `window.set_config_overrides()`, per
+    /// `docs/config/reference/window/get_appearance.md`) observes a consistent
+    /// appearance value across windows. That requires multiple live native
+    /// windows and a real OS theme toggle, which is outside what a unit test
+    /// in this crate can exercise.
+    #[test]
+    fn reload_notifies_every_subscriber_not_just_one() {
+        let configuration = Configuration::new();
+
+        const N: usize = 5;
+        let counters: Vec<Arc<StdAtomicUsize>> =
+            (0..N).map(|_| Arc::new(StdAtomicUsize::new(0))).collect();
+
+        let _subs: Vec<ConfigSubscription> = counters
+            .iter()
+            .map(|counter| {
+                let counter = Arc::clone(counter);
+                ConfigSubscription(configuration.subscribe(move || {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    true
+                }))
+            })
+            .collect();
+
+        {
+            let mut inner = configuration.inner.lock().unwrap();
+            inner.reload(loaded_default());
+        }
+
+        for (idx, counter) in counters.iter().enumerate() {
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                1,
+                "subscriber {idx} of {N} was not notified by a single reload() call \
+                 (per-window updates should all fire together, not a subset)"
+            );
+        }
+
+        // A second reload should notify all of them again -- confirms no
+        // subscriber gets silently dropped after the first cycle (which
+        // would manifest as "the first appearance change works, later ones
+        // don't reach every window").
+        {
+            let mut inner = configuration.inner.lock().unwrap();
+            inner.reload(loaded_default());
+        }
+
+        for (idx, counter) in counters.iter().enumerate() {
+            assert_eq!(
+                counter.load(Ordering::SeqCst),
+                2,
+                "subscriber {idx} of {N} stopped receiving notifications after the first reload"
+            );
+        }
+    }
+}
