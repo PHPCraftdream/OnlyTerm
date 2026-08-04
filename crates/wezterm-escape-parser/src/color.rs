@@ -59,9 +59,9 @@ pub struct RgbColor {
     bits: u32,
 }
 
-impl Into<SrgbaTuple> for RgbColor {
-    fn into(self) -> SrgbaTuple {
-        self.to_tuple_rgba()
+impl From<RgbColor> for SrgbaTuple {
+    fn from(val: RgbColor) -> Self {
+        val.to_tuple_rgba()
     }
 }
 
@@ -157,7 +157,7 @@ impl RgbColor {
     /// The list of names can be found here:
     /// <https://ogeon.github.io/docs/palette/master/palette/named/index.html>
     pub fn from_named_or_rgb_string(s: &str) -> Option<Self> {
-        RgbColor::from_rgb_str(&s).or_else(|| RgbColor::from_named(&s))
+        RgbColor::from_rgb_str(s).or_else(|| RgbColor::from_named(s))
     }
 }
 
@@ -223,18 +223,13 @@ pub type PaletteIndex = u8;
 /// This differs from `ColorAttribute` in that this type can only
 /// specify one of the possible color types at once, whereas the
 /// `ColorAttribute` type can specify a TrueColor value and a fallback.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
 pub enum ColorSpec {
+    #[default]
     Default,
     /// Use either a raw number, or use values from the `AnsiColor` enum
     PaletteIndex(PaletteIndex),
     TrueColor(SrgbaTuple),
-}
-
-impl Default for ColorSpec {
-    fn default() -> Self {
-        ColorSpec::Default
-    }
 }
 
 impl From<AnsiColor> for ColorSpec {

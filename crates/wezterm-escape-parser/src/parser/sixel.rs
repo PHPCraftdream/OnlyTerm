@@ -13,18 +13,15 @@ pub struct SixelBuilder {
 
 impl SixelBuilder {
     pub fn new(params: &[i64]) -> Self {
-        let pan = match params.get(0).unwrap_or(&0) {
-            7 | 8 | 9 => 1,
+        let pan = match params.first().unwrap_or(&0) {
+            7..=9 => 1,
             0 | 1 | 5 | 6 => 2,
             3 | 4 => 3,
             2 => 5,
             _ => 2,
         };
-        let background_is_transparent = match params.get(1).unwrap_or(&0) {
-            1 => true,
-            _ => false,
-        };
-        let horizontal_grid_size = params.get(2).map(|&x| x);
+        let background_is_transparent = matches!(params.get(1).unwrap_or(&0), 1);
+        let horizontal_grid_size = params.get(2).copied();
 
         Self {
             sixel: Sixel {

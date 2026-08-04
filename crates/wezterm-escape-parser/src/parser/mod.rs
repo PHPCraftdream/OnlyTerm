@@ -86,7 +86,7 @@ impl Parser {
         let parser_state = self.state.borrow();
         let tmux_state = parser_state.tmux_state.as_ref().unwrap();
         let mut tmux_parser = tmux_state.borrow_mut();
-        return tmux_parser.advance_bytes(bytes);
+        tmux_parser.advance_bytes(bytes)
     }
 
     pub fn parse<F: FnMut(Action)>(&mut self, bytes: &[u8], mut callback: F) {
@@ -199,7 +199,7 @@ struct Performer<'a, F: FnMut(Action) + 'a> {
 }
 
 fn is_short_dcs(intermediates: &[u8], byte: u8) -> bool {
-    if intermediates == &[b'$'] && byte == b'q' {
+    if intermediates == b"$" && byte == b'q' {
         // DECRQSS
         true
     } else {
@@ -242,7 +242,7 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
         self.state.dcs.take();
         if byte == b'q' && intermediates.is_empty() && !ignored_extra_intermediates {
             self.state.sixel.replace(SixelBuilder::new(params));
-        } else if byte == b'q' && intermediates == [b'+'] {
+        } else if byte == b'q' && intermediates == *b"+" {
             self.state.get_tcap.replace(GetTcapBuilder::default());
         } else if !ignored_extra_intermediates && is_short_dcs(intermediates, byte) {
             self.state.dcs.replace(ShortDeviceControl {

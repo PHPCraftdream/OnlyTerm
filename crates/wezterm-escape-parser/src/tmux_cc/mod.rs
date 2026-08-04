@@ -529,10 +529,10 @@ fn unvis_bytes(s: &[u8]) -> Result<Vec<u8>> {
 
     let mut state = State::Ground;
     let mut result: Vec<u8> = vec![];
-    let mut bytes = s.iter();
+    let bytes = s.iter();
 
     fn is_octal(b: u8) -> bool {
-        b >= b'0' && b <= b'7'
+        (b'0'..=b'7').contains(&b)
     }
 
     fn unvis_byte(b: u8, state: &mut State, result: &mut Vec<u8>) -> Result<bool> {
@@ -670,7 +670,7 @@ fn unvis_bytes(s: &[u8]) -> Result<Vec<u8>> {
         Ok(false)
     }
 
-    while let Some(&b) = bytes.next() {
+    for &b in bytes {
         let again = unvis_byte(b, &mut state, &mut result)?;
         if again {
             unvis_byte(b, &mut state, &mut result)?;
@@ -718,22 +718,22 @@ fn parse_layout_pane(pair: Pair<Rule>) -> Result<PaneLayout> {
         None => 0,
     };
 
-    return Ok(PaneLayout {
+    Ok(PaneLayout {
         pane_id,
         pane_width,
         pane_height,
         pane_left,
         pane_top,
-    });
+    })
 }
 
 fn parse_layout_inner(
-    mut pairs: Pairs<Rule>,
+    pairs: Pairs<Rule>,
     result: &mut Vec<WindowLayout>,
 ) -> Result<Vec<PaneLayout>> {
     let mut stack = Vec::new();
 
-    while let Some(pair) = pairs.next() {
+    for pair in pairs {
         let rule = pair.as_rule();
         match rule {
             Rule::layout_split_horizontal | Rule::layout_split_vertical => {
@@ -756,7 +756,7 @@ fn parse_layout_inner(
 
                 pane.pane_id = last_item.pane_id;
 
-                layout_inner.insert(0, pane.clone());
+                layout_inner.insert(0, pane);
 
                 if let Rule::layout_split_horizontal = rule {
                     result.insert(0, WindowLayout::SplitHorizontal(layout_inner));
@@ -839,6 +839,12 @@ pub fn parse_layout(layout: &str) -> Result<Vec<WindowLayout>> {
 pub struct Parser {
     buffer: Vec<u8>,
     begun: Option<Guarded>,
+}
+
+impl Default for Parser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Parser {
@@ -935,7 +941,7 @@ impl Parser {
             }
         };
         self.buffer.clear();
-        return Ok(result);
+        Ok(result)
     }
 
     fn process_line(&mut self) -> Result<Option<Event>> {

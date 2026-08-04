@@ -187,7 +187,7 @@ impl OperatingSystemCommand {
         let mut iter = osc.iter();
         iter.next(); // skip the command word that we already know is present
 
-        while let Some(index) = iter.next() {
+        for index in iter {
             if index.is_empty() {
                 continue;
             }
@@ -226,14 +226,14 @@ impl OperatingSystemCommand {
 
     fn parse_reset_dynamic_color_number(idx: u8) -> Result<Self> {
         let which_color: DynamicColorNumber = FromPrimitive::from_u8(idx)
-            .ok_or_else(|| format!("osc code is not a valid DynamicColorNumber!?"))?;
+            .ok_or_else(|| "osc code is not a valid DynamicColorNumber!?".to_string())?;
 
         Ok(OperatingSystemCommand::ResetDynamicColor(which_color))
     }
 
     fn parse_change_dynamic_color_number(idx: u8, osc: &[&[u8]]) -> Result<Self> {
         let which_color: DynamicColorNumber = FromPrimitive::from_u8(idx)
-            .ok_or_else(|| format!("osc code is not a valid DynamicColorNumber!?"))?;
+            .ok_or_else(|| "osc code is not a valid DynamicColorNumber!?".to_string())?;
         let mut colors = vec![];
         for spec in osc.iter().skip(1) {
             if spec == b"?" {
@@ -275,7 +275,7 @@ impl OperatingSystemCommand {
         } else {
             OperatingSystemCommandCode::from_code(&p1str)
         }
-        .ok_or_else(|| format!("unknown code"))?;
+        .ok_or_else(|| "unknown code".to_string())?;
 
         macro_rules! single_string {
             ($variant:ident) => {{
@@ -319,7 +319,7 @@ impl OperatingSystemCommand {
                 if osc.len() >= 3 && osc[1] == b"4" {
                     fn get_pct(v: &&[u8]) -> u8 {
                         let number = str::from_utf8(v).unwrap_or("0");
-                        number.parse::<u8>().unwrap_or(0).max(0).min(100)
+                        number.parse::<u8>().unwrap_or(0).min(100)
                     }
                     match osc[2] {
                         b"0" => return Ok(OperatingSystemCommand::ConEmuProgress(Progress::None)),
@@ -657,9 +657,10 @@ impl Display for FinalTermClick {
 }
 
 /// https://gitlab.freedesktop.org/Per_Bothner/specifications/blob/master/proposals/semantic-prompts.md
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum FinalTermPromptKind {
     /// A normal left side primary prompt
+    #[default]
     Initial,
     /// A right-aligned prompt
     RightSide,
@@ -667,12 +668,6 @@ pub enum FinalTermPromptKind {
     Continuation,
     /// A continuation prompt where the input cannot be edited
     Secondary,
-}
-
-impl Default for FinalTermPromptKind {
-    fn default() -> Self {
-        Self::Initial
-    }
 }
 
 impl core::convert::TryFrom<&str> for FinalTermPromptKind {
@@ -791,7 +786,7 @@ impl FinalTermSemanticPrompt {
         }
 
         if param == "D" {
-            let status = match osc.get(2).map(|&p| p) {
+            let status = match osc.get(2).copied() {
                 Some(s) => match str::from_utf8(s) {
                     Ok(s) => s.parse().unwrap_or(0),
                     _ => 0,
@@ -1043,7 +1038,7 @@ impl ITermFileData {
             .get("doNotMoveCursor")
             .map(|s| *s != "0")
             .unwrap_or(false);
-        let data = data.ok_or_else(|| format!("didn't set data"))?;
+        let data = data.ok_or_else(|| "didn't set data".to_string())?;
         Ok(Self {
             name,
             size,
@@ -1103,18 +1098,13 @@ impl Display for ITermFileData {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ITermDimension {
+    #[default]
     Automatic,
     Cells(i64),
     Pixels(i64),
     Percent(i64),
-}
-
-impl Default for ITermDimension {
-    fn default() -> Self {
-        Self::Automatic
-    }
 }
 
 impl Display for ITermDimension {
@@ -1140,12 +1130,10 @@ impl ITermDimension {
     fn parse(s: &str) -> Result<Self> {
         if s == "auto" {
             Ok(ITermDimension::Automatic)
-        } else if s.ends_with("px") {
-            let s = &s[..s.len() - 2];
+        } else if let Some(s) = s.strip_suffix("px") {
             let num = s.parse()?;
             Ok(ITermDimension::Pixels(num))
-        } else if s.ends_with('%') {
-            let s = &s[..s.len() - 1];
+        } else if let Some(s) = s.strip_suffix('%') {
             let num = s.parse()?;
             Ok(ITermDimension::Percent(num))
         } else {
@@ -1163,7 +1151,7 @@ impl ITermDimension {
             ITermDimension::Cells(n) => Some((*n).max(0) as usize * cell_size),
             ITermDimension::Pixels(n) => Some((*n).max(0) as usize),
             ITermDimension::Percent(n) => Some(
-                (((*n).max(0).min(100) as f32 / 100.0) * num_cells as f32 * cell_size as f32)
+                (((*n).clamp(0, 100) as f32 / 100.0) * num_cells as f32 * cell_size as f32)
                     as usize,
             ),
         }
@@ -1171,7 +1159,7 @@ impl ITermDimension {
 }
 
 impl ITermProprietary {
-    #[allow(clippy::cyclomatic_complexity, clippy::cognitive_complexity)]
+    #[allow(clippy::cognitive_complexity)]
     fn parse(osc: &[&[u8]]) -> Result<Self> {
         // iTerm has a number of different styles of OSC parameter
         // encodings, which makes this section of code a bit gnarly.
@@ -1180,7 +1168,7 @@ impl ITermProprietary {
         let param = String::from_utf8_lossy(osc[1]);
 
         let mut iter = param.splitn(2, '=');
-        let keyword = iter.next().ok_or_else(|| format!("bad params"))?;
+        let keyword = iter.next().ok_or_else(|| "bad params".to_string())?;
         let p1 = iter.next();
 
         macro_rules! single {
@@ -1223,11 +1211,7 @@ impl ITermProprietary {
         one_str!(SetProfile, "SetProfile");
         one_str!(CopyToClipboard, "CopyToClipboard");
 
-        let p1_empty = match p1 {
-            Some(p1) if p1 == "" => true,
-            None => true,
-            _ => false,
-        };
+        let p1_empty = matches!(p1, Some("") | None);
 
         if osc.len() == 3 && keyword == "Copy" && p1_empty {
             return Ok(ITermProprietary::Copy(String::from_utf8(base64_decode(
@@ -1240,67 +1224,72 @@ impl ITermProprietary {
             )?));
         }
 
-        if osc.len() == 3 && keyword == "ReportCellSize" && p1.is_some() {
-            if let Some(p1) = p1 {
-                return Ok(ITermProprietary::ReportCellSize {
-                    height_pixels: NotNan::new(p1.parse()?).map_err(not_nan_err)?,
-                    width_pixels: NotNan::new(String::from_utf8_lossy(osc[2]).parse()?)
-                        .map_err(not_nan_err)?,
-                    scale: None,
+        if osc.len() == 3
+            && keyword == "ReportCellSize"
+            && p1.is_some()
+            && let Some(p1) = p1
+        {
+            return Ok(ITermProprietary::ReportCellSize {
+                height_pixels: NotNan::new(p1.parse()?).map_err(not_nan_err)?,
+                width_pixels: NotNan::new(String::from_utf8_lossy(osc[2]).parse()?)
+                    .map_err(not_nan_err)?,
+                scale: None,
+            });
+        }
+        if osc.len() == 4
+            && keyword == "ReportCellSize"
+            && p1.is_some()
+            && let Some(p1) = p1
+        {
+            return Ok(ITermProprietary::ReportCellSize {
+                height_pixels: NotNan::new(p1.parse()?).map_err(not_nan_err)?,
+                width_pixels: NotNan::new(String::from_utf8_lossy(osc[2]).parse()?)
+                    .map_err(not_nan_err)?,
+                scale: Some(
+                    NotNan::new(String::from_utf8_lossy(osc[3]).parse()?).map_err(not_nan_err)?,
+                ),
+            });
+        }
+
+        if osc.len() == 2
+            && keyword == "SetUserVar"
+            && let Some(p1) = p1
+        {
+            let mut iter = p1.splitn(2, '=');
+            let p1 = iter.next();
+            let p2 = iter.next();
+
+            if let (Some(k), Some(v)) = (p1, p2) {
+                return Ok(ITermProprietary::SetUserVar {
+                    name: k.to_string(),
+                    value: String::from_utf8(base64_decode(v)?)?,
                 });
             }
         }
-        if osc.len() == 4 && keyword == "ReportCellSize" && p1.is_some() {
-            if let Some(p1) = p1 {
-                return Ok(ITermProprietary::ReportCellSize {
-                    height_pixels: NotNan::new(p1.parse()?).map_err(not_nan_err)?,
-                    width_pixels: NotNan::new(String::from_utf8_lossy(osc[2]).parse()?)
-                        .map_err(not_nan_err)?,
-                    scale: Some(
-                        NotNan::new(String::from_utf8_lossy(osc[3]).parse()?)
-                            .map_err(not_nan_err)?,
-                    ),
-                });
+
+        if osc.len() == 2
+            && keyword == "UnicodeVersion"
+            && let Some(p1) = p1
+        {
+            let mut iter = p1.splitn(2, ' ');
+            let keyword = iter.next();
+            let label = iter.next();
+
+            if let Some("push") = keyword {
+                return Ok(ITermProprietary::UnicodeVersion(
+                    ITermUnicodeVersionOp::Push(label.map(|s| s.to_string())),
+                ));
             }
-        }
-
-        if osc.len() == 2 && keyword == "SetUserVar" {
-            if let Some(p1) = p1 {
-                let mut iter = p1.splitn(2, '=');
-                let p1 = iter.next();
-                let p2 = iter.next();
-
-                if let (Some(k), Some(v)) = (p1, p2) {
-                    return Ok(ITermProprietary::SetUserVar {
-                        name: k.to_string(),
-                        value: String::from_utf8(base64_decode(v)?)?,
-                    });
-                }
+            if let Some("pop") = keyword {
+                return Ok(ITermProprietary::UnicodeVersion(
+                    ITermUnicodeVersionOp::Pop(label.map(|s| s.to_string())),
+                ));
             }
-        }
 
-        if osc.len() == 2 && keyword == "UnicodeVersion" {
-            if let Some(p1) = p1 {
-                let mut iter = p1.splitn(2, ' ');
-                let keyword = iter.next();
-                let label = iter.next();
-
-                if let Some("push") = keyword {
-                    return Ok(ITermProprietary::UnicodeVersion(
-                        ITermUnicodeVersionOp::Push(label.map(|s| s.to_string())),
-                    ));
-                }
-                if let Some("pop") = keyword {
-                    return Ok(ITermProprietary::UnicodeVersion(
-                        ITermUnicodeVersionOp::Pop(label.map(|s| s.to_string())),
-                    ));
-                }
-
-                if let Ok(n) = p1.parse::<u8>() {
-                    return Ok(ITermProprietary::UnicodeVersion(
-                        ITermUnicodeVersionOp::Set(n),
-                    ));
-                }
+            if let Ok(n) = p1.parse::<u8>() {
+                return Ok(ITermProprietary::UnicodeVersion(
+                    ITermUnicodeVersionOp::Set(n),
+                ));
             }
         }
 
