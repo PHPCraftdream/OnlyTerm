@@ -158,12 +158,9 @@ pub struct WinChildKiller {
 impl ChildKiller for WinChildKiller {
     fn kill(&mut self) -> IoResult<()> {
         let proc = match &self.proc {
-            Some(proc) => proc.try_clone().map_err(|e| {
-                IoError::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to clone handle: {}", e),
-                )
-            })?,
+            Some(proc) => proc
+                .try_clone()
+                .map_err(|e| IoError::other(format!("Failed to clone handle: {}", e)))?,
             // No handle available (eg: because an earlier duplication
             // attempt failed); treat this as a no-op rather than panicking
             // or erroring out.
