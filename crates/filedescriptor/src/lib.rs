@@ -104,6 +104,8 @@ pub use crate::unix::*;
 mod windows;
 #[cfg(windows)]
 pub use crate::windows::*;
+#[cfg(windows)]
+use crate::windows::owned_handle::HandleType;
 
 use thiserror::Error;
 #[derive(Error, Debug)]
