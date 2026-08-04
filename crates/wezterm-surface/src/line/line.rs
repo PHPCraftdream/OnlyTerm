@@ -229,9 +229,9 @@ impl Line {
                     .map(|line| line.len() + cell.width() > width)
                     .unwrap_or(true);
                 if need_new_line {
-                    lines
-                        .last_mut()
-                        .map(|line| line.set_last_cell_was_wrapped(true, seqno));
+                    if let Some(line) = lines.last_mut() {
+                        line.set_last_cell_was_wrapped(true, seqno);
+                    }
                     let mut line = Line::new(seqno);
                     line.set_bidi_info(bidi_enabled, bidi_direction, seqno);
                     lines.push(line);
@@ -511,7 +511,7 @@ impl Line {
         let cells = self.coerce_vec_storage();
         for cell in cells.iter_mut() {
             let replace = match cell.attrs().hyperlink() {
-                Some(ref link) if link.is_implicit() => Some(Cell::new_grapheme(
+                Some(link) if link.is_implicit() => Some(Cell::new_grapheme(
                     cell.str(),
                     cell.attrs().clone().set_hyperlink(None).clone(),
                     None,
@@ -1010,7 +1010,7 @@ impl Line {
     }
 
     pub fn fill_range(&mut self, cols: Range<usize>, cell: &Cell, seqno: SequenceNo) {
-        if self.len() == 0 && *cell == Cell::blank() {
+        if self.is_empty() && *cell == Cell::blank() {
             // We would be filling it with blanks only to prune
             // them all away again before we return; NOP
             return;
@@ -1027,6 +1027,11 @@ impl Line {
             CellStorage::V(cells) => cells.len(),
             CellStorage::C(cl) => cl.len(),
         }
+    }
+
+    /// Returns true if the line contains no cells.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Iterates the visible cells, respecting the width of the cell.
@@ -1122,7 +1127,7 @@ impl Line {
         self.make_cells();
 
         match &mut self.cells {
-            CellStorage::V(c) => return c,
+            CellStorage::V(c) => c,
             CellStorage::C(_) => unreachable!(),
         }
     }
@@ -1277,7 +1282,7 @@ impl Line {
     }
 }
 
-impl<'a> From<&'a str> for Line {
+impl From<&str> for Line {
     fn from(s: &str) -> Line {
         Line::from_text(s, &CellAttributes::default(), SEQ_ZERO, None)
     }
