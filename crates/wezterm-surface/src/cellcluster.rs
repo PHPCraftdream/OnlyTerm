@@ -532,6 +532,7 @@ mod test {
     use super::*;
     use crate::line::Line;
     use crate::SEQ_ZERO;
+    use alloc::string::ToString;
     use wezterm_cell::CellAttributes;
 
     /// Regression test for a bug where punctuation sitting immediately

@@ -1,4 +1,10 @@
 #![no_std]
+// LTR/RTL are the domain-standard acronyms the Unicode Bidirectional
+// Algorithm (UAX #9) uses. Renaming the enum variants to `Ltr`/`Rtl`
+// would harm readability and break the public `DirectionIter` API, so the
+// `upper_case_acronyms` lint is suppressed crate-wide -- matching the
+// precedent set by the `vtparse` and `wezterm-escape-parser` crates.
+#![allow(clippy::upper_case_acronyms)]
 use alloc::borrow::Cow;
 use core::ops::Range;
 use level::MAX_DEPTH;
@@ -11,8 +17,16 @@ use crate::alloc::string::ToString;
 use alloc::vec;
 use alloc::vec::Vec;
 
+// Generated from Unicode data files (BidiBrackets.txt); do not edit by
+// hand. Suppress the redundant `'static` lifetime at the module boundary
+// so the generated source stays byte-identical to its template.
+#[allow(clippy::redundant_static_lifetimes)]
 mod bidi_brackets;
+// Generated from Unicode data files (DerivedBidiClass.txt); do not edit.
+#[allow(clippy::redundant_static_lifetimes)]
 mod bidi_class;
+// Generated from Unicode data files (BidiMirroring.txt); do not edit.
+#[allow(clippy::redundant_static_lifetimes)]
 mod bidi_mirroring;
 mod direction;
 mod level;
@@ -24,22 +38,17 @@ pub use direction::Direction;
 pub use level::Level;
 
 /// Placeholder codepoint index that corresponds to NO_LEVEL
-const DELETED: usize = usize::max_value();
+const DELETED: usize = usize::MAX;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum ParagraphDirectionHint {
+    #[default]
     LeftToRight,
     RightToLeft,
     /// Attempt to auto-detect but fall back to LTR
     AutoLeftToRight,
     /// Attempt to auto-detect but fall back to RTL
     AutoRightToLeft,
-}
-
-impl Default for ParagraphDirectionHint {
-    fn default() -> Self {
-        Self::LeftToRight
-    }
 }
 
 impl ParagraphDirectionHint {
@@ -111,7 +120,7 @@ impl BidiRun {
             type Item = usize;
             fn next(&mut self) -> Option<usize> {
                 for idx in self.range.by_ref() {
-                    if self.removed_by_x9.iter().any(|&i| i == idx) {
+                    if self.removed_by_x9.contains(&idx) {
                         // Skip it
                         continue;
                     }
@@ -338,6 +347,10 @@ impl BidiContext {
     /// Find the highest level among the resolved levels.
     /// Then from that highest level down to the lowest odd
     /// level, reverse any contiguous runs at that level or higher.
+    // Rule L2: the loop index doubles as a character position value
+    // (e.g. `i + first_cidx`), not merely an index into `levels`, so an
+    // iterator rewrite would obscure the spec logic.
+    #[allow(clippy::needless_range_loop)]
     fn reverse_levels(&self, first_cidx: usize, levels: &mut [Level]) -> Vec<usize> {
         // Not typed as Level because the Step trait required by the loop
         // below is nightly only
@@ -850,7 +863,7 @@ impl BidiContext {
                 // of the substring in this isolating run sequence
                 // enclosed by those brackets (inclusive
                 // of the brackets). Resolve that individual pair.
-                self.resolve_one_pair(pair, &iso_run);
+                self.resolve_one_pair(pair, iso_run);
             }
         }
     }
@@ -1004,7 +1017,6 @@ impl BidiContext {
                     &self.orig_char_types,
                     &self.levels,
                 );
-                return;
             } else {
                 // No strong type matching the oppositedirection was found either
                 // before or after these brackets in this text chain. Resolve the
@@ -1017,7 +1029,6 @@ impl BidiContext {
                     &self.orig_char_types,
                     &self.levels,
                 );
-                return;
             }
         } else {
             // No strong type was found between the brackets. Leave
@@ -1269,7 +1280,7 @@ impl BidiContext {
             line_range: Range<usize>,
             base_level: Level,
             orig_char_types: &[BidiClass],
-            levels: &mut Vec<Level>,
+            levels: &mut [Level],
         ) {
             for i in line_range.rev() {
                 if orig_char_types[i] == BidiClass::WhiteSpace
@@ -1320,6 +1331,9 @@ impl BidiContext {
     }
 
     /// Rules X1 through X8
+    // The X7 (PopDirectionalFormat) handler uses explicit nested `if`s to
+    // mirror the spec; keep them rather than collapsing with `&&`.
+    #[allow(clippy::collapsible_if)]
     fn explicit_embedding_levels(&mut self) {
         // X1: initialize stack and other variables
         let mut stack = LevelStack::new();
@@ -1577,6 +1591,7 @@ impl BidiContext {
     ///   1. seqID = 0 (not yet assigned to an isolating run sequence)
     ///   2. its level matches the level we are processing
     ///   3. the first BIDIUNIT is a PDI
+    ///
     /// If all those conditions are met, assign that next level run
     /// to this isolating run sequence (set its seqID, and append to
     /// the list).
@@ -1716,22 +1731,22 @@ impl BidiContext {
 
 impl BidiClass {
     pub fn is_iso_init(self) -> bool {
-        match self {
+        matches!(
+            self,
             BidiClass::RightToLeftIsolate
-            | BidiClass::LeftToRightIsolate
-            | BidiClass::FirstStrongIsolate => true,
-            _ => false,
-        }
+                | BidiClass::LeftToRightIsolate
+                | BidiClass::FirstStrongIsolate
+        )
     }
 
     pub fn is_iso_control(self) -> bool {
-        match self {
+        matches!(
+            self,
             BidiClass::RightToLeftIsolate
-            | BidiClass::LeftToRightIsolate
-            | BidiClass::PopDirectionalIsolate
-            | BidiClass::FirstStrongIsolate => true,
-            _ => false,
-        }
+                | BidiClass::LeftToRightIsolate
+                | BidiClass::PopDirectionalIsolate
+                | BidiClass::FirstStrongIsolate
+        )
     }
 
     pub fn is_neutral(self) -> bool {
@@ -1763,6 +1778,9 @@ struct Run {
 }
 
 impl Run {
+    // The index is used to index both `levels` and `types`; this is bidi
+    // isolating-run identification logic, kept as a range loop for clarity.
+    #[allow(clippy::needless_range_loop)]
     fn first_significant_bidi_class(
         &self,
         types: &[BidiClass],

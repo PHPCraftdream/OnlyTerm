@@ -16,6 +16,13 @@ use wezterm_dynamic::{FromDynamic, ToDynamic};
 pub use wezterm_escape_parser::osc::Hyperlink;
 
 extern crate alloc;
+// The crate is `#![no_std]`, so the std prelude and its macros (`vec!`,
+// `eprintln!`, ...) are not in scope. The unit tests below rely on them, and
+// the test harness always links std, so pull the macros in for test builds
+// only. This is the standard pattern for `no_std` crates with unit tests.
+#[cfg(test)]
+#[macro_use]
+extern crate std;
 use crate::alloc::string::ToString;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -25,23 +32,18 @@ pub mod color;
 pub mod image;
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash)]
 enum SmallColor {
+    #[default]
     Default,
     PaletteIndex(PaletteIndex),
 }
 
-impl Default for SmallColor {
-    fn default() -> Self {
-        Self::Default
-    }
-}
-
-impl Into<ColorAttribute> for SmallColor {
-    fn into(self) -> ColorAttribute {
-        match self {
-            Self::Default => ColorAttribute::Default,
-            Self::PaletteIndex(idx) => ColorAttribute::PaletteIndex(idx),
+impl From<SmallColor> for ColorAttribute {
+    fn from(value: SmallColor) -> Self {
+        match value {
+            SmallColor::Default => ColorAttribute::Default,
+            SmallColor::PaletteIndex(idx) => ColorAttribute::PaletteIndex(idx),
         }
     }
 }
@@ -178,18 +180,13 @@ macro_rules! bitfield {
 /// Input (that the user typed) and Prompt (effectively, "chrome" provided
 /// by the shell or application that the user is interacting with.
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, FromDynamic, ToDynamic)]
 #[repr(u8)]
 pub enum SemanticType {
+    #[default]
     Output = 0,
     Input = 1,
     Prompt = 2,
-}
-
-impl Default for SemanticType {
-    fn default() -> Self {
-        Self::Output
-    }
 }
 
 pub use wezterm_escape_parser::csi::{Blink, Intensity, Underline, VerticalAlign};
@@ -330,10 +327,10 @@ impl CellAttributes {
     }
 
     pub fn foreground(&self) -> ColorAttribute {
-        if let Some(fat) = self.fat.as_ref() {
-            if fat.foreground != ColorAttribute::Default {
-                return fat.foreground;
-            }
+        if let Some(fat) = self.fat.as_ref()
+            && fat.foreground != ColorAttribute::Default
+        {
+            return fat.foreground;
         }
         self.foreground.into()
     }
@@ -366,10 +363,10 @@ impl CellAttributes {
     }
 
     pub fn background(&self) -> ColorAttribute {
-        if let Some(fat) = self.fat.as_ref() {
-            if fat.background != ColorAttribute::Default {
-                return fat.background;
-            }
+        if let Some(fat) = self.fat.as_ref()
+            && fat.background != ColorAttribute::Default
+        {
+            return fat.background;
         }
         self.background.into()
     }
@@ -493,15 +490,14 @@ impl CellAttributes {
             background: self.background,
             fat: None,
         };
-        if let Some(fat) = self.fat.as_ref() {
-            if fat.background != ColorAttribute::Default
-                || fat.foreground != ColorAttribute::Default
-            {
-                res.allocate_fat_attributes();
-                let new_fat = res.fat.as_mut().unwrap();
-                new_fat.foreground = fat.foreground;
-                new_fat.background = fat.background;
-            }
+        if let Some(fat) = self.fat.as_ref()
+            && (fat.background != ColorAttribute::Default
+                || fat.foreground != ColorAttribute::Default)
+        {
+            res.allocate_fat_attributes();
+            let new_fat = res.fat.as_mut().unwrap();
+            new_fat.foreground = fat.foreground;
+            new_fat.background = fat.background;
         }
         // Reset the semantic type; clone_sgr_only is used primarily
         // to create a "blank" cell when clearing and we want that to
@@ -1025,7 +1021,7 @@ pub fn unicode_column_width(s: &str, version: Option<&UnicodeVersion>) -> usize 
 /// the Cell that is used to hold a grapheme, and that per-Cell version
 /// can then be used to calculate width.
 pub fn grapheme_column_width(s: &str, version: Option<&UnicodeVersion>) -> usize {
-    let version = version.as_deref().unwrap_or(&LATEST_UNICODE_VERSION);
+    let version = version.unwrap_or(&LATEST_UNICODE_VERSION);
 
     // Optimization: if there is a single byte we can directly cast
     // that byte as a char which will be in the range 0.255.
@@ -1095,7 +1091,7 @@ mod test {
         );
 
         let s = TeenyString::from_char('a');
-        assert_eq!(s.as_bytes(), &[b'a']);
+        assert_eq!(s.as_bytes(), b"a");
 
         let longer = TeenyString::from_str("hellothere", None, None);
         assert_eq!(longer.as_bytes(), b"hellothere");

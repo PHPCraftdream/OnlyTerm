@@ -23,7 +23,7 @@ pub use wezterm_escape_parser::color::{AnsiColor, ColorSpec, PaletteIndex, RgbCo
 /// TrueColor value, allowing a fallback to a more traditional palette
 /// index if TrueColor is not available.
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Copy, Eq, PartialEq, FromDynamic, ToDynamic, Hash)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, FromDynamic, ToDynamic, Hash)]
 pub enum ColorAttribute {
     /// Use RgbColor when supported, falling back to the specified PaletteIndex.
     TrueColorWithPaletteFallback(SrgbaTuple, PaletteIndex),
@@ -32,13 +32,8 @@ pub enum ColorAttribute {
     /// Use the specified PaletteIndex
     PaletteIndex(PaletteIndex),
     /// Use the default color
+    #[default]
     Default,
-}
-
-impl Default for ColorAttribute {
-    fn default() -> Self {
-        ColorAttribute::Default
-    }
 }
 
 impl From<AnsiColor> for ColorAttribute {

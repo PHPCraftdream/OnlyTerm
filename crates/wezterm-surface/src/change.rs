@@ -196,7 +196,9 @@ impl ChangeSequence {
 
     /// Returns the total number of rows affected
     pub fn render_height(&self) -> usize {
-        (self.render_y_max - self.render_y_min).max(0).abs() as usize
+        (self.render_y_max - self.render_y_min)
+            .max(0)
+            .unsigned_abs()
     }
 
     fn update_render_height(&mut self) {
@@ -261,9 +263,7 @@ impl ChangeSequence {
                 };
 
                 self.cursor_y = match y {
-                    Position::Relative(y) => {
-                        (self.cursor_y as isize + y) % self.screen_rows as isize
-                    }
+                    Position::Relative(y) => (self.cursor_y + y) % self.screen_rows as isize,
                     Position::Absolute(y) => (y % self.screen_rows) as isize,
                     Position::EndRelative(y) => {
                         ((self.screen_rows - y) % self.screen_rows) as isize

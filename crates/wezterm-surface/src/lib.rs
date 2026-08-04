@@ -12,6 +12,12 @@ use wezterm_cell::{Cell, CellAttributes};
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 extern crate alloc;
+// The crate is `#![no_std]`; the std prelude and its macros (`format!`,
+// `vec!`, ...) are not in scope. The unit tests rely on them, and the test
+// harness always links std, so pull the macros in for test builds only.
+#[cfg(test)]
+#[macro_use]
+extern crate std;
 use crate::alloc::borrow::ToOwned;
 use crate::alloc::string::ToString;
 use alloc::string::String;
@@ -45,21 +51,17 @@ pub enum Position {
 }
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Hash, Copy, PartialEq, Eq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Hash, Copy, Default, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum CursorVisibility {
     Hidden,
+    #[default]
     Visible,
 }
 
-impl Default for CursorVisibility {
-    fn default() -> CursorVisibility {
-        CursorVisibility::Visible
-    }
-}
-
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, FromDynamic, ToDynamic)]
 pub enum CursorShape {
+    #[default]
     Default,
     BlinkingBlock,
     SteadyBlock,
@@ -67,12 +69,6 @@ pub enum CursorShape {
     SteadyUnderline,
     BlinkingBar,
     SteadyBar,
-}
-
-impl Default for CursorShape {
-    fn default() -> CursorShape {
-        CursorShape::Default
-    }
 }
 
 impl CursorShape {
@@ -278,7 +274,7 @@ impl Surface {
         let seq = self.seqno.saturating_sub(1) + changes.len();
 
         for change in &changes {
-            self.apply_change(&change);
+            self.apply_change(change);
         }
 
         self.seqno += changes.len();
@@ -525,7 +521,7 @@ impl Surface {
     }
 
     pub fn screen_lines(&self) -> Vec<Cow<'_, Line>> {
-        self.lines.iter().map(|line| Cow::Borrowed(line)).collect()
+        self.lines.iter().map(Cow::Borrowed).collect()
     }
 
     /// Returns a stream of changes suitable to update the screen
@@ -637,11 +633,11 @@ impl Surface {
             } else {
                 let last_change = changes.len() - 1;
                 match (&changes[last_change], trailing_color) {
-                    (&Change::ClearToEndOfLine(ref color), None) => {
+                    (Change::ClearToEndOfLine(color), None) => {
                         trailing_color = Some(*color);
                         trailing_idx = Some(idx);
                     }
-                    (&Change::ClearToEndOfLine(ref color), Some(other)) => {
+                    (Change::ClearToEndOfLine(color), Some(other)) => {
                         if other == *color {
                             trailing_idx = Some(idx);
                             continue;
@@ -906,7 +902,7 @@ fn compute_position_change(current: usize, pos: &Position, limit: usize) -> usiz
                     limit.saturating_sub(1),
                 )
             } else {
-                current.saturating_sub((*delta).abs() as usize)
+                current.saturating_sub((*delta).unsigned_abs())
             }
         }
         Absolute(abs) => min(*abs, limit.saturating_sub(1)),
@@ -917,8 +913,10 @@ fn compute_position_change(current: usize, pos: &Position, limit: usize) -> usiz
 #[cfg(test)]
 mod test {
     use super::*;
+    #[cfg(feature = "use_image")]
     use alloc::sync::Arc;
     use wezterm_cell::color::AnsiColor;
+    #[cfg(feature = "use_image")]
     use wezterm_cell::image::ImageData;
     use wezterm_cell::{AttributeChange, Intensity};
 
@@ -1651,6 +1649,7 @@ mod test {
         assert_eq!(s.screen_chars_to_string(), "A\u{200b}B \n");
     }
 
+    #[cfg(feature = "use_image")]
     #[test]
     fn images() {
         // a dummy image blob with nonsense content
