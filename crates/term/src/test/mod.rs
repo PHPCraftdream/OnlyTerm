@@ -309,7 +309,7 @@ fn print_visible_lines(term: &Terminal) {
 /// The other cell attributes are not compared; this is
 /// a convenience for writing visually understandable tests.
 fn assert_visible_contents(term: &Terminal, file: &str, line: u32, expect_lines: &[&str]) {
-    print_visible_lines(&term);
+    print_visible_lines(term);
     let screen = term.screen();
 
     let expect: Vec<Line> = expect_lines.iter().map(|s| (*s).into()).collect();
@@ -318,7 +318,7 @@ fn assert_visible_contents(term: &Terminal, file: &str, line: u32, expect_lines:
 }
 
 fn assert_all_contents(term: &Terminal, file: &str, line: u32, expect_lines: &[&str]) {
-    print_all_lines(&term);
+    print_all_lines(term);
     let screen = term.screen();
 
     let expect: Vec<Line> = expect_lines.iter().map(|s| (*s).into()).collect();
