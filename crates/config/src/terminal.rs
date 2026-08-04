@@ -43,6 +43,12 @@ impl TermConfig {
     }
 }
 
+impl Default for TermConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl wezterm_term::TerminalConfiguration for TermConfig {
     fn generation(&self) -> usize {
         self.configuration().generation()

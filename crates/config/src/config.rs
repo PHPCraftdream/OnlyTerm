@@ -1394,10 +1394,8 @@ impl Config {
             "onlyterm"
         } else if file_name == ".onlyterm.ktav" {
             ".onlyterm"
-        } else if let Some(stripped) = file_name.strip_suffix(".ktav") {
-            stripped
         } else {
-            return None;
+            file_name.strip_suffix(".ktav")?
         };
 
         for ext in ["rhai", "lua"] {
@@ -1907,35 +1905,36 @@ impl Config {
         for colors_dir in paths {
             if let Ok(dir) = std::fs::read_dir(colors_dir) {
                 for entry in dir {
-                    if let Ok(entry) = entry {
-                        if let Some(name) = entry.file_name().to_str() {
-                            if let Some(scheme_name) = extract_scheme_name(name) {
-                                if self.color_schemes.contains_key(scheme_name) {
-                                    // This scheme has already been defined
-                                    continue;
-                                }
+                    let Ok(entry) = entry else {
+                        continue;
+                    };
+                    if let Some(name) = entry.file_name().to_str() {
+                        if let Some(scheme_name) = extract_scheme_name(name) {
+                            if self.color_schemes.contains_key(scheme_name) {
+                                // This scheme has already been defined
+                                continue;
+                            }
 
-                                let path = entry.path();
-                                match load_scheme(&path) {
-                                    Ok(scheme) => {
-                                        let name = scheme
-                                            .metadata
-                                            .name
-                                            .unwrap_or_else(|| scheme_name.to_string());
-                                        log::trace!(
-                                            "Loaded color scheme `{}` from {}",
-                                            name,
-                                            path.display()
-                                        );
-                                        self.color_schemes.insert(name, scheme.colors);
-                                    }
-                                    Err(err) => {
-                                        log::error!(
-                                            "Color scheme in `{}` failed to load: {:#}",
-                                            path.display(),
-                                            err
-                                        );
-                                    }
+                            let path = entry.path();
+                            match load_scheme(&path) {
+                                Ok(scheme) => {
+                                    let name = scheme
+                                        .metadata
+                                        .name
+                                        .unwrap_or_else(|| scheme_name.to_string());
+                                    log::trace!(
+                                        "Loaded color scheme `{}` from {}",
+                                        name,
+                                        path.display()
+                                    );
+                                    self.color_schemes.insert(name, scheme.colors);
+                                }
+                                Err(err) => {
+                                    log::error!(
+                                        "Color scheme in `{}` failed to load: {:#}",
+                                        path.display(),
+                                        err
+                                    );
                                 }
                             }
                         }
@@ -2792,7 +2791,7 @@ pub(crate) fn validate_domain_name(name: &str) -> Result<(), String> {
         Err(format!(
             "\"{name}\" is a built-in domain and cannot be redefined"
         ))
-    } else if name == "" {
+    } else if name.is_empty() {
         Err("the empty string is an invalid domain name".to_string())
     } else {
         Ok(())

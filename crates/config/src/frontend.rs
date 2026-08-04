@@ -20,36 +20,31 @@ pub struct GpuInfo {
     pub device: Option<u32>,
 }
 
-impl ToString for GpuInfo {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for GpuInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mut result = format!(
             "name={}, device_type={}, backend={}",
             self.name, self.device_type, self.backend
         );
         if let Some(driver) = &self.driver {
-            result.push_str(&format!(", driver={driver}"));
+            result.push_str(&format!(", driver={}", driver));
         }
         if let Some(driver_info) = &self.driver_info {
-            result.push_str(&format!(", driver_info={driver_info}"));
+            result.push_str(&format!(", driver_info={}", driver_info));
         }
         if let Some(vendor) = &self.vendor {
-            result.push_str(&format!(", vendor={vendor}"));
+            result.push_str(&format!(", vendor={}", vendor));
         }
         if let Some(device) = &self.device {
-            result.push_str(&format!(", device={device}"));
+            result.push_str(&format!(", device={}", device));
         }
-        result
+        write!(f, "{}", result)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic, Default)]
 pub enum WebGpuPowerPreference {
+    #[default]
     LowPower,
     HighPerformance,
-}
-
-impl Default for WebGpuPowerPreference {
-    fn default() -> Self {
-        Self::LowPower
-    }
 }

@@ -3,16 +3,11 @@ use std::convert::TryFrom;
 use wezterm_dynamic::{Error as DynError, FromDynamic, FromDynamicOptions, ToDynamic, Value};
 use wezterm_input_types::{KeyCode, Modifiers, PhysKeyCode};
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, FromDynamic, ToDynamic, Default)]
 pub enum KeyMapPreference {
     Physical,
+    #[default]
     Mapped,
-}
-
-impl Default for KeyMapPreference {
-    fn default() -> Self {
-        Self::Mapped
-    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, FromDynamic, ToDynamic)]
@@ -91,7 +86,7 @@ impl TryFrom<&str> for DeferredKeyCode {
     type Error = anyhow::Error;
     fn try_from(s: &str) -> anyhow::Result<DeferredKeyCode> {
         if s.starts_with("mapped:") || s.starts_with("phys:") || s.starts_with("raw:") {
-            let key = Self::parse_str(&s)?;
+            let key = Self::parse_str(s)?;
             return Ok(DeferredKeyCode::KeyCode(key));
         }
 
@@ -145,10 +140,11 @@ pub struct Mouse {
     pub action: KeyAssignment,
 }
 
-#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Default)]
 pub enum MouseEventAltScreen {
     True,
     False,
+    #[default]
     Any,
 }
 
@@ -172,12 +168,6 @@ impl ToDynamic for MouseEventAltScreen {
             Self::False => false.to_dynamic(),
             Self::Any => "Any".to_dynamic(),
         }
-    }
-}
-
-impl Default for MouseEventAltScreen {
-    fn default() -> Self {
-        Self::Any
     }
 }
 

@@ -248,8 +248,8 @@ fn xdg_config_home() -> PathBuf {
 }
 
 fn config_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    dirs.push(xdg_config_home());
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut dirs = vec![xdg_config_home()];
 
     #[cfg(unix)]
     if let Some(d) = std::env::var_os("XDG_CONFIG_DIRS") {
@@ -461,7 +461,7 @@ impl ConfigInner {
                 // don't keep reloading every time something in the
                 // home dir changes!
                 // <https://github.com/wezterm/wezterm/issues/1895>
-                if parent != &*HOME_DIR {
+                if parent != *HOME_DIR {
                     watch_paths.push(parent.to_path_buf());
                 }
             }
@@ -639,6 +639,12 @@ impl Configuration {
     }
 }
 
+impl Default for Configuration {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ConfigHandle {
     config: Arc<Config>,
@@ -673,7 +679,7 @@ impl ConfigHandle {
 impl std::ops::Deref for ConfigHandle {
     type Target = Config;
     fn deref(&self) -> &Config {
-        &*self.config
+        &self.config
     }
 }
 
@@ -681,6 +687,18 @@ pub struct LoadedConfig {
     pub config: anyhow::Result<Config>,
     pub file_name: Option<PathBuf>,
     pub warnings: Vec<String>,
+}
+
+fn default_one_point_oh_f64() -> f64 {
+    1.0
+}
+
+fn default_one_point_oh() -> f32 {
+    1.0
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[cfg(test)]
@@ -785,16 +803,4 @@ mod reload_notify_test {
             );
         }
     }
-}
-
-fn default_one_point_oh_f64() -> f64 {
-    1.0
-}
-
-fn default_one_point_oh() -> f32 {
-    1.0
-}
-
-fn default_true() -> bool {
-    true
 }
