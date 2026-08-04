@@ -94,7 +94,16 @@ struct FatAttributes {
     /// The hyperlink content, if any
     hyperlink: Option<Arc<Hyperlink>>,
     /// The image data, if any
+    // Clippy flags `Vec<Box<ImageCell>>` as redundant boxing (the `Vec`
+    // already heap-allocates its elements). The field is kept boxed here
+    // because it stores the `Box<ImageCell>` handed in directly by the
+    // public `set_image`/`attach_image` API (see below); unboxing would
+    // mean either changing that public signature to take `ImageCell` by
+    // value (a breaking API change rippling into term, wezterm-client and
+    // wezterm-surface) or deref-cloning on every insert, which is worse
+    // than the lint it silences.
     #[cfg(feature = "use_image")]
+    #[allow(clippy::vec_box)]
     image: Vec<Box<ImageCell>>,
     /// The color of the underline.  If None, then
     /// the foreground color is to be used
@@ -943,10 +952,12 @@ impl UnicodeVersion {
     #[inline]
     fn wcwidth(&self, c: char) -> usize {
         #[cfg(feature = "std")]
-        if let Some(ref cell_widths) = self.cell_widths {
-            if let Some(width) = cell_widths.get(&(c as u32)) {
-                return (*width).into();
-            }
+        if let Some(width) = self
+            .cell_widths
+            .as_ref()
+            .and_then(|cell_widths| cell_widths.get(&(c as u32)))
+        {
+            return (*width).into();
         }
         self.width(WCWIDTH_TABLE.classify(c))
     }

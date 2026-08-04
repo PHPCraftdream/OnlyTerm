@@ -16,8 +16,9 @@ use alloc::string::String;
 /// front end's own dynamic value type (see e.g. the `ktav` crate's
 /// `Value` and `config::ktav_value::ktav_value_to_dynamic`) into this
 /// engine-agnostic representation.
-#[derive(Clone, PartialEq, Hash, Eq, Ord, PartialOrd)]
+#[derive(Clone, Default, PartialEq, Hash, Eq, Ord, PartialOrd)]
 pub enum Value {
+    #[default]
     Null,
     Bool(bool),
     String(String),
@@ -26,12 +27,6 @@ pub enum Value {
     U64(u64),
     I64(i64),
     F64(OrderedFloat<f64>),
-}
-
-impl Default for Value {
-    fn default() -> Self {
-        Self::Null
-    }
 }
 
 impl core::fmt::Debug for Value {

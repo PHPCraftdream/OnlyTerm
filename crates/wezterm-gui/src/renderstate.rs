@@ -116,7 +116,7 @@ impl RenderContext {
             ),
             Self::WebGpu(state) => {
                 let info = adapter_info_to_gpu_info(state.adapter_info.clone());
-                format!("WebGPU: {}", info.to_string())
+                format!("WebGPU: {info}")
             }
         }
     }

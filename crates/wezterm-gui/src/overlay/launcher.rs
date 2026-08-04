@@ -350,7 +350,7 @@ impl LauncherState {
                     None => format!(
                         "{:?} ({} {})",
                         entry.action,
-                        mods.to_string(),
+                        mods,
                         keycode.to_string().escape_debug()
                     ),
                 };

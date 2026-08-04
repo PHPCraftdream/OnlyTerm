@@ -644,7 +644,7 @@ pub fn human_key(key: &KeyCode) -> String {
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Function(n) => format!("F{n}"),
         KeyCode::Numpad(n) => format!("Numpad{n}"),
-        KeyCode::Physical(phys) => format!("{} (Physical)", phys.to_string()),
+        KeyCode::Physical(phys) => format!("{phys} (Physical)"),
         _ => format!("{key:?}"),
     }
 }
@@ -672,7 +672,7 @@ fn ktav_key_code(key: &KeyCode) -> String {
             // Fall back to `mapped:` in the (currently unreachable for
             // ASCII digits) case there's no physical-position equivalent.
             match key.to_phys() {
-                Some(phys) => format!("phys:{}", phys.to_string()),
+                Some(phys) => format!("phys:{phys}"),
                 None => format!("mapped:{c}"),
             }
         }
@@ -688,7 +688,7 @@ fn ktav_key_code(key: &KeyCode) -> String {
         KeyCode::Char(c) => c.to_string(),
         KeyCode::Function(n) => format!("F{n}"),
         KeyCode::Numpad(n) => format!("Numpad{n}"),
-        KeyCode::Physical(phys) => format!("phys:{}", phys.to_string()),
+        KeyCode::Physical(phys) => format!("phys:{phys}"),
         _ => format!("{key:?}"),
     }
 }

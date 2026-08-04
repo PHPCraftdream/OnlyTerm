@@ -9,6 +9,7 @@
 //! * fuzziness is used to avoid looking at every pixel
 //! * The image is resized smaller to reduce the total number
 //!   of pixel candidates
+//!
 //! The results are cached to avoid recomputing on each
 //! evaluation of the config file.
 use crate::ColorWrap;

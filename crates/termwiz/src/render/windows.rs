@@ -429,13 +429,7 @@ impl WindowsConsoleRenderer {
                     // move the cursor to the right spot
 
                     for y in 0..image.height {
-                        buffer.fill(
-                            ' ',
-                            0,
-                            buffer.cursor_x,
-                            y + buffer.cursor_y,
-                            image.width as usize,
-                        );
+                        buffer.fill(' ', 0, buffer.cursor_x, y + buffer.cursor_y, image.width);
                     }
                     buffer.set_cursor(buffer.cursor_x + image.width, buffer.cursor_y, out)?;
                 }
