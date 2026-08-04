@@ -341,6 +341,15 @@ fn deserialize<T: serde::de::DeserializeOwned, R: std::io::Read>(
 
 macro_rules! pdu {
     ($( $name:ident:$vers:expr),* $(,)?) => {
+        // `Pdu` is the wire-protocol enum for the mux client/server RPC
+        // codec; each variant tuple-wraps a distinct PDU payload type
+        // by value. Boxing the largest variant would change the public
+        // `Pdu` type (every match arm and every construction site across
+        // the client and server crates would need updating to box/unbox),
+        // and would also change the wire-serialization shape produced by
+        // `serde`/`varbincode` for that variant. Not worth the churn just
+        // to shrink the enum's stack footprint.
+        #[allow(clippy::large_enum_variant)]
         #[derive(PartialEq, Debug)]
         pub enum Pdu {
             Invalid{ident: u64},
@@ -519,17 +528,17 @@ impl Pdu {
     /// directly by a user, rather than background traffic on
     /// a live connection
     pub fn is_user_input(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Self::WriteToPane(_)
-            | Self::SendKeyDown(_)
-            | Self::SendMouseEvent(_)
-            | Self::SendPaste(_)
-            | Self::Resize(_)
-            | Self::SetClipboard(_)
-            | Self::SetPaneZoomed(_)
-            | Self::SpawnV2(_) => true,
-            _ => false,
-        }
+                | Self::SendKeyDown(_)
+                | Self::SendMouseEvent(_)
+                | Self::SendPaste(_)
+                | Self::Resize(_)
+                | Self::SetClipboard(_)
+                | Self::SetPaneZoomed(_)
+                | Self::SpawnV2(_)
+        )
     }
 
     pub fn stream_decode(buffer: &mut Vec<u8>) -> anyhow::Result<Option<DecodedPdu>> {
@@ -1050,7 +1059,7 @@ impl From<Vec<(StableRowIndex, Line)>> for SerializedLines {
                 if let Some(link) = cell.attrs_mut().hyperlink().map(Arc::clone) {
                     cell.attrs_mut().set_hyperlink(None);
                     match current_link.as_ref() {
-                        Some(current) if Arc::ptr_eq(&current, &link) => {
+                        Some(current) if Arc::ptr_eq(current, &link) => {
                             // Continue the current streak
                             current_range = range_union(current_range, x..x + 1);
                         }
@@ -1182,8 +1191,7 @@ mod test {
 
     #[test]
     fn test_frame_lengths() {
-        let mut serial = 1;
-        for target_len in &[128, 247, 256, 65536, 16777216] {
+        for (serial, target_len) in (1..).zip([128, 247, 256, 65536, 16777216].iter()) {
             let mut payload = Vec::with_capacity(*target_len);
             payload.resize(*target_len, b'a');
             let mut encoded = Vec::new();
@@ -1192,7 +1200,6 @@ mod test {
             assert_eq!(decoded.ident, 0x42);
             assert_eq!(decoded.serial, serial);
             assert_eq!(decoded.data, payload);
-            serial += 1;
         }
     }
 

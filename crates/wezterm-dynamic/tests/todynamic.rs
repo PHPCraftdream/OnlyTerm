@@ -107,7 +107,7 @@ fn unit_variants() {
 
 #[derive(ToDynamic, Debug, PartialEq)]
 enum Named {
-    A { foo: bool, bar: bool },
+    A { flag_a: bool, bar: bool },
     B { bar: bool },
 }
 
@@ -115,7 +115,7 @@ enum Named {
 fn named_variants() {
     assert_eq!(
         Named::A {
-            foo: true,
+            flag_a: true,
             bar: false
         }
         .to_dynamic(),
@@ -123,7 +123,7 @@ fn named_variants() {
             btreemap!(
                 "A".to_dynamic() => Value::Object(
                     btreemap!(
-                        "foo".to_dynamic() => Value::Bool(true),
+                        "flag_a".to_dynamic() => Value::Bool(true),
                         "bar".to_dynamic() => Value::Bool(false),
                     ).into())
             )
@@ -184,9 +184,9 @@ struct StructInto {
     age: u8,
 }
 
-impl Into<String> for &StructInto {
-    fn into(self) -> String {
-        format!("age:{}", self.age)
+impl From<&StructInto> for String {
+    fn from(value: &StructInto) -> String {
+        format!("age:{}", value.age)
     }
 }
 
@@ -204,9 +204,9 @@ enum EnumInto {
     Age(u8),
 }
 
-impl Into<String> for &EnumInto {
-    fn into(self) -> String {
-        match self {
+impl From<&EnumInto> for String {
+    fn from(value: &EnumInto) -> String {
+        match value {
             EnumInto::Age(age) => format!("age:{}", age),
         }
     }

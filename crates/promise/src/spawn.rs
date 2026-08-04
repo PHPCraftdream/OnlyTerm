@@ -187,6 +187,12 @@ pub struct SimpleExecutor {
     rx: Receiver<SpawnFunc>,
 }
 
+// `new()` installs the process-wide schedulers via `set_schedulers` as a side
+// effect, so it is not a plain value constructor. A `Default` impl would let
+// one be built implicitly (`unwrap_or_default()` and friends) and silently
+// repoint global scheduling at a fresh queue; requiring the explicit call is
+// deliberate. Same reasoning as `UmaskSaver` in the `umask` crate.
+#[allow(clippy::new_without_default)]
 impl SimpleExecutor {
     pub fn new() -> Self {
         let (tx, rx) = unbounded();
@@ -225,6 +231,11 @@ impl SimpleExecutor {
 
 pub struct ScopedExecutor {}
 
+// `new()` replaces the global `SCOPED_EXECUTOR` and `Drop` tears it back down,
+// so this is an RAII guard rather than a value. Constructing one implicitly
+// through `Default` would install a global executor, and dropping the
+// temporary would immediately remove it again.
+#[allow(clippy::new_without_default)]
 impl ScopedExecutor {
     pub fn new() -> Self {
         SCOPED_EXECUTOR

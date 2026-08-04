@@ -84,7 +84,12 @@ fn main() {
         let _ = run(&root, &args);
 
         // `clippy --fix` does not format what it rewrote.
-        step(&root, "Formatting after autofixes", &fmt_args, &mut failures);
+        step(
+            &root,
+            "Formatting after autofixes",
+            &fmt_args,
+            &mut failures,
+        );
     } else {
         let mut fmt_args = vec!["fmt".to_string()];
         fmt_args.extend(fmt_scope.iter().cloned());
@@ -328,7 +333,11 @@ fn summarize(output: &str, only_under: Option<&Path>) -> BTreeMap<String, usize>
             continue;
         };
         if let Some(prefix) = &prefix {
-            let path = line[..pos].split(':').next().unwrap_or("").replace('\\', "/");
+            let path = line[..pos]
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .replace('\\', "/");
             if !path.starts_with(prefix.as_str()) {
                 continue;
             }

@@ -28,10 +28,7 @@ pub struct Base16Scheme {
 }
 
 impl Base16Scheme {
-    pub fn load_file<P: AsRef<Path>>(path: P) -> anyhow::Result<ColorSchemeFile>
-    where
-        P: std::fmt::Debug,
-    {
+    pub fn load_file<P: AsRef<Path> + std::fmt::Debug>(path: P) -> anyhow::Result<ColorSchemeFile> {
         let data = std::fs::read_to_string(&path).context(format!("read file {path:?}"))?;
 
         let scheme: Self = serde_yaml::from_str(&data)?;
