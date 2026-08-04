@@ -132,7 +132,7 @@ impl BackgroundLayer {
 }
 
 /// <https://developer.mozilla.org/en-US/docs/Web/CSS/background-size>
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum BackgroundSize {
     /// Scales image as large as possible without cropping or stretching.
     /// If the container is larger than the image, tiles the image unless
@@ -142,6 +142,7 @@ pub enum BackgroundSize {
     /// size to the fill the container leaving no empty space.
     /// If the aspect ratio differs from the background, the image is
     /// cropped.
+    #[default]
     Cover,
     /// Stretches the image to the specified length in pixels
     Dimension(Dimension),
@@ -152,13 +153,12 @@ impl FromDynamic for BackgroundSize {
         value: &Value,
         options: FromDynamicOptions,
     ) -> Result<Self, wezterm_dynamic::Error> {
-        match value {
-            Value::String(label) => match label.as_str() {
+        if let Value::String(label) = value {
+            match label.as_str() {
                 "Contain" => return Ok(Self::Contain),
                 "Cover" => return Ok(Self::Cover),
                 _ => {}
-            },
-            _ => {}
+            }
         }
         match PixelUnit::from_dynamic(value, options) {
             Ok(pix) => Ok(Self::Dimension(pix.into())),
@@ -185,42 +185,27 @@ impl ToDynamic for BackgroundSize {
     }
 }
 
-impl Default for BackgroundSize {
-    fn default() -> Self {
-        Self::Cover
-    }
-}
-
-#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic)]
+#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, Default)]
 pub enum BackgroundHorizontalAlignment {
+    #[default]
     Left,
     Center,
     Right,
 }
 
-impl Default for BackgroundHorizontalAlignment {
-    fn default() -> Self {
-        Self::Left
-    }
-}
-
-#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic)]
+#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, Default)]
 pub enum BackgroundVerticalAlignment {
+    #[default]
     Top,
     Middle,
     Bottom,
 }
 
-impl Default for BackgroundVerticalAlignment {
-    fn default() -> Self {
-        Self::Top
-    }
-}
-
-#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, PartialEq, Eq, Default)]
 pub enum BackgroundRepeat {
     /// Repeat as much as possible to cover the area.
     /// The last image will be clipped if it doesn't fit.
+    #[default]
     Repeat,
     /// Like Repeat, except that the image is alternately
     /// mirrored. Helpful when the image doesn't seamlessly
@@ -249,14 +234,9 @@ pub enum BackgroundRepeat {
     NoRepeat,
 }
 
-impl Default for BackgroundRepeat {
-    fn default() -> Self {
-        Self::Repeat
-    }
-}
-
-#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic)]
+#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, Default)]
 pub enum BackgroundAttachment {
+    #[default]
     Fixed,
     Scroll,
     Parallax(f32),
@@ -272,22 +252,11 @@ impl BackgroundAttachment {
     }
 }
 
-impl Default for BackgroundAttachment {
-    fn default() -> Self {
-        Self::Fixed
-    }
-}
-
-#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic)]
+#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, Default)]
 pub enum BackgroundOrigin {
+    #[default]
     BorderBox,
     PaddingBox,
-}
-
-impl Default for BackgroundOrigin {
-    fn default() -> Self {
-        Self::BorderBox
-    }
 }
 
 #[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, PartialEq, Default)]
@@ -321,8 +290,9 @@ pub enum BlendMode {
     Oklab,
 }
 
-#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, PartialEq)]
+#[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, PartialEq, Default)]
 pub enum GradientOrientation {
+    #[default]
     Horizontal,
     Vertical,
     Linear {
@@ -333,12 +303,6 @@ pub enum GradientOrientation {
         cx: Option<f64>,
         cy: Option<f64>,
     },
-}
-
-impl Default for GradientOrientation {
-    fn default() -> Self {
-        Self::Horizontal
-    }
 }
 
 #[derive(Debug, Copy, Clone, FromDynamic, ToDynamic, PartialEq)]
