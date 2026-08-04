@@ -101,8 +101,18 @@ fn main() {
     // it ever reaches the package under test. Denying is our job, not rustc's:
     // capture the lints, keep only the ones that belong to the requested
     // scope, and fail on that count.
+    //
+    // The lint pass is always workspace-wide, even when `-p` was given, and
+    // the scoping is done afterwards by filtering on the package directory.
+    // Building one package alone resolves its features in isolation, while a
+    // workspace build unifies them across every member, so `-p` on its own
+    // silently skips whatever lives behind a feature that only some other
+    // crate turns on. `wezterm-cell` is the worked example: `Cell::image`
+    // sits behind `use_image`, which is off for `-p wezterm-cell` and on for
+    // the workspace, so eight lints in that crate were invisible to a scoped
+    // run and reported it clean.
     let mut args = vec!["clippy".to_string()];
-    args.extend(scope.iter().cloned());
+    args.push("--workspace".into());
     args.extend(all_targets.iter().cloned());
     args.push("--message-format".into());
     args.push("short".into());
