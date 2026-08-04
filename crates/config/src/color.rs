@@ -85,7 +85,7 @@ impl TryFrom<String> for RgbaColor {
     fn try_from(s: String) -> anyhow::Result<RgbaColor> {
         Ok(RgbaColor {
             color: SrgbaTuple::from_str(&s)
-                .map_err(|_| anyhow::anyhow!("failed to parse {} as RgbaColor", &s))?,
+                .map_err(|_| anyhow::anyhow!("failed to parse {} as RgbaColor", s))?,
         })
     }
 }
@@ -199,7 +199,7 @@ impl Palette {
             ansi: overlay!(ansi),
             brights: overlay!(brights),
             tab_bar: match (&self.tab_bar, &other.tab_bar) {
-                (Some(a), Some(b)) => Some(a.overlay_with(&b)),
+                (Some(a), Some(b)) => Some(a.overlay_with(b)),
                 (None, Some(b)) => Some(b.clone()),
                 (Some(a), None) => Some(a.clone()),
                 (None, None) => None,
@@ -456,11 +456,11 @@ pub enum IntegratedTitleButtonColor {
     Custom(RgbaColor),
 }
 
-impl Into<String> for IntegratedTitleButtonColor {
-    fn into(self) -> String {
-        match self {
-            Self::Auto => "auto".to_string(),
-            Self::Custom(color) => color.into(),
+impl From<IntegratedTitleButtonColor> for String {
+    fn from(value: IntegratedTitleButtonColor) -> String {
+        match value {
+            IntegratedTitleButtonColor::Auto => "auto".to_string(),
+            IntegratedTitleButtonColor::Custom(color) => color.into(),
         }
     }
 }
@@ -619,8 +619,8 @@ impl Default for WindowFrameConfig {
             active_titlebar_fg: default_active_titlebar_fg(),
             inactive_titlebar_border_bottom: default_inactive_titlebar_border_bottom(),
             active_titlebar_border_bottom: default_active_titlebar_border_bottom(),
-            button_fg: default_button_fg().into(),
-            button_bg: default_button_bg().into(),
+            button_fg: default_button_fg(),
+            button_bg: default_button_bg(),
             button_hover_fg: default_button_hover_fg(),
             button_hover_bg: default_button_hover_bg(),
             font: None,
@@ -733,7 +733,7 @@ fn dynamic_to_toml(value: Value) -> anyhow::Result<toml::Value> {
             toml::Value::Table(map)
         }
         Value::U64(i) => toml::Value::Integer(i.try_into()?),
-        Value::I64(i) => toml::Value::Integer(i.try_into()?),
+        Value::I64(i) => toml::Value::Integer(i),
         Value::F64(f) => toml::Value::Float(*f),
     })
 }
@@ -758,7 +758,7 @@ impl ColorSchemeFile {
 
     pub fn to_toml_value(&self) -> anyhow::Result<toml::Value> {
         let value = self.to_dynamic();
-        Ok(dynamic_to_toml(value)?)
+        dynamic_to_toml(value)
     }
 
     pub fn from_json_value(value: &serde_json::Value) -> anyhow::Result<Self> {
