@@ -9,19 +9,17 @@ use config::{
     configuration, BoldBrightening, ConfigHandle, DisplayPixelGeometry, FontAttributes,
     FontRasterizerSelection, FontStretch, FontStyle, FontWeight, TextStyle,
 };
-use rangeset::RangeSet;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
 use termwiz::cell::Presentation;
 use thiserror::Error;
 use wezterm_bidi::Direction;
 use wezterm_term::{CellAttributes, Intensity};
-use wezterm_toast_notification::ToastNotification;
+use fallback::FallbackResolveInfo;
 
 pub mod db;
 pub mod locator;
@@ -30,6 +28,8 @@ pub mod rasterizer;
 pub mod shaper;
 pub mod swash_metrics;
 pub mod units;
+
+mod fallback;
 
 #[cfg(all(unix, not(target_os = "macos")))]
 pub mod fcwrap;
@@ -47,9 +47,6 @@ pub fn alloc_font_id() -> LoadedFontId {
     FONT_ID.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed)
 }
 
-lazy_static::lazy_static! {
-    static ref LAST_WARNING: Mutex<Option<(Instant, usize)>> = Mutex::new(None);
-}
 
 pub struct LoadedFont {
     rasterizers: RefCell<HashMap<FallbackIdx, Box<dyn FontRasterizer>>>,
@@ -297,166 +294,6 @@ impl LoadedFont {
         self.handles.borrow().clone()
     }
 }
-
-struct FallbackResolveInfo {
-    no_glyphs: Vec<char>,
-    pending: Arc<Mutex<Vec<ParsedFont>>>,
-    completion: Box<dyn FnOnce() + Send>,
-    font_dirs: Arc<FontDatabase>,
-    built_in: Arc<FontDatabase>,
-    locator: Arc<dyn FontLocator + Send + Sync>,
-    config: ConfigHandle,
-}
-
-impl FallbackResolveInfo {
-    fn process(self) {
-        let fallback_str = self.no_glyphs.iter().collect::<String>();
-        let mut extra_handles = vec![];
-
-        log::trace!(
-            "Looking for {} in fallback fonts",
-            fallback_str.escape_unicode()
-        );
-
-        match self.locator.locate_fallback_for_codepoints(&self.no_glyphs) {
-            Ok(ref mut handles) => extra_handles.append(handles),
-            Err(err) => log::error!(
-                "Error: {:#} while resolving fallback for {} from font-locator",
-                err,
-                fallback_str.escape_unicode()
-            ),
-        }
-
-        if self.config.search_font_dirs_for_fallback {
-            match self
-                .font_dirs
-                .locate_fallback_for_codepoints(&self.no_glyphs)
-            {
-                Ok(ref mut handles) => extra_handles.append(handles),
-                Err(err) => log::error!(
-                    "Error: {:#} while resolving fallback for {} from font_dirs",
-                    err,
-                    fallback_str.escape_unicode()
-                ),
-            }
-        }
-
-        match self
-            .built_in
-            .locate_fallback_for_codepoints(&self.no_glyphs)
-        {
-            Ok(ref mut handles) => extra_handles.append(handles),
-            Err(err) => log::error!(
-                "Error: {:#} while resolving fallback for {} for built-in fonts",
-                err,
-                fallback_str.escape_unicode()
-            ),
-        }
-
-        let mut wanted = RangeSet::new();
-        for c in self.no_glyphs {
-            wanted.add(c as u32);
-        }
-        log::trace!(
-            "Fallback fonts that match {} before sorting are: {:#?}",
-            fallback_str.escape_unicode(),
-            extra_handles
-        );
-
-        if wanted.len() > 1 && self.config.sort_fallback_fonts_by_coverage {
-            // Sort by ascending coverage
-            extra_handles.sort_by_cached_key(|p| {
-                p.coverage_intersection(&wanted)
-                    .map(|r| r.len())
-                    .unwrap_or(0)
-            });
-            // Re-arrange to descending coverage
-            extra_handles.reverse();
-            log::trace!(
-                "Fallback fonts that match {} after sorting are: {:#?}",
-                fallback_str.escape_unicode(),
-                extra_handles
-            );
-        }
-
-        // iteratively reduce to just the fonts that we need
-        extra_handles.retain(|p| match p.coverage_intersection(&wanted) {
-            Ok(cov) if cov.is_empty() => false,
-            Ok(cov) => {
-                // Remove the matches from the set, so that we avoid
-                // picking up multiple fonts for the same glyphs
-                wanted = wanted.difference(&cov);
-                true
-            }
-            Err(_) => false,
-        });
-
-        if !extra_handles.is_empty() {
-            let mut pending = self.pending.lock().unwrap();
-            pending.append(&mut extra_handles);
-            (self.completion)();
-        }
-
-        if !wanted.is_empty() {
-            // There were some glyphs we couldn't resolve!
-            let fallback_str = wanted
-                .iter_values()
-                .map(|c| std::char::from_u32(c).unwrap_or(' '))
-                .collect::<String>();
-
-            let current_gen = self.config.generation();
-            let show_warning = self.config.warn_about_missing_glyphs
-                && LAST_WARNING
-                    .lock()
-                    .unwrap()
-                    .map(|(instant, generation)| {
-                        generation != current_gen
-                            || instant.elapsed() > Duration::from_secs(60 * 60)
-                    })
-                    .unwrap_or(true);
-
-            if show_warning {
-                LAST_WARNING
-                    .lock()
-                    .unwrap()
-                    .replace((Instant::now(), self.config.generation()));
-                let url = "https://wezterm.org/config/fonts.html";
-                log::warn!(
-                    "No fonts contain glyphs for these codepoints: {}.\n\
-                     Placeholder glyphs are being displayed instead.\n\
-                     You may wish to install additional fonts, or adjust your\n\
-                     configuration so that it can find them.\n\
-                     {} has more information about configuring fonts.\n\
-                     Set warn_about_missing_glyphs=false to suppress this message.",
-                    fallback_str.escape_unicode(),
-                    url,
-                );
-
-                ToastNotification {
-                    title: "Font problem".to_string(),
-                    message: format!(
-                        "No fonts contain glyphs for these codepoints: {}.\n\
-                            Placeholder glyphs are being displayed instead.\n\
-                            You may wish to install additional fonts, or adjust\n\
-                            your configuration so that it can find them.\n\
-                            Set warn_about_missing_glyphs=false to suppress this\n\
-                            message.",
-                        fallback_str.escape_unicode()
-                    ),
-                    url: Some(url.to_string()),
-                    timeout: Some(Duration::from_secs(15)),
-                }
-                .show();
-            } else {
-                log::debug!(
-                    "No fonts contain glyphs for these codepoints: {}",
-                    fallback_str.escape_unicode()
-                );
-            }
-        }
-    }
-}
-
 #[derive(PartialEq, Eq)]
 enum Entity {
     Title,
