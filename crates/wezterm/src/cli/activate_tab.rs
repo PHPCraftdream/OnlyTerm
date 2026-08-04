@@ -101,7 +101,7 @@ impl ActivateTab {
                 // This logic is coupled with TermWindow::activate_tab
                 // If you update this, update that!
                 let tab_idx = if tab_index < 0 {
-                    max.saturating_sub(tab_index.abs() as usize)
+                    max.saturating_sub(tab_index.unsigned_abs())
                 } else {
                     tab_index as usize
                 };

@@ -400,8 +400,8 @@ impl Pane for ClientPane {
         let render = self.renderable.lock();
         let mut inner = render.inner.borrow_mut();
 
-        let cols = size.cols as usize;
-        let rows = size.rows as usize;
+        let cols = size.cols;
+        let rows = size.rows;
 
         if inner.dimensions.cols != cols
             || inner.dimensions.viewport_rows != rows
@@ -662,7 +662,7 @@ impl std::io::Write for PaneWriter {
             pane_id: self.remote_pane_id,
             data: data.to_vec(),
         }))
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("{}", e)))?;
+        .map_err(|e| std::io::Error::other(format!("{}", e)))?;
         Ok(data.len())
     }
 

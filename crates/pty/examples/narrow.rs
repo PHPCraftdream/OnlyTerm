@@ -66,6 +66,14 @@ fn main() {
         // want to send data to the child, you'd set `to_write` to
         // that data and do it like this:
         let to_write = "";
+        // `to_write` is deliberately the empty-string literal here: this branch
+        // exists only to show readers the shape of the code they'd use if they
+        // set `to_write` to real data (see comment above). Clippy const-evaluates
+        // `to_write.is_empty()` to `true` and flags the `is_empty()` call itself
+        // as always constant; the branch is intentionally dead in this example
+        // and should stay written this way so it keeps compiling if someone
+        // edits `to_write` in place to try it out.
+        #[allow(clippy::const_is_empty)]
         if !to_write.is_empty() {
             // To avoid deadlock, wrt. reading and waiting, we send
             // data to the stdin of the child in a different thread.

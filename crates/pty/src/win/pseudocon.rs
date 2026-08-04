@@ -29,6 +29,11 @@ use winapi::um::winnt::{
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
+// `HPCON` is the literal type name Microsoft uses for the pseudoconsole handle
+// in the Win32 API (see `wincontypes.h` / `CreatePseudoConsole`). Renaming it
+// to `Hpcon` would break the direct correspondence with the documented Win32
+// API and with the FFI signatures below that mirror `ConPTY.h`.
+#[allow(clippy::upper_case_acronyms)]
 pub type HPCON = HANDLE;
 
 pub const PSEUDOCONSOLE_INHERIT_CURSOR: DWORD = 0x1;

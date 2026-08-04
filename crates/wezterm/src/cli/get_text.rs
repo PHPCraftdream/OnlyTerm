@@ -70,7 +70,12 @@ impl GetText {
 
         let lines = client
             .get_lines(codec::GetLines {
-                pane_id: pane_id.into(),
+                pane_id,
+                // `GetLines::lines` is a `Vec<Range>` because the protocol supports
+                // requesting multiple discontiguous ranges in one call; here we only
+                // need a single range, so clippy's "collect into one range" suggestion
+                // would change the wire format, not just the local code style.
+                #[allow(clippy::single_range_in_vec_init)]
                 lines: vec![start_line..end_line + 1],
             })
             .await?;

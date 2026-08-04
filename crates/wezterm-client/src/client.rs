@@ -821,7 +821,7 @@ impl Client {
                 };
                 ui.output_str(&err.to_string());
                 log::error!("{:?}", err);
-                return Err(err.into());
+                Err(err.into())
             }
             Err(err) => {
                 log::trace!("{:?}", err);
@@ -941,7 +941,7 @@ impl Client {
                 } else {
                     let mut clients = self.list_clients().await?.clients;
                     clients.retain(|client| client.focused_pane_id.is_some());
-                    clients.sort_by(|a, b| b.last_input.cmp(&a.last_input));
+                    clients.sort_by_key(|c| std::cmp::Reverse(c.last_input));
                     if clients.is_empty() {
                         anyhow::bail!(
                             "--pane-id was not specified and $ONLYTERM_PANE

@@ -55,7 +55,7 @@ mod windows {
     impl FileMapping {
         /// Create a new or open an existing mapping with the specified name/size
         pub fn create(name: &str, size: usize) -> anyhow::Result<Self> {
-            let wide_name = wide_string(&name);
+            let wide_name = wide_string(name);
 
             // SAFETY: `INVALID_HANDLE_VALUE` backed by the page file is a valid
             // mapping source; the security attrs pointer is null (default). The
@@ -84,7 +84,7 @@ mod windows {
 
         /// Attempt to open an existing mapping
         pub fn open(name: &str, size: usize) -> anyhow::Result<Self> {
-            let wide_name = wide_string(&name);
+            let wide_name = wide_string(name);
 
             // SAFETY: `wide_name` is NUL-terminated (see `wide_string`) and
             // outlives the call; the access/inherit args are constants.
@@ -478,18 +478,16 @@ pub fn discover_gui_socks() -> Vec<PathBuf> {
     }
 
     if let Ok(dir) = std::fs::read_dir(&*config::RUNTIME_DIR) {
-        for entry in dir {
-            if let Ok(entry) = entry {
-                if let Some(name) = entry.file_name().to_str() {
-                    if name.starts_with("gui-sock-") {
-                        let path = entry.path();
-                        if let Ok(meta) = entry.metadata() {
-                            let age = meta_age(&meta);
-                            if is_sock_dead(&path) && age > Duration::from_secs(1) {
-                                let _ = std::fs::remove_file(&path);
-                            } else {
-                                socks.push(Entry { path, age });
-                            }
+        for entry in dir.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                if name.starts_with("gui-sock-") {
+                    let path = entry.path();
+                    if let Ok(meta) = entry.metadata() {
+                        let age = meta_age(&meta);
+                        if is_sock_dead(&path) && age > Duration::from_secs(1) {
+                            let _ = std::fs::remove_file(&path);
+                        } else {
+                            socks.push(Entry { path, age });
                         }
                     }
                 }

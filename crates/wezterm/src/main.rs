@@ -58,6 +58,12 @@ pub struct Opt {
 }
 
 #[derive(Debug, Clone, ValueEnum)]
+// `PowerShell` ending in "Shell" trips clippy::enum_variant_names, but this is a
+// clap `ValueEnum`: the variant name is serialized (kebab-cased) into the
+// `--shell` CLI argument's accepted values. Renaming it would change the
+// user-facing `wezterm shell-completion --shell <name>` value, which is a
+// breaking CLI change, not just a naming cleanup.
+#[allow(clippy::enum_variant_names)]
 enum Shell {
     Bash,
     Elvish,
@@ -344,7 +350,7 @@ impl ImgCatCommand {
                 let width = info.width as usize;
                 let height = info.height as usize;
                 // but ensure that it fits
-                if width as usize > pixel_width || height as usize > pixel_height {
+                if width > pixel_width || height > pixel_height {
                     let width = width as f32;
                     let height = height as f32;
                     let mut candidates = vec![];
@@ -358,7 +364,7 @@ impl ImgCatCommand {
                         candidates.push(((width * y_scale) as usize, pixel_height));
                     }
 
-                    candidates.sort_by(|a, b| (a.0 * a.1).cmp(&(b.0 * b.1)));
+                    candidates.sort_by_key(|a| a.0 * a.1);
 
                     candidates.pop().unwrap()
                 } else {
@@ -407,7 +413,7 @@ impl ImgCatCommand {
         let start = std::time::Instant::now();
         let im = image::load_from_memory(data).with_context(|| match self.file_name.as_ref() {
             Some(file_name) => format!("loading image from file {file_name:?}"),
-            None => format!("loading image from stdin"),
+            None => "loading image from stdin".to_string(),
         })?;
         if self.show_resample_timing {
             eprintln!(
@@ -554,7 +560,7 @@ impl ImgCatCommand {
             // column as a result of doing this.
             term.render(&[Change::CursorPosition {
                 x: Position::Absolute(0),
-                y: Position::Relative(-1 * (cursor_y as isize)),
+                y: Position::Relative(-(cursor_y as isize)),
             }])?;
         }
 
@@ -590,20 +596,18 @@ impl ImgCatCommand {
         if self.hold {
             term.set_raw_mode()?;
             while let Ok(Some(event)) = term.poll_input(None) {
-                match event {
-                    InputEvent::Key(
-                        KeyEvent {
-                            key: KeyCode::Enter | KeyCode::Escape,
-                            modifiers: _,
-                        }
-                        | KeyEvent {
-                            key: KeyCode::Char('c') | KeyCode::Char('d'),
-                            modifiers: Modifiers::CTRL,
-                        },
-                    ) => {
-                        break;
+                if let InputEvent::Key(
+                    KeyEvent {
+                        key: KeyCode::Enter | KeyCode::Escape,
+                        modifiers: _,
                     }
-                    _ => {}
+                    | KeyEvent {
+                        key: KeyCode::Char('c') | KeyCode::Char('d'),
+                        modifiers: Modifiers::CTRL,
+                    },
+                ) = event
+                {
+                    break;
                 }
             }
         }
