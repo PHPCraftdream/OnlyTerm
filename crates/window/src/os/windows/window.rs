@@ -172,6 +172,40 @@ impl PlaceholderSpinner {
     }
 }
 
+/// Class name for the `WS_EX_LAYERED` overlay window used to cross-fade the
+/// placeholder spinner into the real terminal content (task #385; see
+/// `WindowInner::placeholder_fade` and `start_placeholder_fade` for the
+/// full story).
+const PLACEHOLDER_OVERLAY_CLASS_NAME: &str = "OnlyTermPlaceholderOverlay";
+
+/// State for the placeholder-overlay fade-out (task #385). Unlike
+/// `PlaceholderSpinner` (which owns GDI brushes/pens for as long as no
+/// renderer is up), this only exists for the brief final transition: it is
+/// created once both gating conditions in `start_placeholder_fade` are
+/// satisfied, and torn down as soon as alpha reaches zero.
+///
+/// The overlay is a separate `WS_CHILD | WS_EX_LAYERED` sibling of
+/// `webgpu_child_hwnd`, stacked above it in z-order. It exists because the
+/// WebGpu child window is a live DXGI swapchain target: once its surface
+/// presents a frame, that frame owns the window's pixels outright (flip-model
+/// presentation bypasses GDI/DWM composition for that HWND), so there is no
+/// way to alpha-blend GDI-painted spinner pixels against WebGpu-presented
+/// pixels *within* that same HWND. A `WS_EX_LAYERED` window is DWM's
+/// mechanism for exactly this: composite an independent, alpha-controlled
+/// surface on top of whatever is beneath it, which is otherwise-unmodified
+/// live WebGpu content in this case. The overlay paints one final still frame
+/// of the spinner into itself (via the same `draw_placeholder_spinner` used
+/// throughout the opaque phase, so there is no visible seam at the moment it
+/// appears) and then only its whole-window alpha changes from then on --
+/// `SetLayeredWindowAttributes`, stepped by `PLACEHOLDER_FADE_TIMER_ID`.
+struct PlaceholderFade {
+    /// The layered overlay's own child HWND.
+    hwnd: HWindow,
+    /// When the fade-out began, used to derive the current alpha the same
+    /// way `PlaceholderSpinner::started` derives animation phase.
+    started: Instant,
+}
+
 /// How often the spinner timer fires and, in turn, how often the placeholder
 /// window is invalidated to advance the animation. 30fps: smooth enough for
 /// a handful of slowly-orbiting dots, cheap enough to be a non-issue on the
@@ -185,6 +219,28 @@ const PLACEHOLDER_SPINNER_INTERVAL_MS: u32 = 1000 / 30;
 /// tick. Scoped to a single constant since each top-level window only ever
 /// runs one of these at a time (ids are per-HWND, not global).
 const PLACEHOLDER_SPINNER_TIMER_ID: usize = 1;
+
+/// `SetTimer`/`KillTimer`/`WM_TIMER` id for the placeholder-overlay fade
+/// tick (task #385). Distinct from `PLACEHOLDER_SPINNER_TIMER_ID` because,
+/// briefly, both timers can be alive on the same top-level window at once:
+/// the spinner timer keeps animating the (now-hidden-behind-the-overlay)
+/// parent/child paint path until `clear_placeholder_background` kills it,
+/// while this timer independently steps the overlay's alpha down. In
+/// practice `clear_placeholder_background` runs before the fade starts (see
+/// `WindowInner::start_placeholder_fade`), so they don't overlap for
+/// long, but keeping separate ids avoids relying on that ordering.
+const PLACEHOLDER_FADE_TIMER_ID: usize = 2;
+
+/// Total duration of the placeholder-overlay fade-out, once triggered.
+/// Long enough to read as a deliberate cross-fade rather than a flicker,
+/// short enough not to noticeably delay the terminal becoming fully opaque
+/// after it's already interactive.
+const PLACEHOLDER_FADE_DURATION_MS: u32 = 320;
+
+/// How often the fade timer ticks to step alpha down. 30fps, matching the
+/// spinner's own animation rate -- no reason for the fade to be smoother
+/// than the animation it's fading out.
+const PLACEHOLDER_FADE_INTERVAL_MS: u32 = 1000 / 30;
 
 pub(crate) struct WindowInner {
     /// Non-owning reference to the window handle
@@ -258,6 +314,25 @@ pub(crate) struct WindowInner {
     /// and `WM_ERASEBKGND` goes back to being a no-op (returning 1 without
     /// painting, matching today's behavior of a null-brush class).
     placeholder_spinner: Option<PlaceholderSpinner>,
+    /// Set once `clear_placeholder_background` has run, i.e. a working
+    /// `RenderState` is installed and producing frames (task #385's first
+    /// gating condition -- see `start_placeholder_fade`). Kept
+    /// separate from `placeholder_spinner.is_none()` even though they
+    /// currently flip at the same time: this flag specifically means
+    /// "renderer ready", not "spinner gone", which matters once the fade
+    /// overlay (below) becomes the thing actually keeping the spinner
+    /// visible on screen.
+    renderer_ready: bool,
+    /// Set once this window's pane(s) have produced their first non-empty
+    /// pty output (task #385's second gating condition -- proxy for "the
+    /// shell is alive and likely to accept input"; see
+    /// `WindowOps::notify_shell_ready`'s doc comment for why this specific
+    /// signal was chosen over waiting for a harder handshake).
+    shell_ready: bool,
+    /// The placeholder-overlay fade-out, once started (see `PlaceholderFade`
+    /// and `start_placeholder_fade`). `None` before the fade begins
+    /// and after it completes and tears itself down.
+    placeholder_fade: Option<PlaceholderFade>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -822,6 +897,144 @@ impl Window {
         Ok(hwnd)
     }
 
+    /// Create the `WS_EX_LAYERED` overlay child window used to cross-fade
+    /// the placeholder spinner out (task #385; see `PlaceholderFade`'s doc
+    /// comment for why this needs to be a separate window from
+    /// `webgpu_child_hwnd` at all). Parented to `parent` and sized to
+    /// exactly cover `sibling`'s current bounds (i.e. the WebGpu child's,
+    /// which in turn covers the parent's full client area), then placed
+    /// directly above `sibling` in z-order so it visually covers the
+    /// WebGpu content while opaque and lets it show through as alpha drops.
+    ///
+    /// `WS_EX_TRANSPARENT` makes this input-transparent exactly like the
+    /// WebGpu child (`child_wnd_proc`'s `WM_NCHITTEST` handling) -- it only
+    /// exists for a fraction of a second right as the terminal is becoming
+    /// interactive, so the user's clicks/keys must not be able to land on it
+    /// even momentarily.
+    fn create_placeholder_overlay_window(parent: HWND, sibling: HWND) -> anyhow::Result<HWND> {
+        let class_name = wide_string(PLACEHOLDER_OVERLAY_CLASS_NAME);
+        // SAFETY: null module name returns the current process's exe handle,
+        // which is always valid and non-null on Windows.
+        let h_inst = unsafe { GetModuleHandleW(null()) };
+        let class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(overlay_wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: h_inst,
+            hIcon: null_mut(),
+            hCursor: null_mut(),
+            hbrBackground: null_mut(),
+            lpszMenuName: null(),
+            lpszClassName: class_name.as_ptr(),
+        };
+
+        // SAFETY: `class` is a fully-initialized `WNDCLASSW` with valid string
+        // pointers and a registered `overlay_wnd_proc`; the failure case
+        // (return 0) is handled below, including the benign
+        // CLASS_ALREADY_EXISTS case (multiple top-level windows in the same
+        // process share this class).
+        if unsafe { RegisterClassW(&class) } == 0 {
+            let err = IoError::last_os_error();
+            match err.raw_os_error() {
+                Some(code)
+                    if code == winapi::shared::winerror::ERROR_CLASS_ALREADY_EXISTS as i32 => {}
+                _ => return Err(err.into()),
+            }
+        }
+
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: `rect` is a live stack `RECT` and `sibling` is a valid
+        // window handle; `GetWindowRect` only writes into `rect`. We use
+        // `sibling`'s (the WebGpu child's) screen rect rather than
+        // `parent`'s client rect so the overlay matches it exactly even if
+        // the two have drifted apart by a pending resize.
+        unsafe {
+            GetWindowRect(sibling, &mut rect);
+        }
+        let mut top_left = POINT {
+            x: rect.left,
+            y: rect.top,
+        };
+        // SAFETY: `parent` is a valid window handle and `top_left` is a live
+        // stack `POINT`; `ScreenToClient` only writes into it.
+        unsafe {
+            ScreenToClient(parent, &mut top_left);
+        }
+
+        let name = wide_string(PLACEHOLDER_OVERLAY_CLASS_NAME);
+        // SAFETY: `class_name`/`name` are live null-terminated UTF-16
+        // buffers. `parent` is a valid top-level HWND, so this becomes a
+        // `WS_CHILD` window owned by it (destroyed automatically when
+        // `parent` is destroyed, and also explicitly torn down by
+        // `finish_placeholder_fade`). `WS_EX_LAYERED` is what allows
+        // `SetLayeredWindowAttributes` below; the window starts fully
+        // opaque (alpha 255) so its first paint is indistinguishable from
+        // the spinner it replaces. A null result is reported as an error.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TRANSPARENT,
+                class_name.as_ptr(),
+                name.as_ptr(),
+                WS_CHILD | WS_VISIBLE,
+                top_left.x,
+                top_left.y,
+                rect_width(&rect),
+                rect_height(&rect),
+                parent,
+                null_mut(),
+                h_inst,
+                null_mut(),
+            )
+        };
+
+        if hwnd.is_null() {
+            let err = IoError::last_os_error();
+            bail!("CreateWindowExW (placeholder overlay): {}", err);
+        }
+
+        // SAFETY: `hwnd` is the just-created, valid window handle; 255 is a
+        // valid alpha value and `LWA_ALPHA` is the flag that makes
+        // `SetLayeredWindowAttributes` honor it (as opposed to a color-key).
+        unsafe {
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+        }
+
+        // A freshly created `WS_CHILD` window is normally already placed at
+        // the top of its parent's child z-order by `CreateWindowExW`, which
+        // would put it above `sibling` (the WebGpu child, created earlier in
+        // the same `new_window` call) without further action. Explicitly
+        // reassert `HWND_TOP` anyway rather than relying on that default:
+        // being visually above the WebGpu content is not just cosmetic here
+        // (it's the entire mechanism the cross-fade depends on), so it's
+        // worth the one extra, cheap `SetWindowPos` call to make it
+        // unconditionally true instead of implicitly true.
+        // SAFETY: `hwnd` is the just-created, valid child window handle;
+        // `HWND_TOP` is a reserved constant Win32 accepts in place of a
+        // window handle here. `SWP_NOMOVE|SWP_NOSIZE` leave the position/size
+        // just set by `CreateWindowExW` untouched; `SWP_NOACTIVATE` avoids
+        // stealing focus (this window is never meant to be focusable at
+        // all -- it's `WS_EX_TRANSPARENT`).
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND_TOP,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+
+        Ok(hwnd)
+    }
+
     pub async fn new_window<F>(
         class_name: &str,
         name: &str,
@@ -879,6 +1092,9 @@ impl Window {
             paint_throttled: false,
             invalidated: true,
             placeholder_spinner,
+            renderer_ready: false,
+            shell_ready: false,
+            placeholder_fade: None,
         }));
 
         // Careful: `raw` owns a ref to inner, but there is no Drop impl
@@ -1167,14 +1383,26 @@ impl WindowInner {
         });
     }
 
-    /// Drop the placeholder spinner (see `placeholder_spinner`'s doc
-    /// comment) once a working renderer is in place and responsible for
-    /// painting every frame. Idempotent: safe to call more than once (e.g.
-    /// once from `TermWindow::created` on the happy path, and once more as
-    /// a backstop from `wm_ncdestroy` if the window is closed before a
-    /// renderer ever came up) -- `Option::take` makes the second call a
-    /// no-op.
+    /// Mark the renderer as ready (task #385's first gating condition) and,
+    /// if the shell is also already known to be ready, hand off from the
+    /// opaque spinner to the fade overlay; then drop the placeholder
+    /// spinner's own timer/GDI resources (see `placeholder_spinner`'s doc
+    /// comment) now that a working renderer is in place and responsible for
+    /// painting every subsequent frame. Idempotent: safe to call more than
+    /// once (e.g. once from `TermWindow::created` on the happy path, and
+    /// once more as a backstop from `wm_ncdestroy` if the window is closed
+    /// before a renderer ever came up) -- `Option::take` makes the second
+    /// call's spinner teardown a no-op, and `start_placeholder_fade`
+    /// is separately guarded by `placeholder_fade.is_some()`.
+    ///
+    /// Order matters here: `start_placeholder_fade` must run (and, if
+    /// it decides to start the fade, paint the overlay's one-shot frame)
+    /// *before* the spinner's GDI objects are destroyed below, since that
+    /// paint reads them via `draw_placeholder_spinner`.
     fn clear_placeholder_background(&mut self) {
+        self.renderer_ready = true;
+        self.start_placeholder_fade();
+
         if let Some(spinner) = self.placeholder_spinner.take() {
             if spinner.timer_running {
                 // SAFETY: `self.hwnd.0` is either a valid window handle
@@ -1195,9 +1423,181 @@ impl WindowInner {
             // GDI object or in use by an in-flight paint call (both
             // `WM_ERASEBKGND`/`wm_paint` and this method only ever run on
             // this window's single GUI/message-loop thread), so deleting
-            // them now cannot race a concurrent use.
+            // them now cannot race a concurrent use. Any fade overlay
+            // started just above by `start_placeholder_fade` has
+            // already taken its one-shot paint of the spinner by this
+            // point, so it doesn't need these to stay alive any longer.
             unsafe {
                 spinner.destroy();
+            }
+        }
+    }
+
+    /// Mark the shell as ready (task #385's second gating condition -- see
+    /// `WindowOps::notify_shell_ready`) and, if the renderer is also already
+    /// ready, start the placeholder fade. Idempotent: `shell_ready` is only
+    /// ever set to `true`, and `start_placeholder_fade` is separately
+    /// guarded against starting twice.
+    fn notify_shell_ready(&mut self) {
+        self.shell_ready = true;
+        self.start_placeholder_fade();
+    }
+
+    /// Start the placeholder-overlay fade-out (task #385) if, and only if,
+    /// both gating conditions are now satisfied (`renderer_ready` -- a
+    /// working `RenderState` exists and is producing frames -- and
+    /// `shell_ready` -- the shell has produced its first output) and no
+    /// fade has been started for this window yet.
+    ///
+    /// Why gate on both rather than just the renderer: the renderer being
+    /// ready only means WebGpu can now present real frames -- typically
+    /// still a blank/default-background terminal for the fraction of a
+    /// second until the shell's startup banner/prompt actually lands. That
+    /// would still show a "dead" cross-fade into apparently-nothing rather
+    /// than into a live shell. Why not gate on just the shell: with a slow
+    /// GPU/driver init, the shell could be ready before the renderer has
+    /// even installed a `RenderState` to hand off to, in which case there is
+    /// nothing yet to fade *into*.
+    ///
+    /// Creates the overlay window, gives it one paint of the current spinner
+    /// frame (so its first visible frame is pixel-identical to what it
+    /// replaces -- see `create_placeholder_overlay_window`'s doc comment),
+    /// and arms the fade timer. Called from both `clear_placeholder_
+    /// background` and `notify_shell_ready`, i.e. from whichever of the two
+    /// gating conditions is satisfied *second* -- that's what "start on the
+    /// later of the two events" means operationally: both setters call this
+    /// unconditionally, but it only actually does anything once both flags
+    /// are set.
+    fn start_placeholder_fade(&mut self) {
+        if !self.renderer_ready || !self.shell_ready || self.placeholder_fade.is_some() {
+            return;
+        }
+        if self.hwnd.0.is_null() {
+            // The top-level window is already gone (e.g. this is being
+            // reached via `wm_ncdestroy`'s backstop call to
+            // `clear_placeholder_background`, which runs after `hwnd` has
+            // already been reset to null there). Nothing to layer a new
+            // overlay on top of.
+            return;
+        }
+        if self.webgpu_child_hwnd.0.is_null() {
+            // No WebGpu child to layer over (surface creation fell back to
+            // the top-level window itself, or never happened) -- there is
+            // nothing for a layered sibling to sit above, so there's no safe
+            // place to put the overlay. The spinner's own teardown in
+            // `clear_placeholder_background` still runs as normal; this
+            // just means that edge case gets the old instant cut instead of
+            // a cross-fade, same as before task #385.
+            return;
+        }
+        let overlay_hwnd = match Window::create_placeholder_overlay_window(
+            self.hwnd.0,
+            self.webgpu_child_hwnd.0,
+        ) {
+            Ok(hwnd) => hwnd,
+            Err(err) => {
+                log::warn!(
+                    "Failed to create placeholder fade overlay ({:#}); \
+                     falling back to an instant cut instead of a cross-fade",
+                    err
+                );
+                return;
+            }
+        };
+
+        // Paint the overlay's one and only content frame now, while
+        // `self.placeholder_spinner` is still `Some` (the caller,
+        // `clear_placeholder_background`, destroys it right after this
+        // returns). `WM_PAINT`/`WM_ERASEBKGND` on `overlay_hwnd` both read
+        // the spinner via `paint_parent_placeholder_spinner`, so a plain
+        // `InvalidateRect`+processing it synchronously via `UpdateWindow`
+        // is enough to force that first paint immediately rather than
+        // waiting for the next natural paint cycle (there may not be one
+        // before we destroy the spinner).
+        // SAFETY: `overlay_hwnd` is the just-created, valid window handle.
+        unsafe {
+            UpdateWindow(overlay_hwnd);
+        }
+
+        // SAFETY: `self.hwnd.0` is a valid window handle (this method is
+        // only ever reached while it is); `PLACEHOLDER_FADE_TIMER_ID` is a
+        // plain nonzero id distinct from `PLACEHOLDER_SPINNER_TIMER_ID`.
+        unsafe {
+            SetTimer(
+                self.hwnd.0,
+                PLACEHOLDER_FADE_TIMER_ID,
+                PLACEHOLDER_FADE_INTERVAL_MS,
+                None,
+            );
+        }
+
+        self.placeholder_fade = Some(PlaceholderFade {
+            hwnd: HWindow(overlay_hwnd),
+            started: Instant::now(),
+        });
+    }
+
+    /// Advance the placeholder-overlay fade by one timer tick: compute the
+    /// current alpha from elapsed time and either apply it via
+    /// `SetLayeredWindowAttributes`, or, once the fade duration has elapsed,
+    /// tear the overlay down for good (kill the timer, hide+destroy the
+    /// overlay window). Called from `WM_TIMER` for `PLACEHOLDER_FADE_TIMER_
+    /// ID`; a no-op if no fade is in progress (e.g. a stray/racing timer
+    /// tick after `finish_placeholder_fade` already ran, though `KillTimer`
+    /// there should normally prevent that).
+    fn tick_placeholder_fade(&mut self) {
+        let Some(fade) = self.placeholder_fade.as_ref() else {
+            return;
+        };
+        let elapsed_ms = fade.started.elapsed().as_millis() as u32;
+        if elapsed_ms >= PLACEHOLDER_FADE_DURATION_MS {
+            self.finish_placeholder_fade();
+            return;
+        }
+        let remaining = PLACEHOLDER_FADE_DURATION_MS - elapsed_ms;
+        let alpha = ((remaining as u64 * 255) / PLACEHOLDER_FADE_DURATION_MS as u64) as u8;
+        // SAFETY: `fade.hwnd.0` is the overlay's live window handle (this
+        // method only runs between `start_placeholder_fade` creating it and
+        // `finish_placeholder_fade` destroying it); `alpha` is always a
+        // valid byte and `LWA_ALPHA` is the flag that makes
+        // `SetLayeredWindowAttributes` honor it.
+        unsafe {
+            SetLayeredWindowAttributes(fade.hwnd.0, 0, alpha, LWA_ALPHA);
+        }
+    }
+
+    /// Tear down the placeholder-overlay fade: kill its timer, hide and
+    /// destroy the overlay window. Idempotent via `Option::take`. Called
+    /// once `tick_placeholder_fade` observes the fade duration has elapsed,
+    /// and as a backstop from `wm_ncdestroy` (mirroring `clear_placeholder_
+    /// background`'s own backstop call there) in case the window closes
+    /// mid-fade.
+    fn finish_placeholder_fade(&mut self) {
+        if let Some(fade) = self.placeholder_fade.take() {
+            // SAFETY: `self.hwnd.0` is either the valid window handle this
+            // timer was armed on, or null for the `wm_ncdestroy` backstop
+            // path -- see the identical rationale in `clear_placeholder_
+            // background` for why `KillTimer(null, ..)` there is harmless.
+            unsafe {
+                KillTimer(self.hwnd.0, PLACEHOLDER_FADE_TIMER_ID);
+            }
+            if !fade.hwnd.0.is_null() {
+                // SAFETY: `fade.hwnd.0` is a live `WS_CHILD` window handle
+                // owned by `self.hwnd.0` (or, during the `wm_ncdestroy`
+                // backstop, already being torn down as part of the same
+                // parent teardown that made this call happen at all).
+                // `ShowWindow(SW_HIDE)` immediately stops it from occluding
+                // anything even if `DestroyWindow` below is deferred/queued
+                // by the message loop; explicitly destroying it (rather than
+                // just relying on `WS_CHILD` auto-cleanup when `self.hwnd.0`
+                // eventually goes away) frees its GDI/DWM-side resources
+                // promptly instead of leaving them until the whole top-level
+                // window closes, which for a long-lived terminal session
+                // could be hours or days away.
+                unsafe {
+                    ShowWindow(fade.hwnd.0, SW_HIDE);
+                    DestroyWindow(fade.hwnd.0);
+                }
             }
         }
     }
@@ -1487,6 +1887,13 @@ impl WindowOps for Window {
     fn clear_placeholder_background(&self) {
         Connection::with_window_inner(self.0, move |inner| {
             inner.clear_placeholder_background();
+            Ok(())
+        });
+    }
+
+    fn notify_shell_ready(&self) {
+        Connection::with_window_inner(self.0, move |inner| {
+            inner.notify_shell_ready();
             Ok(())
         });
     }
@@ -1790,6 +2197,13 @@ unsafe fn wm_ncdestroy(
         // GDI objects are always deleted rather than leaked. No-op if it
         // was already cleared.
         inner.clear_placeholder_background();
+        // Same rationale, for the fade overlay: if the window closes
+        // mid-fade (or, in principle, exactly as the fade would have
+        // started -- see `start_placeholder_fade`'s null-`hwnd` guard,
+        // which `clear_placeholder_background` just above could otherwise
+        // race), make sure its timer/window are always torn down rather
+        // than leaked. No-op if there was no fade in progress.
+        inner.finish_placeholder_fade();
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     }
 
@@ -2561,6 +2975,17 @@ unsafe fn wm_timer(hwnd: HWND, _msg: UINT, wparam: WPARAM, _lparam: LPARAM) -> O
             null_mut(),
             RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
         );
+        return Some(0);
+    }
+    if wparam == PLACEHOLDER_FADE_TIMER_ID {
+        // Unlike the spinner timer above, this does not repaint anything --
+        // `tick_placeholder_fade` only ever changes the overlay's whole-
+        // window alpha via `SetLayeredWindowAttributes`, which DWM composites
+        // without the overlay (or anything beneath it) needing to repaint at
+        // all.
+        if let Some(inner) = rc_from_hwnd(hwnd) {
+            inner.borrow_mut().tick_placeholder_fade();
+        }
         return Some(0);
     }
     None
@@ -3705,6 +4130,102 @@ unsafe extern "system" fn child_wnd_proc(
             if paint_parent_placeholder_spinner(hwnd, hdc, &rect) {
                 return 1;
             }
+        }
+        // SAFETY: `hwnd`/`msg`/`wparam`/`lparam` are the values Win32 just
+        // supplied to this wndproc; `DefWindowProcW` is always valid to call
+        // with them.
+        DefWindowProcW(hwnd, msg, wparam, lparam)
+    }) {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("caught {:?}", e);
+            std::process::exit(1)
+        }
+    }
+}
+
+/// Window procedure for the `WS_EX_LAYERED` placeholder-overlay child window
+/// (task #385; see `PlaceholderFade` and `Window::create_placeholder_overlay_
+/// window`).
+///
+/// Like `child_wnd_proc`, this window has no `WindowInner`/`GWLP_USERDATA` of
+/// its own and is input-transparent (`WM_NCHITTEST` -> `HTTRANSPARENT`, same
+/// rationale). `WM_ERASEBKGND`/`WM_PAINT` both paint the parent's spinner via
+/// `paint_parent_placeholder_spinner` -- the exact same GDI content the
+/// parent/WebGpu-child were showing right up until this overlay appeared, so
+/// there is no visible seam at the moment it takes over, only the fade that
+/// follows via `SetLayeredWindowAttributes` (driven by `PLACEHOLDER_FADE_
+/// TIMER_ID` on the parent's `WindowInner`, not by this window at all -- this
+/// wndproc only ever repaints the *content*, never touches alpha itself).
+///
+/// # Safety
+/// This is the `WNDCLASSW::lpfnWndProc` callback: Win32 supplies a valid
+/// `hwnd` and the raw message arguments.
+unsafe extern "system" fn overlay_wnd_proc(
+    hwnd: HWND,
+    msg: UINT,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match std::panic::catch_unwind(|| {
+        if msg == WM_NCHITTEST {
+            return HTTRANSPARENT as LRESULT;
+        }
+        if msg == WM_ERASEBKGND {
+            let hdc = wparam as HDC;
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            // SAFETY: `hwnd` is this valid child window handle; `rect` is a
+            // live stack `RECT` that `GetClientRect` only writes into.
+            GetClientRect(hwnd, &mut rect);
+            // SAFETY: `hwnd` is this valid child window handle; `hdc` is the
+            // device context Win32 passed in `wparam` of a real
+            // `WM_ERASEBKGND` and is live for `rect`, this window's full
+            // client area.
+            if paint_parent_placeholder_spinner(hwnd, hdc, &rect) {
+                return 1;
+            }
+        }
+        if msg == WM_PAINT {
+            let mut ps = PAINTSTRUCT {
+                fErase: 0,
+                fIncUpdate: 0,
+                fRestore: 0,
+                hdc: std::ptr::null_mut(),
+                rcPaint: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                rgbReserved: [0; 32],
+            };
+            // SAFETY: `hwnd` is this valid child window handle and `ps` is a
+            // fully-initialized, live `PAINTSTRUCT`.
+            let hdc = BeginPaint(hwnd, &mut ps);
+            if !hdc.is_null() {
+                let mut rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                // SAFETY: `hwnd` is this valid child window handle; `rect`
+                // is a live stack `RECT` that `GetClientRect` only writes
+                // into.
+                GetClientRect(hwnd, &mut rect);
+                // SAFETY: `hdc` is the non-null device context just
+                // returned by `BeginPaint` and live until `EndPaint`.
+                paint_parent_placeholder_spinner(hwnd, hdc, &rect);
+            }
+            // SAFETY: `hwnd`/`ps` are the same valid handle/live
+            // `PAINTSTRUCT` passed to the matching `BeginPaint` above.
+            EndPaint(hwnd, &ps);
+            return 0;
         }
         // SAFETY: `hwnd`/`msg`/`wparam`/`lparam` are the values Win32 just
         // supplied to this wndproc; `DefWindowProcW` is always valid to call
