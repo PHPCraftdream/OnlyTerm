@@ -13,6 +13,7 @@ vendor-roboto = []
 vendor-noto-emoji = []
 vendor-hebrew = []
 vendor-nerd-font-symbols = []
+vendor-noto-symbols = []
 
 [dependencies]
 anyhow.workspace = true
