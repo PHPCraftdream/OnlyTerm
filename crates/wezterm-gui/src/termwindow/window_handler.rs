@@ -72,25 +72,38 @@ impl TermWindow {
                 );
                 self.render_state.replace(render_state);
 
-                // A working renderer is now installed and will paint every
-                // subsequent frame, so the Windows `WM_ERASEBKGND`
-                // placeholder (task #330; see `WindowOps::
-                // clear_placeholder_background`'s doc comment) is no longer
-                // needed. `created` is the single funnel every renderer
-                // (re)build path goes through -- initial `new_window`
-                // creation, `finish_opengl_fallback`, and
-                // `finish_renderer_rebuild` all call it -- so clearing here
-                // covers all three without duplicating the call at each
-                // site. No-op on non-Windows platforms and idempotent if a
-                // later rebuild calls `created` again.
+                // A working renderer is now installed, but -- unlike before
+                // task #425 -- the Windows `WM_ERASEBKGND` placeholder
+                // (task #330; see `WindowOps::clear_placeholder_
+                // background`'s doc comment) is deliberately NOT cleared
+                // here. `RenderState::new` succeeding only means the GPU
+                // pipeline/atlas exist; on the WebGpu path (the default) the
+                // per-window render thread is spawned strictly *after* this
+                // function returns (see `new_window`), and even the
+                // synchronous fallback path still needs a `WM_PAINT` message
+                // the OS message loop hasn't dispatched yet to actually
+                // build and submit the first real frame. Clearing here (the
+                // pre-#425 behavior) tore down the only thing painting the
+                // client area before any real content was ever queued for
+                // presentation, leaving a gap where the window showed
+                // undefined swapchain contents -- typically a black flash --
+                // between the placeholder disappearing and the first real
+                // frame landing. `paint_impl` now does the actual clear,
+                // gated on `placeholder_cleared`, the first time a real
+                // frame is built and handed off for presentation.
+                //
+                // `window.invalidate()` still happens unconditionally here:
+                // `created` is the single funnel every renderer (re)build
+                // path goes through (initial `new_window` creation,
+                // `finish_opengl_fallback`, `finish_renderer_rebuild`), and
+                // a forced repaint is exactly as necessary as before for all
+                // three -- only the placeholder teardown moved. The window
+                // may already be visible (task #331/early show) with
+                // nothing queued to trigger a repaint yet, so this ensures
+                // the first (or, for a rebuild, next) real frame appears
+                // immediately instead of waiting for some unrelated event
+                // (focus change, resize, blink tick, ...).
                 if let Some(window) = self.window.as_ref() {
-                    window.clear_placeholder_background();
-                    // The window may already be visible (task #331/early
-                    // show) with nothing queued to trigger a repaint yet.
-                    // Force one now so the first real frame appears
-                    // immediately instead of waiting for some unrelated
-                    // event (focus change, resize, blink tick, ...) to
-                    // eventually invalidate the window.
                     window.invalidate();
                 }
             }

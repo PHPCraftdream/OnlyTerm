@@ -351,11 +351,14 @@ pub(crate) struct WindowInner {
     /// `ShowWindow` and the renderer's first frame, where the alternative is
     /// whatever garbage happened to be in that region of the framebuffer, or
     /// (worse, on a dark theme) a stark white flash from an unpainted
-    /// client area. Cleared via `clear_placeholder_background` as soon as
-    /// `TermWindow::created` installs a working `RenderState`, at which
-    /// point the renderer itself is responsible for every subsequent frame
-    /// and `WM_ERASEBKGND` goes back to being a no-op (returning 1 without
-    /// painting, matching today's behavior of a null-brush class).
+    /// client area. Cleared via `clear_placeholder_background` once
+    /// `TermWindow::paint_impl` confirms the first real frame has actually
+    /// been handed off for presentation (task #425 -- deliberately later
+    /// than `TermWindow::created` merely installing a working `RenderState`;
+    /// see that call site for why), at which point the renderer itself is
+    /// responsible for every subsequent frame and `WM_ERASEBKGND` goes back
+    /// to being a no-op (returning 1 without painting, matching today's
+    /// behavior of a null-brush class).
     placeholder_spinner: Option<PlaceholderSpinner>,
     /// Set once `clear_placeholder_background` has run, i.e. a working
     /// `RenderState` is installed and producing frames (task #385's first
@@ -1449,10 +1452,13 @@ impl WindowInner {
     /// spinner's own timer/GDI resources (see `placeholder_spinner`'s doc
     /// comment) now that a working renderer is in place and responsible for
     /// painting every subsequent frame. Idempotent: safe to call more than
-    /// once (e.g. once from `TermWindow::created` on the happy path, and
-    /// once more as a backstop from `wm_ncdestroy` if the window is closed
-    /// before a renderer ever came up) -- `Option::take` makes the second
-    /// call's spinner teardown a no-op, and `start_placeholder_fade`
+    /// once (e.g. once from `TermWindow::paint_impl` -- task #425; see that
+    /// call site for why it waits for the first real frame to actually be
+    /// handed off for presentation rather than calling this as soon as
+    /// `TermWindow::created` installs a `RenderState` -- on the happy path,
+    /// and once more as a backstop from `wm_ncdestroy` if the window is
+    /// closed before a renderer ever came up) -- `Option::take` makes the
+    /// second call's spinner teardown a no-op, and `start_placeholder_fade`
     /// is separately guarded by `placeholder_fade.is_some()`.
     ///
     /// Order matters here: `start_placeholder_fade` must run (and, if
@@ -1468,7 +1474,7 @@ impl WindowInner {
                 // SAFETY: `self.hwnd.0` is either a valid window handle
                 // that `SetTimer` was previously called on with this same
                 // id (see `wm_nccreate`), for the happy-path call from
-                // `TermWindow::created`; or null, for the `wm_ncdestroy`
+                // `TermWindow::paint_impl`; or null, for the `wm_ncdestroy`
                 // backstop call, which runs after `wm_ncdestroy` has
                 // already reset `hwnd` to null -- `KillTimer(null, ..)`
                 // just fails and does nothing, which is fine, since Windows
@@ -3015,9 +3021,9 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
 /// While `placeholder_spinner` is set, paint the spinner into `rcPaint` and
 /// report the background as erased (return 1). Once
 /// `clear_placeholder_background` has dropped it (called from
-/// `TermWindow::created` after a working `RenderState` is installed), fall
-/// straight back to returning 1 without painting -- identical to today's
-/// null-brush behavior.
+/// `TermWindow::paint_impl` once the first real frame has actually been
+/// handed off for presentation -- task #425), fall straight back to
+/// returning 1 without painting -- identical to today's null-brush behavior.
 ///
 /// # Safety
 /// `hwnd` must be a valid window handle and `wparam` the `HDC` passed by
