@@ -578,9 +578,13 @@ As features stabilize some brief notes about them will accumulate here.
   static color as a placeholder while the WebGPU renderer initializes.
   The double resize came from computing the window's initial pixel
   dimensions using a hardcoded 96 DPI default instead of the target
-  monitor's real DPI, which Windows would then correct via a
-  `WM_DPICHANGED` notification shortly after the window appeared; the
-  window now queries the primary monitor's actual DPI up front. The
+  monitor's real DPI: `new_window` built its font metrics on 96, then
+  `check_and_call_resize_if_needed` read the true DPI via
+  `GetDpiForWindow`, detected the mismatch with the cached dimensions,
+  and fired a `WindowEvent::Resized`, after which the GUI rebuilt its
+  metrics and called `set_inner_size` (no `WM_DPICHANGED` is involved --
+  this codebase has no handler for it). The window now queries the
+  primary monitor's actual DPI up front. The
   static placeholder fill is now a small animated spinner, drawn the same
   lightweight (non-GPU) way the old fill was. Once the renderer has
   produced its first frame *and* the shell has produced its first output

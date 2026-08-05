@@ -74,12 +74,18 @@ impl ConnectionOps for Connection {
 
     // New windows are placed on the primary monitor unless a specific
     // position was requested, so querying its real DPI here (instead of
-    // falling back to the hardcoded 96 default) lets window-size
-    // computation that happens before window creation (e.g. cols/rows ->
-    // pixel size in RenderMetrics) already match what Windows will report
-    // once the window exists. Without this, a HiDPI primary monitor causes
-    // Windows to send a corrective WM_DPICHANGED shortly after the window
-    // is shown, producing a visible resize.
+    // falling back to the hardcoded 96 default) lets the pre-creation
+    // window-size computation (cols/rows -> pixel size via RenderMetrics
+    // in `Config::initial_size`) already match what `GetDpiForWindow`
+    // will report once the window exists. Without this, on a HiDPI primary
+    // monitor `new_window` builds its `FontConfiguration`/`RenderMetrics`
+    // on the 96 default; after creation
+    // `check_and_call_resize_if_needed` reads the real DPI, detects the
+    // mismatch with the cached `last_size.dpi`, and dispatches a
+    // `WindowEvent::Resized`, after which the GUI rebuilds fonts/metrics
+    // and calls `set_inner_size` -- producing a visible resize. (This
+    // codebase has no `WM_DPICHANGED` handler, so the OS itself never
+    // forces that correction; the mismatch is entirely internal.)
     fn default_dpi(&self) -> f64 {
         get_primary_monitor_dpi() as f64
     }
