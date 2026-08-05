@@ -7,22 +7,22 @@ use lru::LruCache;
 use mux::pane::PaneId;
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::Mux;
-use promise::BrokenPromise;
 use rangeset::*;
 use ratelim::RateLimiter;
-use std::cell::RefCell;
-use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use termwiz::cell::{Cell, CellAttributes, Underline};
-use termwiz::color::AnsiColor;
-use termwiz::image::{ImageCell, ImageData};
 use termwiz::surface::{SequenceNo, SEQ_ZERO};
 use url::Url;
 use wezterm_term::{KeyCode, KeyModifiers, Line, StableRowIndex};
+
+mod hydrate;
+mod state;
+
+pub(crate) use hydrate::hydrate_lines;
+pub use state::RenderableState;
 
 const MAX_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const BASE_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -78,10 +78,6 @@ pub struct RenderableInner {
     last_input_rtt: u64,
 
     pub input_serial: InputSerial,
-}
-
-pub struct RenderableState {
-    pub inner: RefCell<RenderableInner>,
 }
 
 impl RenderableInner {
@@ -497,7 +493,6 @@ impl RenderableInner {
         if to_fetch.is_empty() || self.dead {
             return;
         }
-
         let local_pane_id = self.local_pane_id;
         log::trace!(
             "will fetch lines {:?} for remote tab id {} at {:?}",
@@ -634,230 +629,6 @@ impl RenderableInner {
         })
         .detach();
         Ok(())
-    }
-}
-
-lazy_static::lazy_static! {
-    static ref IMAGE_LRU: Mutex<LruCache<[u8;32], Arc<ImageData>>> = Mutex::new(LruCache::new(NonZeroUsize::new(128).unwrap()));
-}
-
-pub(crate) async fn hydrate_lines(
-    client: Arc<ClientInner>,
-    pane_id: PaneId,
-    serialized_lines: SerializedLines,
-) -> Vec<(StableRowIndex, Line)> {
-    let (lines, image_cells) = serialized_lines.extract_data();
-
-    if image_cells.is_empty() {
-        return lines;
-    }
-
-    let mut requests = HashMap::new();
-    let mut data_by_hash = HashMap::new();
-    for im in &image_cells {
-        if let Some(data) = IMAGE_LRU.lock().unwrap().get(&im.data_hash) {
-            data_by_hash.insert(im.data_hash, Arc::clone(data));
-        } else {
-            requests
-                .entry(&im.data_hash)
-                .or_insert_with(|| GetImageCell {
-                    pane_id,
-                    line_idx: im.line_idx,
-                    cell_idx: im.cell_idx,
-                    data_hash: im.data_hash,
-                });
-        }
-    }
-
-    for (_, request) in requests {
-        match client.client.get_image_cell(request).await {
-            Ok(GetImageCellResponse {
-                data: Some(data), ..
-            }) => {
-                IMAGE_LRU
-                    .lock()
-                    .unwrap()
-                    .put(data.hash(), Arc::clone(&data));
-                data_by_hash.insert(data.hash(), data);
-            }
-            Ok(GetImageCellResponse { data: None, .. }) => {
-                log::error!("no image data!");
-            }
-
-            Err(err) => {
-                log::error!("failed to retrieve image {err:#}");
-            }
-        }
-    }
-
-    let mut line_by_idx = HashMap::new();
-    for (line_idx, line) in lines {
-        line_by_idx.insert(line_idx, line);
-    }
-
-    for im in image_cells {
-        if let Some(data) = data_by_hash.get(&im.data_hash) {
-            if let Some(line) = line_by_idx.get_mut(&im.line_idx) {
-                if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(im.cell_idx) {
-                    cell.attrs_mut()
-                        .attach_image(Box::new(ImageCell::with_z_index(
-                            im.top_left,
-                            im.bottom_right,
-                            Arc::clone(data),
-                            im.z_index,
-                            im.padding_left,
-                            im.padding_top,
-                            im.padding_right,
-                            im.padding_bottom,
-                            im.image_id,
-                            im.placement_id,
-                        )));
-                }
-            }
-        }
-    }
-
-    line_by_idx.into_iter().collect()
-}
-
-impl RenderableState {
-    pub fn get_cursor_position(&self) -> StableCursorPosition {
-        self.inner.borrow().cursor_position
-    }
-
-    pub fn get_lines(&self, lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
-        let mut inner = self.inner.borrow_mut();
-        let mut result = vec![];
-        let mut to_fetch = RangeSet::new();
-        let now = Instant::now();
-
-        for idx in lines.clone() {
-            let entry = match inner.lines.pop(&idx) {
-                Some(LineEntry::Line(line)) => {
-                    result.push(line.clone());
-                    if line.changed_since(inner.seqno) {
-                        to_fetch.add(idx);
-                        LineEntry::Stale(line)
-                    } else {
-                        LineEntry::Line(line)
-                    }
-                }
-                Some(LineEntry::LineAndFetching(line, then)) => {
-                    result.push(line.clone());
-                    LineEntry::LineAndFetching(line, then)
-                }
-                Some(LineEntry::Fetching(then)) => {
-                    result.push(Line::with_width(inner.dimensions.cols, SEQ_ZERO));
-                    LineEntry::Fetching(then)
-                }
-                Some(LineEntry::Stale(line)) => {
-                    result.push(line.clone());
-                    to_fetch.add(idx);
-                    LineEntry::LineAndFetching(line, now)
-                }
-                None => {
-                    result.push(Line::with_width(inner.dimensions.cols, SEQ_ZERO));
-                    to_fetch.add(idx);
-                    LineEntry::Fetching(now)
-                }
-            };
-
-            if inner.client.overlay_lag_indicator
-                && idx == inner.dimensions.physical_top
-                && inner.is_tardy()
-            {
-                let status = format!(
-                    "wezterm: {:.0?}⏳since last response",
-                    inner.last_recv_time.elapsed()
-                );
-                // Right align it in the tab
-                let col = inner
-                    .dimensions
-                    .cols
-                    .saturating_sub(wezterm_term::unicode_column_width(&status, None));
-
-                let mut attr = CellAttributes::default();
-                attr.set_foreground(AnsiColor::White);
-                attr.set_background(AnsiColor::Blue);
-
-                result
-                    .last_mut()
-                    .unwrap()
-                    .overlay_text_with_attribute(col, &status, attr, SEQ_ZERO);
-            }
-
-            inner.lines.put(idx, entry);
-        }
-
-        log::trace!(
-            "get_lines: {:?}, num result lines={}, will fetch {:?}",
-            lines,
-            result.len(),
-            to_fetch
-        );
-
-        inner.schedule_fetch_lines(to_fetch, now);
-        (lines.start, result)
-    }
-
-    pub fn get_current_seqno(&self) -> SequenceNo {
-        self.inner.borrow().seqno
-    }
-
-    pub fn get_changed_since(
-        &self,
-        lines: Range<StableRowIndex>,
-        seqno: SequenceNo,
-    ) -> RangeSet<StableRowIndex> {
-        let mut inner = self.inner.borrow_mut();
-        if let Err(err) = inner.poll() {
-            // We allow for BrokenPromise here for now; for a TLS backed
-            // session it indicates that we'll retry.  For a local unix
-            // domain session it is terminal... but we will detect that
-            // terminal condition elsewhere
-            if let Err(err) = err.downcast::<BrokenPromise>() {
-                log::error!("remote tab poll failed: {}, marking as dead", err);
-                inner.dead = true;
-            }
-        }
-
-        let mut result = RangeSet::new();
-        for r in lines {
-            match inner.lines.get(&r) {
-                None => {
-                    result.add(r);
-                }
-                Some(
-                    LineEntry::Line(line)
-                    | LineEntry::Stale(line)
-                    | LineEntry::LineAndFetching(line, _),
-                ) if line.changed_since(seqno) => {
-                    result.add(r);
-                }
-                _ => {}
-            }
-        }
-
-        // If we're behind receiving an update, invalidate the top row so
-        // that the indicator will update in a more timely fashion
-        if inner.is_tardy() {
-            // ... but take care to avoid always reporting it as dirty, so
-            // that we don't end up busy looping just to repaint it
-            if inner.last_late_dirty.elapsed() >= Duration::from_secs(1) {
-                result.add(inner.dimensions.physical_top);
-                inner.last_late_dirty = Instant::now();
-            }
-        }
-
-        if !result.is_empty() {
-            log::trace!("get_changed_since: {} -> {:?}", seqno, result);
-        }
-
-        result
-    }
-
-    pub fn get_dimensions(&self) -> RenderableDimensions {
-        self.inner.borrow().dimensions
     }
 }
 
