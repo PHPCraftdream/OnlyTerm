@@ -172,6 +172,21 @@ impl PlaceholderSpinner {
     }
 }
 
+impl Drop for PlaceholderSpinner {
+    fn drop(&mut self) {
+        // SAFETY: `DeleteObject` accepts any GDI object handle, including
+        // ones already deleted (a no-op returning `FALSE`), and none of
+        // these three are ever shared with another live GDI object.
+        // This guarantees the three handles from `PlaceholderSpinner::new`
+        // are freed on every code path, including the early-return from
+        // `Window::new_window` when `create_window` fails after the
+        // spinner was already constructed.
+        unsafe {
+            self.destroy();
+        }
+    }
+}
+
 /// Class name for the `WS_EX_LAYERED` overlay window used to cross-fade the
 /// placeholder spinner into the real terminal content (task #385; see
 /// `WindowInner::placeholder_fade` and `start_placeholder_fade` for the
@@ -1417,18 +1432,6 @@ impl WindowInner {
                 unsafe {
                     KillTimer(self.hwnd.0, PLACEHOLDER_SPINNER_TIMER_ID);
                 }
-            }
-            // SAFETY: `spinner`'s GDI objects were created by
-            // `PlaceholderSpinner::new` and are not shared with any other
-            // GDI object or in use by an in-flight paint call (both
-            // `WM_ERASEBKGND`/`wm_paint` and this method only ever run on
-            // this window's single GUI/message-loop thread), so deleting
-            // them now cannot race a concurrent use. Any fade overlay
-            // started just above by `start_placeholder_fade` has
-            // already taken its one-shot paint of the spinner by this
-            // point, so it doesn't need these to stay alive any longer.
-            unsafe {
-                spinner.destroy();
             }
         }
     }
