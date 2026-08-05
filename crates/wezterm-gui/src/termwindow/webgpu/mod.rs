@@ -88,20 +88,17 @@ pub struct WebGpuState {
     /// `Device::handle_hal_error`/`Device::lose` on whatever thread
     /// happened to make the wgpu call that observed the failure (see the
     /// call site in `new` below), a device that this window has already
-    /// abandoned (superseded by an in-place rebuild, task #253, or replaced
-    /// entirely by a permanent OpenGL fallback, task #255) can still fire a
-    /// *late* device-lost event -- exactly what a real TDR produces on the
-    /// very device this whole recovery machinery exists to escape from.
-    /// Without this flag, that late event would reach
-    /// `TermWindow::handle_render_error_recovery` and either charge a
-    /// spurious rebuild attempt against a perfectly healthy *new* WebGpu
-    /// device (rebuild case) or, worse, drag a window that has permanently
-    /// moved to OpenGL back into the WebGpu rebuild dance (fallback case).
+    /// abandoned (superseded by an in-place rebuild, task #253) can still
+    /// fire a *late* device-lost event -- exactly what a real TDR produces
+    /// on the very device this whole recovery machinery exists to escape
+    /// from. Without this flag, that late event would reach
+    /// `TermWindow::handle_render_error_recovery` and charge a spurious
+    /// rebuild attempt against a perfectly healthy *new* WebGpu device.
     ///
     /// Set to `true` for the lifetime of this instance; the `TermWindow`
-    /// call sites that abandon this `WebGpuState` (`begin_renderer_rebuild`
-    /// and `begin_opengl_fallback`, both in `termwindow/mod.rs`) flip it to
-    /// `false` at the moment they take/drop it, *before* the replacement
+    /// call site that abandons this `WebGpuState` (`begin_renderer_rebuild`
+    /// in `termwindow/render_pipeline.rs`) flips it to `false` at the moment
+    /// it takes/drops it, *before* the replacement
     /// device (if any) exists -- so the callback's check can never
     /// race-observe stale-but-not-yet-marked-stale state from the GUI
     /// thread's perspective (both the flip and the `notify()` re-entry that

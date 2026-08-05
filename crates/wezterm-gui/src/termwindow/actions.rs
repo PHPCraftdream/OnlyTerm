@@ -639,11 +639,15 @@ impl TermWindow {
 
         let gui_win = GuiWin::new(self);
 
-        let opengl_info = self.opengl_info.as_deref().unwrap_or("Unknown").to_string();
+        let renderer_info = self
+            .renderer_info
+            .as_deref()
+            .unwrap_or("Unknown")
+            .to_string();
         let connection_info = self.connection_name.clone();
 
         let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::show_debug_overlay(term, gui_win, opengl_info, connection_info)
+            crate::overlay::show_debug_overlay(term, gui_win, renderer_info, connection_info)
         }) {
             Ok(res) => res,
             Err(err) => {

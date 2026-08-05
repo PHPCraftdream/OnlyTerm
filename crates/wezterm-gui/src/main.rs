@@ -55,7 +55,6 @@ mod stats;
 mod tabbar;
 mod termwindow;
 mod unicode_names;
-mod uniforms;
 mod update;
 mod utilsprites;
 
@@ -546,13 +545,13 @@ fn notify_on_gui_thread_hang() {
     });
 }
 
-fn terminate_with_error_message(err: &str) -> ! {
+pub(crate) fn terminate_with_error_message(err: &str) -> ! {
     log::error!("{}; terminating", err);
     fatal_toast_notification("Wezterm Error", err);
     std::process::exit(1);
 }
 
-fn terminate_with_error(err: anyhow::Error) -> ! {
+pub(crate) fn terminate_with_error(err: anyhow::Error) -> ! {
     let mut err_text = format!("{err:#}");
 
     let warnings = config::configuration_warnings_and_errors();

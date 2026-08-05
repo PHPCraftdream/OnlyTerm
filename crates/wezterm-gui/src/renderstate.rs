@@ -4,15 +4,8 @@ use super::utilsprites::{RenderMetrics, UtilSprites};
 use crate::termwindow::webgpu::{adapter_info_to_gpu_info, WebGpuState, WebGpuTexture};
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::bitmaps::Texture2d;
-use ::window::glium::backend::Context as GliumContext;
-use ::window::glium::buffer::Mapping;
-use ::window::glium::{
-    CapabilitiesSource, IndexBuffer as GliumIndexBuffer, VertexBuffer as GliumVertexBuffer,
-};
-use ::window::*;
 use anyhow::Context;
 use std::cell::{Cell, RefCell, RefMut};
-use std::convert::TryInto;
 use std::rc::Rc;
 use std::sync::Arc;
 use wezterm_font::FontConfiguration;
@@ -21,173 +14,69 @@ use wgpu::util::DeviceExt;
 const INDICES_PER_CELL: usize = 6;
 
 #[derive(Clone)]
-pub enum RenderContext {
-    Glium(Rc<GliumContext>),
-    WebGpu(Arc<WebGpuState>),
-}
+pub struct RenderContext(pub Arc<WebGpuState>);
 
-pub enum RenderFrame<'a> {
-    Glium(&'a mut glium::Frame),
+pub enum RenderFrame {
     WebGpu,
 }
 
 impl RenderContext {
     pub fn allocate_index_buffer(&self, indices: &[u32]) -> anyhow::Result<IndexBuffer> {
-        match self {
-            Self::Glium(context) => Ok(IndexBuffer::Glium(GliumIndexBuffer::new(
-                context,
-                glium::index::PrimitiveType::TrianglesList,
-                indices,
-            )?)),
-            Self::WebGpu(state) => Ok(IndexBuffer::WebGpu(WebGpuIndexBuffer::new(indices, state))),
-        }
+        Ok(IndexBuffer(WebGpuIndexBuffer::new(indices, &self.0)))
     }
 
-    pub fn allocate_vertex_buffer_initializer(&self, num_quads: usize) -> Vec<Vertex> {
-        match self {
-            Self::Glium(_) => {
-                vec![Vertex::default(); num_quads * VERTICES_PER_CELL]
-            }
-            Self::WebGpu(_) => vec![],
-        }
+    pub fn allocate_vertex_buffer_initializer(&self, _num_quads: usize) -> Vec<Vertex> {
+        vec![]
     }
 
     pub fn allocate_vertex_buffer(
         &self,
         num_quads: usize,
-        initializer: &[Vertex],
+        _initializer: &[Vertex],
     ) -> anyhow::Result<VertexBuffer> {
-        match self {
-            Self::Glium(context) => Ok(VertexBuffer::Glium(GliumVertexBuffer::dynamic(
-                context,
-                initializer,
-            )?)),
-            Self::WebGpu(state) => Ok(VertexBuffer::WebGpu(WebGpuVertexBuffer::new(
-                num_quads * VERTICES_PER_CELL,
-                state,
-            ))),
-        }
+        Ok(VertexBuffer(WebGpuVertexBuffer::new(
+            num_quads * VERTICES_PER_CELL,
+            &self.0,
+        )))
     }
 
     pub fn allocate_texture_atlas(&self, size: usize) -> anyhow::Result<Rc<dyn Texture2d>> {
-        match self {
-            Self::Glium(context) => {
-                let caps = context.get_capabilities();
-                // You'd hope that allocating a texture would automatically
-                // include this check, but it doesn't, and instead, the texture
-                // silently fails to bind when attempting to render into it later.
-                // So! We check and raise here for ourselves!
-                let max_texture_size: usize = caps
-                    .max_texture_size
-                    .try_into()
-                    .context("represent Capabilities.max_texture_size as usize")?;
-                if size > max_texture_size {
-                    anyhow::bail!(
-                        "Cannot use a texture of size {} as it is larger \
-                         than the max {} supported by your GPU",
-                        size,
-                        caps.max_texture_size
-                    );
-                }
-                use crate::glium::texture::SrgbTexture2d;
-                let surface: Rc<dyn Texture2d> = Rc::new(SrgbTexture2d::empty_with_format(
-                    context,
-                    glium::texture::SrgbFormat::U8U8U8U8,
-                    glium::texture::MipmapsOption::NoMipmap,
-                    size as u32,
-                    size as u32,
-                )?);
-                Ok(surface)
-            }
-            Self::WebGpu(state) => {
-                let texture: Rc<dyn Texture2d> =
-                    Rc::new(WebGpuTexture::new(size as u32, size as u32, state)?);
-                Ok(texture)
-            }
-        }
+        let texture: Rc<dyn Texture2d> =
+            Rc::new(WebGpuTexture::new(size as u32, size as u32, &self.0)?);
+        Ok(texture)
     }
 
     pub fn renderer_info(&self) -> String {
-        match self {
-            Self::Glium(ctx) => format!(
-                "OpenGL: {} {}",
-                ctx.get_opengl_renderer_string(),
-                ctx.get_opengl_version_string()
-            ),
-            Self::WebGpu(state) => {
-                let info = adapter_info_to_gpu_info(state.adapter_info.clone());
-                format!("WebGPU: {info}")
-            }
-        }
+        let info = adapter_info_to_gpu_info(self.0.adapter_info.clone());
+        format!("WebGPU: {info}")
     }
 }
 
-// Dual-backend enum (OpenGL/WebGPU); the size difference is inherent to
-// wrapping two buffer backends in one type, allocated once per frame.
-#[allow(clippy::large_enum_variant)]
-pub enum IndexBuffer {
-    Glium(GliumIndexBuffer<u32>),
-    WebGpu(WebGpuIndexBuffer),
-}
+pub struct IndexBuffer(WebGpuIndexBuffer);
 
 impl IndexBuffer {
-    pub fn glium(&self) -> &GliumIndexBuffer<u32> {
-        match self {
-            Self::Glium(g) => g,
-            _ => unreachable!(),
-        }
-    }
     pub fn webgpu(&self) -> &WebGpuIndexBuffer {
-        match self {
-            Self::WebGpu(g) => g,
-            _ => unreachable!(),
-        }
+        &self.0
     }
 }
 
-// Dual-backend enum (OpenGL/WebGPU); the size difference is inherent to
-// wrapping two buffer backends in one type, allocated once per frame.
-#[allow(clippy::large_enum_variant)]
-pub enum VertexBuffer {
-    Glium(GliumVertexBuffer<Vertex>),
-    WebGpu(WebGpuVertexBuffer),
-}
+pub struct VertexBuffer(WebGpuVertexBuffer);
 
 impl VertexBuffer {
-    pub fn glium(&self) -> &GliumVertexBuffer<Vertex> {
-        match self {
-            Self::Glium(g) => g,
-            _ => unreachable!(),
-        }
-    }
     pub fn webgpu(&self) -> &WebGpuVertexBuffer {
-        match self {
-            Self::WebGpu(g) => g,
-            _ => unreachable!(),
-        }
+        &self.0
     }
     pub fn webgpu_mut(&mut self) -> &mut WebGpuVertexBuffer {
-        match self {
-            Self::WebGpu(g) => g,
-            _ => unreachable!(),
-        }
+        &mut self.0
     }
 }
 
-enum MappedVertexBuffer<'a> {
-    Glium(Mapping<'a, [Vertex]>),
-    WebGpu(WebGpuMappedVertexBuffer<'a>),
-}
+struct MappedVertexBuffer<'a>(WebGpuMappedVertexBuffer<'a>);
 
 impl<'a> MappedVertexBuffer<'a> {
     fn slice_mut(&mut self, range: std::ops::Range<usize>) -> &mut [Vertex] {
-        match self {
-            Self::Glium(g) => &mut g[range],
-            Self::WebGpu(g) => {
-                let mapping: &mut [Vertex] = bytemuck::cast_slice_mut(&mut g.mapping);
-                &mut mapping[range]
-            }
-        }
+        let mapping: &mut [Vertex] = bytemuck::cast_slice_mut(&mut self.0.mapping);
+        &mut mapping[range]
     }
 }
 
@@ -360,13 +249,7 @@ impl TripleVertexBuffer {
     /// nested borrow rather than a self-referential struct.
     pub fn map<'a>(&'a self, bufs: &'a mut [VertexBuffer]) -> MappedQuadsView<'a> {
         let index = self.index.get();
-        let mapping = match &mut bufs[index] {
-            VertexBuffer::Glium(vb) => {
-                let buf_slice = vb.slice_mut(..).expect("to map vertex buffer");
-                MappedVertexBuffer::Glium(buf_slice.map())
-            }
-            VertexBuffer::WebGpu(vb) => MappedVertexBuffer::WebGpu(vb.map()),
-        };
+        let mapping = MappedVertexBuffer(bufs[index].0.map());
 
         MappedQuadsView {
             mapping,
@@ -385,14 +268,11 @@ impl TripleVertexBuffer {
         RefMut::map(self.bufs.borrow_mut(), |bufs| &mut bufs[index])
     }
 
-    /// Rotates to the next of `bufs.len()` slots. On Glium, `bufs` holds 3
-    /// buffers (unchanged legacy behavior: rotating avoids writing into a
-    /// buffer the GPU might still be reading from a prior frame, since the
-    /// same buffer objects are reused frame over frame). On WebGpu, `bufs`
-    /// holds a single buffer -- `recreate()` swaps in a brand new GPU buffer
-    /// every frame regardless of slot, so a second/third rotation slot never
-    /// holds a buffer the GPU has actually seen before and would just be
-    /// wasted resident memory. With one slot, this is a no-op: index stays 0.
+    /// Rotates to the next of `bufs.len()` slots. `bufs` holds a single
+    /// buffer -- `recreate()` swaps in a brand new GPU buffer every frame
+    /// regardless of slot, so a second/third rotation slot would never hold
+    /// a buffer the GPU has actually seen before and would just be wasted
+    /// resident memory. With one slot, this is a no-op: index stays 0.
     pub fn next_index(&self) {
         let len = self.bufs.borrow().len();
         let mut index = self.index.get();
@@ -496,18 +376,12 @@ impl RenderLayer {
             indices.push(idx + V_BOT_RIGHT as u32);
         }
 
-        // Glium reuses the same buffer objects frame over frame, so it needs
-        // to rotate across multiple (3) slots to avoid writing into a buffer
-        // the GPU might still be reading from a previous frame. WebGpu's
         // `recreate()` swaps in a brand new GPU buffer every frame regardless
-        // of slot (see `call_draw_webgpu`), so a second/third slot would
-        // never actually hold a buffer the GPU has seen before -- rotation
-        // buys nothing there, so it gets a single slot to avoid keeping 3x
-        // the vertex-buffer memory resident for no benefit.
-        let num_slots = match context {
-            RenderContext::Glium(_) => 3,
-            RenderContext::WebGpu(_) => 1,
-        };
+        // of slot (see `call_draw_webgpu`), so more than one rotation slot
+        // would never actually hold a buffer the GPU has seen before --
+        // rotation buys nothing here, so this gets a single slot rather than
+        // keeping extra vertex-buffer memory resident for no benefit.
+        let num_slots = 1;
         let mut bufs = Vec::with_capacity(num_slots);
         for _ in 0..num_slots {
             bufs.push(context.allocate_vertex_buffer(num_quads, &verts)?);
@@ -543,7 +417,6 @@ pub struct RenderState {
     pub context: RenderContext,
     pub glyph_cache: RefCell<GlyphCache>,
     pub util_sprites: UtilSprites,
-    pub glyph_prog: Option<glium::Program>,
     pub layers: RefCell<Vec<Rc<RenderLayer>>>,
 }
 
@@ -559,20 +432,12 @@ impl RenderState {
             let result = UtilSprites::new(&mut glyph_cache.borrow_mut(), metrics);
             match result {
                 Ok(util_sprites) => {
-                    let glyph_prog = match &context {
-                        RenderContext::Glium(context) => {
-                            Some(Self::compile_prog(context, Self::glyph_shader)?)
-                        }
-                        RenderContext::WebGpu(_) => None,
-                    };
-
                     let main_layer = Rc::new(RenderLayer::new(&context, 1024, 0)?);
 
                     return Ok(Self {
                         context,
                         glyph_cache,
                         util_sprites,
-                        glyph_prog,
                         layers: RefCell::new(vec![main_layer]),
                     });
                 }
@@ -636,49 +501,6 @@ impl RenderState {
         }
 
         Ok(allocated)
-    }
-
-    fn compile_prog(
-        context: &Rc<GliumContext>,
-        fragment_shader: fn(&str) -> (String, String),
-    ) -> anyhow::Result<glium::Program> {
-        let mut errors = vec![];
-
-        let caps = context.get_capabilities();
-        log::trace!("Compiling shader. context.capabilities.srgb={}", caps.srgb);
-
-        for version in &["330 core", "330", "320 es", "300 es"] {
-            let (vertex_shader, fragment_shader) = fragment_shader(version);
-            let source = glium::program::ProgramCreationInput::SourceCode {
-                vertex_shader: &vertex_shader,
-                fragment_shader: &fragment_shader,
-                outputs_srgb: true,
-                tessellation_control_shader: None,
-                tessellation_evaluation_shader: None,
-                transform_feedback_varyings: None,
-                uses_point_size: false,
-                geometry_shader: None,
-            };
-            match glium::Program::new(context, source) {
-                Ok(prog) => {
-                    return Ok(prog);
-                }
-                Err(err) => errors.push(format!("shader version: {}: {:#}", version, err)),
-            };
-        }
-
-        anyhow::bail!("Failed to compile shaders: {}", errors.join("\n"))
-    }
-
-    fn glyph_shader(version: &str) -> (String, String) {
-        (
-            format!(
-                "#version {}\n{}",
-                version,
-                include_str!("glyph-vertex.glsl")
-            ),
-            format!("#version {}\n{}", version, include_str!("glyph-frag.glsl")),
-        )
     }
 
     pub fn config_changed(&mut self) {
