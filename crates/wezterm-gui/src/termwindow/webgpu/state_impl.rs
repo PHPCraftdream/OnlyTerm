@@ -492,13 +492,35 @@ impl WebGpuState {
         // view_formats without it will cause surface.configure
         // to panic
         // <https://github.com/wezterm/wezterm/issues/3565>
-        let view_formats = if downlevel_caps
+        let supports_reinterpret_view = downlevel_caps
             .flags
-            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
-        {
+            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
+        let view_formats = if supports_reinterpret_view {
             vec![format.add_srgb_suffix(), format.remove_srgb_suffix()]
         } else {
             vec![]
+        };
+
+        // The render pipeline and `submit_frame`'s render pass both target a
+        // non-sRGB *view* of the (possibly sRGB) surface format, when the
+        // adapter allows reinterpreting the view (`supports_reinterpret_view`,
+        // gated on the same `SURFACE_VIEW_FORMATS` capability that populates
+        // `view_formats` above). Writing/blending through a non-sRGB view
+        // means the GPU does not auto-linearize the blend operation, matching
+        // the OpenGL/glium backend's `outputs_srgb: true` + manual
+        // `to_srgb()` in glyph-frag.glsl: both backends then blend directly
+        // on gamma-encoded bytes ("naive"/gamma-space blending), which is
+        // what shader.wgsl's `to_srgb()` call at the end of `fs_main` now
+        // produces. Skipping this (falling back to the sRGB view) restores
+        // the old behavior: physically-correct linear-space blending, which
+        // reads as visibly thinner glyph edges than glium's gamma-space
+        // blending for the same coverage data. `submit_frame` re-derives this
+        // same condition from `self.downlevel_caps` when building the view,
+        // so both must stay in sync with this variable's logic.
+        let render_format = if supports_reinterpret_view {
+            format.remove_srgb_suffix()
+        } else {
+            format
         };
 
         let max_dim = device.limits().max_texture_dimension_2d;
@@ -614,7 +636,7 @@ impl WebGpuState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: config.format,
+                    format: render_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -695,9 +717,25 @@ impl WebGpuState {
     /// makes it callable from a dedicated render thread in a later task.
     pub fn submit_frame(&self, frame: GpuFrame) -> Result<(), wgpu::SurfaceError> {
         let output = self.surface.get_current_texture()?;
-        let view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        // Reinterpret as the non-sRGB sibling format when the adapter
+        // supports it, matching `render_format` in `new_impl`'s render
+        // pipeline creation -- see the comment there for why. `None` (the
+        // texture's own, sRGB, format) is the correct fallback on adapters
+        // that lack `DownlevelFlags::SURFACE_VIEW_FORMATS`, since `format`
+        // wasn't added to `view_formats` for them either.
+        let render_view_format = if self
+            .downlevel_caps
+            .flags
+            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
+        {
+            Some(self.config.lock().format.remove_srgb_suffix())
+        } else {
+            None
+        };
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: render_view_format,
+            ..Default::default()
+        });
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
