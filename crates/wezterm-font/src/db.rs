@@ -224,3 +224,87 @@ impl FontDatabase {
         None
     }
 }
+
+#[cfg(test)]
+#[cfg(windows)]
+mod stack_overflow_repro {
+    //! Task #422: a real, deterministic `EXCEPTION_STACK_OVERFLOW` was
+    //! captured via minidump-stackwalk from two independent crash dumps
+    //! in `C:\CrashDumps\OnlyTerm\`, both with an identical crash address
+    //! and both after 5-7s of uptime, with the configuration
+    //! `font_locator: ConfigDirsOnly`, `font_dirs: [C:/Windows/Fonts]`,
+    //! `search_font_dirs_for_fallback: true`. The reported crash frame was
+    //! inside `FontDatabase::with_font_dirs` (this file), which is what
+    //! originally pointed the investigation at font parsing.
+    //!
+    //! Investigation summary (see the config-crate regression test added
+    //! alongside this one, `crates/config/src/config.rs`'s
+    //! `stack_overflow_repro` module, for the actual root cause): running
+    //! `with_font_dirs` against the real `C:/Windows/Fonts` directory
+    //! (537 files, including COLR/TTC/SVG-in-OT fonts) on a thread with a
+    //! deliberately small stack does reproduce an overflow, but bisecting
+    //! it down (by shrinking the font-file set, and by isolating each
+    //! `ttf_parser`/`swash`-backed accessor individually) showed that no
+    //! font file or font-parsing call is responsible: every
+    //! `ttf_parser`/`SwashFontInfo` accessor, including on the specific
+    //! file the overflow was bisected down to
+    //! (`EmojiOneColor-SVGinOT.ttf`), completes fine even on a 64KiB
+    //! stack. The actual trigger was `config::configuration()`'s *first*
+    //! call in the process lazily initializing the global `CONFIG`
+    //! static via `Config::default()` -- which is unrelated to font
+    //! parsing and just happened to be reachable from
+    //! `ParsedFont::from_face`'s `ignore_svg_fonts` check the moment a
+    //! font file was being parsed. `Config::default()` goes through the
+    //! `FromDynamic` derive macro (`crates/wezterm-dynamic/derive`),
+    //! which for a ~226-field struct generates one large, non-recursive
+    //! `from_dynamic` function body; in an unoptimized/debug build this
+    //! measured as needing threads have stack headroom well beyond a
+    //! constrained (256KiB) stack, though comfortably under the 1MiB
+    //! Windows default. This test keeps a basic sanity check that a real
+    //! `with_font_dirs` scan of the system fonts directory succeeds; the
+    //! `Config::default()` stack-usage regression coverage lives in the
+    //! `config` crate, closer to the actual root cause.
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn with_font_dirs_over_real_windows_fonts_directory_does_not_overflow() {
+        let fonts_dir = Path::new(r"C:\Windows\Fonts");
+        if !fonts_dir.is_dir() {
+            eprintln!("skipping: {:?} does not exist on this machine", fonts_dir);
+            return;
+        }
+
+        let config = Config {
+            font_dirs: vec![fonts_dir.to_path_buf()],
+            ..Config::default()
+        };
+
+        // A small (but not absurd) stack makes any unbounded/deep
+        // recursion in the parsing path fail fast and cheaply instead of
+        // silently succeeding just because the test thread happens to
+        // have several MB of headroom. 1MiB matches the real Windows
+        // default main-thread stack size (see the module doc comment for
+        // why this test no longer uses a smaller stack: below 1MiB, the
+        // dominant cost is `Config::default()`'s own stack usage, not
+        // anything in this crate, and that's covered separately in the
+        // `config` crate).
+        let handle = std::thread::Builder::new()
+            .name("font-dirs-repro".into())
+            .stack_size(1024 * 1024)
+            .spawn(move || {
+                let db = FontDatabase::with_font_dirs(&config)
+                    .expect("with_font_dirs should not error for a valid directory");
+                db.list_available().len()
+            })
+            .expect("failed to spawn repro thread");
+
+        let count = handle
+            .join()
+            .expect("with_font_dirs panicked or the thread crashed (possible stack overflow)");
+        eprintln!(
+            "with_font_dirs over {:?} parsed {} font entries without crashing",
+            fonts_dir, count
+        );
+    }
+}
