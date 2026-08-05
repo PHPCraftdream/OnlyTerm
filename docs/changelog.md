@@ -561,6 +561,31 @@ As features stabilize some brief notes about them will accumulate here.
   gamma-space blending. `shader.wgsl` now gamma-encodes its output and
   renders through a non-sRGB view of the surface, matching the OpenGL
   backend's blending space.
+* Fallback font resolution for a missing glyph was non-deterministic: the
+  same codepoint could resolve to a correct glyph on one run and to
+  `.notdef` (tofu) on the next. Two compounding causes: the coverage-based
+  candidate sort only ran when the (default-off) `sort_fallback_fonts_by_coverage`
+  option was enabled, so by default candidates were ordered by a `HashMap`'s
+  iteration order (randomized per-process); and the bundled Noto Color Emoji
+  font's cmap claims coverage of some Dingbat codepoints (e.g. U+2702
+  SCISSORS) that it can only actually render as part of a ZWJ/ligature
+  sequence, not standalone, so winning the (previously unstable) tie-break
+  against the correctly-covering font produced tofu. Candidate sorting is
+  now always applied, with emoji-presentation fonts deprioritized on a
+  coverage tie and a final deterministic tie-break by font name.
+* Startup showed a small window that briefly resized (twice, in quick
+  succession) to its final size, filled in the meantime with a plain,
+  static color as a placeholder while the WebGPU renderer initializes.
+  The double resize came from computing the window's initial pixel
+  dimensions using a hardcoded 96 DPI default instead of the target
+  monitor's real DPI, which Windows would then correct via a
+  `WM_DPICHANGED` notification shortly after the window appeared; the
+  window now queries the primary monitor's actual DPI up front. The
+  static placeholder fill is now a small animated spinner, drawn the same
+  lightweight (non-GPU) way the old fill was. Once the renderer has
+  produced its first frame *and* the shell has produced its first output
+  (whichever happens later), the spinner smoothly cross-fades into the
+  real terminal content instead of being replaced abruptly.
 * Seven issues surfaced by review during the file-splitting and clippy
   cleanup above are now fixed. Three predate this fork (inherited from
   upstream): `kitty` keyboard-protocol encoding mapped `KeyCode::VolumeDown`
