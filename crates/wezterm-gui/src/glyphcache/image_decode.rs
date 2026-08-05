@@ -52,7 +52,6 @@ impl<'a> BitmapImage for DecodedImageHandle<'a> {
 #[derive(Clone)]
 pub(super) struct DecodedFrame {
     pub(super) lease: BlobLease,
-    #[allow(dead_code)]
     duration: Duration,
     pub(super) width: usize,
     pub(super) height: usize,
