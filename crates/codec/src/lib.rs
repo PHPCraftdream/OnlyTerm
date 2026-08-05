@@ -36,8 +36,8 @@ mod test {
     use std::io::Cursor;
     use std::ops::Range;
     use termwiz::surface::{Line, SequenceNo};
-    use wezterm_term::TerminalSize;
     use wezterm_term::StableRowIndex;
+    use wezterm_term::TerminalSize;
 
     #[test]
     fn test_frame() {
@@ -166,9 +166,9 @@ mod test {
         // byte each; only the declared length is inflated.
         let serial: u64 = 0;
         let ident: u64 = 1;
-        let len =
-            declared_data_len + crate::framing::encoded_length(serial) as u64
-                + crate::framing::encoded_length(ident) as u64;
+        let len = declared_data_len
+            + crate::framing::encoded_length(serial) as u64
+            + crate::framing::encoded_length(ident) as u64;
         let mut buf = Vec::new();
         leb128::write::unsigned(&mut buf, len).unwrap();
         leb128::write::unsigned(&mut buf, serial).unwrap();

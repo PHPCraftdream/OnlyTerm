@@ -1,5 +1,5 @@
 use crate::attributes::CellAttributes;
-use crate::unicode::{grapheme_column_width, UnicodeVersion};
+use crate::unicode::{UnicodeVersion, grapheme_column_width};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 #[cfg(feature = "use_serde")]

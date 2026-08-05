@@ -18,12 +18,12 @@ mod cell;
 mod color;
 mod config;
 mod config_types;
+mod configuration;
 mod daemon;
 mod dynamic_convert;
 mod exec_domain;
 mod font;
 mod font_weight;
-mod text_style;
 mod frontend;
 pub mod keyassignment;
 mod keys;
@@ -32,11 +32,11 @@ pub mod meta;
 mod scheme_data;
 mod serial;
 mod terminal;
+mod text_style;
 mod units;
 mod unix;
 mod version;
 pub mod window;
-mod configuration;
 
 pub use crate::config::*;
 pub use background::*;
@@ -44,7 +44,9 @@ pub use bell::*;
 pub use cell::*;
 pub use color::*;
 pub use config_types::*;
+pub use configuration::*;
 pub use daemon::*;
+pub(crate) use dynamic_convert::*;
 pub use exec_domain::*;
 pub use font::*;
 pub use frontend::*;
@@ -54,10 +56,8 @@ pub use terminal::*;
 pub use units::*;
 pub use unix::*;
 pub use version::*;
-pub(crate) use dynamic_convert::*;
-pub use configuration::*;
 
-pub(crate) use configuration::{default_config_with_overrides_applied};
+pub(crate) use configuration::default_config_with_overrides_applied;
 pub(crate) use configuration::{CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP};
 
 lazy_static! {

@@ -20,8 +20,11 @@ pub(super) fn schedule_domain_spawn_v2<SND>(
         .detach();
 }
 
-pub(super) fn schedule_split_pane<SND>(split: SplitPane, send_response: SND, client_id: Option<Arc<ClientId>>)
-where
+pub(super) fn schedule_split_pane<SND>(
+    split: SplitPane,
+    send_response: SND,
+    client_id: Option<Arc<ClientId>>,
+) where
     SND: Fn(anyhow::Result<Pdu>) + 'static,
 {
     promise::spawn::spawn(async move { send_response(split_pane(split, client_id).await) })

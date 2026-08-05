@@ -124,7 +124,10 @@ pub(super) struct Reconnectable {
 }
 
 impl Reconnectable {
-    pub(super) fn new(config: ClientDomainConfig, stream: Option<Box<dyn AsyncReadAndWrite>>) -> Self {
+    pub(super) fn new(
+        config: ClientDomainConfig,
+        stream: Option<Box<dyn AsyncReadAndWrite>>,
+    ) -> Self {
         Self { config, stream }
     }
 

@@ -1,6 +1,6 @@
-use super::*;
 use super::ime::ImmContext;
 use super::keyboard_layout::{KeyboardLayoutInfo, ResolvedDeadKey};
+use super::*;
 use crate::connection::ConnectionOps;
 use crate::parameters::{self, Parameters};
 use crate::{

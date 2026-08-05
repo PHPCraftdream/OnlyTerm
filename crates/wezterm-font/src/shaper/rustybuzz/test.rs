@@ -45,9 +45,7 @@ fn primary_then_hebrew_fallback_handles() -> Vec<ParsedFont> {
 #[cfg(windows)]
 fn lucida_then_hebrew_fallback_handles() -> Vec<ParsedFont> {
     let lucida = ParsedFont::from_locator(&FontDataHandle {
-        source: FontDataSource::OnDisk(std::path::PathBuf::from(
-            "C:\\Windows\\Fonts\\lucon.ttf",
-        )),
+        source: FontDataSource::OnDisk(std::path::PathBuf::from("C:\\Windows\\Fonts\\lucon.ttf")),
         index: 0,
         variation: 0,
         origin: crate::locator::FontOrigin::FontDirs,
@@ -124,8 +122,7 @@ fn reproduces_the_captured_clamp_warning_input() {
         .try_init();
 
     let config = config::configuration();
-    let shaper =
-        RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+    let shaper = RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
 
     let mut no_glyphs = vec![];
     shaper
@@ -244,8 +241,7 @@ fn unresolved_mark_does_not_discard_its_base_letter() {
 
     let text = "\u{5d4}\u{5b4}\u{5d9}\u{5d0}"; // he + hiriq + yod + alef ("הִיא")
     let config = config::configuration();
-    let shaper =
-        RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+    let shaper = RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
     let mut no_glyphs = vec![];
     let info = shaper
         .shape(
@@ -301,8 +297,7 @@ fn bidi_multi_word_hebrew_phrase_shapes_with_correct_cell_widths() {
     let clusters = line.cluster(Some(ParagraphDirectionHint::AutoLeftToRight));
 
     let config = config::configuration();
-    let shaper =
-        RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
+    let shaper = RustybuzzShaper::new(&config, &primary_then_hebrew_fallback_handles()).unwrap();
 
     for cluster in &clusters {
         let presentation_width = PresentationWidth::with_cluster(cluster);

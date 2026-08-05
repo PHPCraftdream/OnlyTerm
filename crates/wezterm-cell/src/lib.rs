@@ -11,12 +11,12 @@ extern crate alloc;
 #[macro_use]
 extern crate std;
 
-pub mod color;
-#[cfg(feature = "use_image")]
-pub mod image;
 mod attribute_change;
 mod attributes;
 mod cell;
+pub mod color;
+#[cfg(feature = "use_image")]
+pub mod image;
 #[cfg(test)]
 mod test;
 mod unicode;
@@ -25,8 +25,8 @@ pub use attribute_change::AttributeChange;
 pub use attributes::{CellAttributes, SemanticType};
 pub use cell::Cell;
 pub use unicode::{
-    grapheme_column_width, is_white_space_char, is_white_space_grapheme, unicode_column_width,
-    LATEST_UNICODE_VERSION, UnicodeVersion,
+    LATEST_UNICODE_VERSION, UnicodeVersion, grapheme_column_width, is_white_space_char,
+    is_white_space_grapheme, unicode_column_width,
 };
 pub use wezterm_char_props::emoji::Presentation;
 pub use wezterm_escape_parser::csi::{Blink, Intensity, Underline, VerticalAlign};

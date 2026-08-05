@@ -302,8 +302,6 @@ pub fn adapter_info_to_gpu_info(info: wgpu::AdapterInfo) -> GpuInfo {
     }
 }
 
-
-
 /// Clamp a requested surface size to a maximum.
 /// (e.g. the GPU adapter's maximum texture dimension)
 ///

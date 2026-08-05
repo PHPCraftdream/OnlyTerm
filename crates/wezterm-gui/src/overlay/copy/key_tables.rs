@@ -1,6 +1,6 @@
-
 use config::keyassignment::{
-    ClipboardCopyDestination, CopyModeAssignment, KeyAssignment, KeyTable, KeyTableEntry, SelectionMode,
+    ClipboardCopyDestination, CopyModeAssignment, KeyAssignment, KeyTable, KeyTableEntry,
+    SelectionMode,
 };
 use ordered_float::NotNan;
 use window::{KeyCode as WKeyCode, Modifiers};

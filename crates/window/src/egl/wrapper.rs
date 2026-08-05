@@ -107,7 +107,11 @@ impl EglWrapper {
         }
     }
 
-    pub(super) fn log_config_info(&self, display: ffi::types::EGLDisplay, config: ffi::types::EGLConfig) {
+    pub(super) fn log_config_info(
+        &self,
+        display: ffi::types::EGLDisplay,
+        config: ffi::types::EGLConfig,
+    ) {
         #[derive(Debug)]
         #[allow(dead_code)]
         struct ConfigInfo {

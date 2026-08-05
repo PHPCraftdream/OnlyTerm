@@ -1,7 +1,7 @@
 mod console;
 
-pub use console::{ConsoleInputHandle, ConsoleOutputHandle};
 use console::{dimensions_from_buffer_info, EventHandle, InputHandle, OutputHandle};
+pub use console::{ConsoleInputHandle, ConsoleOutputHandle};
 
 use crate::caps::Capabilities;
 use crate::escape::csi::{DecPrivateMode, DecPrivateModeCode, Mode, CSI};
@@ -23,9 +23,9 @@ use std::time::Duration;
 use winapi::um::synchapi::WaitForMultipleObjects;
 use winapi::um::winbase::{INFINITE, WAIT_FAILED, WAIT_OBJECT_0};
 use winapi::um::wincon::{
-    COORD, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_MOUSE_INPUT,
-    ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-    ENABLE_WINDOW_INPUT, SetConsoleScreenBufferSize,
+    SetConsoleScreenBufferSize, COORD, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT,
+    ENABLE_LINE_INPUT, ENABLE_MOUSE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT,
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WINDOW_INPUT,
 };
 use winapi::um::winnls::CP_UTF8;
 

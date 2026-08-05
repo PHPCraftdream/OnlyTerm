@@ -17,9 +17,7 @@ use url::Url;
 use wezterm_bidi::ParagraphDirectionHint;
 use wezterm_cell::image::ImageData;
 use wezterm_cell::UnicodeVersion;
-use wezterm_escape_parser::csi::{
-    CursorStyle, Edit, EraseInDisplay, EraseInLine, TabulationClear,
-};
+use wezterm_escape_parser::csi::{CursorStyle, Edit, EraseInDisplay, EraseInLine, TabulationClear};
 use wezterm_escape_parser::{OperatingSystemCommand, CSI};
 use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo};
 

@@ -268,7 +268,13 @@ pub enum PolyCommand {
 }
 
 impl PolyCommand {
-    pub(super) fn to_skia(self, width: usize, height: usize, underline_height: f32, pb: &mut PathBuilder) {
+    pub(super) fn to_skia(
+        self,
+        width: usize,
+        height: usize,
+        underline_height: f32,
+        pb: &mut PathBuilder,
+    ) {
         match self {
             Self::MoveTo(x, y) => pb.move_to(
                 x.to_pixel(width, underline_height, width.min(height)),

@@ -1,9 +1,6 @@
 use super::*;
 
-use config::keyassignment::{
-    CopyModeAssignment, KeyAssignment,
-    ScrollbackEraseMode,
-};
+use config::keyassignment::{CopyModeAssignment, KeyAssignment, ScrollbackEraseMode};
 use mux::domain::DomainId;
 use mux::pane::{
     CachePolicy, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId, Pattern,
@@ -20,8 +17,8 @@ use termwiz::surface::{SequenceNo, SEQ_ZERO};
 use url::Url;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
-    unicode_column_width, Clipboard, KeyCode, KeyModifiers, Line, MouseEvent,
-    StableRowIndex, TerminalSize,
+    unicode_column_width, Clipboard, KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex,
+    TerminalSize,
 };
 
 impl Pane for CopyOverlay {
