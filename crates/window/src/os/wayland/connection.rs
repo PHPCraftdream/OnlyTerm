@@ -21,7 +21,6 @@ use super::WaylandWindowInner;
 pub struct WaylandConnection {
     pub(crate) should_terminate: RefCell<bool>,
     pub(crate) next_window_id: AtomicUsize,
-    pub(super) gl_connection: RefCell<Option<Rc<crate::egl::GlConnection>>>,
     pub(super) connection: WConnection,
     pub(super) event_queue: RefCell<EventQueue<WaylandState>>,
     pub(super) wayland_state: RefCell<WaylandState>,
@@ -38,7 +37,6 @@ impl WaylandConnection {
             connection: conn,
             should_terminate: RefCell::new(false),
             next_window_id: AtomicUsize::new(1),
-            gl_connection: RefCell::new(None),
             event_queue: RefCell::new(event_queue),
             wayland_state: RefCell::new(wayland_state),
         };
