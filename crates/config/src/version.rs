@@ -27,16 +27,18 @@ pub fn running_under_wsl() -> bool {
         // returns 0 on success. `name` is zero-initialized so any field left
         // untouched is a valid NUL-terminated C string. We only read `version`
         // and `release` via `CStr::from_ptr` when uname reports success.
-        let mut name: libc::utsname = std::mem::zeroed();
-        if unsafe { libc::uname(&mut name) } == 0 {
-            // 'microsoft' is usually in version, in some cases it can be in release instead
-            // (see #7136)
-            let version = format!(
-                "{} {}",
-                std::ffi::CStr::from_ptr(name.version.as_ptr()).to_string_lossy(),
-                std::ffi::CStr::from_ptr(name.release.as_ptr()).to_string_lossy()
-            );
-            return version.to_ascii_lowercase().contains("microsoft");
+        unsafe {
+            let mut name: libc::utsname = std::mem::zeroed();
+            if libc::uname(&mut name) == 0 {
+                // 'microsoft' is usually in version, in some cases it can be in release instead
+                // (see #7136)
+                let version = format!(
+                    "{} {}",
+                    std::ffi::CStr::from_ptr(name.version.as_ptr()).to_string_lossy(),
+                    std::ffi::CStr::from_ptr(name.release.as_ptr()).to_string_lossy()
+                );
+                return version.to_ascii_lowercase().contains("microsoft");
+            }
         }
     }
 
