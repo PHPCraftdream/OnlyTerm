@@ -543,6 +543,23 @@ As features stabilize some brief notes about them will accumulate here.
   OSC 9 escapes set the progress state to "Indeterminate".
 
 #### Fixed
+* The seven pre-existing issues surfaced by review during the file-splitting
+  and clippy cleanup above are now fixed: `kitty` keyboard-protocol encoding
+  mapped both `MediaPrevTrack` and `VolumeDown` to function code `57436` in
+  two independent match blocks (`VolumeDown` now correctly uses `57438`,
+  matching the `57438`/`57439`/`57440` lower/raise/mute-volume run); a
+  Windows console `scroll_region` computed its destination rectangle's Y
+  coordinate from the X-axis `left` variable instead of `top`; `termwiz`
+  encoded `Numpad9` as the PageDown escape instead of the conventional
+  PageUp one; `config` failed to compile on any unix target because a
+  `SAFETY`-commented `unsafe` block around `version.rs`'s WSL detection was
+  scoped too narrowly, leaving `mem::zeroed()` and two `CStr::from_ptr`
+  calls outside it; `termwiz` warned about an unused `MouseButtons` import
+  on non-Windows targets, introduced by the file-splitting pass; the
+  workspace's own `cargo fmt --all -- --check` gate was failing on 143
+  hunks across 66 files at HEAD; and a stray `#[allow(dead_code)]` plus a
+  duplicated `clippy::cognitive_complexity` entry in an `#[allow(...)]` list
+  were removed.
 * Race condition when very quickly adjusting font scale, and other improvements
   around resizing. Thanks to @jknockel! #4876 #5032 #5033
 * macOS: wacky initial window size with external monitors or certain font
