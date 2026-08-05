@@ -31,25 +31,9 @@ use wezterm_term::{Alert, StableRowIndex, TerminalSize};
 
 impl TermWindow {
     pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
-        // TEMPDIAG(task #405): find where the time goes before the startup
-        // spinner becomes visible. Remove once #405 is resolved.
-        let t_new_window_start = crate::TEMPDIAG_405_START
-            .get()
-            .map(|i| i.elapsed())
-            .unwrap_or_default();
         let config = configuration();
         let dpi = config.dpi.unwrap_or_else(::window::default_dpi) as usize;
         let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
-        log::info!(
-            "TEMPDIAG #405: new_window entered at {:?} since process start, \
-             FontConfiguration::new took {:?}",
-            t_new_window_start,
-            crate::TEMPDIAG_405_START
-                .get()
-                .map(|i| i.elapsed())
-                .unwrap_or_default()
-                .saturating_sub(t_new_window_start)
-        );
 
         let mux = Mux::get();
         let size = match mux.get_active_tab_for_window(mux_window_id) {
@@ -323,16 +307,6 @@ impl TermWindow {
         // `created()`), and pane input keeps flowing to the pty regardless of
         // whether a renderer is attached yet, so there is nothing unsafe
         // about a visible-but-not-yet-rendering window.
-        // TEMPDIAG(task #405): the headline number -- everything from
-        // process start up to the point the window (and its startup
-        // spinner) actually becomes visible. Remove once #405 is resolved.
-        log::info!(
-            "TEMPDIAG #405: about to call window.show() at {:?} since process start",
-            crate::TEMPDIAG_405_START
-                .get()
-                .map(|i| i.elapsed())
-                .unwrap_or_default()
-        );
         window.show();
         if config.start_maximized {
             window.maximize();

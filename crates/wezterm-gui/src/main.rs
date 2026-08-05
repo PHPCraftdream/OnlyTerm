@@ -564,15 +564,7 @@ fn terminate_with_error(err: anyhow::Error) -> ! {
     terminate_with_error_message(&err_text)
 }
 
-// TEMPDIAG(task #405): records when `main()` started so later checkpoints
-// can log elapsed-since-process-start, to find where the time goes before
-// the startup spinner (task #384) becomes visible. Remove once #405 is
-// resolved.
-pub(crate) static TEMPDIAG_405_START: std::sync::OnceLock<std::time::Instant> =
-    std::sync::OnceLock::new();
-
 fn main() {
-    TEMPDIAG_405_START.set(std::time::Instant::now()).ok();
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 
