@@ -1,6 +1,6 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 use crate::db::FontDatabase;
-use crate::locator::{new_locator, FontLocator};
+use crate::locator::{new_locator, FontLocator, FontLocatorSelection};
 use crate::parser::ParsedFont;
 use crate::rasterizer::{new_rasterizer, FontRasterizer};
 use crate::shaper::{new_shaper, FontShaper, PresentationWidth};
@@ -307,7 +307,18 @@ struct FontConfigInner {
     dpi: RefCell<usize>,
     font_scale: RefCell<f64>,
     config: RefCell<ConfigHandle>,
-    locator: Arc<dyn FontLocator + Send + Sync>,
+    /// The OS/system font source, built from `config.font_locator`. Held in
+    /// a `RefCell` because that config value can change at runtime: a plain
+    /// `Arc` field would pin whichever locator the process happened to start
+    /// with, so switching e.g. `ConfigDirsOnly` (a no-op locator) to `Gdi`
+    /// would appear to do nothing -- glyphs the system font could supply
+    /// would keep rendering as tofu, and explicitly configured fonts would
+    /// keep falling back -- until the process was restarted.
+    locator: RefCell<Arc<dyn FontLocator + Send + Sync>>,
+    /// The `font_locator` value `locator` was built from, so `config_changed`
+    /// can tell whether it needs rebuilding (constructing a locator can scan
+    /// the system font collection, so it is not free to redo on every reload).
+    locator_selection: RefCell<FontLocatorSelection>,
     font_dirs: RefCell<Arc<FontDatabase>>,
     built_in: RefCell<Arc<FontDatabase>>,
     title_font: RefCell<Option<Rc<LoadedFont>>>,
@@ -329,7 +340,8 @@ impl FontConfigInner {
         let locator = new_locator(config.font_locator);
         Ok(Self {
             fonts: RefCell::new(HashMap::new()),
-            locator,
+            locator: RefCell::new(locator),
+            locator_selection: RefCell::new(config.font_locator),
             metrics: RefCell::new(None),
             title_font: RefCell::new(None),
             pane_select_font: RefCell::new(None),
@@ -355,6 +367,17 @@ impl FontConfigInner {
         self.command_palette_font.borrow_mut().take();
         self.metrics.borrow_mut().take();
         *self.font_dirs.borrow_mut() = FontDatabase::with_font_dirs_cached(config)?;
+        // Rebuild the system font locator if the user switched `font_locator`.
+        // Without this the process keeps whichever locator it started with, so
+        // e.g. moving from `ConfigDirsOnly` (which maps to a no-op locator) to
+        // `Gdi` silently does nothing until restart: system-supplied glyphs
+        // keep rendering as tofu and explicitly configured fonts keep warning
+        // that they can't be loaded. Gated on the value actually changing
+        // because building a locator can enumerate the system font collection.
+        if *self.locator_selection.borrow() != config.font_locator {
+            *self.locator.borrow_mut() = new_locator(config.font_locator);
+            *self.locator_selection.borrow_mut() = config.font_locator;
+        }
         Ok(())
     }
 
@@ -374,7 +397,7 @@ impl FontConfigInner {
             pending: Arc::clone(pending),
             font_dirs: Arc::clone(&*self.font_dirs.borrow()),
             built_in: Arc::clone(&*self.built_in.borrow()),
-            locator: Arc::clone(&self.locator),
+            locator: Arc::clone(&self.locator.borrow()),
             config: self.config.borrow().clone(),
         };
 
@@ -577,9 +600,10 @@ impl FontConfigInner {
             }
 
             let mut loaded_ignored = HashSet::new();
-            let located = self
-                .locator
-                .load_fonts(attrs, &mut loaded_ignored, pixel_size)?;
+            let located =
+                self.locator
+                    .borrow()
+                    .load_fonts(attrs, &mut loaded_ignored, pixel_size)?;
             for font in &located {
                 candidates.push(font);
             }
@@ -954,7 +978,7 @@ impl FontConfiguration {
     }
 
     pub fn list_system_fonts(&self) -> anyhow::Result<Vec<ParsedFont>> {
-        self.inner.locator.enumerate_all_fonts()
+        self.inner.locator.borrow().enumerate_all_fonts()
     }
 
     /// Apply the defined font_rules from the user configuration to
