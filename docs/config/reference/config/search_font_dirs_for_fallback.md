@@ -1,0 +1,48 @@
+---
+tags:
+  - font
+---
+# `search_font_dirs_for_fallback`
+
+{{since('nightly')}}
+
+Defaults to `false`.
+
+When wezterm cannot find a glyph for some codepoint in your configured fonts,
+it searches a list of *fallback* fonts to find one that has the glyph. By
+default, that fallback search only looks at the fonts resolved by your
+[font_locator](font_locator.md) (the system font resolver) and wezterm's
+built-in fallback fonts -- it does **not** look at
+[font_dirs](font_dirs.md), even though `font_dirs` is still scanned at
+startup to build a database of the fonts found there.
+
+That means that simply configuring `font_dirs` is not enough to make those
+fonts available as fallback candidates. If you want fonts from `font_dirs` to
+be considered when resolving a missing glyph, you must explicitly opt in:
+
+```
+font_dirs: [fonts]
+search_font_dirs_for_fallback: true
+```
+
+If you have `font_dirs` configured but `search_font_dirs_for_fallback` is
+left at its default `false`, and wezterm shows a "No fonts contain glyphs for
+these codepoints" warning even though you believe one of your `font_dirs`
+fonts covers it, this is very likely the reason: the directory was scanned,
+but never consulted during fallback resolution. wezterm's warning message
+will call this out explicitly when it detects this situation.
+
+## Performance and stability warning
+
+Setting `search_font_dirs_for_fallback: true` means that *every* font found
+in `font_dirs` is a candidate to be probed each time a fallback glyph needs
+to be resolved. This is fine for a small, curated set of extra font files,
+but it has been observed to cause significant slowdowns, and even a crash
+(`EXCEPTION_STACK_OVERFLOW` on Windows) when `font_dirs` was pointed at an
+entire system font directory such as `C:/Windows/Fonts`.
+
+Narrow `font_dirs` to a small curated folder of the specific fonts you want
+to add, rather than pointing it at a whole system fonts directory, especially
+if you also enable `search_font_dirs_for_fallback`. See
+[font_dirs](font_dirs.md) for more on why a whole system font directory is
+not an appropriate value for `font_dirs` in the first place.

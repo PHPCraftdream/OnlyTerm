@@ -174,14 +174,37 @@ impl FallbackResolveInfo {
                     .unwrap()
                     .replace((Instant::now(), self.config.generation()));
                 let url = "https://wezterm.org/config/fonts.html";
+
+                // If font_dirs is configured but search_font_dirs_for_fallback
+                // is off, those fonts are scanned into a database that is
+                // then never consulted for fallback resolution, which looks
+                // exactly like "wezterm can't find my fonts" from the
+                // outside. Call that out explicitly so the fix (flip the
+                // flag) is obvious instead of requiring a fresh
+                // investigation each time.
+                let font_dirs_hint = if !self.config.font_dirs.is_empty()
+                    && !self.config.search_font_dirs_for_fallback
+                {
+                    format!(
+                        "\nfont_dirs is configured ({} directories) but \
+                         search_font_dirs_for_fallback is false, so those fonts\n\
+                         are not being searched as fallback candidates. Set\n\
+                         search_font_dirs_for_fallback = true in your config to use them.\n",
+                        self.config.font_dirs.len()
+                    )
+                } else {
+                    String::new()
+                };
+
                 log::warn!(
                     "No fonts contain glyphs for these codepoints: {}.\n\
                      Placeholder glyphs are being displayed instead.\n\
                      You may wish to install additional fonts, or adjust your\n\
-                     configuration so that it can find them.\n\
+                     configuration so that it can find them.{}\n\
                      {} has more information about configuring fonts.\n\
                      Set warn_about_missing_glyphs=false to suppress this message.",
                     fallback_str.escape_unicode(),
+                    font_dirs_hint,
                     url,
                 );
 
@@ -191,10 +214,11 @@ impl FallbackResolveInfo {
                         "No fonts contain glyphs for these codepoints: {}.\n\
                             Placeholder glyphs are being displayed instead.\n\
                             You may wish to install additional fonts, or adjust\n\
-                            your configuration so that it can find them.\n\
+                            your configuration so that it can find them.{}\n\
                             Set warn_about_missing_glyphs=false to suppress this\n\
                             message.",
-                        fallback_str.escape_unicode()
+                        fallback_str.escape_unicode(),
+                        font_dirs_hint,
                     ),
                     url: Some(url.to_string()),
                     timeout: Some(Duration::from_secs(15)),
