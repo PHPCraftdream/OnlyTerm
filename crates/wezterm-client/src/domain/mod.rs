@@ -1,9 +1,9 @@
 use crate::client::Client;
 use crate::pane::ClientPane;
+use ::config::keyassignment::{RotationDirection, SpawnTabDomain};
 use anyhow::{anyhow, bail};
 use async_trait::async_trait;
 use codec::{ListPanesResponse, SpawnV2, SplitPane};
-use ::config::keyassignment::{RotationDirection, SpawnTabDomain};
 use mux::connui::{ConnectionUI, ConnectionUIParams};
 use mux::domain::{alloc_domain_id, Domain, DomainId, DomainState, SplitSource};
 use mux::pane::{Pane, PaneId};

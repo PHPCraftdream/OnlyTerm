@@ -1,7 +1,7 @@
 use super::*;
+use bitflags::bitflags;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
-use bitflags::bitflags;
 
 bitflags! {
     #[cfg_attr(feature="use_serde", derive(Serialize, Deserialize))]

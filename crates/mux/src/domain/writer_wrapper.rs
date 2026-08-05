@@ -1,6 +1,5 @@
 use std::io::Write;
 
-
 /// Allows sharing the writer between the Pane and the Terminal.
 /// This could potentially be eliminated in the future if we can
 /// teach the Pane impl to reference the writer in the Termninal,

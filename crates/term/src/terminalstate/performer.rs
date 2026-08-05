@@ -767,5 +767,4 @@ impl<'a> Performer<'a> {
             }
         }
     }
-
 }

@@ -6,13 +6,13 @@ pub use termwiz::color::{AnsiColor, ColorAttribute, RgbColor, SrgbaTuple};
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_term::color::ColorPalette;
 
+mod color_scheme;
 mod tabbar;
 mod window_frame;
-mod color_scheme;
 
+pub use color_scheme::*;
 pub use tabbar::*;
 pub use window_frame::*;
-pub use color_scheme::*;
 
 #[derive(Debug, Copy, Clone, FromDynamic, ToDynamic)]
 pub struct HsbTransform {

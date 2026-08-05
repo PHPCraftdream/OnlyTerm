@@ -7,9 +7,9 @@ use mux::connui::ConnectionUI;
 use mux::domain::DomainId;
 use mux::pane::PaneId;
 use mux::Mux;
+use smol::block_on;
 use smol::channel::{bounded, unbounded, Receiver, Sender};
 use smol::prelude::*;
-use smol::block_on;
 use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
@@ -18,8 +18,8 @@ use thiserror::Error;
 mod conn;
 mod unilateral;
 
-pub use conn::{unix_connect_with_retry, AsyncReadAndWrite};
 use conn::Reconnectable;
+pub use conn::{unix_connect_with_retry, AsyncReadAndWrite};
 use unilateral::process_unilateral;
 
 #[derive(Error, Debug)]

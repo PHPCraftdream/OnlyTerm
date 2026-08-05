@@ -1,22 +1,19 @@
+use super::prevcursor::PrevCursorPos;
 use super::*;
-use crate::utilsprites::RenderMetrics;
 use crate::colorease::ColorEase;
 use crate::frontend::front_end;
 use crate::inputmap::InputMap;
-use crate::overlay::{
-    CopyOverlay,
-    QuickSelectOverlay,
-};
+use crate::overlay::{CopyOverlay, QuickSelectOverlay};
 use crate::resize_increment_calculator::ResizeIncrementCalculator;
 use crate::tabbar::TabBarState;
 use crate::termwindow::background::load_background_image;
 use crate::termwindow::keyevent::KeyTableState;
 use crate::termwindow::render::paint::AllowImage;
 use crate::termwindow::webgpu::WebGpuState;
+use crate::utilsprites::RenderMetrics;
 use anyhow::{anyhow, Context};
 use config::{
-    configuration, AudibleBell, Dimension, DimensionContext, FrontEndSelection,
-    GeometryOrigin,
+    configuration, AudibleBell, Dimension, DimensionContext, FrontEndSelection, GeometryOrigin,
 };
 use mux::pane::{Pane, PaneId};
 use mux::renderable::RenderableDimensions;
@@ -31,7 +28,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wezterm_font::FontConfiguration;
 use wezterm_term::{Alert, StableRowIndex, TerminalSize};
-use super::prevcursor::PrevCursorPos;
 
 impl TermWindow {
     pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {

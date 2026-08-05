@@ -18,9 +18,9 @@ mod bidi_brackets;
 mod bidi_class;
 mod bidi_class_lookup;
 // Generated from Unicode data files (BidiMirroring.txt); do not edit.
+mod bidi_context;
 #[allow(clippy::redundant_static_lifetimes)]
 mod bidi_mirroring;
-mod bidi_context;
 mod bidi_run;
 mod direction;
 mod level;

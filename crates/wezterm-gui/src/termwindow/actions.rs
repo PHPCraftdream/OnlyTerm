@@ -7,6 +7,7 @@ use crate::overlay::{
     launcher, start_overlay, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
     QuickSelectOverlay,
 };
+use crate::spawn::SpawnWhere;
 use crate::tabbar::TabBarState;
 use crate::termwindow::background::reload_background_image;
 use crate::termwindow::keyevent::{KeyTableArgs, KeyTableState};
@@ -17,9 +18,7 @@ use config::keyassignment::{
     Pattern, PromptInputLine, QuickSelectArguments, SpawnCommand, SplitSize,
 };
 use config::window::WindowLevel;
-use config::{
-    configuration, TermConfig,
-};
+use config::{configuration, TermConfig};
 use mux::pane::{CachePolicy, Pane, PaneId, Pattern as MuxPattern, PerformAssignmentResult};
 use mux::renderable::RenderableDimensions;
 use mux::tab::{
@@ -36,7 +35,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{StableRowIndex, TerminalConfiguration, TerminalSize};
-use crate::spawn::SpawnWhere;
 
 impl TermWindow {
     pub(super) fn palette(&mut self) -> &ColorPalette {

@@ -177,7 +177,6 @@ struct LineKey {
     size: CellMetricKey,
 }
 
-
 /// A number of items here are HashMaps rather than LfuCaches;
 /// eviction is managed by recreating Self when the Atlas is filled
 pub struct GlyphCache {
@@ -193,9 +192,8 @@ pub struct GlyphCache {
     min_frame_duration: Duration,
 }
 
-
 mod glyph_cache_impl;
 mod image_decode;
 
-use image_decode::DecodedImageHandle;
 pub use image_decode::DecodedImage;
+use image_decode::DecodedImageHandle;

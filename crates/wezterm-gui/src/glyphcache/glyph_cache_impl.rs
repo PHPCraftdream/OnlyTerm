@@ -1,8 +1,8 @@
 use super::*;
 
-use crate::utilsprites::RenderMetrics;
 use crate::renderstate::RenderContext;
 use crate::termwindow::render::paint::AllowImage;
+use crate::utilsprites::RenderMetrics;
 use ::window::bitmaps::atlas::{Atlas, OutOfTextureSpace, Sprite};
 use ::window::bitmaps::{BitmapImage, Image, ImageTexture, Texture2d};
 use ::window::color::SrgbaPixel;
@@ -824,8 +824,8 @@ impl GlyphCache {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::image_decode::FrameDecoder;
+    use super::*;
 
     /// Exercise the rewritten `ImageFormat::WebP` branch in `FrameDecoder`.
     ///

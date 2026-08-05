@@ -9,6 +9,7 @@ use config::{
     configuration, BoldBrightening, ConfigHandle, DisplayPixelGeometry, FontAttributes,
     FontRasterizerSelection, FontStretch, FontStyle, FontWeight, TextStyle,
 };
+use fallback::FallbackResolveInfo;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -19,7 +20,6 @@ use termwiz::cell::Presentation;
 use thiserror::Error;
 use wezterm_bidi::Direction;
 use wezterm_term::{CellAttributes, Intensity};
-use fallback::FallbackResolveInfo;
 
 pub mod db;
 pub mod locator;
@@ -46,7 +46,6 @@ pub type LoadedFontId = usize;
 pub fn alloc_font_id() -> LoadedFontId {
     FONT_ID.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed)
 }
-
 
 pub struct LoadedFont {
     rasterizers: RefCell<HashMap<FallbackIdx, Box<dyn FontRasterizer>>>,

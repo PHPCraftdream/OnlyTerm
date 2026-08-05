@@ -4,14 +4,14 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 
 mod env;
+#[cfg(test)]
+mod tests;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
 mod windows;
-#[cfg(test)]
-mod tests;
 
-use env::{EnvEntry, get_base_env};
+use env::{get_base_env, EnvEntry};
 
 /// `CommandBuilder` is used to prepare a command to be spawned into a pty.
 /// The interface is intentionally similar to that of `std::process::Command`.

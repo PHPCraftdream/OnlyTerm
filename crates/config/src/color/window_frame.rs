@@ -1,4 +1,4 @@
-use crate::color::{RgbaColor, RgbColor};
+use crate::color::{RgbColor, RgbaColor};
 use crate::font::TextStyle;
 use crate::units::Dimension;
 use wezterm_dynamic::{FromDynamic, ToDynamic};

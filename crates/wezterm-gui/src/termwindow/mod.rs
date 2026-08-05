@@ -22,16 +22,11 @@ use crate::termwindow::webgpu::WebGpuState;
 use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
 use ::window::*;
 use config::keyassignment::KeyAssignment;
-use config::{
-    ConfigHandle, DimensionContext, GuiPosition,
-};
+use config::{ConfigHandle, DimensionContext, GuiPosition};
 use lfucache::*;
 use mux::pane::{Pane, PaneId};
 use mux::renderable::RenderableDimensions;
-use mux::tab::{
-    PositionedSplit,
-    TabId,
-};
+use mux::tab::{PositionedSplit, TabId};
 use mux::window::WindowId as MuxWindowId;
 use mux::MuxNotification;
 use smol::channel::Sender;
@@ -49,6 +44,7 @@ use wezterm_term::color::ColorPalette;
 use wezterm_term::input::LastMouseClick;
 use wezterm_term::{Progress, StableRowIndex, TerminalSize};
 
+mod actions;
 pub mod background;
 pub mod box_model;
 pub mod charselect;
@@ -60,12 +56,11 @@ pub mod palette;
 pub mod paneselect;
 mod prevcursor;
 pub mod render;
+mod render_pipeline;
 pub mod resize;
 mod selection;
 pub mod spawn;
 pub mod webgpu;
-mod actions;
-mod render_pipeline;
 mod window_handler;
 use prevcursor::PrevCursorPos;
 
@@ -515,7 +510,6 @@ pub struct TermWindow {
     permanently_on_opengl: Cell<bool>,
     config_subscription: Option<config::ConfigSubscription>,
 }
-
 
 impl Drop for TermWindow {
     fn drop(&mut self) {

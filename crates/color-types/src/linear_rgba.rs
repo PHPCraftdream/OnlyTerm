@@ -1,4 +1,6 @@
-use crate::conversion_tables::{linear_f32_to_srgb8, linear_f32_to_srgbf32, rgb_to_linear_f32, srgb8_to_linear_f32};
+use crate::conversion_tables::{
+    linear_f32_to_srgb8, linear_f32_to_srgbf32, rgb_to_linear_f32, srgb8_to_linear_f32,
+};
 use crate::{SrgbaPixel, SrgbaTuple};
 use core::hash::{Hash, Hasher};
 

@@ -422,4 +422,3 @@ impl DecodedImage {
         }
     }
 }
-

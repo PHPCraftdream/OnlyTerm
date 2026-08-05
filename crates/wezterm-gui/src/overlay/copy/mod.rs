@@ -1,9 +1,7 @@
 use crate::selection::{SelectionCoordinate, SelectionRange};
 use crate::termwindow::TermWindow;
 use config::keyassignment::SelectionMode;
-use mux::pane::{
-    Pane, Pattern, PatternType, SearchResult,
-};
+use mux::pane::{Pane, Pattern, PatternType, SearchResult};
 use mux::renderable::*;
 use mux::tab::TabId;
 use parking_lot::Mutex;

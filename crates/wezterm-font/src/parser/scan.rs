@@ -1,6 +1,6 @@
+use super::ParsedFont;
 use crate::locator::{FontDataHandle, FontDataSource, FontOrigin};
 use crate::swash_metrics::SwashFontInfo;
-use super::ParsedFont;
 use std::sync::Arc;
 
 /// Backing bytes for a single scan of `parse_and_collect_font_info`: either

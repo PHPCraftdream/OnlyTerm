@@ -3,8 +3,8 @@
 use crate::cell::TeenyString;
 use crate::color::ColorAttribute;
 use crate::{
-    grapheme_column_width, is_white_space_char, is_white_space_grapheme, unicode_column_width,
-    Cell, CellAttributes, Presentation, UnicodeVersion,
+    Cell, CellAttributes, Presentation, UnicodeVersion, grapheme_column_width, is_white_space_char,
+    is_white_space_grapheme, unicode_column_width,
 };
 use alloc::string::ToString;
 use alloc::vec;

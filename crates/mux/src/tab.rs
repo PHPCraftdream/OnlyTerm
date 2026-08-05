@@ -18,7 +18,6 @@ mod test;
 
 pub use codec::{PaneEntry, PaneNode, SerdeUrl};
 
-
 pub type Tree = bintree::Tree<Arc<dyn Pane>, SplitDirectionAndSize>;
 pub type Cursor = bintree::Cursor<Arc<dyn Pane>, SplitDirectionAndSize>;
 
@@ -2153,4 +2152,3 @@ impl TabInner {
         self.zoomed.clone()
     }
 }
-

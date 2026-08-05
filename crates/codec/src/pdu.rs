@@ -6,7 +6,9 @@
 //! client and server instances that are built from different versions
 //! of this code; in this way the client and server can more gracefully
 //! manage unknown enum variants.
-use crate::framing::{decode_raw, decode_raw_async, deserialize, encode_raw, encode_raw_async, serialize};
+use crate::framing::{
+    decode_raw, decode_raw_async, deserialize, encode_raw, encode_raw_async, serialize,
+};
 use crate::messages::*;
 use anyhow::{bail, Context as _, Error};
 use mux::pane::PaneId;

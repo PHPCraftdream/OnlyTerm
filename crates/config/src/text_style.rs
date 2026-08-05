@@ -1,5 +1,5 @@
 use crate::color::RgbaColor;
-use crate::font::{FontStretch, FontStyle, FreeTypeLoadFlags, FreeTypeLoadTarget, FontWeight};
+use crate::font::{FontStretch, FontStyle, FontWeight, FreeTypeLoadFlags, FreeTypeLoadTarget};
 use ordered_float::NotNan;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
