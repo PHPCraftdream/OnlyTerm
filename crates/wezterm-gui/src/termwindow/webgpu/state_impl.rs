@@ -530,13 +530,29 @@ impl WebGpuState {
             dimensions.pixel_height as u32,
             max_dim,
         );
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: init_width,
-            height: init_height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: if caps
+        // Only ask the compositor to alpha-blend this surface with whatever
+        // is behind the window when the user has actually configured window
+        // transparency (`window_background_opacity < 1.0` or a background
+        // image/gradient) -- mirrors the `window_is_transparent` condition in
+        // `paint_window_background`. Otherwise prefer `Opaque`: every frame's
+        // render pass clears the surface to alpha 0 before drawing (see the
+        // `LoadOp::Clear` below), and normal frames redraw an opaque
+        // full-window background quad over that, but any transient mismatch
+        // between that quad's bounds and the actual swapchain size (e.g.
+        // mid-resize, mid-DPI-change) would otherwise leave a strip of real,
+        // literal per-pixel transparency that DWM composites with whatever
+        // window happens to be behind this one -- reported as "white/
+        // transparent rectangles" when a second OnlyTerm window is in the
+        // background (task #407). `Opaque` makes the compositor ignore the
+        // surface's alpha channel entirely, so the same transient gap shows
+        // as a black flash (already documented as the acceptable fallback
+        // for the startup case in task #425) instead of literal transparency.
+        let wants_transparency = config.window_background_opacity != 1.0
+            || config.window_background_image.is_some()
+            || config.window_background_gradient.is_some()
+            || !config.background.is_empty();
+        let alpha_mode = if wants_transparency {
+            if caps
                 .alpha_modes
                 .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
             {
@@ -548,7 +564,19 @@ impl WebGpuState {
                 wgpu::CompositeAlphaMode::PreMultiplied
             } else {
                 wgpu::CompositeAlphaMode::Auto
-            },
+            }
+        } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
+            wgpu::CompositeAlphaMode::Opaque
+        } else {
+            wgpu::CompositeAlphaMode::Auto
+        };
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: init_width,
+            height: init_height,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode,
             view_formats,
             desired_maximum_frame_latency: 2,
         };
