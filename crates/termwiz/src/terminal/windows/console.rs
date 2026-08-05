@@ -509,7 +509,7 @@ impl ConsoleOutputHandle for OutputHandle {
                 &clip_rect,
                 COORD {
                     X: max(left, left + dx),
-                    Y: max(left, top + dy),
+                    Y: max(top, top + dy),
                 },
                 &fill,
             )
