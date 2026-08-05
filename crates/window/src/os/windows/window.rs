@@ -46,8 +46,9 @@ use winapi::um::uxtheme::{
     CloseThemeData, GetThemeFont, GetThemeSysFont, OpenThemeData, SetWindowTheme,
 };
 use winapi::um::wingdi::{
-    CreatePen, CreateSolidBrush, DeleteObject, Ellipse, SelectObject, SetBkMode, LOGFONTW,
-    MAKEPOINTS, PS_SOLID, RGB, TRANSPARENT,
+    CreateFontW, CreateSolidBrush, DeleteObject, SelectObject, SetBkMode, SetTextColor,
+    CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DEFAULT_PITCH, DEFAULT_QUALITY, FF_DONTCARE, FW_NORMAL,
+    LOGFONTW, MAKEPOINTS, OUT_DEFAULT_PRECIS, RGB, TRANSPARENT,
 };
 use winapi::um::winnt::OSVERSIONINFOW;
 use winapi::um::winuser::*;
@@ -103,27 +104,30 @@ unsafe impl Send for HWindow {}
 // SAFETY: same rationale as the `Send` impl above.
 unsafe impl Sync for HWindow {}
 
-/// State for the animated startup spinner painted in place of the old flat
-/// placeholder fill (task #384), covering the gap between `ShowWindow` and
-/// the renderer's first real frame -- see `WindowInner::placeholder_spinner`
-/// and `draw_placeholder_spinner` for the rest of the story. This struct
-/// replaces what used to be a single `HBRUSH` field: painting the spinner
-/// needs both colors (as GDI objects) and a clock to derive the current
-/// animation phase from, plus a flag for the timer that keeps repainting
-/// while it is active.
+/// State for the animated "Loading..." startup placeholder painted in place
+/// of the old flat placeholder fill (task #384; text style per task #405/
+/// #406 follow-up -- the original 8-dot ring read as an illegible speck on
+/// large/high-DPI windows and wasn't worth trying to salvage), covering the
+/// gap between `ShowWindow` and the renderer's first real frame -- see
+/// `WindowInner::placeholder_spinner` and `draw_placeholder_spinner` for the
+/// rest of the story. The struct/function names predate this text-based
+/// redesign and are kept as-is to avoid an unrelated rename churning every
+/// call site; only what gets painted changed.
 struct PlaceholderSpinner {
     /// Solid brush for the client-area background, same color the old flat
     /// fill used (`config.resolved_palette.background`).
     bg_brush: HBRUSH,
-    /// Solid brush for the spinner dots, from `config.resolved_palette.
+    /// Text color for the "Loading..." label, from `config.resolved_palette.
     /// foreground` (falling back like `bg_brush` does for `background`).
-    dot_brush: HBRUSH,
-    /// A `PS_NULL`-less 1px pen in the dot color, used so `Ellipse` doesn't
-    /// outline each dot in the default black `WHITE_PEN`.
-    dot_pen: HPEN,
-    /// When the spinner started, used only to compute an ever-increasing
-    /// rotation phase (`elapsed % period`); never reset, so the animation
-    /// keeps a steady rate across however many paints it takes.
+    text_color: COLORREF,
+    /// Font used to draw the label. Owned here (not a stock object) so its
+    /// point size can be derived from the window instead of a fixed size
+    /// that would look wrong at very different DPIs/window sizes.
+    font: HFONT,
+    /// When the placeholder started, used only to compute an ever-increasing
+    /// animation phase (`elapsed % period`) for the trailing-dots count;
+    /// never reset, so the animation keeps a steady rate across however
+    /// many paints it takes.
     started: Instant,
     /// Whether `SetTimer` has been called for this window (idempotent
     /// guard: `WM_NCCREATE` may in principle run more than once per
@@ -135,7 +139,7 @@ struct PlaceholderSpinner {
 impl PlaceholderSpinner {
     /// # Safety
     /// Always safe to call: only reads plain config values and calls
-    /// `CreateSolidBrush`/`CreatePen`, neither of which can fail in a way
+    /// `CreateSolidBrush`/`CreateFontW`, neither of which can fail in a way
     /// that produces an invalid non-null handle.
     unsafe fn new(config: &ConfigHandle) -> Self {
         let (bg_r, bg_g, bg_b, _a) = config
@@ -145,17 +149,41 @@ impl PlaceholderSpinner {
             .unwrap_or((0, 0, 0, 0xff));
         // Same fallback rationale as the background: the terminal's own
         // default foreground (light gray) when the palette doesn't specify
-        // one, so the dots stay visible against the black default
+        // one, so the label stays visible against the black default
         // background rather than defaulting to another black.
         let (fg_r, fg_g, fg_b, _a) = config
             .resolved_palette
             .foreground
             .map(|c| c.as_rgba_u8())
             .unwrap_or((0xb0, 0xb0, 0xb0, 0xff));
+        let face = wide_string("Segoe UI");
+        // SAFETY: `face` is a live, null-terminated UTF-16 buffer for the
+        // duration of this call; -24 is a plain negative character height
+        // (device units, not points) that `CreateFontW` accepts to mean
+        // "match this cell height", same convention GDI text APIs use
+        // throughout this file. A null result (font unavailable) falls back
+        // to the stock system font at paint time via `GetStockObject`, see
+        // `draw_placeholder_spinner`.
+        let font = CreateFontW(
+            -24,
+            0,
+            0,
+            0,
+            FW_NORMAL,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE,
+            face.as_ptr(),
+        );
         PlaceholderSpinner {
             bg_brush: CreateSolidBrush(RGB(bg_r, bg_g, bg_b)),
-            dot_brush: CreateSolidBrush(RGB(fg_r, fg_g, fg_b)),
-            dot_pen: CreatePen(PS_SOLID as i32, 1, RGB(fg_r, fg_g, fg_b)),
+            text_color: RGB(fg_r, fg_g, fg_b),
+            font,
             started: Instant::now(),
             timer_running: false,
         }
@@ -163,24 +191,24 @@ impl PlaceholderSpinner {
 
     /// # Safety
     /// Always safe to call: `DeleteObject` accepts any GDI object handle,
-    /// including ones already deleted (a no-op returning `FALSE`), and none
-    /// of these three are ever shared with another live GDI object.
+    /// including ones already deleted (a no-op returning `FALSE`) or null
+    /// (also a harmless no-op), and neither of these two is ever shared
+    /// with another live GDI object.
     unsafe fn destroy(&self) {
         DeleteObject(self.bg_brush as _);
-        DeleteObject(self.dot_brush as _);
-        DeleteObject(self.dot_pen as _);
+        DeleteObject(self.font as _);
     }
 }
 
 impl Drop for PlaceholderSpinner {
     fn drop(&mut self) {
         // SAFETY: `DeleteObject` accepts any GDI object handle, including
-        // ones already deleted (a no-op returning `FALSE`), and none of
-        // these three are ever shared with another live GDI object.
-        // This guarantees the three handles from `PlaceholderSpinner::new`
-        // are freed on every code path, including the early-return from
-        // `Window::new_window` when `create_window` fails after the
-        // spinner was already constructed.
+        // ones already deleted (a no-op returning `FALSE`), and neither of
+        // these two is ever shared with another live GDI object. This
+        // guarantees the handles from `PlaceholderSpinner::new` are freed on
+        // every code path, including the early-return from `Window::
+        // new_window` when `create_window` fails after the spinner was
+        // already constructed.
         unsafe {
             self.destroy();
         }
@@ -2829,21 +2857,21 @@ unsafe fn wm_kill_focus(
     None
 }
 
-/// Number of dots orbiting the spinner's center.
-const PLACEHOLDER_SPINNER_DOT_COUNT: i32 = 8;
-/// One full rotation every 1.4s -- fast enough to read as "alive" within
-/// the first paint or two, slow enough not to be distracting for however
-/// many seconds WebGpu init takes.
+/// Max number of trailing dots after "Loading" (0..=3, cycling).
+const PLACEHOLDER_LOADER_MAX_DOTS: u128 = 3;
+/// One full "Loading" -> "Loading..." -> "Loading" cycle every 1.4s -- fast
+/// enough to read as "alive" within the first paint or two, slow enough not
+/// to be distracting for however many seconds WebGpu init takes.
 const PLACEHOLDER_SPINNER_PERIOD_MS: u128 = 1400;
 
-/// Paint the animated placeholder spinner into `hdc`, covering `rect`
-/// (the window's client area) with the background color and drawing a ring
-/// of dots -- fading from full brightness at the "lead" dot down to barely
-/// visible at the "tail" -- rotating around the center. This is the task
-/// #384 replacement for the old flat `FillRect`-only placeholder: same
-/// cheap GDI path (no WebGpu/render-thread involvement, since that pipeline
-/// is exactly what is not ready yet), just drawing a few more small shapes
-/// instead of one big one.
+/// Paint the animated "Loading..." placeholder label into `hdc`, covering
+/// `rect` (the window's client area) with the background color first. Task
+/// #384's original design (a ring of orbiting dots) read as an illegible
+/// speck once made large enough to actually be visible on a big/high-DPI
+/// window (task #406) -- a plain text label sidesteps that entirely, since
+/// its size already tracks the font instead of a hand-picked pixel radius.
+/// Same cheap GDI path as before (no WebGpu/render-thread involvement,
+/// since that pipeline is exactly what is not ready yet).
 ///
 /// # Safety
 /// `hdc` must be a valid, live device context for a window whose client
@@ -2851,47 +2879,45 @@ const PLACEHOLDER_SPINNER_PERIOD_MS: u128 = 1400;
 unsafe fn draw_placeholder_spinner(hdc: HDC, rect: &RECT, spinner: &PlaceholderSpinner) {
     FillRect(hdc, rect, spinner.bg_brush);
 
-    let cx = (rect.left + rect.right) / 2;
-    let cy = (rect.top + rect.bottom) / 2;
-    // Scale the ring to the smaller dimension so it stays fully on-screen
-    // even in a narrow or short window; clamp so a not-yet-laid-out (0x0)
-    // window doesn't divide badly.
-    let short_side = rect_width(rect).min(rect_height(rect)).max(1);
-    // Task #406: the old caps (radius 48px / dot 10px, ~96px diameter total)
-    // never grew past that regardless of window size -- on any modern,
-    // large window (e.g. a 1920x1080 client area) that reads as a tiny,
-    // easy-to-miss speck rather than a visible loading indicator. Raised
-    // caps so the spinner actually scales with the window up to a size
-    // that stays comfortably proportioned rather than overwhelming.
-    let radius = (short_side / 6).clamp(8, 120);
-    let dot_radius = (radius / 4).clamp(2, 18);
-
     let phase = spinner.started.elapsed().as_millis() % PLACEHOLDER_SPINNER_PERIOD_MS;
-    let base_angle = (phase as f64 / PLACEHOLDER_SPINNER_PERIOD_MS as f64) * std::f64::consts::TAU;
+    let num_dots = (phase * (PLACEHOLDER_LOADER_MAX_DOTS + 1) / PLACEHOLDER_SPINNER_PERIOD_MS)
+        .min(PLACEHOLDER_LOADER_MAX_DOTS);
+    let mut text = String::from("Loading");
+    for _ in 0..num_dots {
+        text.push('.');
+    }
+    let mut wide_text = wide_string(&text);
+    // `DrawTextW` wants the length excluding any trailing NUL when given an
+    // explicit count; `wide_string` null-terminates, so trim that back off
+    // rather than passing -1 (which would also work, but this avoids
+    // relying on `wide_text` having no embedded NULs of its own).
+    let text_len = (wide_text.len() as i32 - 1).max(0);
 
     // SAFETY: `hdc` is the live device context passed in by the caller;
-    // `dot_pen`/`dot_brush` are live GDI objects owned by `spinner` for the
-    // duration of this call. `SelectObject` returns the previously-selected
-    // object, which we restore before returning so `hdc` (owned by the
-    // window, via `CS_OWNDC`) is left exactly as we found it.
-    let old_pen = SelectObject(hdc, spinner.dot_pen as _);
-    let old_brush = SelectObject(hdc, spinner.dot_brush as _);
+    // `spinner.font` is a live GDI object owned by `spinner` for the
+    // duration of this call (or null, if `CreateFontW` failed at
+    // `PlaceholderSpinner::new` time, which `SelectObject` tolerates as a
+    // no-op-ish "keep current font" call). `SelectObject`/`SetTextColor`/
+    // `SetBkMode` return the previous values, which are restored before
+    // returning so `hdc` (owned by the window, via `CS_OWNDC`) is left
+    // exactly as found. `wide_text` is a live UTF-16 buffer for the
+    // duration of the `DrawTextW` call; `rect` is caller-provided and only
+    // read (`DrawTextW`'s `DT_CALCRECT` is not set, so it isn't mutated).
+    let old_font = SelectObject(hdc, spinner.font as _);
+    let old_color = SetTextColor(hdc, spinner.text_color);
     let old_bk_mode = SetBkMode(hdc, TRANSPARENT as i32);
 
-    for i in 0..PLACEHOLDER_SPINNER_DOT_COUNT {
-        let angle = base_angle
-            + (i as f64) * (std::f64::consts::TAU / PLACEHOLDER_SPINNER_DOT_COUNT as f64);
-        let x = cx + (angle.cos() * radius as f64) as i32;
-        let y = cy + (angle.sin() * radius as f64) as i32;
-        // Shrink trailing dots so the ring reads as a moving comet rather
-        // than a static ring of identical dots. `i == 0` is the lead dot.
-        let shrink = i * dot_radius / (PLACEHOLDER_SPINNER_DOT_COUNT * 2);
-        let r = (dot_radius - shrink).max(1);
-        Ellipse(hdc, x - r, y - r, x + r, y + r);
-    }
+    let mut text_rect = *rect;
+    DrawTextW(
+        hdc,
+        wide_text.as_mut_ptr(),
+        text_len,
+        &mut text_rect,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+    );
 
-    SelectObject(hdc, old_pen);
-    SelectObject(hdc, old_brush);
+    SelectObject(hdc, old_font);
+    SetTextColor(hdc, old_color);
     SetBkMode(hdc, old_bk_mode);
 }
 
