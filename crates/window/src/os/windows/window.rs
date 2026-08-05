@@ -1472,6 +1472,29 @@ impl WindowInner {
         if !self.renderer_ready || !self.shell_ready || self.placeholder_fade.is_some() {
             return;
         }
+        if self.placeholder_spinner.is_none() {
+            // `clear_placeholder_background` already destroyed the spinner
+            // (this happens whenever it runs while `shell_ready` is still
+            // false: it calls `start_placeholder_fade` first, which bails
+            // out on the `!self.shell_ready` check above, then tears the
+            // spinner down regardless), and `notify_shell_ready` is what's
+            // calling this now. There is nothing left to snapshot into the
+            // overlay's one-shot frame -- creating it anyway would produce
+            // an opaque, never-painted `WS_EX_LAYERED` window sitting over
+            // live WebGpu content for the entire fade duration (the exact
+            // "abrupt flash" defect this feature exists to prevent, just
+            // moved to a different trigger). Same reasoning applies to a
+            // renderer rebuild (`finish_opengl_fallback`/`finish_renderer_
+            // rebuild`) re-running `clear_placeholder_background` long
+            // after the original fade already completed: `renderer_ready`/
+            // `shell_ready` are latched `true` forever, so without this
+            // guard every later rebuild would restart a fade with nothing
+            // to fade from. Falling back to an instant, non-animated
+            // hand-off here is strictly safer than painting nothing --
+            // same trade-off already accepted below for "no WebGpu child
+            // to layer over".
+            return;
+        }
         if self.hwnd.0.is_null() {
             // The top-level window is already gone (e.g. this is being
             // reached via `wm_ncdestroy`'s backstop call to
