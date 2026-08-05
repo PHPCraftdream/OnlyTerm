@@ -1,5 +1,6 @@
 //! The connection to the GUI subsystem
 use super::watchdog;
+use super::window::get_primary_monitor_dpi;
 use super::{HWindow, WindowInner};
 use crate::connection::ConnectionOps;
 use crate::screen::{ScreenInfo, Screens};
@@ -69,6 +70,18 @@ impl ConnectionOps for Connection {
 
     fn name(&self) -> String {
         "Windows".to_string()
+    }
+
+    // New windows are placed on the primary monitor unless a specific
+    // position was requested, so querying its real DPI here (instead of
+    // falling back to the hardcoded 96 default) lets window-size
+    // computation that happens before window creation (e.g. cols/rows ->
+    // pixel size in RenderMetrics) already match what Windows will report
+    // once the window exists. Without this, a HiDPI primary monitor causes
+    // Windows to send a corrective WM_DPICHANGED shortly after the window
+    // is shown, producing a visible resize.
+    fn default_dpi(&self) -> f64 {
+        get_primary_monitor_dpi() as f64
     }
 
     fn run_message_loop(&self) -> anyhow::Result<()> {
