@@ -414,6 +414,59 @@ As features stabilize some brief notes about them will accumulate here.
   the target integer type, so the documented `colors.indexed` syntax works
   again; a key that isn't a valid integer still produces the original
   error.
+* Fixed toast notifications (e.g. the "couldn't find a glyph for this font"
+  warning) being attributed to WezTerm's name and icon instead of
+  OnlyTerm's on Windows. The process already announces itself to Windows
+  under the `org.wezfurlong.onlyterm` AppUserModelID, and the installer
+  registers the Start Menu shortcut under that same ID -- but the toast
+  code itself still created its notifier under the old, un-renamed
+  `org.wezfurlong.wezterm` ID, so Windows couldn't resolve a shortcut for
+  it and fell back to unrelated app info. One-line fix; the equivalent
+  Linux D-Bus path carries the same stale ID but was left alone, since
+  this fork is Windows-focused and the report was Windows-only.
+* `cargo clippy --workspace --all-targets` now runs with zero warnings for
+  the first time in this fork's history (roughly 1,300 lints cleared across
+  every crate). Along the way, a local `cargo lint` command (`xtask`) was
+  added as the one-stop formatting/clippy/compile check used to get and
+  keep the workspace there; its own scoping had a blind spot where `cargo
+  lint -p <crate>` resolved that crate's Cargo features in isolation and
+  silently missed code gated behind a feature only some other workspace
+  member enables (`wezterm-cell`'s image-attachment field, hidden behind
+  `use_image`, was the crate that exposed this), so the lint pass is now
+  always workspace-wide and `-p` only filters which directory's lints are
+  reported. A few of the larger cleanups are worth calling out on their
+  own: `wezterm-input-types`'s hand-written `impl ToString` for `KeyCode`,
+  `Modifiers`, `PhysKeyCode` and `KeyboardLedStatus` became `impl Display`
+  (the blanket `ToString` impl still covers `.to_string()` callers), and a
+  handful of `#[allow]`s were added instead of applying a suggested fix
+  where the fix would have changed a wire format, diverged a
+  vendored/generated file from its upstream source, or fought a documented
+  deliberate design (notably `wezterm-gui`'s per-quad boxing in the glyph
+  render layer, and three RAII guards -- `UmaskSaver`, `SimpleExecutor`,
+  `ScopedExecutor` -- whose constructors mutate process-global state and
+  so were deliberately not given a `Default` impl).
+* Every source file over ~700 lines across roughly twenty crates was split
+  so that each file holds one public export (one type, trait or function)
+  plus whatever private helpers only it uses, re-exported from the
+  original module path so nothing importing from these crates needs to
+  change. This is pure reorganization with no behavior change -- verified,
+  not just asserted, by diffing the line-for-line content of the old and
+  new files against each other for every split, and additionally by a
+  direct diff of every relocated function body (not just its surrounding
+  lines) in the highest-risk files: the wire-protocol dispatch tables in
+  `codec`, `wezterm-client` and `wezterm-mux-server-impl`; the terminal
+  emulation core in `term`; the CSI/OSC escape-sequence parser in
+  `wezterm-escape-parser`; keyboard/physical-key lookup tables in
+  `wezterm-input-types` and `termwiz`; the Unicode bidi algorithm in `bidi`
+  (plus a full run of its UCD conformance suite); and font shaping/mmap
+  loading in `wezterm-font`. A few pre-existing, unrelated issues were
+  noticed while reading through this code and were deliberately left
+  untouched rather than folded into a reorganization change: `kitty`
+  keyboard-protocol encoding maps two distinct keys to the same function
+  code, a Windows console `scroll_region` computation uses the wrong
+  coordinate for one axis, and `termwiz`'s numpad-key encoding sends the
+  PageDown escape sequence for Numpad9 instead of the conventional PageUp
+  one. Each is filed separately for its own fix.
 
 #### New
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
