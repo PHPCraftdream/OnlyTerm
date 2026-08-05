@@ -30,6 +30,7 @@ use std::path::PathBuf;
 use std::ptr::{null, null_mut};
 use std::rc::Rc;
 use std::sync::Mutex;
+use std::time::Instant;
 use wezterm_color_types::LinearRgba;
 use wezterm_font::FontConfiguration;
 use wezterm_input_types::KeyboardLedStatus;
@@ -44,7 +45,10 @@ use winapi::um::sysinfoapi::{GetTickCount, GetVersionExW};
 use winapi::um::uxtheme::{
     CloseThemeData, GetThemeFont, GetThemeSysFont, OpenThemeData, SetWindowTheme,
 };
-use winapi::um::wingdi::{CreateSolidBrush, DeleteObject, LOGFONTW, MAKEPOINTS, RGB};
+use winapi::um::wingdi::{
+    CreatePen, CreateSolidBrush, DeleteObject, Ellipse, SelectObject, SetBkMode, LOGFONTW,
+    MAKEPOINTS, PS_SOLID, RGB, TRANSPARENT,
+};
 use winapi::um::winnt::OSVERSIONINFOW;
 use winapi::um::winuser::*;
 use windows::UI::Color as WUIColor;
@@ -98,6 +102,89 @@ pub(crate) struct HWindow(HWND);
 unsafe impl Send for HWindow {}
 // SAFETY: same rationale as the `Send` impl above.
 unsafe impl Sync for HWindow {}
+
+/// State for the animated startup spinner painted in place of the old flat
+/// placeholder fill (task #384), covering the gap between `ShowWindow` and
+/// the renderer's first real frame -- see `WindowInner::placeholder_spinner`
+/// and `draw_placeholder_spinner` for the rest of the story. This struct
+/// replaces what used to be a single `HBRUSH` field: painting the spinner
+/// needs both colors (as GDI objects) and a clock to derive the current
+/// animation phase from, plus a flag for the timer that keeps repainting
+/// while it is active.
+struct PlaceholderSpinner {
+    /// Solid brush for the client-area background, same color the old flat
+    /// fill used (`config.resolved_palette.background`).
+    bg_brush: HBRUSH,
+    /// Solid brush for the spinner dots, from `config.resolved_palette.
+    /// foreground` (falling back like `bg_brush` does for `background`).
+    dot_brush: HBRUSH,
+    /// A `PS_NULL`-less 1px pen in the dot color, used so `Ellipse` doesn't
+    /// outline each dot in the default black `WHITE_PEN`.
+    dot_pen: HPEN,
+    /// When the spinner started, used only to compute an ever-increasing
+    /// rotation phase (`elapsed % period`); never reset, so the animation
+    /// keeps a steady rate across however many paints it takes.
+    started: Instant,
+    /// Whether `SetTimer` has been called for this window (idempotent
+    /// guard: `WM_NCCREATE` may in principle run more than once per
+    /// `WindowInner` in edge cases, and `SetTimer` with the same id is
+    /// itself idempotent, but tracking this avoids relying on that).
+    timer_running: bool,
+}
+
+impl PlaceholderSpinner {
+    /// # Safety
+    /// Always safe to call: only reads plain config values and calls
+    /// `CreateSolidBrush`/`CreatePen`, neither of which can fail in a way
+    /// that produces an invalid non-null handle.
+    unsafe fn new(config: &ConfigHandle) -> Self {
+        let (bg_r, bg_g, bg_b, _a) = config
+            .resolved_palette
+            .background
+            .map(|c| c.as_rgba_u8())
+            .unwrap_or((0, 0, 0, 0xff));
+        // Same fallback rationale as the background: the terminal's own
+        // default foreground (light gray) when the palette doesn't specify
+        // one, so the dots stay visible against the black default
+        // background rather than defaulting to another black.
+        let (fg_r, fg_g, fg_b, _a) = config
+            .resolved_palette
+            .foreground
+            .map(|c| c.as_rgba_u8())
+            .unwrap_or((0xb0, 0xb0, 0xb0, 0xff));
+        PlaceholderSpinner {
+            bg_brush: CreateSolidBrush(RGB(bg_r, bg_g, bg_b)),
+            dot_brush: CreateSolidBrush(RGB(fg_r, fg_g, fg_b)),
+            dot_pen: CreatePen(PS_SOLID as i32, 1, RGB(fg_r, fg_g, fg_b)),
+            started: Instant::now(),
+            timer_running: false,
+        }
+    }
+
+    /// # Safety
+    /// Always safe to call: `DeleteObject` accepts any GDI object handle,
+    /// including ones already deleted (a no-op returning `FALSE`), and none
+    /// of these three are ever shared with another live GDI object.
+    unsafe fn destroy(&self) {
+        DeleteObject(self.bg_brush as _);
+        DeleteObject(self.dot_brush as _);
+        DeleteObject(self.dot_pen as _);
+    }
+}
+
+/// How often the spinner timer fires and, in turn, how often the placeholder
+/// window is invalidated to advance the animation. 30fps: smooth enough for
+/// a handful of slowly-orbiting dots, cheap enough to be a non-issue on the
+/// GUI thread for the few seconds this ever runs (no GPU involvement at
+/// all -- see the module-level rationale for why this must stay a plain GDI
+/// path). `USER_TIMER_MINIMUM` is 10ms/100fps, so this is comfortably above
+/// the OS floor.
+const PLACEHOLDER_SPINNER_INTERVAL_MS: u32 = 1000 / 30;
+
+/// `SetTimer`/`KillTimer`/`WM_TIMER` id for the placeholder spinner's redraw
+/// tick. Scoped to a single constant since each top-level window only ever
+/// runs one of these at a time (ids are per-HWND, not global).
+const PLACEHOLDER_SPINNER_TIMER_ID: usize = 1;
 
 pub(crate) struct WindowInner {
     /// Non-owning reference to the window handle
@@ -156,12 +243,12 @@ pub(crate) struct WindowInner {
     paint_throttled: bool,
     invalidated: bool,
 
-    /// A solid brush matching the effective config palette's terminal
-    /// background color, used only by `WM_ERASEBKGND` to paint the client
-    /// area before the first real GPU frame lands. The window class is
+    /// Animated spinner state, used only by `wm_paint`/`WM_ERASEBKGND` to
+    /// paint the client area before the first real GPU frame lands (task
+    /// #384; see `PlaceholderSpinner`'s doc comment). The window class is
     /// registered with `hbrBackground: null_mut()` (see `create_window`) so
     /// that a *working* renderer never gets an extra background erase on
-    /// every resize; this brush exists purely to cover the gap between
+    /// every resize; this exists purely to cover the gap between
     /// `ShowWindow` and the renderer's first frame, where the alternative is
     /// whatever garbage happened to be in that region of the framebuffer, or
     /// (worse, on a dark theme) a stark white flash from an unpainted
@@ -170,7 +257,7 @@ pub(crate) struct WindowInner {
     /// point the renderer itself is responsible for every subsequent frame
     /// and `WM_ERASEBKGND` goes back to being a no-op (returning 1 without
     /// painting, matching today's behavior of a null-brush class).
-    placeholder_background_brush: Option<HBRUSH>,
+    placeholder_spinner: Option<PlaceholderSpinner>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -178,40 +265,6 @@ pub struct Window(HWindow);
 
 fn wuicolor_to_linearrgba(color: WUIColor) -> LinearRgba {
     LinearRgba::with_srgba(color.R, color.G, color.B, 255)
-}
-
-/// Build the `WM_ERASEBKGND` placeholder brush for a not-yet-rendered
-/// window, colored from the config's effective, fully-resolved palette
-/// (color scheme merged with any explicit `colors` overrides -- the exact
-/// same `resolved_palette` field that `TermConfig::color_palette` hands to
-/// the terminal model, see `crates/config/src/terminal.rs`). When the
-/// palette doesn't specify a background (`None`), fall back to the same
-/// default the terminal itself would use: `wezterm_term::color::
-/// ColorPalette::default().background`, which is plain black. That default
-/// is duplicated here as a literal rather than depending on the `term`
-/// crate (this `window` crate intentionally has no such dependency) --
-/// black is also the safe conservative choice if the two ever drifted,
-/// since it matches `hbrBackground: null_mut()`'s previous de-facto
-/// behavior of leaving stale (usually dark) framebuffer contents visible
-/// on unpainted, freshly-allocated window surfaces.
-///
-/// # Safety
-/// Always safe to call: only reads plain config values and calls
-/// `CreateSolidBrush`, which cannot fail in a way that produces an invalid
-/// non-null handle.
-fn create_placeholder_background_brush(config: &ConfigHandle) -> HBRUSH {
-    let (r, g, b, _a) = config
-        .resolved_palette
-        .background
-        .map(|c| c.as_rgba_u8())
-        .unwrap_or((0, 0, 0, 0xff));
-    // SAFETY: `RGB` is a pure macro over three `u8`s; `CreateSolidBrush`
-    // takes a plain `COLORREF` value and returns either a valid `HBRUSH` or
-    // null on failure (e.g. GDI handle exhaustion), which is an accepted,
-    // extremely unlikely degenerate case here -- see `WM_ERASEBKGND`'s
-    // handler, which already tolerates a null brush by falling back to "no
-    // paint" instead of dereferencing it.
-    unsafe { CreateSolidBrush(RGB(r, g, b)) }
 }
 
 fn rect_width(r: &RECT) -> i32 {
@@ -788,19 +841,22 @@ impl Window {
         };
         let appearance = get_appearance();
 
-        // Create the `WM_ERASEBKGND` placeholder brush up front, from the
-        // *effective* palette (color scheme + explicit overrides already
-        // resolved into `config.resolved_palette`, exactly like
+        // Create the placeholder spinner's GDI objects up front, colored
+        // from the *effective* palette (color scheme + explicit overrides
+        // already resolved into `config.resolved_palette`, exactly like
         // `TermConfig::color_palette` does for the terminal model itself --
-        // see `crates/config/src/terminal.rs`), not a hardcoded color. This
-        // is the same background the terminal will actually paint once the
-        // renderer comes up, so a placeholder-colored window handed to the
-        // user before the first GPU frame is indistinguishable from (or at
-        // worst a same-color no-op blend with) the real thing. Hardcoding
-        // e.g. white here would be invisible for this fork's light-theme
-        // default but would flash white on every dark theme -- precisely
-        // the defect this placeholder exists to prevent.
-        let placeholder_background_brush = Some(create_placeholder_background_brush(&config));
+        // see `crates/config/src/terminal.rs`), not hardcoded colors. This
+        // is the same background/foreground the terminal will actually
+        // paint once the renderer comes up, so the spinner shown to the
+        // user before the first GPU frame is drawn in colors that already
+        // match the real thing. Hardcoding e.g. a white background here
+        // would be invisible for this fork's light-theme default but would
+        // flash white on every dark theme -- precisely the defect this
+        // placeholder exists to prevent.
+        //
+        // SAFETY: `PlaceholderSpinner::new` only reads plain config values
+        // and creates GDI objects, which is always safe.
+        let placeholder_spinner = Some(unsafe { PlaceholderSpinner::new(&config) });
 
         let inner = Rc::new(RefCell::new(WindowInner {
             hwnd: HWindow(null_mut()),
@@ -822,7 +878,7 @@ impl Window {
             config: config.clone(),
             paint_throttled: false,
             invalidated: true,
-            placeholder_background_brush,
+            placeholder_spinner,
         }));
 
         // Careful: `raw` owns a ref to inner, but there is no Drop impl
@@ -1111,23 +1167,37 @@ impl WindowInner {
         });
     }
 
-    /// Drop the `WM_ERASEBKGND` placeholder brush (see
-    /// `placeholder_background_brush`'s doc comment) once a working
-    /// renderer is in place and responsible for painting every frame.
-    /// Idempotent: safe to call more than once (e.g. once from
-    /// `TermWindow::created` on the happy path, and once more as a backstop
-    /// from `wm_ncdestroy` if the window is closed before a renderer ever
-    /// came up) -- `Option::take` makes the second call a no-op.
+    /// Drop the placeholder spinner (see `placeholder_spinner`'s doc
+    /// comment) once a working renderer is in place and responsible for
+    /// painting every frame. Idempotent: safe to call more than once (e.g.
+    /// once from `TermWindow::created` on the happy path, and once more as
+    /// a backstop from `wm_ncdestroy` if the window is closed before a
+    /// renderer ever came up) -- `Option::take` makes the second call a
+    /// no-op.
     fn clear_placeholder_background(&mut self) {
-        if let Some(brush) = self.placeholder_background_brush.take() {
-            // SAFETY: `brush` was created by `CreateSolidBrush` in
-            // `create_placeholder_background_brush` and is not shared with
-            // any other GDI object or in use by an in-flight `FillRect`
-            // call (both `WM_ERASEBKGND` and this method only ever run on
-            // this window's single GUI/message-loop thread), so deleting it
-            // now cannot race a concurrent use.
+        if let Some(spinner) = self.placeholder_spinner.take() {
+            if spinner.timer_running {
+                // SAFETY: `self.hwnd.0` is either a valid window handle
+                // that `SetTimer` was previously called on with this same
+                // id (see `wm_nccreate`), for the happy-path call from
+                // `TermWindow::created`; or null, for the `wm_ncdestroy`
+                // backstop call, which runs after `wm_ncdestroy` has
+                // already reset `hwnd` to null -- `KillTimer(null, ..)`
+                // just fails and does nothing, which is fine, since Windows
+                // already destroys every timer owned by a window as part of
+                // that same `WM_NCDESTROY` teardown.
+                unsafe {
+                    KillTimer(self.hwnd.0, PLACEHOLDER_SPINNER_TIMER_ID);
+                }
+            }
+            // SAFETY: `spinner`'s GDI objects were created by
+            // `PlaceholderSpinner::new` and are not shared with any other
+            // GDI object or in use by an in-flight paint call (both
+            // `WM_ERASEBKGND`/`wm_paint` and this method only ever run on
+            // this window's single GUI/message-loop thread), so deleting
+            // them now cannot race a concurrent use.
             unsafe {
-                DeleteObject(brush as _);
+                spinner.destroy();
             }
         }
     }
@@ -1669,7 +1739,28 @@ unsafe fn wm_nccreate(hwnd: HWND, _msg: UINT, _wparam: WPARAM, lparam: LPARAM) -
     // SAFETY: valid hwnd; storing the `Rc` raw pointer in GWLP_USERDATA for later
     // recovery (balanced by `wm_ncdestroy`).
     SetWindowLongPtrW(hwnd, GWLP_USERDATA, create.lpCreateParams as _);
-    inner.borrow_mut().hwnd = HWindow(hwnd);
+    let mut inner_mut = inner.borrow_mut();
+    inner_mut.hwnd = HWindow(hwnd);
+
+    // Start the placeholder spinner's redraw tick now that `hwnd` is valid.
+    // This is the earliest point a `SetTimer` call on this window is legal.
+    // The timer just invalidates the window on every tick (see `WM_TIMER`
+    // in `do_wnd_proc`) to advance the animation; it is killed in
+    // `clear_placeholder_background` as soon as a working renderer is
+    // installed, so it never outlives the few seconds the spinner is shown
+    // for.
+    if let Some(spinner) = inner_mut.placeholder_spinner.as_mut() {
+        // SAFETY: `hwnd` is the just-created, valid window handle;
+        // `PLACEHOLDER_SPINNER_TIMER_ID` is a plain nonzero id scoped to
+        // this window.
+        SetTimer(
+            hwnd,
+            PLACEHOLDER_SPINNER_TIMER_ID,
+            PLACEHOLDER_SPINNER_INTERVAL_MS,
+            None,
+        );
+        spinner.timer_running = true;
+    }
 
     None
 }
@@ -1695,9 +1786,9 @@ unsafe fn wm_ncdestroy(
         inner.hwnd = HWindow(null_mut());
         // Backstop in case this window is closed before a renderer ever
         // came up (so `TermWindow::created` never ran and never called
-        // `clear_placeholder_background` itself): make sure the brush is
-        // always deleted rather than leaked. No-op if it was already
-        // cleared.
+        // `clear_placeholder_background` itself): make sure the spinner's
+        // GDI objects are always deleted rather than leaked. No-op if it
+        // was already cleared.
         inner.clear_placeholder_background();
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     }
@@ -2234,6 +2325,66 @@ unsafe fn wm_kill_focus(
     None
 }
 
+/// Number of dots orbiting the spinner's center.
+const PLACEHOLDER_SPINNER_DOT_COUNT: i32 = 8;
+/// One full rotation every 1.4s -- fast enough to read as "alive" within
+/// the first paint or two, slow enough not to be distracting for however
+/// many seconds WebGpu init takes.
+const PLACEHOLDER_SPINNER_PERIOD_MS: u128 = 1400;
+
+/// Paint the animated placeholder spinner into `hdc`, covering `rect`
+/// (the window's client area) with the background color and drawing a ring
+/// of dots -- fading from full brightness at the "lead" dot down to barely
+/// visible at the "tail" -- rotating around the center. This is the task
+/// #384 replacement for the old flat `FillRect`-only placeholder: same
+/// cheap GDI path (no WebGpu/render-thread involvement, since that pipeline
+/// is exactly what is not ready yet), just drawing a few more small shapes
+/// instead of one big one.
+///
+/// # Safety
+/// `hdc` must be a valid, live device context for a window whose client
+/// area is `rect`.
+unsafe fn draw_placeholder_spinner(hdc: HDC, rect: &RECT, spinner: &PlaceholderSpinner) {
+    FillRect(hdc, rect, spinner.bg_brush);
+
+    let cx = (rect.left + rect.right) / 2;
+    let cy = (rect.top + rect.bottom) / 2;
+    // Scale the ring to the smaller dimension so it stays fully on-screen
+    // even in a narrow or short window; clamp so a not-yet-laid-out (0x0)
+    // window doesn't divide badly.
+    let short_side = rect_width(rect).min(rect_height(rect)).max(1);
+    let radius = (short_side / 6).clamp(8, 48);
+    let dot_radius = (radius / 4).clamp(2, 10);
+
+    let phase = spinner.started.elapsed().as_millis() % PLACEHOLDER_SPINNER_PERIOD_MS;
+    let base_angle = (phase as f64 / PLACEHOLDER_SPINNER_PERIOD_MS as f64) * std::f64::consts::TAU;
+
+    // SAFETY: `hdc` is the live device context passed in by the caller;
+    // `dot_pen`/`dot_brush` are live GDI objects owned by `spinner` for the
+    // duration of this call. `SelectObject` returns the previously-selected
+    // object, which we restore before returning so `hdc` (owned by the
+    // window, via `CS_OWNDC`) is left exactly as we found it.
+    let old_pen = SelectObject(hdc, spinner.dot_pen as _);
+    let old_brush = SelectObject(hdc, spinner.dot_brush as _);
+    let old_bk_mode = SetBkMode(hdc, TRANSPARENT as i32);
+
+    for i in 0..PLACEHOLDER_SPINNER_DOT_COUNT {
+        let angle = base_angle
+            + (i as f64) * (std::f64::consts::TAU / PLACEHOLDER_SPINNER_DOT_COUNT as f64);
+        let x = cx + (angle.cos() * radius as f64) as i32;
+        let y = cy + (angle.sin() * radius as f64) as i32;
+        // Shrink trailing dots so the ring reads as a moving comet rather
+        // than a static ring of identical dots. `i == 0` is the lead dot.
+        let shrink = i * dot_radius / (PLACEHOLDER_SPINNER_DOT_COUNT * 2);
+        let r = (dot_radius - shrink).max(1);
+        Ellipse(hdc, x - r, y - r, x + r, y + r);
+    }
+
+    SelectObject(hdc, old_pen);
+    SelectObject(hdc, old_brush);
+    SetBkMode(hdc, old_bk_mode);
+}
+
 /// # Safety
 /// `hwnd` must be a valid window handle; the `PAINTSTRUCT` is fully
 /// initialized before being passed to `BeginPaint`/`EndPaint`.
@@ -2260,17 +2411,17 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
         rgbReserved: [0; 32],
     };
     let hdc = BeginPaint(hwnd, &mut ps);
-    // Fill the placeholder background here rather than leaving it to
+    // Paint the placeholder spinner here rather than leaving it to
     // `wm_erasebkgnd`. That handler can never do it during our own paint
     // cycle: `BeginPaint` sends `WM_ERASEBKGND` *synchronously*, from
     // inside this function, while we are still holding `borrow_mut()` on
     // the same `RefCell` -- so its `try_borrow` always fails and it skips
-    // the fill. (And the repaint we schedule below uses
+    // the paint. (And the repaint we schedule below uses
     // `InvalidateRect(.., bErase = 0)`, which doesn't request an erase in
     // the first place.) Doing it here, where `inner` is already borrowed,
     // is what actually makes a shown-but-not-yet-rendered window come up
-    // in the terminal's background color instead of an unpainted white.
-    if let Some(brush) = inner.placeholder_background_brush {
+    // showing the spinner instead of unpainted white.
+    if let Some(spinner) = inner.placeholder_spinner.as_ref() {
         if !hdc.is_null() {
             let mut rect = RECT {
                 left: 0,
@@ -2282,11 +2433,11 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
             // is a live stack `RECT` that `GetClientRect` only writes into.
             GetClientRect(hwnd, &mut rect);
             // SAFETY: `hdc` is the non-null device context just returned by
-            // `BeginPaint` and still live until `EndPaint`; `brush` is a
-            // live `HBRUSH` owned by `inner` (created in
-            // `create_placeholder_background_brush`, deleted only in
+            // `BeginPaint` and still live until `EndPaint`; `spinner`'s GDI
+            // objects are owned by `inner` (created in
+            // `PlaceholderSpinner::new`, deleted only in
             // `clear_placeholder_background`/`wm_ncdestroy`).
-            FillRect(hdc, &rect, brush);
+            draw_placeholder_spinner(hdc, &rect, spinner);
         }
     }
     EndPaint(hwnd, &ps);
@@ -2325,9 +2476,9 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
 /// all, it would show whatever was previously in that region of the
 /// framebuffer (garbage, or another window's content underneath).
 ///
-/// While `placeholder_background_brush` is set, fill `rcPaint` with it and
+/// While `placeholder_spinner` is set, paint the spinner into `rcPaint` and
 /// report the background as erased (return 1). Once
-/// `clear_placeholder_background` has dropped the brush (called from
+/// `clear_placeholder_background` has dropped it (called from
 /// `TermWindow::created` after a working `RenderState` is installed), fall
 /// straight back to returning 1 without painting -- identical to today's
 /// null-brush behavior.
@@ -2362,7 +2513,7 @@ unsafe fn wm_erasebkgnd(
         Err(_) => return Some(1),
     };
 
-    if let Some(brush) = inner.placeholder_background_brush {
+    if let Some(spinner) = inner.placeholder_spinner.as_ref() {
         let hdc = wparam as HDC;
         let mut rect = RECT {
             left: 0,
@@ -2375,14 +2526,44 @@ unsafe fn wm_erasebkgnd(
         GetClientRect(hwnd, &mut rect);
         // SAFETY: `hdc` comes from `wparam` of a real `WM_ERASEBKGND`
         // message and is therefore a valid device context for this window;
-        // `brush` is a live `HBRUSH` owned by `inner` (created in
-        // `create_placeholder_background_brush`, deleted only in
+        // `spinner`'s GDI objects are owned by `inner` (created in
+        // `PlaceholderSpinner::new`, deleted only in
         // `clear_placeholder_background`/`wm_ncdestroy`) and `rect` is the
         // just-populated client rect.
-        FillRect(hdc, &rect, brush);
+        draw_placeholder_spinner(hdc, &rect, spinner);
     }
 
     Some(1)
+}
+
+/// Handles `WM_TIMER`. The only timer this window ever sets is
+/// `PLACEHOLDER_SPINNER_TIMER_ID` (see `wm_nccreate`), so on every tick we
+/// just invalidate the client area to advance the spinner animation by one
+/// frame. Once `clear_placeholder_background` kills the timer, no more of
+/// these arrive.
+///
+/// # Safety
+/// `hwnd` must be a valid window handle.
+unsafe fn wm_timer(hwnd: HWND, _msg: UINT, wparam: WPARAM, _lparam: LPARAM) -> Option<LRESULT> {
+    if wparam == PLACEHOLDER_SPINNER_TIMER_ID {
+        // SAFETY: `hwnd` is the valid window handle passed in. `RDW_ERASE`
+        // so `WM_ERASEBKGND` fires again too (needed since the spinner also
+        // paints there for the `BeginPaint`-synchronous-erase case, see
+        // `wm_erasebkgnd`'s doc comment). `RDW_ALLCHILDREN` matters as much
+        // as the invalidate itself here, for the same reason it does in
+        // `schedule_show_window`: the WebGpu child window covers the entire
+        // client area and is what the user actually sees, and a plain
+        // `InvalidateRect` on the parent does not reach it, so the spinner
+        // would never animate.
+        RedrawWindow(
+            hwnd,
+            null(),
+            null_mut(),
+            RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+        );
+        return Some(0);
+    }
+    None
 }
 
 fn mods_and_buttons(wparam: WPARAM) -> (Modifiers, MouseButtons) {
@@ -3373,6 +3554,7 @@ unsafe fn do_wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
         }
         WM_DROPFILES => drop_files(hwnd, msg, wparam, lparam),
         WM_ERASEBKGND => wm_erasebkgnd(hwnd, msg, wparam, lparam),
+        WM_TIMER => wm_timer(hwnd, msg, wparam, lparam),
         WM_CLOSE => {
             if let Some(inner) = rc_from_hwnd(hwnd) {
                 let mut inner = inner.borrow_mut();
@@ -3426,24 +3608,42 @@ unsafe extern "system" fn wnd_proc(
     }
 }
 
-/// The placeholder brush belonging to `child`'s parent top-level window, or
-/// `None` once the renderer is up (or if the parent has no `WindowInner`
-/// yet). Used by `child_wnd_proc` -- the WebGpu child window has no
-/// `WindowInner` of its own, so it borrows its parent's.
+/// Paint the placeholder spinner belonging to `child`'s parent top-level
+/// window into `hdc`/`rect`, if the parent still has one (i.e. the renderer
+/// isn't up yet). Returns whether anything was painted. Used by
+/// `child_wnd_proc` -- the WebGpu child window has no `WindowInner` of its
+/// own, so it borrows its parent's. Unlike the old single-`HBRUSH` version,
+/// this can't just hand back a `Copy` handle and let the caller draw with
+/// it afterwards: `PlaceholderSpinner` isn't `Copy` (it owns a `started:
+/// Instant` and several GDI handles), so the actual `draw_placeholder_
+/// spinner` call has to happen here, inside the parent's borrow.
 ///
 /// # Safety
-/// `child` must be a valid window handle.
-unsafe fn parent_placeholder_brush(child: HWND) -> Option<HBRUSH> {
+/// `child` must be a valid window handle; `hdc` must be a valid, live
+/// device context for `child`'s client area, which must equal `rect`.
+unsafe fn paint_parent_placeholder_spinner(child: HWND, hdc: HDC, rect: &RECT) -> bool {
     let parent = GetParent(child);
     if parent.is_null() {
-        return None;
+        return false;
     }
-    let inner = rc_from_hwnd(parent)?;
+    let inner = match rc_from_hwnd(parent) {
+        Some(inner) => inner,
+        None => return false,
+    };
     // `try_borrow` for the same reason the top-level `WM_ERASEBKGND`
     // handler uses it: this can be reached synchronously from a
     // `BeginPaint` on a stack frame that already holds the borrow.
-    let inner = inner.try_borrow().ok()?;
-    inner.placeholder_background_brush
+    let inner = match inner.try_borrow() {
+        Ok(inner) => inner,
+        Err(_) => return false,
+    };
+    match inner.placeholder_spinner.as_ref() {
+        Some(spinner) => {
+            draw_placeholder_spinner(hdc, rect, spinner);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Window procedure for the small `WS_CHILD` window that hosts the WebGpu
@@ -3479,31 +3679,30 @@ unsafe extern "system" fn child_wnd_proc(
             // This child window is created up front, together with the
             // top-level window -- not when WebGpu finishes initializing --
             // and it is `WS_VISIBLE` from the start, covering the parent's
-            // entire client area. So the parent's own placeholder fill is
+            // entire client area. So the parent's own placeholder paint is
             // painted *underneath* it and never visible, while this window
             // paints nothing at all until the swapchain presents its first
             // frame seconds later. That gap is what the user sees as a
-            // blank white rectangle. Fill it with the parent's placeholder
-            // brush; once the renderer is up, `clear_placeholder_background`
-            // drops the brush and this goes back to being a no-op, leaving
-            // the swapchain in sole control of these pixels.
-            if let Some(brush) = parent_placeholder_brush(hwnd) {
-                let hdc = wparam as HDC;
-                let mut rect = RECT {
-                    left: 0,
-                    top: 0,
-                    right: 0,
-                    bottom: 0,
-                };
-                // SAFETY: `hwnd` is this valid child window handle; `rect`
-                // is a live stack `RECT` that `GetClientRect` only writes
-                // into.
-                GetClientRect(hwnd, &mut rect);
-                // SAFETY: `hdc` is the device context Win32 passed in
-                // `wparam` of a real `WM_ERASEBKGND`; `brush` is owned by
-                // the parent's `WindowInner` and outlives this call, which
-                // runs on the same (GUI) thread that would destroy it.
-                FillRect(hdc, &rect, brush);
+            // blank white rectangle. Paint the parent's spinner here
+            // instead; once the renderer is up, `clear_placeholder_
+            // background` drops it and this goes back to being a no-op,
+            // leaving the swapchain in sole control of these pixels.
+            let hdc = wparam as HDC;
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            // SAFETY: `hwnd` is this valid child window handle; `rect`
+            // is a live stack `RECT` that `GetClientRect` only writes
+            // into.
+            GetClientRect(hwnd, &mut rect);
+            // SAFETY: `hwnd` is this valid child window handle; `hdc` is
+            // the device context Win32 passed in `wparam` of a real
+            // `WM_ERASEBKGND` and is live for `rect`, this child's full
+            // client area.
+            if paint_parent_placeholder_spinner(hwnd, hdc, &rect) {
                 return 1;
             }
         }
