@@ -76,21 +76,61 @@ impl FallbackResolveInfo {
             extra_handles
         );
 
-        if wanted.len() > 1 && self.config.sort_fallback_fonts_by_coverage {
-            // Sort by ascending coverage
-            extra_handles.sort_by_cached_key(|p| {
-                p.coverage_intersection(&wanted)
+        // Sort candidates deterministically before the greedy reduction
+        // below picks winners. Unlike the old code, this always runs (not
+        // just when `sort_fallback_fonts_by_coverage` is on) because two of
+        // its three keys are correctness fixes, not a quality preference:
+        //
+        // 1. (opt-in via `sort_fallback_fonts_by_coverage`) descending
+        //    coverage of `wanted` -- a font that covers more of what we
+        //    still need is more useful, so prefer it first.
+        // 2. (always) prefer a non-emoji-presentation font on a tie.
+        //    `compute_coverage` (cmap enumeration) and the shaper's real
+        //    per-codepoint glyph lookup can disagree for color/emoji fonts:
+        //    a codepoint's cmap entry can point at a glyph that is only
+        //    meaningful as part of a ZWJ/ligature sequence (resolved via
+        //    GSUB during real shaping), not as a standalone character, so
+        //    `compute_coverage` sees a real (non-zero) glyph id while the
+        //    shaper renders `.notdef` for it in isolation. Observed
+        //    concretely with the bundled NotoColorEmoji.ttf claiming
+        //    coverage of U+2702 (SCISSORS, a Dingbat, not an emoji) that it
+        //    cannot actually render standalone, competing with the
+        //    correctly-covering Noto Sans Symbols 2. Deprioritizing
+        //    emoji-presentation fonts on ties avoids the class of bug, not
+        //    just this one codepoint.
+        // 3. (always) the font's own name, as a final tie-break. The three
+        //    `locate_fallback_for_codepoints` sources above walk a
+        //    `HashMap`, whose iteration order is randomized per-process, so
+        //    without this the previous keys being equal would still leave
+        //    the winner picked non-deterministically from one run to the
+        //    next (this is what made the underlying bug intermittent
+        //    rather than consistently wrong, and is why this whole sort
+        //    cannot be left conditional on the opt-in coverage preference).
+        extra_handles.sort_by(|a, b| {
+            let mut ordering = std::cmp::Ordering::Equal;
+            if self.config.sort_fallback_fonts_by_coverage {
+                let a_cov = a
+                    .coverage_intersection(&wanted)
                     .map(|r| r.len())
-                    .unwrap_or(0)
-            });
-            // Re-arrange to descending coverage
-            extra_handles.reverse();
-            log::trace!(
-                "Fallback fonts that match {} after sorting are: {:#?}",
-                fallback_str.escape_unicode(),
-                extra_handles
-            );
-        }
+                    .unwrap_or(0);
+                let b_cov = b
+                    .coverage_intersection(&wanted)
+                    .map(|r| r.len())
+                    .unwrap_or(0);
+                ordering = b_cov.cmp(&a_cov);
+            }
+            ordering
+                .then_with(|| {
+                    a.assume_emoji_presentation
+                        .cmp(&b.assume_emoji_presentation)
+                })
+                .then_with(|| a.names().full_name.cmp(&b.names().full_name))
+        });
+        log::trace!(
+            "Fallback fonts that match {} after sorting are: {:#?}",
+            fallback_str.escape_unicode(),
+            extra_handles
+        );
 
         // iteratively reduce to just the fonts that we need
         extra_handles.retain(|p| match p.coverage_intersection(&wanted) {
