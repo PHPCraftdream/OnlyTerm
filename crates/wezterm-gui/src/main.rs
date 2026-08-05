@@ -12,13 +12,11 @@ use ::window::*;
 use anyhow::{anyhow, Context};
 use clap::builder::ValueParser;
 use clap::{Parser, ValueHint};
-use config::keyassignment::SpawnTabDomain;
 use config::{ConfigHandle, SerialDomain};
 use mux::activity::Activity;
 use mux::domain::{Domain, LocalDomain};
 use mux::Mux;
 use portable_pty::cmdbuilder::CommandBuilder;
-use promise::spawn::block_on;
 use std::borrow::Cow;
 use std::env::current_dir;
 use std::ffi::OsString;
@@ -362,165 +360,25 @@ async fn async_run_terminal_gui(
     spawn_tab_in_domain_if_mux_is_empty(cmd, is_connecting, domain, opts.workspace).await
 }
 
-#[derive(Debug)]
-// "Publish" suffix is load-bearing: the variants distinguish connect/publish
-// CLI behaviors, and removing it would leave meaningless *Or/*No/*But names.
-#[allow(clippy::enum_variant_names)]
-enum Publish {
-    TryPathOrPublish(PathBuf),
-    NoConnectNoPublish,
-    NoConnectButPublish,
-}
-
-impl Publish {
-    pub fn resolve(mux: &Arc<Mux>, config: &ConfigHandle, always_new_process: bool) -> Self {
-        if mux.default_domain().domain_name() != config.default_domain.as_deref().unwrap_or("local")
-        {
-            return Self::NoConnectNoPublish;
-        }
-
-        if always_new_process {
-            return Self::NoConnectNoPublish;
-        }
-
-        if config::is_config_overridden() {
-            // They're using a specific config file: assume that it is
-            // different from the running gui
-            log::trace!("skip existing gui: config is different");
-            return Self::NoConnectNoPublish;
-        }
-
-        match wezterm_client::discovery::resolve_gui_sock_path(
-            &crate::termwindow::get_window_class(),
-        ) {
-            Ok(path) => Self::TryPathOrPublish(path),
-            Err(_) => Self::NoConnectButPublish,
-        }
-    }
-
-    pub fn should_publish(&self) -> bool {
-        match self {
-            Self::TryPathOrPublish(_) | Self::NoConnectButPublish => true,
-            Self::NoConnectNoPublish => false,
-        }
-    }
-
-    pub fn try_spawn(
-        &mut self,
-        cmd: Option<CommandBuilder>,
-        config: &ConfigHandle,
-        workspace: Option<&str>,
-        domain: SpawnTabDomain,
-        new_tab: bool,
-        attach: bool,
-    ) -> anyhow::Result<bool> {
-        if let Publish::TryPathOrPublish(gui_sock) = &self {
-            let dom = config::UnixDomain {
-                socket_path: Some(gui_sock.clone()),
-                no_serve_automatically: true,
-                ..Default::default()
-            };
-            let mut ui = mux::connui::ConnectionUI::new_headless();
-            match wezterm_client::client::Client::new_unix_domain(None, &dom, false, &mut ui, true)
-            {
-                Ok(client) => {
-                    let executor = promise::spawn::ScopedExecutor::new();
-                    let command = cmd.clone();
-                    let res = block_on(executor.run(async move {
-                        let vers = client.verify_version_compat(&ui).await?;
-
-                        if vers.executable_path != std::env::current_exe().context("resolve executable path")? {
-                            *self = Publish::NoConnectNoPublish;
-                            anyhow::bail!(
-                                "Running GUI is a different executable from us, will start a new one");
-                        }
-                        if vers.config_file_path
-                            != std::env::var_os("ONLYTERM_CONFIG_FILE").map(Into::into)
-                        {
-                            *self = Publish::NoConnectNoPublish;
-                            anyhow::bail!(
-                                "Running GUI has different config from us, will start a new one"
-                            );
-                        }
-
-                        let window_id = if new_tab || config.prefer_to_spawn_tabs {
-                            if let Ok(pane_id) = client.resolve_pane_id(None).await {
-                                let panes = client.list_panes().await?;
-
-                                let mut window_id = None;
-                                'outer: for tabroot in panes.tabs {
-                                    let mut cursor = tabroot.into_tree().cursor();
-
-                                    loop {
-                                        if let Some(entry) = cursor.leaf_mut() {
-                                            if entry.pane_id == pane_id {
-                                                window_id.replace(entry.window_id);
-                                                break 'outer;
-                                            }
-                                        }
-                                        match cursor.preorder_next() {
-                                            Ok(c) => cursor = c,
-                                            Err(_) => break,
-                                        }
-                                    }
-                                }
-                                window_id
-
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-
-                        client
-                            .spawn_v2(codec::SpawnV2 {
-                                domain,
-                                window_id,
-                                command,
-                                command_dir: None,
-                                size: config.initial_size(0, None),
-                                workspace: workspace.unwrap_or(
-                                    config
-                                        .default_workspace
-                                        .as_deref()
-                                        .unwrap_or(mux::DEFAULT_WORKSPACE)
-                                ).to_string(),
-                                attach,
-                            })
-                            .await
-                    }));
-
-                    match res {
-                        Ok(res) => {
-                            log::info!(
-                                "Spawned your command via the existing GUI instance. \
-                             Use wezterm start --always-new-process if you do not want this behavior. \
-                             Result={:?}",
-                                res
-                            );
-                            Ok(true)
-                        }
-                        Err(err) => {
-                            log::trace!(
-                                "while attempting to ask existing instance to spawn: {:#}",
-                                err
-                            );
-                            Ok(false)
-                        }
-                    }
-                }
-                Err(err) => {
-                    // Couldn't connect: it's probably a stale symlink.
-                    // That's fine: we can continue with starting a fresh gui below.
-                    log::trace!("{:#}", err);
-                    Ok(false)
-                }
-            }
-        } else {
-            Ok(false)
-        }
-    }
+// OnlyTerm: a `start` invocation never asks an already-running GUI instance
+// to spawn the window on its behalf and then exit -- every launch always
+// becomes its own independent process with its own window, mux, and render
+// state, regardless of whether another instance happens to be running.
+// Upstream's default was to look for a running GUI's published gui-sock and
+// delegate the spawn to it (opt out via `--always-new-process`); that
+// default made a plain "launch OnlyTerm" delegate to a possibly much older
+// process instead of actually starting fresh, which is exactly the
+// confusing behavior this fork intentionally removes. `--always-new-process`
+// still parses (for compatibility) but is now a no-op: this was always the
+// only behavior.
+//
+// This process still publishes its own gui-sock (see `should_publish_gui_sock`
+// and its use in `spawn_mux_server`) so unrelated tooling (e.g. a `cli`
+// subcommand run from a separate process) can still find and control *this*
+// window -- only the "delegate my own spawn to some other, already-running
+// window" behavior is gone.
+fn should_publish_gui_sock(mux: &Arc<Mux>, config: &ConfigHandle) -> bool {
+    mux.default_domain().domain_name() == config.default_domain.as_deref().unwrap_or("local")
 }
 
 fn spawn_mux_server(unix_socket_path: PathBuf, should_publish: bool) -> anyhow::Result<()> {
@@ -628,34 +486,16 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
         opts.workspace.as_deref(),
     )?;
 
-    // First, let's see if we can ask an already running wezterm to do this.
-    // We must do this before we start the gui frontend as the scheduler
-    // requirements are different.
-    let mut publish = Publish::resolve(
-        &mux,
-        &config,
-        opts.always_new_process || opts.position.is_some(),
-    );
-    log::trace!("{:?}", publish);
-    if publish.try_spawn(
-        cmd.clone(),
-        &config,
-        opts.workspace.as_deref(),
-        match &opts.domain {
-            Some(name) => SpawnTabDomain::DomainName(name.to_string()),
-            None => SpawnTabDomain::DefaultDomain,
-        },
-        opts.new_tab,
-        opts.attach,
-    )? {
-        return Ok(());
-    }
+    // OnlyTerm: never delegate this spawn to an already-running GUI instance
+    // -- see `should_publish_gui_sock`'s doc comment. Always become our own
+    // independent process/window here.
+    let should_publish = should_publish_gui_sock(&mux, &config);
 
     let gui = crate::frontend::try_new()?;
     let activity = Activity::new();
 
     promise::spawn::spawn(async move {
-        if let Err(err) = async_run_terminal_gui(cmd, opts, publish.should_publish()).await {
+        if let Err(err) = async_run_terminal_gui(cmd, opts, should_publish).await {
             terminate_with_error(err);
         }
         drop(activity);
