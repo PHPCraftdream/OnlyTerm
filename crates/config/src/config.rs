@@ -2132,4 +2132,44 @@ exec_domains: [
             Some(dir.path().join(".onlyterm.lua"))
         );
     }
+
+    /// Task #420 (OS-portable config paths). A relative `font_dirs` entry
+    /// must resolve to a path under the directory that holds the config
+    /// file itself, using whatever `PathBuf`/`Path::join` produces on the
+    /// host OS -- there is no hardcoded separator or platform assumption in
+    /// `compute_extra_defaults`. This is what makes a relative `font_dirs`
+    /// entry (e.g. `font_dirs: [fonts]`) safe to sync between Windows and
+    /// Linux/macOS: the join happens the same way regardless of platform,
+    /// unlike a hardcoded absolute path such as `C:/Windows/Fonts`, which
+    /// only ever makes sense on one OS (see `docs/config/reference/config/
+    /// font_dirs.md`).
+    #[test]
+    fn relative_font_dirs_resolve_against_the_config_file_directory() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("onlyterm.ktav");
+        std::fs::write(&config_path, "font_dirs: [fonts, ../shared-fonts]\n").unwrap();
+
+        let path_item = PathPossibility::required(config_path);
+        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            .expect("try_load should succeed")
+            .expect("a config was found");
+        let cfg = loaded.config.expect("config should parse");
+
+        assert_eq!(
+            cfg.font_dirs,
+            vec![dir.path().join("fonts"), dir.path().join("../shared-fonts"),],
+            "relative font_dirs entries must resolve relative to the config \
+             file's own directory on every OS, with no hardcoded platform path"
+        );
+        for font_dir in &cfg.font_dirs {
+            assert!(
+                font_dir.is_absolute(),
+                "resolved font_dirs entries must be absolute: {:?}",
+                font_dir
+            );
+        }
+    }
 }
