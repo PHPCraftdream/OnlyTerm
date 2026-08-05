@@ -2857,8 +2857,14 @@ unsafe fn draw_placeholder_spinner(hdc: HDC, rect: &RECT, spinner: &PlaceholderS
     // even in a narrow or short window; clamp so a not-yet-laid-out (0x0)
     // window doesn't divide badly.
     let short_side = rect_width(rect).min(rect_height(rect)).max(1);
-    let radius = (short_side / 6).clamp(8, 48);
-    let dot_radius = (radius / 4).clamp(2, 10);
+    // Task #406: the old caps (radius 48px / dot 10px, ~96px diameter total)
+    // never grew past that regardless of window size -- on any modern,
+    // large window (e.g. a 1920x1080 client area) that reads as a tiny,
+    // easy-to-miss speck rather than a visible loading indicator. Raised
+    // caps so the spinner actually scales with the window up to a size
+    // that stays comfortably proportioned rather than overwhelming.
+    let radius = (short_side / 6).clamp(8, 120);
+    let dot_radius = (radius / 4).clamp(2, 18);
 
     let phase = spinner.started.elapsed().as_millis() % PLACEHOLDER_SPINNER_PERIOD_MS;
     let base_angle = (phase as f64 / PLACEHOLDER_SPINNER_PERIOD_MS as f64) * std::f64::consts::TAU;
