@@ -289,6 +289,18 @@ pub trait WindowOps {
     /// `hbrBackground: null_mut()` class does.
     fn clear_placeholder_background(&self) {}
 
+    /// Signal that the shell running in this window's pane(s) has produced
+    /// its first output, used as a practical proxy for "the shell is alive
+    /// and likely ready to accept input" (task #385 -- there is no harder
+    /// "ready for input" handshake to wait for; see the call site in
+    /// `wezterm-gui`'s `TermWindow` for the exact trigger). Windows-only
+    /// concern, like `clear_placeholder_background`: it gates the placeholder
+    /// spinner's cross-fade into the real terminal content
+    /// (`os::windows::window::WindowInner::start_placeholder_fade`), which
+    /// only starts once both this and a working renderer are in place. No-op
+    /// default for platforms that never painted a placeholder to begin with.
+    fn notify_shell_ready(&self) {}
+
     /// Change the titlebar text for the window
     fn set_title(&self, title: &str);
 

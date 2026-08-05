@@ -388,6 +388,22 @@ pub struct TermWindow {
 
     created: Instant,
 
+    /// Set the first time any pane in this window produces non-empty pty
+    /// output (task #385). Used as a practical proxy for "the shell is
+    /// alive and likely ready to accept input" -- there is no harder
+    /// "ready for input" handshake available (the alternative, waiting for
+    /// a DA1/DSR-style negotiation to complete, isn't something every shell
+    /// or program running in the pane will ever emit) -- and forwarded via
+    /// `WindowOps::notify_shell_ready` to gate the Windows placeholder
+    /// spinner's cross-fade into the real terminal content (see
+    /// `window::os::windows::window::WindowInner::start_placeholder_fade`,
+    /// which also waits for the renderer to be ready; whichever of the two
+    /// conditions is satisfied later is what actually starts the fade).
+    /// Checked-then-set in `mux_pane_output_event` so the notification is
+    /// only ever sent once per window; a no-op on non-Windows platforms and
+    /// harmless if sent more than once, but there's no reason to.
+    shell_output_seen: bool,
+
     pub last_frame_duration: Duration,
     last_fps_check_time: Instant,
     num_frames: usize,
