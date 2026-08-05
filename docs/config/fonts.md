@@ -1,9 +1,16 @@
 ### Font Related Configuration
 
 WezTerm bundles [JetBrains Mono](https://www.jetbrains.com/lp/mono/),
-[Nerd Font Symbols](https://nerdfonts.com) and
-[Noto Color Emoji](https://www.google.com/get/noto/help/emoji/) fonts
-and uses those for the default font configuration.
+[Nerd Font Symbols](https://nerdfonts.com),
+[Noto Color Emoji](https://www.google.com/get/noto/help/emoji/), and
+[Noto Sans Symbols / Noto Sans Symbols
+2](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) fonts and uses
+those for the default font configuration. The two Noto Sans Symbols fonts
+sit at the end of the built-in fallback chain as a broad-coverage safety
+net for symbol codepoints that neither the primary monospace font nor the
+Nerd Font glyph set include (for example the Miscellaneous Technical block,
+U+2300-U+23FF), so that unsupported symbols degrade to *some* legible glyph
+instead of an empty tofu box.
 
 If you wish to use a different font face, set the `font` option directly to
 a `TextStyle` object (there is no `wezterm.font(...)` helper anymore — see

@@ -821,6 +821,11 @@ pub(crate) fn load_built_in_fonts(font_info: &mut Vec<ParsedFont>) -> anyhow::Re
         &[font!(
             "../../../assets/fonts/SymbolsNerdFontMono-Regular.ttf"
         )],
+        #[cfg(any(test, feature = "vendor-noto-symbols"))]
+        &[
+            font!("../../../assets/fonts/NotoSansSymbols-Regular.ttf"),
+            font!("../../../assets/fonts/NotoSansSymbols2-Regular.ttf"),
+        ],
     ];
     for bundle in built_ins {
         for (data, name) in bundle.iter() {
