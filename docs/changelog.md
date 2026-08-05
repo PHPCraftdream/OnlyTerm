@@ -590,6 +590,19 @@ As features stabilize some brief notes about them will accumulate here.
   produced its first frame *and* the shell has produced its first output
   (whichever happens later), the spinner smoothly cross-fades into the
   real terminal content instead of being replaced abruptly.
+* Review of the startup cross-fade above surfaced a robustness round, now
+  fixed: the fade could start with the placeholder spinner already
+  destroyed (when the shell's first output arrived after the renderer, or
+  on any later renderer rebuild), leaving an unpainted, opaque overlay
+  sitting over live terminal content for the whole fade duration -- it now
+  bails out to the old instant hand-off instead. The fade's `WS_EX_LAYERED`
+  overlay window is no longer left stale (misaligned, or hidden behind a
+  newly recreated WebGPU child window) across a resize or renderer rebuild
+  mid-fade -- either now ends the fade immediately rather than animating a
+  wrong rectangle. Three placeholder-spinner GDI handles could leak if
+  window creation failed partway through. A reentrant `WM_TIMER` during the
+  fade (possible from a nested message pump, e.g. a move/resize loop) could
+  panic and take down the whole process; it now just skips that tick.
 * Seven issues surfaced by review during the file-splitting and clippy
   cleanup above are now fixed. Three predate this fork (inherited from
   upstream): `kitty` keyboard-protocol encoding mapped `KeyCode::VolumeDown`
