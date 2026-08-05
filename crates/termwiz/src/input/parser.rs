@@ -10,7 +10,10 @@ use winapi::um::wincon::{
     WINDOW_BUFFER_SIZE_EVENT, WINDOW_BUFFER_SIZE_RECORD,
 };
 
-use super::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent, PixelMouseEvent};
+#[cfg(windows)]
+use super::MouseButtons;
+
+use super::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseEvent, PixelMouseEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputState {
