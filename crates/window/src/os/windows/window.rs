@@ -1644,6 +1644,18 @@ impl WindowInner {
     /// and as a backstop from `wm_ncdestroy` (mirroring `clear_placeholder_
     /// background`'s own backstop call there) in case the window closes
     /// mid-fade.
+    ///
+    /// # Reentrancy invariant
+    ///
+    /// `DestroyWindow` on the overlay child sends `WM_PARENTNOTIFY`
+    /// synchronously to the parent window. `do_wnd_proc` currently has no
+    /// handler for `WM_PARENTNOTIFY` (it falls through to `DefWindowProcW`),
+    /// so this is safe: no code path triggered by the synchronous dispatch
+    /// tries to borrow `WindowInner`. If a `WM_PARENTNOTIFY` handler is ever
+    /// added, it MUST use `try_borrow`/`try_borrow_mut` (or this teardown
+    /// must be deferred out of the borrowed scope), otherwise it will fail
+    /// silently or panic under the borrow already held by `wm_timer`'s
+    /// `try_borrow_mut` / `tick_placeholder_fade`.
     fn finish_placeholder_fade(&mut self) {
         if let Some(fade) = self.placeholder_fade.take() {
             // SAFETY: `self.hwnd.0` is either the valid window handle this
@@ -3056,7 +3068,16 @@ unsafe fn wm_timer(hwnd: HWND, _msg: UINT, wparam: WPARAM, _lparam: LPARAM) -> O
         // without the overlay (or anything beneath it) needing to repaint at
         // all.
         if let Some(inner) = rc_from_hwnd(hwnd) {
-            inner.borrow_mut().tick_placeholder_fade();
+            // `try_borrow_mut` (not `borrow_mut`): a re-entrant `WM_TIMER`
+            // arriving through a nested message pump (move/size loop, system
+            // menu) while `WindowInner` is already borrowed would panic
+            // here, and `catch_unwind` in `wnd_proc` turns that into
+            // `std::process::exit(1)`. A skipped tick is harmless -- alpha
+            // is derived from `fade.started.elapsed()`, not accumulated
+            // incrementally.
+            if let Ok(mut inner) = inner.try_borrow_mut() {
+                inner.tick_placeholder_fade();
+            }
         }
         return Some(0);
     }
