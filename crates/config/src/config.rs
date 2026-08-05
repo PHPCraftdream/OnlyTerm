@@ -621,13 +621,6 @@ pub struct Config {
     #[dynamic(default)]
     pub enable_zwlr_output_manager: bool,
 
-    /// Whether to prefer EGL over other GL implementations.
-    /// EGL on Windows has jankier resize behavior than WGL (which
-    /// is used if EGL is unavailable), but EGL survives graphics
-    /// driver updates without breaking and losing your work.
-    #[dynamic(default = "default_prefer_egl")]
-    pub prefer_egl: bool,
-
     #[dynamic(default = "default_true")]
     pub custom_block_glyphs: bool,
     #[dynamic(default = "default_true")]
@@ -1349,32 +1342,10 @@ fn default_gui_watchdog_threshold_ms() -> u64 {
     4_000
 }
 
-#[cfg(windows)]
+/// WebGpu is the only supported front end; the OpenGL renderer (and its
+/// `Software`/Mesa variant) has been removed from OnlyTerm.
 fn default_front_end() -> FrontEndSelection {
     FrontEndSelection::WebGpu
-}
-
-#[cfg(not(windows))]
-fn default_front_end() -> FrontEndSelection {
-    FrontEndSelection::default()
-}
-
-#[cfg(test)]
-mod default_front_end_test {
-    use super::*;
-
-    /// WebGpu (with its OpenGL fallback and dedicated render thread) is only
-    /// the default on Windows; other platforms keep their historical
-    /// `FrontEndSelection::default()` (`OpenGL`), per the
-    /// execution-decoupling plan (task 221.8).
-    #[test]
-    fn matches_platform_expectation() {
-        #[cfg(windows)]
-        assert_eq!(default_front_end(), FrontEndSelection::WebGpu);
-
-        #[cfg(not(windows))]
-        assert_eq!(default_front_end(), FrontEndSelection::default());
-    }
 }
 
 fn default_debug_render_thread_stall_ms() -> u64 {
@@ -1457,10 +1428,6 @@ fn default_tab_max_width() -> usize {
 
 fn default_update_interval() -> u64 {
     86400
-}
-
-fn default_prefer_egl() -> bool {
-    !cfg!(windows)
 }
 
 fn default_clean_exits() -> Vec<u32> {
@@ -1662,6 +1629,44 @@ keys: [
 
         // Clean up global state so other tests in this process aren't affected.
         CONFIG_OVERRIDES.lock().unwrap().clear();
+    }
+
+    /// Task #413 (OpenGL removal, config layer): a real `.ktav` config file
+    /// left over from before the OpenGL renderer was removed may still say
+    /// `front_end: OpenGL` (the historical default) or `front_end: Software`
+    /// (the Mesa/SWRAST mode). Neither backend exists anymore, but loading
+    /// such a config must not fail -- that would turn a previously-working
+    /// setup into a hard error on upgrade. `FrontEndSelection::from_dynamic`
+    /// maps both legacy values onto `WebGpu` (see `frontend.rs`); this test
+    /// exercises that mapping through the full, real
+    /// `Config::try_load` -> `ktav::parse` -> `Config::from_dynamic` pipeline,
+    /// not just the unit-level `FromDynamic` impl.
+    #[test]
+    fn legacy_front_end_values_migrate_to_web_gpu() {
+        // See `CONFIG_OVERRIDES_TEST_LOCK`.
+        let _guard = CONFIG_OVERRIDES_TEST_LOCK.lock().unwrap();
+
+        let load = |body: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let config_path = dir.path().join("onlyterm.ktav");
+            std::fs::write(&config_path, body).unwrap();
+            let path_item = PathPossibility::required(config_path);
+            Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+                .expect("try_load should succeed")
+                .expect("a config was found")
+                .config
+                .expect("config should parse despite the removed front_end value")
+        };
+
+        let cfg = load("front_end: OpenGL\n");
+        assert_eq!(cfg.front_end, FrontEndSelection::WebGpu);
+
+        let cfg = load("front_end: Software\n");
+        assert_eq!(cfg.front_end, FrontEndSelection::WebGpu);
+
+        // The still-supported value keeps working normally.
+        let cfg = load("front_end: WebGpu\n");
+        assert_eq!(cfg.front_end, FrontEndSelection::WebGpu);
     }
 
     /// Regression test for task #336: `color_scheme` used to have no effect
