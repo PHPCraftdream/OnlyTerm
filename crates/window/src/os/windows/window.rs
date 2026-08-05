@@ -1508,15 +1508,44 @@ impl WindowInner {
         // Paint the overlay's one and only content frame now, while
         // `self.placeholder_spinner` is still `Some` (the caller,
         // `clear_placeholder_background`, destroys it right after this
-        // returns). `WM_PAINT`/`WM_ERASEBKGND` on `overlay_hwnd` both read
-        // the spinner via `paint_parent_placeholder_spinner`, so a plain
-        // `InvalidateRect`+processing it synchronously via `UpdateWindow`
-        // is enough to force that first paint immediately rather than
-        // waiting for the next natural paint cycle (there may not be one
-        // before we destroy the spinner).
-        // SAFETY: `overlay_hwnd` is the just-created, valid window handle.
-        unsafe {
-            UpdateWindow(overlay_hwnd);
+        // returns). This must NOT go through `UpdateWindow`/`WM_PAINT`: both
+        // `start_placeholder_fade` callers (`clear_placeholder_background`,
+        // `notify_shell_ready`) only ever run inside `Connection::
+        // with_window_inner`'s `handle.borrow_mut()`, so a synchronous
+        // `WM_PAINT`/`WM_ERASEBKGND` dispatched to `overlay_wnd_proc` here
+        // would call `paint_parent_placeholder_spinner`, which does
+        // `GetParent(overlay_hwnd)` -> this SAME top-level `self.hwnd.0` ->
+        // `rc_from_hwnd` -> `try_borrow()` on the very `RefCell` already
+        // mutably borrowed one frame up the stack. That `try_borrow()` would
+        // always fail (silently, by design -- see `paint_parent_placeholder_
+        // spinner`'s `Err(_) => return false` arm), leaving the overlay's
+        // first-ever frame unpainted instead of "pixel-identical to what it
+        // replaces" as intended (the exact reentrancy hazard `wm_paint`'s own
+        // doc comment describes for the original spinner, reintroduced here
+        // by `start_placeholder_fade` running inside an existing borrow).
+        // Paint directly with a plain `GetDC`/`ReleaseDC` instead, using
+        // `self.placeholder_spinner` we already have `&mut self` access to,
+        // bypassing the window-procedure/borrow round-trip entirely.
+        if let Some(spinner) = self.placeholder_spinner.as_ref() {
+            // SAFETY: `overlay_hwnd` is the just-created, valid window
+            // handle; `spinner` is `self.placeholder_spinner`, still alive
+            // (the caller only drops it after this method returns);
+            // `GetDC`/`ReleaseDC` are the standard paired calls for painting
+            // outside a `WM_PAINT` cycle.
+            unsafe {
+                let mut rect = RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                };
+                GetClientRect(overlay_hwnd, &mut rect);
+                let hdc = GetDC(overlay_hwnd);
+                if !hdc.is_null() {
+                    draw_placeholder_spinner(hdc, &rect, spinner);
+                    ReleaseDC(overlay_hwnd, hdc);
+                }
+            }
         }
 
         // SAFETY: `self.hwnd.0` is a valid window handle (this method is
