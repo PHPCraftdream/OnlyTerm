@@ -31,7 +31,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug)]
 pub struct Line {
     pub(crate) cells: CellStorage,
     zones: Vec<ZoneRange>,
@@ -40,6 +39,23 @@ pub struct Line {
     #[cfg(feature = "appdata")]
     #[cfg_attr(feature = "use_serde", serde(skip))]
     appdata: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
+}
+
+// Manual impl (rather than `#[derive(Debug)]`) so that `Debug` output is
+// identical regardless of whether the `appdata` feature is enabled: the
+// field holds a `Weak` reference with no meaningful printable state, and a
+// derived impl would make Debug-based snapshots (see line/test.rs) depend
+// on which other workspace member happened to pull the feature in, since
+// Cargo unifies features workspace-wide.
+impl core::fmt::Debug for Line {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Line")
+            .field("cells", &self.cells)
+            .field("zones", &self.zones)
+            .field("seqno", &self.seqno)
+            .field("bits", &self.bits)
+            .finish()
+    }
 }
 
 impl Clone for Line {
