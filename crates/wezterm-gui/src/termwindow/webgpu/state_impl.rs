@@ -132,9 +132,8 @@ impl WebGpuState {
         // has no way to unregister itself, so this same closure keeps living
         // for as long as `state.device` does, including after this
         // `WebGpuState` has been abandoned by an in-place rebuild
-        // (`begin_renderer_rebuild`) or a permanent OpenGL fallback
-        // (`begin_opengl_fallback`) -- both of which call `mark_stale()` on
-        // the outgoing `WebGpuState` before dropping it. A device-lost event
+        // (`begin_renderer_rebuild`), which calls `mark_stale()` on the
+        // outgoing `WebGpuState` before dropping it. A device-lost event
         // that fires after that point is a *late* signal from a device this
         // window has already moved on from, and must not trigger recovery:
         // mirrors `submit_one_frame`'s existing `window_destroyed` check in
@@ -506,17 +505,19 @@ impl WebGpuState {
         // adapter allows reinterpreting the view (`supports_reinterpret_view`,
         // gated on the same `SURFACE_VIEW_FORMATS` capability that populates
         // `view_formats` above). Writing/blending through a non-sRGB view
-        // means the GPU does not auto-linearize the blend operation, matching
-        // the OpenGL/glium backend's `outputs_srgb: true` + manual
-        // `to_srgb()` in glyph-frag.glsl: both backends then blend directly
-        // on gamma-encoded bytes ("naive"/gamma-space blending), which is
-        // what shader.wgsl's `to_srgb()` call at the end of `fs_main` now
-        // produces. Skipping this (falling back to the sRGB view) restores
-        // the old behavior: physically-correct linear-space blending, which
-        // reads as visibly thinner glyph edges than glium's gamma-space
-        // blending for the same coverage data. `submit_frame` re-derives this
-        // same condition from `self.downlevel_caps` when building the view,
-        // so both must stay in sync with this variable's logic.
+        // means the GPU does not auto-linearize the blend operation, so
+        // blending happens directly on gamma-encoded bytes
+        // ("naive"/gamma-space blending) -- this is what shader.wgsl's
+        // `to_srgb()` call at the end of `fs_main` produces, matching the
+        // behavior of the OpenGL renderer this WebGpu backend replaced
+        // (removed in task #414; it used `outputs_srgb: true` plus its own
+        // manual `to_srgb()` in its now-deleted fragment shader for the same
+        // gamma-space blending). Skipping this (falling back to the sRGB
+        // view) would instead give physically-correct linear-space blending,
+        // which reads as visibly thinner glyph edges for the same coverage
+        // data. `submit_frame` re-derives this same condition from
+        // `self.downlevel_caps` when building the view, so both must stay in
+        // sync with this variable's logic.
         let render_format = if supports_reinterpret_view {
             format.remove_srgb_suffix()
         } else {
@@ -684,9 +685,9 @@ impl WebGpuState {
     /// Marks this device/surface as abandoned: a device-lost event that
     /// arrives after this point (see the `set_device_lost_callback` closure
     /// registered in `new`) is stale and must not trigger recovery. Called
-    /// by `TermWindow` (`begin_renderer_rebuild`/`begin_opengl_fallback` in
-    /// `termwindow/mod.rs`, task #267) at the moment it takes/drops this
-    /// `WebGpuState`, before any replacement device exists.
+    /// by `TermWindow::begin_renderer_rebuild` (in
+    /// `termwindow/render_pipeline.rs`, task #267) at the moment it
+    /// takes/drops this `WebGpuState`, before any replacement device exists.
     pub fn mark_stale(&self) {
         self.is_current
             .store(false, std::sync::atomic::Ordering::Release);

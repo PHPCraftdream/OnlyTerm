@@ -31,7 +31,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(200);
 /// With the scripting layer removed entirely, there is nothing left for a
 /// REPL to evaluate against, so the eval engine has been deleted along with
 /// it. What remains is the overlay's other diagnostic purpose: a static
-/// summary of the running wezterm (version, target triple, window/OpenGL
+/// summary of the running wezterm (version, target triple, window/renderer
 /// environment) plus a live tail of the application's own log ring buffer
 /// (see [`print_new_log_entries`]), which has nothing to do with rhai and is
 /// still useful for troubleshooting.
@@ -77,7 +77,7 @@ fn print_new_log_entries(term: &mut TermWizTerminal) -> termwiz::Result<()> {
 pub fn show_debug_overlay(
     mut term: TermWizTerminal,
     _gui_win: GuiWin,
-    opengl_info: String,
+    renderer_info: String,
     connection_info: String,
 ) -> anyhow::Result<()> {
     term.no_grab_mouse_in_raw_mode();
@@ -93,7 +93,7 @@ pub fn show_debug_overlay(
          wezterm version: {version} {triple}\r\n\
          Window Environment: {connection_info}\r\n\
          Scripting: removed (rhai eval REPL no longer available)\r\n\
-         {opengl_info}\r\n\
+         {renderer_info}\r\n\
          Showing a live tail of the application log.\r\n\
          Press ESC or CTRL-D to exit\r\n",
     ))])?;

@@ -1,7 +1,3 @@
-// Clippy hates the implement_vertex macro and won't let me scope
-// this warning to its use
-#![allow(clippy::unneeded_field_pattern)]
-
 use crate::renderstate::BorrowedLayers;
 use ::window::bitmaps::TextureRect;
 use ::window::color::LinearRgba;
@@ -41,9 +37,6 @@ pub struct Vertex {
     pub has_color: f32,
     pub mix_value: f32,
 }
-::window::glium::implement_vertex!(
-    Vertex, position, tex, fg_color, alt_color, hsv, has_color, mix_value
-);
 
 impl Vertex {
     const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![

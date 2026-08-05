@@ -72,13 +72,13 @@ fn apply_hsv(c: vec4<f32>, transform: vec3<f32>) -> vec4<f32>
   return vec4<f32>(hsv2rgb(hsv).rgb, c.a);
 }
 
-// Mirrors glyph-frag.glsl's to_srgb(): the render target we write into is a
-// non-sRGB view of an sRGB-capable surface (see WebGpuState::submit_frame),
-// so, like the OpenGL path with `outputs_srgb: true`, blending happens
-// directly on these gamma-encoded bytes rather than being auto-linearized
-// by the GPU. Without this, alpha-blended glyph edges are composited in
-// linear light instead of gamma space, which reads as visibly thinner
-// strokes than the OpenGL backend produces for the same coverage data.
+// The render target we write into is a non-sRGB view of an sRGB-capable
+// surface (see WebGpuState::submit_frame), so blending happens directly on
+// these gamma-encoded bytes rather than being auto-linearized by the GPU
+// (matching the gamma-space blending of the OpenGL renderer this backend
+// replaced -- removed in task #414). Without this, alpha-blended glyph edges
+// are composited in linear light instead of gamma space, which reads as
+// visibly thinner strokes for the same coverage data.
 fn to_srgb(linear_rgb: vec4<f32>) -> vec4<f32>
 {
   let cutoff = linear_rgb.rgb < vec3<f32>(0.0031308);
