@@ -553,7 +553,7 @@ fn decorations_to_style(decorations: WindowDecorations) -> u32 {
     }
 }
 
-fn get_primary_monitor_dpi() -> u32 {
+pub(crate) fn get_primary_monitor_dpi() -> u32 {
     // SAFETY: a null hwnd with MONITOR_DEFAULTTOPRIMARY returns the primary
     // monitor handle, which is asserted non-null below.
     let primary = unsafe { MonitorFromWindow(null_mut(), MONITOR_DEFAULTTOPRIMARY) };
