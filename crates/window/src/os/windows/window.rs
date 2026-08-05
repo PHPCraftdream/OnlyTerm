@@ -236,14 +236,14 @@ const PLACEHOLDER_SPINNER_INTERVAL_MS: u32 = 1000 / 30;
 const PLACEHOLDER_SPINNER_TIMER_ID: usize = 1;
 
 /// `SetTimer`/`KillTimer`/`WM_TIMER` id for the placeholder-overlay fade
-/// tick (task #385). Distinct from `PLACEHOLDER_SPINNER_TIMER_ID` because,
-/// briefly, both timers can be alive on the same top-level window at once:
-/// the spinner timer keeps animating the (now-hidden-behind-the-overlay)
-/// parent/child paint path until `clear_placeholder_background` kills it,
-/// while this timer independently steps the overlay's alpha down. In
-/// practice `clear_placeholder_background` runs before the fade starts (see
-/// `WindowInner::start_placeholder_fade`), so they don't overlap for
-/// long, but keeping separate ids avoids relying on that ordering.
+/// tick (task #385). Deliberately distinct from
+/// `PLACEHOLDER_SPINNER_TIMER_ID`: although in practice the spinner timer
+/// is killed by `clear_placeholder_background` before the fade timer is
+/// ever armed (there is no message-dispatch point between the
+/// `KillTimer(id=1)` and the `SetTimer(id=2)` in that function), using a
+/// separate id means the two never collide even if that ordering changes --
+/// timer ids are per-HWND, so a shared id would make the second `SetTimer`
+/// silently replace the first.
 const PLACEHOLDER_FADE_TIMER_ID: usize = 2;
 
 /// Total duration of the placeholder-overlay fade-out, once triggered.
@@ -1641,8 +1641,8 @@ impl WindowInner {
     /// Tear down the placeholder-overlay fade: kill its timer, hide and
     /// destroy the overlay window. Idempotent via `Option::take`. Called
     /// once `tick_placeholder_fade` observes the fade duration has elapsed,
-    /// and as a backstop from `wm_ncdestroy` (mirroring `clear_placeholder_
-    /// background`'s own backstop call there) in case the window closes
+    /// and from the resize/rebuild paths (`check_and_call_resize_if_needed`,
+    /// `recreate_webgpu_child_window`) when geometry or z-order changes
     /// mid-fade.
     ///
     /// # Reentrancy invariant
@@ -1658,26 +1658,29 @@ impl WindowInner {
     /// `try_borrow_mut` / `tick_placeholder_fade`.
     fn finish_placeholder_fade(&mut self) {
         if let Some(fade) = self.placeholder_fade.take() {
-            // SAFETY: `self.hwnd.0` is either the valid window handle this
-            // timer was armed on, or null for the `wm_ncdestroy` backstop
-            // path -- see the identical rationale in `clear_placeholder_
-            // background` for why `KillTimer(null, ..)` there is harmless.
+            // SAFETY: `self.hwnd.0` is the valid window handle this
+            // timer was armed on. (The `wm_ncdestroy` path no longer calls this
+            // function -- it just `take()`s the `PlaceholderFade` to drop
+            // bookkeeping -- so `self.hwnd.0` is never null here.)
             unsafe {
                 KillTimer(self.hwnd.0, PLACEHOLDER_FADE_TIMER_ID);
             }
             if !fade.hwnd.0.is_null() {
                 // SAFETY: `fade.hwnd.0` is a live `WS_CHILD` window handle
-                // owned by `self.hwnd.0` (or, during the `wm_ncdestroy`
-                // backstop, already being torn down as part of the same
-                // parent teardown that made this call happen at all).
-                // `ShowWindow(SW_HIDE)` immediately stops it from occluding
-                // anything even if `DestroyWindow` below is deferred/queued
-                // by the message loop; explicitly destroying it (rather than
-                // just relying on `WS_CHILD` auto-cleanup when `self.hwnd.0`
-                // eventually goes away) frees its GDI/DWM-side resources
-                // promptly instead of leaving them until the whole top-level
-                // window closes, which for a long-lived terminal session
-                // could be hours or days away.
+                // owned by `self.hwnd.0`. All remaining callers of
+                // `finish_placeholder_fade` (timer tick, resize, WebGpu child
+                // rebuild) reach it only while both the parent and the
+                // overlay are still live -- the `wm_ncdestroy` teardown path
+                // does NOT call this (it just `take()`s the `PlaceholderFade`
+                // to drop bookkeeping), because by `WM_NCDESTROY` the overlay
+                // HWND is already dead. `ShowWindow(SW_HIDE)` immediately
+                // stops it from occluding anything even if `DestroyWindow`
+                // below is deferred/queued by the message loop; explicitly
+                // destroying it (rather than just relying on `WS_CHILD`
+                // auto-cleanup when `self.hwnd.0` eventually goes away) frees
+                // its GDI/DWM-side resources promptly instead of leaving them
+                // until the whole top-level window closes, which for a
+                // long-lived terminal session could be hours or days away.
                 unsafe {
                     ShowWindow(fade.hwnd.0, SW_HIDE);
                     DestroyWindow(fade.hwnd.0);
@@ -2281,13 +2284,16 @@ unsafe fn wm_ncdestroy(
         // GDI objects are always deleted rather than leaked. No-op if it
         // was already cleared.
         inner.clear_placeholder_background();
-        // Same rationale, for the fade overlay: if the window closes
-        // mid-fade (or, in principle, exactly as the fade would have
-        // started -- see `start_placeholder_fade`'s null-`hwnd` guard,
-        // which `clear_placeholder_background` just above could otherwise
-        // race), make sure its timer/window are always torn down rather
-        // than leaked. No-op if there was no fade in progress.
-        inner.finish_placeholder_fade();
+        // By `WM_NCDESTROY` time the parent's children (including any fade
+        // overlay) have already been destroyed by Windows itself (WM_DESTROY
+        // parent -> WM_DESTROY children -> WM_NCDESTROY children ->
+        // WM_NCDESTROY parent), so the overlay HWND is already dead. Just
+        // drop our `PlaceholderFade` bookkeeping without calling
+        // `ShowWindow`/`DestroyWindow` on a stale handle -- the normal
+        // teardown (`finish_placeholder_fade`) is left to the timer / resize
+        // / rebuild paths, where the overlay is guaranteed still live. No-op
+        // if there was no fade in progress.
+        inner.placeholder_fade.take();
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
     }
 
@@ -3034,11 +3040,13 @@ unsafe fn wm_erasebkgnd(
     Some(1)
 }
 
-/// Handles `WM_TIMER`. The only timer this window ever sets is
-/// `PLACEHOLDER_SPINNER_TIMER_ID` (see `wm_nccreate`), so on every tick we
-/// just invalidate the client area to advance the spinner animation by one
-/// frame. Once `clear_placeholder_background` kills the timer, no more of
-/// these arrive.
+/// Handles `WM_TIMER`. Two timer ids are used: `PLACEHOLDER_SPINNER_TIMER_ID`
+/// (armed in `wm_nccreate`), which invalidates the client area to advance the
+/// spinner animation; and `PLACEHOLDER_FADE_TIMER_ID` (armed in
+/// `start_placeholder_fade`), which steps the overlay's alpha down via
+/// `tick_placeholder_fade`. Once the spinner timer is killed by
+/// `clear_placeholder_background` and the fade completes (or
+/// `finish_placeholder_fade` kills it early), no more of either arrive.
 ///
 /// # Safety
 /// `hwnd` must be a valid window handle.
