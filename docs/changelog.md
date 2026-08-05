@@ -543,6 +543,24 @@ As features stabilize some brief notes about them will accumulate here.
   OSC 9 escapes set the progress state to "Indeterminate".
 
 #### Fixed
+* Many symbol codepoints (e.g. U+23BF and other Miscellaneous
+  Technical/Dingbats characters, such as the tree-drawing glyphs some tools
+  use) rendered as an empty "tofu" box: the fallback chain worked correctly
+  but none of the bundled fonts (JetBrains Mono, Nerd Font Mono, Noto Color
+  Emoji) had a glyph for that range. Bundles [Noto Sans
+  Symbols](https://fonts.google.com/noto/specimen/Noto+Sans+Symbols) and
+  Noto Sans Symbols 2 (OFL 1.1, same license as the other bundled fonts) as
+  additional built-in fallback fonts to close the gap.
+* Text rendered via the (default, on Windows) WebGPU backend was visibly
+  thinner than the same text rendered via OpenGL. Root cause: both backends
+  receive the same pre-linearized vertex color, but OpenGL blends it
+  directly in gamma space (matching how GDI/ClearType/CoreText render text),
+  while WebGPU wrote into an sRGB-formatted surface with no shader-side
+  gamma handling, so the GPU auto-linearized the blend -- physically
+  correct, but perceptibly thinner for anti-aliased glyph edges than
+  gamma-space blending. `shader.wgsl` now gamma-encodes its output and
+  renders through a non-sRGB view of the surface, matching the OpenGL
+  backend's blending space.
 * Seven issues surfaced by review during the file-splitting and clippy
   cleanup above are now fixed. Three predate this fork (inherited from
   upstream): `kitty` keyboard-protocol encoding mapped `KeyCode::VolumeDown`
