@@ -11,28 +11,27 @@ use crate::font::{
     FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
 };
 use crate::frontend::FrontEndSelection;
-use crate::keyassignment::SpawnCommand;
 #[cfg(test)]
 use crate::keyassignment::KeyAssignment;
+use crate::keyassignment::SpawnCommand;
 use crate::keys::{Key, LeaderKey, Mouse};
 use crate::units::Dimension;
 use crate::unix::UnixDomain;
-use crate::{
-    default_one_point_oh, default_one_point_oh_f64,
-    default_true, default_win32_acrylic_accent_color, CellWidth, GpuInfo,
-    IntegratedTitleButtonColor, KeyMapPreference, RgbaColor,
-    SerialDomain, SystemBackdrop, WebGpuPowerPreference,
-};
 #[cfg(test)]
 use crate::CONFIG_OVERRIDES;
+use crate::{
+    default_one_point_oh, default_one_point_oh_f64, default_true,
+    default_win32_acrylic_accent_color, CellWidth, GpuInfo, IntegratedTitleButtonColor,
+    KeyMapPreference, RgbaColor, SerialDomain, SystemBackdrop, WebGpuPowerPreference,
+};
 use anyhow::Context;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use wezterm_config_derive::ConfigMeta;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 use termwiz::hyperlink;
 use wezterm_bidi::ParagraphDirectionHint;
+use wezterm_config_derive::ConfigMeta;
+use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_input_types::{
     IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle, Modifiers,
     UIKeyCapRendering, WindowDecorations,
@@ -1104,7 +1103,6 @@ impl Default for Config {
         .unwrap()
     }
 }
-
 
 fn default_check_for_updates() -> bool {
     cfg!(not(feature = "distro-defaults"))

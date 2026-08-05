@@ -23,7 +23,6 @@ use wezterm_term::TerminalSize;
 mod writer_wrapper;
 pub(crate) use writer_wrapper::WriterWrapper;
 
-
 static DOMAIN_ID: ::std::sync::atomic::AtomicUsize = ::std::sync::atomic::AtomicUsize::new(0);
 pub type DomainId = usize;
 

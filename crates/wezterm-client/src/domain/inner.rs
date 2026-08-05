@@ -1,10 +1,10 @@
 use crate::client::Client;
 use crate::pane::ClientPane;
 use mux::domain::DomainId;
-use mux::Mux;
 use mux::pane::{Pane, PaneId};
 use mux::tab::TabId;
 use mux::window::WindowId;
+use mux::Mux;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -144,7 +144,11 @@ impl ClientInner {
         log::trace!("remove_old_tab_mapping: {remote_tab_id} -> {old:?}");
     }
 
-    pub(super) fn record_remote_to_local_tab_mapping(&self, remote_tab_id: TabId, local_tab_id: TabId) {
+    pub(super) fn record_remote_to_local_tab_mapping(
+        &self,
+        remote_tab_id: TabId,
+        local_tab_id: TabId,
+    ) {
         let mut map = self.remote_to_local_tab.lock().unwrap();
         let prior = map.insert(remote_tab_id, local_tab_id);
         log::trace!(

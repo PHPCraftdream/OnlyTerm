@@ -346,6 +346,5 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
     }
 }
 
-
 #[cfg(all(test, feature = "std"))]
 mod test;

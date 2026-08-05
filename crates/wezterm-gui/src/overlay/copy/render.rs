@@ -4,16 +4,11 @@ use crate::selection::{SelectionCoordinate, SelectionRange, SelectionX};
 use crate::termwindow::keyevent::KeyTableArgs;
 use crate::termwindow::{TermWindow, TermWindowNotif};
 use config::keyassignment::SelectionMode;
-use mux::pane::{
-    Pane, Pattern, PatternType, SearchResult,
-};
+use mux::pane::{Pane, Pattern, PatternType, SearchResult};
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
-use wezterm_term::{
-    unicode_column_width, SemanticType,
-    StableRowIndex,
-};
+use wezterm_term::{unicode_column_width, SemanticType, StableRowIndex};
 use window::WindowOps;
 
 impl CopyRenderable {

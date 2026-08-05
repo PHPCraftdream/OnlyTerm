@@ -6,7 +6,7 @@ use crate::change::{Image, TextureCoordinate};
 use crate::cursor::{CursorShape, CursorVisibility};
 use crate::line::CellRef;
 use crate::line::Line;
-use crate::position::{Position, compute_position_change};
+use crate::position::{compute_position_change, Position};
 use crate::SequenceNo;
 use alloc::borrow::Cow;
 use alloc::string::String;

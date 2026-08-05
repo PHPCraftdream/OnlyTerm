@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::ffi::{OsStr, OsString};
 use std::path::{Component, Path};
 
-use super::env::{EnvEntry, get_shell};
+use super::env::{get_shell, EnvEntry};
 use super::CommandBuilder;
 
 #[cfg(unix)]

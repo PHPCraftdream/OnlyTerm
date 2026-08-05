@@ -1,4 +1,4 @@
-use crate::color::{RgbaColor, RgbColor};
+use crate::color::{RgbColor, RgbaColor};
 use std::convert::TryFrom;
 use termwiz::cell::CellAttributes;
 use termwiz::color::ColorSpec as TWColorSpec;

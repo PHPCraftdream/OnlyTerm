@@ -18,9 +18,9 @@ mod mode;
 mod mouse;
 mod sgr;
 mod style;
-mod window;
 #[cfg(all(test, feature = "std"))]
 mod test;
+mod window;
 
 pub use self::cursor::*;
 pub use self::device::*;
@@ -220,7 +220,6 @@ impl<T: ParamEnum> ParseParams for T {
         }
     }
 }
-
 
 /// Constrol Sequence Initiator (CSI) Parser.
 /// Since many sequences allow for composition of actions by separating
@@ -1422,5 +1421,3 @@ impl<'a> Iterator for CSIParser<'a> {
         }
     }
 }
-
-

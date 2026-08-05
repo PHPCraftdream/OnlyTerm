@@ -3,9 +3,7 @@
 //! together with `FcObjectSet`/`FcObjectType`/`FcConstant` (which describe
 //! and constrain pattern properties), `FcValue` accessors, and the
 //! `FcName*` pattern (de)serialization functions.
-use crate::{
-    FcBool, FcChar32, FcChar8, FcCharSet, FcLangSet, FcMatrix, FcResult, FcType, FcValue,
-};
+use crate::{FcBool, FcChar32, FcChar8, FcCharSet, FcLangSet, FcMatrix, FcResult, FcType, FcValue};
 use libc::{c_char, c_double, c_int, c_void};
 
 pub type struct__FcPattern = c_void;

@@ -27,6 +27,7 @@ pub mod connui;
 pub mod domain;
 pub mod localpane;
 pub mod pane;
+mod pty_reader;
 pub mod renderable;
 pub mod ssh_agent;
 pub mod tab;
@@ -36,7 +37,6 @@ mod test;
 pub mod tmux;
 pub mod tmux_commands;
 mod tmux_pty;
-mod pty_reader;
 pub mod window;
 
 use crate::activity::Activity;
@@ -128,7 +128,6 @@ pub struct Mux {
     /// than replaying the notification payload.
     pane_output_notify_pending: Mutex<HashSet<PaneId>>,
 }
-
 
 lazy_static::lazy_static! {
     static ref MUX: Mutex<Option<Arc<Mux>>> = Mutex::new(None);

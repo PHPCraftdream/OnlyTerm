@@ -14,7 +14,6 @@ use log::trace;
 /// Placeholder codepoint index that corresponds to NO_LEVEL
 const DELETED: usize = usize::MAX;
 
-
 #[derive(Debug, Default)]
 pub struct BidiContext {
     orig_char_types: Vec<BidiClass>,
