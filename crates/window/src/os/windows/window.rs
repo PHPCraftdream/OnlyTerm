@@ -608,6 +608,14 @@ impl WindowInner {
             }
         }
 
+        // If a placeholder fade is in progress, the overlay's bounds are
+        // stale the instant the WebGpu child underneath it resizes. A
+        // shifted/mismatched rectangle would look worse than an instant cut,
+        // so finish the fade now rather than trying to reposition the overlay.
+        if self.placeholder_fade.is_some() {
+            self.finish_placeholder_fade();
+        }
+
         let current_dims = Dimensions {
             pixel_width,
             pixel_height,
@@ -1267,7 +1275,16 @@ impl Window {
             }
 
             let new_child = Self::create_webgpu_child_window(parent)?;
-            handle.borrow_mut().webgpu_child_hwnd = HWindow(new_child);
+            let mut inner = handle.borrow_mut();
+            inner.webgpu_child_hwnd = HWindow(new_child);
+            // A new WebGpu child is created at the top of the parent's child
+            // z-order, which would land above any active fade overlay. Rather
+            // than re-assert the overlay's z-order against the newcomer,
+            // finish the fade instantly (same principle as the resize path
+            // in `check_and_call_resize_if_needed`).
+            if inner.placeholder_fade.is_some() {
+                inner.finish_placeholder_fade();
+            }
             Ok(())
         })
         .await
