@@ -107,7 +107,42 @@ impl crate::TermWindow {
         }
         log::debug!("paint_impl before call_draw elapsed={:?}", start.elapsed());
 
-        self.call_draw(frame).ok();
+        let draw_result = self.call_draw(frame);
+        if let Err(err) = &draw_result {
+            log::error!("call_draw failed: {:#}", err);
+        }
+
+        // Task #425: only now -- after a fully-built frame has actually been
+        // handed off for presentation (submitted synchronously, or queued to
+        // the render thread when `webgpu_render_thread` is active) -- is it
+        // safe to tear down the Windows GDI placeholder (task #330) that has
+        // been the only thing painting this window's client area up to this
+        // point. Doing this from `TermWindow::created` instead (the pre-#425
+        // behavior) cleared it as soon as the renderer/pipeline merely
+        // *existed*, which on Windows is well before the first real frame is
+        // built here: the render thread is spawned strictly after `created`
+        // returns, and even the synchronous fallback path still needs a
+        // `WM_PAINT` message the OS message loop hadn't dispatched yet at
+        // that point. That gap left the window showing undefined swapchain
+        // contents (typically a black flash) between the placeholder
+        // disappearing and this first real frame landing. Gated on
+        // `draw_result` being `Ok` -- if the very first `call_draw` fails
+        // (e.g. `build_webgpu_frame` erroring before anything was ever
+        // queued for presentation), leave the placeholder in place rather
+        // than tearing down the only thing painting the window over a frame
+        // that was never actually sent; the next successful paint will clear
+        // it instead. Checked-then-set so this only ever fires once per
+        // window, matching the old call's idempotency (a later renderer
+        // rebuild's `created()` call has nothing left to clear -- the
+        // placeholder was already dropped by the first successful frame,
+        // long before any rebuild).
+        if !self.placeholder_cleared && draw_result.is_ok() {
+            self.placeholder_cleared = true;
+            if let Some(window) = self.window.as_ref() {
+                window.clear_placeholder_background();
+            }
+        }
+
         self.last_frame_duration = start.elapsed();
         log::debug!(
             "paint_impl elapsed={:?}, fps={}",
