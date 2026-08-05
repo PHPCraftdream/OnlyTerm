@@ -76,6 +76,7 @@ Additional options for configuring fonts can be found elsewhere in the docs:
 * [freetype_render_target](reference/config/freetype_render_target.md) - configure anti-aliasing
 * [cell_width](reference/config/cell_width.md) - scale the font-specified cell width
 * [line_height](reference/config/line_height.md) - scale the font-specified line height
+* [search_font_dirs_for_fallback](reference/config/search_font_dirs_for_fallback.md) - also search `font_dirs` when resolving fallback fonts for missing glyphs
 * [wezterm.font](reference/wezterm/font.md) - removed scripting function; see the page for what a `{ family: ..., ... }` object replaces it with
 * [wezterm.font_with_fallback](reference/wezterm/font_with_fallback.md) - removed scripting function; see the page for what a `font: { font: [...] }` block replaces it with
 
