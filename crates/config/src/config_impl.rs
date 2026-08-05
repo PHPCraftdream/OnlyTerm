@@ -861,7 +861,9 @@ impl Config {
         if let Some(palette) = self.color_schemes.get(scheme_name) {
             Some(palette)
         } else {
-            crate::COLOR_SCHEMES.get(scheme_name)
+            // Parses just the named scheme rather than all ~1000 bundled
+            // ones; see `lookup_default_scheme` for why (task #405).
+            crate::lookup_default_scheme(scheme_name)
         }
     }
 
