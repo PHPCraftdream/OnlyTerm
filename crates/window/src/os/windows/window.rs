@@ -507,7 +507,15 @@ impl WindowInner {
     fn enable_opengl(&mut self) -> anyhow::Result<Rc<glium::backend::Context>> {
         let conn = Connection::get().unwrap();
 
-        let gl_state = if self.config.prefer_egl {
+        // TODO(#415): `prefer_egl` used to be a user-facing config knob; the
+        // config field was removed in #413 as part of the OpenGL removal
+        // (EGL only exists to serve the GL renderer). This whole
+        // EGL/WGL-selection function is slated for removal in #415, so for
+        // now just keep its previous default behavior (EGL not preferred on
+        // Windows) hard-coded rather than reintroducing config plumbing for
+        // code that is about to be deleted.
+        let prefer_egl = false;
+        let gl_state = if prefer_egl {
             match conn.gl_connection.borrow().as_ref() {
                 None => crate::egl::GlState::create(None, self.hwnd.0),
                 Some(glconn) => {
