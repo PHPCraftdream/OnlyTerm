@@ -577,7 +577,7 @@ impl KeyCode {
                 let intro = match key {
                     Numpad0 => "\x1b[2",
                     Numpad3 => "\x1b[6",
-                    Numpad9 => "\x1b[6",
+                    Numpad9 => "\x1b[5",
                     Decimal => "\x1b[3",
                     _ => unreachable!(),
                 };
