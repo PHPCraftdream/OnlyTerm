@@ -36,7 +36,6 @@ use winreg::RegKey;
 pub struct Connection {
     event_handle: HANDLE,
     pub(crate) windows: RefCell<HashMap<HWindow, Rc<RefCell<WindowInner>>>>,
-    pub(crate) gl_connection: RefCell<Option<Rc<crate::egl::GlConnection>>>,
 }
 
 pub(crate) fn get_appearance() -> Appearance {
@@ -166,7 +165,6 @@ impl Connection {
         Ok(Self {
             event_handle,
             windows: RefCell::new(HashMap::new()),
-            gl_connection: RefCell::new(None),
         })
     }
 

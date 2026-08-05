@@ -11,11 +11,8 @@ build = "build.rs"
 [dev-dependencies]
 k9.workspace = true
 
-[build-dependencies]
-gl_generator.workspace = true
-
 [features]
-wayland = ["wayland-client", "smithay-client-toolkit", "wayland-egl", "wayland-protocols", "wayland-backend", "wayland-protocols-plasma"]
+wayland = ["wayland-client", "smithay-client-toolkit", "wayland-protocols", "wayland-backend", "wayland-protocols-plasma"]
 
 [dependencies]
 async-channel.workspace = true
@@ -40,7 +37,6 @@ raw-window-handle.workspace = true
 resize.workspace = true
 serde = {workspace=true, features = ["rc", "derive"]}
 tiny-skia.workspace = true
-glium.workspace = true
 url.workspace = true
 wezterm-bidi.workspace = true
 wezterm-color-types.workspace = true
@@ -86,10 +82,8 @@ wayland-backend = {workspace=true, features=["client_system", "rwh_06"], optiona
 wayland-protocols = {workspace=true, optional=true}
 wayland-protocols-plasma = {workspace=true, optional=true}
 wayland-client = {workspace=true, optional=true}
-wayland-egl = {workspace=true, optional=true}
 
 [target.'cfg(target_os="macos")'.dependencies]
-cgl.workspace = true
 cocoa.workspace = true
 core-foundation.workspace = true
 core-graphics.workspace = true
