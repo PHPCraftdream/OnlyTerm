@@ -2,44 +2,27 @@
 tags:
   - gpu
 ---
-# `front_end = "OpenGL"`
+# `front_end = "WebGpu"`
 
-Specifies which render front-end to use.  This option used to have
-more scope in earlier versions of wezterm, but today it allows three
-possible values:
+Specifies which render front-end to use.
 
-* `OpenGL` - use GPU accelerated rasterization
-* `Software` - use CPU-based rasterization.
-* `WebGpu` - use GPU accelerated rasterization {{since('20221119-145034-49b9839f', inline=True)}}
+{{since('20221119-145034-49b9839f', inline=True)}}
+    `WebGpu` is available as a front end.
 
-{{since('20240127-113634-bbcac864', outline=true)}}
-    The default is `"WebGpu"`. In earlier versions it was `"OpenGL"`
+This fork has removed the legacy OpenGL renderer (and its `Software`/Mesa
+variant) entirely, so `WebGpu` is now the only supported value, and also the
+default.
 
-{{since('20240128-202157-1e552d76', outline=true)}}
-    The default has been reverted to `"OpenGL"`.
+If you have an old config with `front_end = "OpenGL"` or `front_end =
+"Software"` left over from before this change, it will still load: those
+values are recognized as deprecated aliases for `"WebGpu"` and a warning is
+logged explaining that the OpenGL renderer is gone. You should update your
+config to remove the setting (or set it explicitly to `"WebGpu"`) to silence
+the warning.
 
-On Windows, this fork now defaults to `"WebGpu"`, with automatic fallback to
-`"OpenGL"` if WebGpu adapter/device initialization fails (for example in an
-RDP session, on an old or software-only GPU, in a VM without GPU passthrough,
-or due to a driver mismatch). Other platforms still default to `"OpenGL"`.
-
-Only the `WebGpu` front end gets a dedicated per-window render thread (see
-`webgpu_render_thread`), which isolates a stuck GPU driver call so it can't
-freeze the whole process. `OpenGL` and `Software` remain fully synchronous on
-the GUI thread, so a hung GL driver call can still freeze every window in
-the process.
-
-You may wish (or need!) to select `Software` if there are issues with your
-GPU/OpenGL drivers.
-
-WezTerm will force software rasterization (SWRAST) within the OpenGL/EGL/WGL
-code path if it detects that it is being started in a Remote Desktop
-environment on Windows; this does not change the `front_end` setting itself,
-it only affects how the OpenGL backend renders.
-
-## WebGpu
-
-{{since('20221119-145034-49b9839f')}}
+The `WebGpu` front end gets a dedicated per-window render thread (see
+`webgpu_render_thread`), which isolates a stuck GPU driver call so that it
+can't freeze the whole process.
 
 The WebGpu front end allows wezterm to use GPU acceleration provided by
 a number of platform-specific backends:
@@ -47,6 +30,11 @@ a number of platform-specific backends:
 * Metal (on macOS)
 * Vulkan
 * DirectX 12 (on Windows)
+
+If WebGpu adapter/device initialization fails outright (for example in a VM
+without GPU passthrough, or due to a driver mismatch), wezterm will report a
+clear error explaining what went wrong rather than silently degrading or
+leaving a blank window on screen.
 
 See also:
 
