@@ -2,9 +2,11 @@ use crate::cellcluster::CellCluster;
 use crate::hyperlink::Rule;
 use crate::line::cellref::CellRef;
 use crate::line::clusterline::ClusteredLine;
+use crate::line::doubleclick::DoubleClickRange;
 use crate::line::linebits::LineBits;
 use crate::line::storage::{CellStorage, VisibleCellIter};
 use crate::line::vecstorage::{VecStorage, VecStorageIter};
+use crate::line::zone::ZoneRange;
 use crate::{Change, SequenceNo, SEQ_ZERO};
 use alloc::borrow::Cow;
 #[cfg(feature = "appdata")]
@@ -20,26 +22,13 @@ use siphasher::sip128::{Hasher128, SipHasher};
 #[cfg(feature = "appdata")]
 use std::sync::Mutex;
 use wezterm_bidi::{Direction, ParagraphDirectionHint};
-use wezterm_cell::{Cell, CellAttributes, SemanticType, UnicodeVersion};
+use wezterm_cell::{Cell, CellAttributes, UnicodeVersion};
 
 extern crate alloc;
 use crate::alloc::string::ToString;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-
-#[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ZoneRange {
-    pub semantic_type: SemanticType,
-    pub range: Range<u16>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum DoubleClickRange {
-    Range(Range<usize>),
-    RangeWithWrap(Range<usize>),
-}
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 #[derive(Debug)]
