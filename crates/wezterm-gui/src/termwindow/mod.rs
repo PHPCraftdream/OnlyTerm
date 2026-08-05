@@ -336,7 +336,7 @@ pub struct TermWindow {
     current_mouse_buttons: Vec<MousePress>,
     current_mouse_capture: Option<MouseCapture>,
 
-    opengl_info: Option<String>,
+    renderer_info: Option<String>,
 
     /// Keeps track of double and triple clicks
     last_mouse_click: Option<LastMouseClick>,
@@ -433,7 +433,6 @@ pub struct TermWindow {
 
     connection_name: String,
 
-    gl: Option<Rc<glium::backend::Context>>,
     webgpu: Option<Arc<WebGpuState>>,
     render_thread: Option<crate::renderthread::RenderThreadHandle>,
     /// One-shot guard for the render-thread hang supervisor (see
@@ -483,69 +482,6 @@ pub struct TermWindow {
     /// than `REBUILD_WINDOW` are pruned on every check, so this never grows
     /// unbounded across a long-lived window's lifetime.
     rebuild_attempts: RefCell<Vec<Instant>>,
-    /// Per-window relay for `begin_opengl_fallback` / `finish_opengl_fallback`
-    /// (task #255, race fixed in task #265): carries the
-    /// `anyhow::Result<Rc<glium::backend::Context>>` produced by
-    /// `Window::enable_opengl()` across the `TermWindowNotif::Apply`
-    /// re-entry boundary.
-    ///
-    /// `Rc<glium::backend::Context>` is not `Send`/`Sync` (it wraps
-    /// thread-affine GL context state), so it cannot be captured directly
-    /// in an `Apply` closure, which `notify()` requires to be `Send + Sync`
-    /// (that bound exists because `notify()` is a generic API callable from
-    /// any thread, e.g. a background render thread posting back to the GUI
-    /// thread). In this specific call chain the value never actually
-    /// leaves the GUI thread -- `promise::spawn::spawn` is `spawn_local`
-    /// (see `crates/promise/src/spawn.rs`), so both the write (in
-    /// `begin_opengl_fallback`'s spawned task) and the read (in
-    /// `finish_opengl_fallback`, reached via the `notify()` dispatch)
-    /// happen on this same thread.
-    ///
-    /// This used to be a single process-wide `thread_local!` slot, keyed by
-    /// nothing at all. That was a real bug (task #265): if two *different*
-    /// windows both trip the render-rebuild circuit breaker around the same
-    /// time (the expected case for a process-wide broken GPU
-    /// adapter/driver), their `begin_opengl_fallback` spawned tasks can both
-    /// be in flight before either `finish_opengl_fallback` runs (each
-    /// `enable_opengl().await` yields the executor at least once, and
-    /// `Window::notify` merely enqueues a `spawn_into_main_thread` task
-    /// rather than dispatching synchronously), so window B's write could
-    /// silently clobber window A's result in the shared cell, handing
-    /// window A a `glium::backend::Context` that belongs to window B's
-    /// HWND/device context and leaving window B's slot empty (which then
-    /// reads back a spurious "relay was empty" error and destroys window
-    /// B's tabs/panes even though B's own OpenGL init never failed).
-    ///
-    /// Scoping this to an `Rc<RefCell<...>>` owned by (and captured from)
-    /// this specific `TermWindow`/`Window` eliminates the cross-window
-    /// aliasing entirely: each window's spawned fallback task closes over
-    /// its own `Rc` clone, so N windows falling back concurrently each get
-    /// their own slot with no possibility of clobbering or starving each
-    /// other. A single slot (rather than a queue) remains sufficient
-    /// *per window*: `render_thread_hang_handled`'s one-shot guard still
-    /// ensures `begin_opengl_fallback` isn't re-entered for a given window
-    /// while a previous attempt's result hasn't been consumed yet.
-    opengl_fallback_relay:
-        Rc<RefCell<Option<anyhow::Result<Rc<::window::glium::backend::Context>>>>>,
-    /// Set once (task #267) by `finish_opengl_fallback` the moment this
-    /// window has *successfully* completed its one-shot OpenGL fallback
-    /// (task #255): this window is done trying WebGpu again, permanently,
-    /// for the rest of its lifetime -- by design, not as a transient state.
-    ///
-    /// Checked at the very top of `handle_render_error_recovery` (and
-    /// `check_render_thread_hang_tick`, which reaches the same shared
-    /// `attempt_renderer_rebuild_or_close`): once set, no recovery-triggering
-    /// event (hang, surface error, device-lost) may begin a renderer rebuild
-    /// for this window ever again. Without this flag, a stale/late
-    /// device-lost event from the old, now-abandoned WebGpu device (see
-    /// `WebGpuState::mark_stale`'s doc comment) that arrives more than
-    /// `REBUILD_WINDOW` after the fallback completed would find
-    /// `rebuild_attempts` pruned back down to nothing, pass the circuit
-    /// breaker's count check, and tear down this window's healthy, currently
-    /// in-use OpenGL `render_state`/`gl` to restart the WebGpu rebuild dance
-    /// on a window that has permanently moved off WebGpu -- exactly the
-    /// failure task #255's fallback exists to avoid.
-    permanently_on_opengl: Cell<bool>,
     config_subscription: Option<config::ConfigSubscription>,
 }
 

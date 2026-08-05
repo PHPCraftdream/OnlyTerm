@@ -136,14 +136,11 @@ impl TermWindow {
             fps: 0.,
             config_subscription: None,
             os_parameters: None,
-            gl: None,
             webgpu: None,
             render_thread: None,
             render_thread_hang_handled: Cell::new(false),
             hang_check_scheduled: Cell::new(false),
             rebuild_attempts: RefCell::new(Vec::new()),
-            opengl_fallback_relay: Rc::new(RefCell::new(None)),
-            permanently_on_opengl: Cell::new(false),
             window: None,
             window_background,
             config: config.clone(),
@@ -247,7 +244,7 @@ impl TermWindow {
             is_click_to_focus_window: false,
             key_table_state: KeyTableState::default(),
             modal: RefCell::new(None),
-            opengl_info: None,
+            renderer_info: None,
         };
 
         let tw = Rc::new(RefCell::new(myself));
@@ -307,12 +304,11 @@ impl TermWindow {
         // `created()` merely installs a `RenderState`, rather than once a
         // real frame is confirmed handed off for presentation, left a gap
         // where nothing painted the window). `NeedRepaint` before the
-        // renderer exists is already a no-op (`do_paint` bails out when
-        // `self.gl` is `None`, and `do_paint_webgpu` is unreachable until
-        // `self.webgpu` is set in `created()`), and pane input keeps flowing
-        // to the pty regardless of whether a renderer is attached yet, so
-        // there is nothing unsafe about a visible-but-not-yet-rendering
-        // window.
+        // renderer exists is already a no-op (`do_paint_webgpu` is
+        // unreachable until `self.webgpu` is set in `created()`), and pane
+        // input keeps flowing to the pty regardless of whether a renderer is
+        // attached yet, so there is nothing unsafe about a
+        // visible-but-not-yet-rendering window.
         window.show();
         if config.start_maximized {
             window.maximize();
@@ -328,34 +324,40 @@ impl TermWindow {
             }
         });
 
-        // Attempt WebGpu first (if requested) so that we can fall back to
-        // OpenGL when adapter/device creation fails, rather than hard-failing
-        // window creation. Only construct `gl` afterwards, and only if
-        // WebGpu wasn't requested or just failed.
-        let mut webgpu = None;
-        if config.front_end == FrontEndSelection::WebGpu {
-            match WebGpuState::new(&window, dimensions, &config).await {
-                Ok(state) => {
-                    webgpu.replace(Arc::new(state));
-                }
-                Err(err) => {
-                    // WebGpu adapter/device creation can fail in RDP
-                    // sessions, on old/software-only GPUs, in VMs without
-                    // GPU passthrough, or due to driver mismatches. Rather
-                    // than failing to open the window at all, fall back to
-                    // OpenGL below.
-                    log::error!(
-                        "Failed to initialize WebGpu ({:#}); falling back to OpenGL rendering",
-                        err
-                    );
-                }
+        // WebGpu is the only renderer OnlyTerm has left (the OpenGL/Mesa
+        // fallback was removed in task #414). `FrontEndSelection` has only
+        // one variant (see config::frontend), so this is always taken; the
+        // `match` isn't a real branch point any more, just documentation of
+        // that invariant, kept so a future new `FrontEndSelection` variant
+        // doesn't silently fall through here unhandled.
+        debug_assert_eq!(config.front_end, FrontEndSelection::WebGpu);
+        let webgpu = match WebGpuState::new(&window, dimensions, &config).await {
+            Ok(state) => Arc::new(state),
+            Err(err) => {
+                // WebGpu adapter/device creation can fail in RDP sessions, on
+                // old/software-only GPUs, in VMs without GPU passthrough, or
+                // due to a driver mismatch. There is no other renderer left
+                // to fall back to (task #414 removed the OpenGL/Mesa
+                // fallback that used to catch this), so rather than leave a
+                // blank/half-initialized window on screen or silently
+                // degrade, terminate the process the same way any other
+                // fatal startup error does: log the real cause, show the
+                // user a toast notification explaining what went wrong, and
+                // exit. See `crate::terminate_with_error_message` (used
+                // identically by `crate::terminate_with_error` for other
+                // fatal startup failures in `main.rs`) -- reusing that path
+                // here rather than inventing a second one means the user
+                // sees the exact same failure UX regardless of which fatal
+                // startup error they hit.
+                crate::terminate_with_error_message(&format!(
+                    "Failed to initialize the WebGpu renderer: {err:#}\n\n\
+                     This can happen in a VM without GPU passthrough, over \
+                     RDP, or due to a graphics driver mismatch. OnlyTerm has \
+                     no other rendering backend to fall back to, so it \
+                     cannot open a window without a working WebGpu \
+                     adapter/device."
+                ));
             }
-        }
-
-        let gl = if webgpu.is_none() {
-            Some(window.enable_opengl().await?)
-        } else {
-            None
         };
 
         {
@@ -377,37 +379,28 @@ impl TermWindow {
                 );
             }
 
-            if let Some(gl) = gl {
-                myself.gl.replace(Rc::clone(&gl));
-                myself.created(RenderContext::Glium(Rc::clone(&gl)))?;
-            }
-            if let Some(webgpu) = webgpu {
-                myself.webgpu.replace(Arc::clone(&webgpu));
-                myself.created(RenderContext::WebGpu(Arc::clone(&webgpu)))?;
+            myself.webgpu.replace(Arc::clone(&webgpu));
+            myself.created(RenderContext(Arc::clone(&webgpu)))?;
 
-                if config.webgpu_render_thread {
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    let repaint_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    let window_destroyed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                    let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
-                    let seed = crate::renderthread::RenderThreadSeed {
-                        window: window.clone(),
-                        webgpu: Arc::clone(&webgpu),
-                        rx,
-                        in_flight,
-                        repaint_pending,
-                        window_destroyed,
-                        submit_started_at,
-                    };
-                    myself.render_thread = crate::renderthread::RenderThreadHandle::spawn(
-                        seed,
-                        tx,
-                        myself.mux_window_id,
-                    );
-                    if myself.render_thread.is_some() {
-                        myself.schedule_render_thread_hang_check(&window);
-                    }
+            if config.webgpu_render_thread {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let repaint_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let window_destroyed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
+                let seed = crate::renderthread::RenderThreadSeed {
+                    window: window.clone(),
+                    webgpu: Arc::clone(&webgpu),
+                    rx,
+                    in_flight,
+                    repaint_pending,
+                    window_destroyed,
+                    submit_started_at,
+                };
+                myself.render_thread =
+                    crate::renderthread::RenderThreadHandle::spawn(seed, tx, myself.mux_window_id);
+                if myself.render_thread.is_some() {
+                    myself.schedule_render_thread_hang_check(&window);
                 }
             }
             myself.load_os_parameters();
@@ -612,25 +605,6 @@ impl TermWindow {
         circuit_breaker_log_reason: &str,
         rebuilt_metric: &'static str,
     ) {
-        if self.permanently_on_opengl.get() {
-            // This window has already successfully, permanently fallen back
-            // to OpenGL (task #255/#267): it is done trying WebGpu again by
-            // design, so no recovery-triggering event -- including a late
-            // device-lost callback from the old, now-abandoned WebGpu device
-            // (see `WebGpuState::mark_stale`) that arrives well after the
-            // fallback completed, once `rebuild_attempts` has been pruned
-            // back down and would otherwise pass the circuit breaker's count
-            // check -- may begin a new renderer rebuild attempt and tear
-            // down this window's healthy, currently in-use OpenGL
-            // `render_state`/`gl`. Just log and drop it.
-            log::debug!(
-                "{}; ignoring -- this window has already permanently fallen back to \
-                 OpenGL rendering and will not attempt a WebGpu rebuild again",
-                log_reason,
-            );
-            return;
-        }
-
         // Set the one-shot guard immediately: everything below this point
         // (the circuit breaker check, the async rebuild, the fallback close)
         // must not race with another recovery trigger for this same
@@ -649,27 +623,25 @@ impl TermWindow {
         let attempts_in_window = self.rebuild_attempts.borrow().len();
 
         if attempts_in_window > Self::MAX_REBUILDS_PER_WINDOW {
+            // The GPU/driver/adapter looks fundamentally broken, not just
+            // transiently stuck: rebuilding WebGpu in place has already
+            // failed to produce a working renderer `MAX_REBUILDS_PER_WINDOW`
+            // times within `REBUILD_WINDOW`. There is no other renderer left
+            // to fall back to (task #414 removed the OpenGL/Mesa fallback
+            // that used to catch this), so the only thing left to do is
+            // close this window cleanly rather than let it sit there
+            // silently broken or spin forever retrying.
             log::error!(
                 "{} {} times in the last {:?}; giving up on rebuilding WebGpu (the \
                  GPU/driver/adapter looks fundamentally broken, not just transiently \
-                 stuck); attempting a one-time fallback to OpenGL for this window \
-                 before resorting to closing it",
+                 stuck) and closing this window -- OnlyTerm has no other rendering \
+                 backend to fall back to",
                 circuit_breaker_log_reason,
                 attempts_in_window,
                 Self::REBUILD_WINDOW,
             );
             metrics::counter!("gui.render_thread.rebuild_circuit_breaker_tripped").increment(1);
-            // No additional explicit backoff/delay is inserted here on
-            // purpose: the circuit breaker already spaces out WebGpu
-            // rebuild attempts by however long each rebuild-then-rehang
-            // cycle actually takes in practice (observed ~2.3-2.9s per
-            // cycle during task #253's manual testing, driven by real
-            // HWND recreation + WebGpuState::new work, not a busy loop).
-            // A synthetic sleep here would only add user-visible lag to a
-            // window that's already visibly degraded, with no reliability
-            // benefit -- the OpenGL fallback below is a one-shot attempt,
-            // not something that benefits from spacing against itself.
-            self.begin_opengl_fallback(window);
+            self.close_window_for_unrecoverable_render_hang(window);
             return;
         }
 
@@ -689,201 +661,16 @@ impl TermWindow {
     /// The destructive fallback: kill this window's panes (and their child
     /// processes) before destroying the OS window, otherwise the
     /// shells/programs running in them are orphaned with no controlling
-    /// terminal left. This is the same sequence `close_requested` and the
-    /// original (pre-#253) hang handler used; it's now the true last resort,
-    /// reached only when the in-place WebGpu rebuild's circuit breaker trips
-    /// *and* the OpenGL fallback (`begin_opengl_fallback`, task #255) also
-    /// fails.
+    /// terminal left. This is the same sequence `close_requested` uses; it's
+    /// the true last resort, reached only once the in-place WebGpu rebuild's
+    /// circuit breaker trips (task #414 removed the OpenGL fallback that used
+    /// to be tried before resorting to this).
     fn close_window_for_unrecoverable_render_hang(&mut self, window: &Window) {
         let mux = Mux::get();
         mux.kill_window(self.mux_window_id);
         window.close();
         front_end().forget_known_window(window);
         metrics::counter!("gui.render_thread.window_closed_for_hang").increment(1);
-    }
-
-    /// Last-resort renderer fallback (task #255), tried once the WebGpu
-    /// in-place rebuild circuit breaker has tripped (`MAX_REBUILDS_PER_WINDOW`
-    /// rebuilds within `REBUILD_WINDOW` all failed to produce a
-    /// working/stable renderer): abandon WebGpu entirely for this window and
-    /// switch it to OpenGL, exactly like the startup-time
-    /// WebGpu->OpenGL fallback in `new_window` (task #221.8) does when
-    /// `WebGpuState::new` fails on initial window creation. The difference
-    /// here is that this window already has a live `RenderState`/render
-    /// thread built on WebGpu that must be torn down first, and success
-    /// permanently downgrades the window for the rest of its lifetime
-    /// (there's no further attempt to go back to WebGpu).
-    ///
-    /// `enable_opengl` is `async`, so -- exactly like `begin_renderer_rebuild`
-    /// bridges the async `WebGpuState::new` call -- the rest of the work
-    /// happens in a spawned task that re-enters via `TermWindowNotif::Apply`
-    /// (see `finish_opengl_fallback`). Unlike the WebGpu rebuild, no
-    /// WebGpu-child-HWND recreation dance is needed first: `enable_opengl`
-    /// (all platforms) operates on the main window/surface directly and
-    /// doesn't touch `webgpu_child_hwnd` at all.
-    fn begin_opengl_fallback(&mut self, window: &Window) {
-        // Abandon the old WebGpu render thread and GPU resources, the same
-        // careful way `begin_renderer_rebuild` does: shutdown (detach, don't
-        // join -- a stuck driver call must not block the GUI thread), then
-        // drop render_state before the device/surface it was built from.
-        if let Some(rt) = self.render_thread.take() {
-            rt.shutdown();
-        }
-        self.render_state.take();
-        self.gl.take();
-        // Mark the outgoing device stale (task #267) before dropping it: its
-        // `set_device_lost_callback` closure can't be unregistered, so a
-        // late device-lost event firing after this window has moved to
-        // OpenGL must be able to tell it's no longer current and no-op
-        // instead of dragging this window back into the WebGpu rebuild
-        // dance. See `WebGpuState::mark_stale`'s doc comment.
-        if let Some(webgpu) = self.webgpu.take() {
-            webgpu.mark_stale();
-        }
-
-        let window_for_async = window.clone();
-        // Clone this window's own relay slot (not a process-global one --
-        // see the field's doc comment and task #265) so the spawned task
-        // below can hand the result back to *this* window specifically,
-        // with no risk of a concurrently-falling-back sibling window
-        // clobbering or stealing it.
-        let relay = Rc::clone(&self.opengl_fallback_relay);
-
-        promise::spawn::spawn(async move {
-            let result = window_for_async.enable_opengl().await;
-            let win = window_for_async.clone();
-            // `Rc<glium::backend::Context>` is not `Send`/`Sync` (unlike
-            // `Arc<WebGpuState>` in the WebGpu rebuild path), but
-            // `TermWindowNotif::Apply` requires its closure to be
-            // `Send + Sync` -- `notify()`'s signature is generic over any
-            // caller thread, even though in practice `promise::spawn::spawn`
-            // is `spawn_local` and this closure only ever runs back on this
-            // same GUI thread. Rather than reach for `unsafe impl Send`
-            // (unsound in general, and unjustifiable here since
-            // `glium::backend::Context` is genuinely thread-affine GL
-            // state), relay the `Rc` itself through this window's own
-            // GUI-thread-only relay slot (see `opengl_fallback_relay`'s doc
-            // comment) and send only a `Send`-safe ok/err signal through
-            // `notify`.
-            relay.borrow_mut().replace(result);
-            window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
-                tw.finish_opengl_fallback(&win);
-            })));
-        })
-        .detach();
-    }
-
-    /// Re-entry point (via `TermWindowNotif::Apply`) once the async half of
-    /// the OpenGL fallback (`enable_opengl`) has resolved.
-    ///
-    /// On success: rebuild `RenderState` against the new OpenGL context and
-    /// log clearly that this window has permanently downgraded away from
-    /// WebGpu, since -- per task #222's documented architectural decision --
-    /// OpenGL rendering on this window is now synchronous on the GUI thread
-    /// with none of WebGpu's render-thread/hang-detection/rebuild isolation.
-    /// No render thread is (re-)armed and `schedule_render_thread_hang_check`
-    /// is never scheduled again for this window: there's no render thread
-    /// left to supervise. This is a deliberate, accepted tradeoff (a
-    /// strictly less resilient renderer, chosen over closing the window and
-    /// losing its tabs' child processes).
-    ///
-    /// On failure: this really is the end of the road -- both WebGpu and
-    /// OpenGL failed to produce a working renderer for this window -- so
-    /// fall back to the destructive close.
-    ///
-    /// Takes no `result` parameter: the actual `Rc<GliumContext>` (or
-    /// error) was stashed in this window's own `opengl_fallback_relay` by
-    /// `begin_opengl_fallback`'s spawned task just before this was
-    /// `notify()`-ed, since a non-`Send` `Rc` cannot ride along in the
-    /// `TermWindowNotif::Apply` closure itself. See that relay's doc
-    /// comment for why this is safe (GUI-thread-only, and -- since task
-    /// #265 -- per-window, so a concurrently-falling-back sibling window
-    /// can never clobber or empty this window's slot).
-    fn finish_opengl_fallback(&mut self, window: &Window) {
-        let result = self
-            .opengl_fallback_relay
-            .borrow_mut()
-            .take()
-            .unwrap_or_else(|| {
-                Err(anyhow::anyhow!(
-                    "internal error: opengl_fallback_relay was empty in finish_opengl_fallback"
-                ))
-            });
-        let gl = match result {
-            Ok(gl) => gl,
-            Err(err) => {
-                log::error!(
-                    "OpenGL fallback also failed for this window after the WebGpu rebuild \
-                     circuit breaker tripped ({:#}); no renderer is available, closing this \
-                     window",
-                    err
-                );
-                metrics::counter!("gui.render_thread.opengl_fallback_failed").increment(1);
-                self.close_window_for_unrecoverable_render_hang(window);
-                return;
-            }
-        };
-
-        self.gl.replace(Rc::clone(&gl));
-        if let Err(err) = self.created(RenderContext::Glium(Rc::clone(&gl))) {
-            log::error!(
-                "OpenGL fallback's RenderState build failed for this window ({:#}); no \
-                 renderer is available, closing this window",
-                err
-            );
-            metrics::counter!("gui.render_thread.opengl_fallback_failed").increment(1);
-            self.close_window_for_unrecoverable_render_hang(window);
-            return;
-        }
-
-        // Success: this window is now permanently on OpenGL. No render
-        // thread to spawn/supervise for it any more (WebGpu-only
-        // machinery), so -- unlike `finish_renderer_rebuild` -- there is no
-        // `schedule_render_thread_hang_check` call here.
-        self.render_thread_hang_handled.set(false);
-
-        // This window has genuinely, successfully moved to OpenGL for good
-        // (task #267): from this point on, no recovery-triggering event --
-        // including a late device-lost callback from the old, now-abandoned
-        // WebGpu device (see `WebGpuState::mark_stale`) -- may start a new
-        // WebGpu rebuild attempt for this window. See
-        // `attempt_renderer_rebuild_or_close`'s guard and this flag's own
-        // doc comment.
-        self.permanently_on_opengl.set(true);
-
-        // One-shot sweep of any WebGpu child HWNDs retired by the failed
-        // rebuild attempts that led to this fallback (task #292, issue 2):
-        // once this window is permanently on OpenGL, `schedule_render_thread_hang_check`
-        // is never armed again (see this function's own doc comment), so the
-        // `check_render_thread_hang_tick` cadence that normally sweeps
-        // `retired_webgpu_children` promptly (task #283) will never run
-        // again for this window either -- without this call, up to
-        // `MAX_REBUILDS_PER_WINDOW` retired HWNDs from the rebuild attempts
-        // above would sit hidden-but-technically-alive until the window
-        // itself closes (still not a real leak, since `hwnd`'s own
-        // `WS_CHILD` teardown is a backstop -- see
-        // `retired_webgpu_children`'s doc comment -- just not reclaimed
-        // promptly). A single sweep here is sufficient and nothing needs to
-        // keep polling afterward: WebGpu rebuilds have stopped for this
-        // window permanently, so no *new* HWNDs will ever be retired after
-        // this point. Safe to call even if nothing was retired (plain
-        // no-op per `sweep_retired_webgpu_children`'s doc comment).
-        #[cfg(windows)]
-        window.sweep_retired_webgpu_children();
-
-        window.invalidate();
-
-        log::warn!(
-            "this window has permanently fallen back to OpenGL rendering after repeated \
-             WebGpu renderer rebuild failures (circuit breaker tripped {} times within \
-             {:?}); OpenGL rendering on this window is synchronous on the GUI thread with \
-             none of WebGpu's render-thread isolation/hang-detection/rebuild machinery \
-             (see task #222) -- this is an accepted resilience tradeoff to keep the window \
-             and its tabs' processes alive rather than closing it",
-            Self::MAX_REBUILDS_PER_WINDOW,
-            Self::REBUILD_WINDOW,
-        );
-        metrics::counter!("gui.render_thread.window_fallen_back_to_opengl").increment(1);
     }
 
     /// Kick off the async half of the in-place renderer rebuild (abandoning
@@ -939,17 +726,15 @@ impl TermWindow {
         // Step 2: drop the old GPU resources in the same order the
         // `Destroyed` handler documents: render_state first (its Drop
         // deletes programs/buffers/textures/glyph atlas via the context),
-        // then the context itself (gl) / device+surface (webgpu). The old
-        // `webgpu` Arc may still be referenced by the just-shutdown render
-        // thread until its `recv()` loop actually observes the disconnect,
-        // but that's fine -- `Arc` keeps it alive until the last reference
-        // (here, or on that thread) drops it, and the render thread will
-        // never issue another GPU call against it once `window_destroyed`
-        // is set (see `RenderThreadHandle::shutdown`'s doc comment).
+        // then the device+surface (webgpu). The old `webgpu` Arc may still
+        // be referenced by the just-shutdown render thread until its
+        // `recv()` loop actually observes the disconnect, but that's fine --
+        // `Arc` keeps it alive until the last reference (here, or on that
+        // thread) drops it, and the render thread will never issue another
+        // GPU call against it once `window_destroyed` is set (see
+        // `RenderThreadHandle::shutdown`'s doc comment).
         self.render_state.take();
-        self.gl.take();
-        // Mark the outgoing device stale (task #267) before dropping it, for
-        // the same reason `begin_opengl_fallback` does: its
+        // Mark the outgoing device stale (task #267) before dropping it: its
         // `set_device_lost_callback` closure keeps living (wgpu gives no way
         // to unregister it) for as long as the underlying `wgpu::Device`
         // handle does, so a *late* device-lost event from this now-abandoned
@@ -1030,11 +815,11 @@ impl TermWindow {
     /// justification: all three symptoms mean "this WebGpu attempt didn't
     /// produce a working renderer", and the breaker's 3-attempts/30s budget
     /// is exactly the mechanism designed to decide when to stop retrying and
-    /// fall back. So a failure at either point counts as one attempt against
+    /// give up. So a failure at either point counts as one attempt against
     /// that same budget, and re-calling `attempt_renderer_rebuild_or_close`
     /// naturally either retries WebGpu again (if attempts remain) or, once
-    /// the breaker trips, falls back to OpenGL (see that function) before
-    /// ever reaching the destructive close.
+    /// the breaker trips, closes the window (see that function; task #414
+    /// removed the OpenGL fallback that used to be tried at that point).
     fn finish_renderer_rebuild(&mut self, window: &Window, result: anyhow::Result<WebGpuState>) {
         // Opportunistic extra sweep (task #283): by the time `WebGpuState::new`
         // (real adapter/device/surface setup work, not instantaneous) has
@@ -1087,7 +872,7 @@ impl TermWindow {
         // called. So the surface/device just resolved above already targets
         // the fresh child HWND. Nothing left to do for the HWND here.
         self.webgpu.replace(Arc::clone(&webgpu));
-        if let Err(err) = self.created(RenderContext::WebGpu(Arc::clone(&webgpu))) {
+        if let Err(err) = self.created(RenderContext(Arc::clone(&webgpu))) {
             // Same reasoning as the `WebGpuState::new` failure arm above
             // (task #272): the device/surface rebuild itself just
             // succeeded, so this is a `RenderState::new` failure (shader
@@ -1171,17 +956,13 @@ impl TermWindow {
                 // the window is gone and we'll linger forever.
                 // <https://github.com/wezterm/wezterm/issues/3522>
                 self.clear_all_overlays();
-                // Drop OpenGL/render resources while the window surface is still
-                // alive, before NSView dealloc invalidates the GPU drawable.
-                // If deferred until TermWindow::drop, glium's Drop impls
-                // (RawProgram, Context, VertexBuffer, etc.) call make_current
-                // which triggers NSOpenGLContext update on a stale IOSurface,
-                // causing SIGABRT.
-                // Order matters: render_state first (its Drop deletes programs,
-                // buffers, textures via the context), then gl (drops the
-                // context itself, which does FBO/VAO/sampler cleanup).
+                // Drop render resources while the window surface is still
+                // alive, before the OS invalidates the GPU drawable
+                // (e.g. NSView dealloc on macOS). render_state's Drop deletes
+                // the wgpu buffers/textures/glyph atlas via the device it was
+                // built from, so it must go before the render thread (which
+                // owns the device/surface) is torn down.
                 self.render_state.take();
-                self.gl.take();
                 // Detach, don't join: the whole point of the render
                 // thread is that a stuck GPU driver call can't freeze the
                 // GUI thread, so blocking window-close on that same thread
@@ -1248,8 +1029,6 @@ impl TermWindow {
                     self.is_repaint_pending = false;
                     if self.webgpu.is_some() {
                         self.do_paint_webgpu()?;
-                    } else {
-                        self.do_paint(window);
                     }
                 }
                 self.apply_pending_scale_changes();
@@ -1285,21 +1064,18 @@ impl TermWindow {
             WindowEvent::NeedRepaint => {
                 // Early-show (task #331) means the window can be visible --
                 // and generating `NeedRepaint` events from focus/resize/OS
-                // paint requests -- before either renderer is attached.
-                // `self.gl` and `self.webgpu` are both still `None` from
-                // when they're constructed (see the `myself` initializer
-                // above `new_window`'s `Window::new_window` call) until
-                // `created()` fills in whichever one won the WebGpu/OpenGL
-                // race. This is intentionally *not* treated as an error:
+                // paint requests -- before the renderer is attached.
+                // `self.webgpu` is still `None` from when it's constructed
+                // (see the `myself` initializer above `new_window`'s
+                // `Window::new_window` call) until `created()` fills it in.
+                // This is intentionally *not* treated as an error:
                 // `do_paint_webgpu` is simply unreachable while
                 // `self.webgpu` is `None` (the `else` branch below runs
-                // instead), and `do_paint` handles a `None` `self.gl` by
-                // returning `false` rather than panicking (see its early
-                // return). The client area itself is covered by the
+                // instead). The client area itself is covered by the
                 // `WM_ERASEBKGND` placeholder brush (task #330) for the
                 // brief window before `created()` runs, so a dropped
                 // repaint here is harmless -- `created()` also forces one
-                // more `window.invalidate()` once a renderer is actually in
+                // more `window.invalidate()` once the renderer is actually in
                 // place, so nothing is lost, only delayed.
                 if self.resizes_pending > 0 {
                     self.is_repaint_pending = true;
@@ -1307,7 +1083,7 @@ impl TermWindow {
                 } else if self.webgpu.is_some() {
                     self.do_paint_webgpu()
                 } else {
-                    Ok(self.do_paint(window))
+                    Ok(false)
                 }
             }
             WindowEvent::Notification(item) => {
@@ -1359,45 +1135,6 @@ impl TermWindow {
             }
             WindowEvent::DraggedFile(_) => Ok(true),
         }
-    }
-
-    fn do_paint(&mut self, window: &Window) -> bool {
-        // `self.gl` is `None` for the entire span between the window
-        // becoming visible (early show, task #331) and OpenGL actually
-        // winning the WebGpu/OpenGL race in `created()` -- and permanently
-        // `None` on a WebGpu-only run. Both are expected, not error states:
-        // this early return is what makes a `NeedRepaint` delivered to a
-        // renderer-less-but-visible window a safe no-op instead of a panic
-        // (see `WindowEvent::NeedRepaint` above for the fuller picture,
-        // including why nothing is lost -- `created()` forces one more
-        // repaint once a renderer does land).
-        let gl = match self.gl.as_ref() {
-            Some(gl) => gl,
-            None => return false,
-        };
-
-        if gl.is_context_lost() {
-            log::error!("opengl context was lost; should reinit");
-            // Mirror close_requested's teardown: kill this window's panes
-            // (and their child processes) before destroying the OS window,
-            // otherwise the shells/programs running in them are orphaned
-            // with no controlling terminal left.
-            let mux = Mux::get();
-            mux.kill_window(self.mux_window_id);
-            window.close();
-            front_end().forget_known_window(window);
-            return false;
-        }
-
-        let mut frame = glium::Frame::new(
-            Rc::clone(gl),
-            (
-                self.dimensions.pixel_width as u32,
-                self.dimensions.pixel_height as u32,
-            ),
-        );
-        self.paint_impl(&mut RenderFrame::Glium(&mut frame));
-        window.finish_frame(frame).is_ok()
     }
 
     fn do_paint_webgpu(&mut self) -> anyhow::Result<bool> {

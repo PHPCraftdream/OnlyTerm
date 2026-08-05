@@ -61,12 +61,12 @@ impl TermWindow {
         self.render_state = None;
 
         let render_info = ctx.renderer_info();
-        self.opengl_info.replace(render_info.clone());
+        self.renderer_info.replace(render_info.clone());
 
         match RenderState::new(ctx, &self.fonts, &self.render_metrics, ATLAS_SIZE) {
             Ok(render_state) => {
                 log::debug!(
-                    "OpenGL initialized! {} wezterm version: {}",
+                    "Renderer initialized! {} wezterm version: {}",
                     render_info,
                     config::wezterm_version(),
                 );
@@ -94,10 +94,10 @@ impl TermWindow {
                 //
                 // `window.invalidate()` still happens unconditionally here:
                 // `created` is the single funnel every renderer (re)build
-                // path goes through (initial `new_window` creation,
-                // `finish_opengl_fallback`, `finish_renderer_rebuild`), and
-                // a forced repaint is exactly as necessary as before for all
-                // three -- only the placeholder teardown moved. The window
+                // path goes through (initial `new_window` creation and
+                // `finish_renderer_rebuild`), and a forced repaint is
+                // exactly as necessary as before for both -- only the
+                // placeholder teardown moved. The window
                 // may already be visible (task #331/early show) with
                 // nothing queued to trigger a repaint yet, so this ensures
                 // the first (or, for a rebuild, next) real frame appears
