@@ -322,7 +322,6 @@ pub(crate) struct WindowInner {
     /// still children of `hwnd` for as long as they live).
     retired_webgpu_children: Vec<(HWindow, std::sync::Weak<dyn Any + Send + Sync>)>,
     events: WindowEventSender,
-    gl_state: Option<Rc<glium::backend::Context>>,
     /// Fraction of mouse scroll
     hscroll_remainder: i16,
     vscroll_remainder: i16,
@@ -467,16 +466,6 @@ fn take_rc_from_pointer(lparam: LPVOID) -> Rc<RefCell<WindowInner>> {
     }
 }
 
-fn callback_behavior() -> glium::debug::DebugCallbackBehavior {
-    if cfg!(debug_assertions) && false
-    /* https://github.com/glium/glium/issues/1885 */
-    {
-        glium::debug::DebugCallbackBehavior::DebugMessageOnError
-    } else {
-        glium::debug::DebugCallbackBehavior::Ignore
-    }
-}
-
 impl HasDisplayHandle for WindowInner {
     fn display_handle(&self) -> Result<DisplayHandle<'_>, HandleError> {
         // SAFETY: `WindowsDisplayHandle` is a zero-sized marker with no raw
@@ -504,64 +493,6 @@ impl HasWindowHandle for WindowInner {
 }
 
 impl WindowInner {
-    fn enable_opengl(&mut self) -> anyhow::Result<Rc<glium::backend::Context>> {
-        let conn = Connection::get().unwrap();
-
-        // TODO(#415): `prefer_egl` used to be a user-facing config knob; the
-        // config field was removed in #413 as part of the OpenGL removal
-        // (EGL only exists to serve the GL renderer). This whole
-        // EGL/WGL-selection function is slated for removal in #415, so for
-        // now just keep its previous default behavior (EGL not preferred on
-        // Windows) hard-coded rather than reintroducing config plumbing for
-        // code that is about to be deleted.
-        let prefer_egl = false;
-        let gl_state = if prefer_egl {
-            match conn.gl_connection.borrow().as_ref() {
-                None => crate::egl::GlState::create(None, self.hwnd.0),
-                Some(glconn) => {
-                    crate::egl::GlState::create_with_existing_connection(glconn, self.hwnd.0)
-                }
-            }
-        } else {
-            Err(anyhow::anyhow!("Config says to avoid EGL"))
-        }
-        .and_then(|egl| {
-            // SAFETY: `egl` is a freshly-created, valid EGL `Backend` owning a
-            // current GL context; `glium::backend::Context::new` is unsafe only
-            // because it trusts the backend to be a valid GL context provider.
-            unsafe {
-                log::trace!("Initialized EGL!");
-                conn.gl_connection
-                    .borrow_mut()
-                    .replace(Rc::clone(egl.get_connection()));
-                let backend = Rc::new(egl);
-                Ok(glium::backend::Context::new(
-                    backend,
-                    true,
-                    callback_behavior(),
-                )?)
-            }
-        })
-        .or_else(|err| {
-            log::trace!("EGL init failed {:?}, fall back to WGL", err);
-            super::wgl::GlState::create(self.hwnd.0).and_then(|state| {
-                // SAFETY: `state` is a freshly-created, valid WGL `Backend`
-                // owning a current GL context; same rationale as the EGL branch.
-                unsafe {
-                    Ok(glium::backend::Context::new(
-                        Rc::new(state),
-                        true,
-                        callback_behavior(),
-                    )?)
-                }
-            })
-        })?;
-
-        self.gl_state.replace(gl_state.clone());
-
-        Ok(gl_state)
-    }
-
     fn get_effective_dpi(&self) -> usize {
         // SAFETY: `self.hwnd.0` is a live window handle.
         let actual_dpi = unsafe { GetDpiForWindow(self.hwnd.0) } as f64;
@@ -594,18 +525,6 @@ impl WindowInner {
     /// Calls resize if needed.
     /// Returns true if we did.
     fn check_and_call_resize_if_needed(&mut self) -> bool {
-        /*
-        if self.gl_state.is_none() {
-            // Don't cache state or generate resize callbacks until
-            // we've set up opengl, otherwise we can miss propagating
-            // some state during the initial window setup that results
-            // in the window dimensions being out of sync with the dpi
-            // when eg: the system display settings are set to 200%
-            // scale factor.
-            return false;
-        }
-        */
-
         let mut rect = RECT {
             left: 0,
             bottom: 0,
@@ -1139,7 +1058,6 @@ impl Window {
             retired_webgpu_children: Vec::new(),
             appearance,
             events,
-            gl_state: None,
             vscroll_remainder: 0,
             hscroll_remainder: 0,
             keyboard_info: KeyboardLayoutInfo::new(),
@@ -1261,18 +1179,16 @@ impl Window {
     /// thread has actually returned and dropped its `Arc`), at which point
     /// it's safe to actually destroy.
     ///
-    /// `async` and deferred via `promise::spawn::spawn`, mirroring
-    /// `enable_opengl` just below: the caller (`TermWindow`'s render-thread
-    /// hang supervisor) always reaches this synchronously from inside
-    /// `notify()`'s `WindowEvent::Notification` dispatch, which is itself
-    /// invoked from `Connection::with_window_inner` while it still holds
-    /// this exact window's `WindowInner` `RefCell` mutably borrowed (see
-    /// `notify`). Borrowing it again *synchronously* here would panic with
-    /// "already mutably borrowed" -- this bit the first version of this
-    /// method in manual testing. Deferring the actual `get_window`/`borrow`
-    /// to a freshly spawned task lets that outer borrow finish and drop
-    /// first, exactly like `enable_opengl` already has to for the same
-    /// reason during `new_window`.
+    /// `async` and deferred via `promise::spawn::spawn`: the caller
+    /// (`TermWindow`'s render-thread hang supervisor) always reaches this
+    /// synchronously from inside `notify()`'s `WindowEvent::Notification`
+    /// dispatch, which is itself invoked from `Connection::with_window_inner`
+    /// while it still holds this exact window's `WindowInner` `RefCell`
+    /// mutably borrowed (see `notify`). Borrowing it again *synchronously*
+    /// here would panic with "already mutably borrowed" -- this bit the
+    /// first version of this method in manual testing. Deferring the actual
+    /// `get_window`/`borrow` to a freshly spawned task lets that outer borrow
+    /// finish and drop first.
     pub async fn recreate_webgpu_child_window(
         &self,
         old_webgpu_state: std::sync::Weak<dyn Any + Send + Sync>,
@@ -1896,19 +1812,6 @@ impl HasWindowHandle for Window {
 
 #[async_trait(?Send)]
 impl WindowOps for Window {
-    async fn enable_opengl(&self) -> anyhow::Result<Rc<glium::backend::Context>> {
-        let window = self.0;
-        promise::spawn::spawn(async move {
-            if let Some(handle) = Connection::get().unwrap().get_window(window) {
-                let mut inner = handle.borrow_mut();
-                inner.enable_opengl()
-            } else {
-                anyhow::bail!("invalid window");
-            }
-        })
-        .await
-    }
-
     fn notify<T: Any + Send + Sync>(&self, t: T)
     where
         Self: Sized,

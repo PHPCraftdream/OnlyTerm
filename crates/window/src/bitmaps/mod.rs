@@ -1,7 +1,6 @@
 use crate::color::{LinearRgba, SrgbaPixel};
 use crate::{Point, Rect, Size};
 use downcast_rs::{impl_downcast, Downcast};
-use glium::texture::SrgbTexture2d;
 use std::cell::RefCell;
 
 pub mod atlas;
@@ -42,42 +41,6 @@ pub trait Texture2d: Downcast {
     }
 }
 impl_downcast!(Texture2d);
-
-impl Texture2d for SrgbTexture2d {
-    fn write(&self, rect: Rect, im: &dyn BitmapImage) {
-        let (im_width, im_height) = im.image_dimensions();
-
-        let source = glium::texture::RawImage2d {
-            data: std::borrow::Cow::Borrowed(im.pixels()),
-            width: im_width as u32,
-            height: im_height as u32,
-            format: glium::texture::ClientFormat::U8U8U8U8,
-        };
-
-        SrgbTexture2d::write(
-            self,
-            glium::Rect {
-                left: rect.min_x() as u32,
-                bottom: rect.min_y() as u32,
-                width: rect.size.width as u32,
-                height: rect.size.height as u32,
-            },
-            source,
-        )
-    }
-
-    fn read(&self, _rect: Rect, _im: &mut dyn BitmapImage) {
-        unimplemented!();
-    }
-
-    fn width(&self) -> usize {
-        SrgbTexture2d::width(self) as usize
-    }
-
-    fn height(&self) -> usize {
-        SrgbTexture2d::height(self) as usize
-    }
-}
 
 /// A bitmap in big endian rbga32 color format with abstract
 /// storage filled in by the trait implementation.

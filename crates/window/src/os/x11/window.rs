@@ -118,9 +118,8 @@ const _NET_WM_MOVERESIZE_CANCEL: u32 = 11;
 
 impl Drop for XWindowInner {
     fn drop(&mut self) {
-        // Drop the event handler first, because it indirectly owns the TermWindow
-        // and its glium resources. Those resources need a still-valid native window
-        // so that make_current() can succeed in their Drop impls.
+        // Drop the event handler first, because it indirectly owns the
+        // TermWindow and its renderer resources.
         self.drop_event_handler();
 
         if self.window_id != xcb::x::Window::none() {
@@ -167,49 +166,13 @@ impl HasWindowHandle for XWindowInner {
 
 impl XWindowInner {
     fn drop_event_handler(&mut self) {
-        // The handler captures TermWindow; dropping it before issuing
-        // DestroyWindow keeps the EGL surface valid for glium cleanup.
+        // The handler captures TermWindow; drop it before issuing
+        // DestroyWindow so cleanup doesn't reach back into a partially
+        // torn-down window.
         drop(std::mem::replace(
             &mut self.events,
             WindowEventSender::new(|_, _| {}),
         ));
-    }
-
-    fn enable_opengl(&mut self) -> anyhow::Result<Rc<glium::backend::Context>> {
-        let conn = self.conn();
-
-        let gl_state = match conn.gl_connection.borrow().as_ref() {
-            None => crate::egl::GlState::create(
-                Some(conn.conn.get_raw_dpy() as *const _),
-                self.child_id.resource_id() as *mut _,
-            ),
-            Some(glconn) => crate::egl::GlState::create_with_existing_connection(
-                glconn,
-                self.child_id.resource_id() as *mut _,
-            ),
-        };
-
-        // Don't chain on the end of the above to avoid borrowing gl_connection twice.
-        let gl_state = gl_state.map(Rc::new).and_then(|state| {
-            // SAFETY: `state` is a freshly-created valid GL `Backend` owning a
-            // current context; `glium::backend::Context::new` only trusts that.
-            unsafe {
-                conn.gl_connection
-                    .borrow_mut()
-                    .replace(Rc::clone(state.get_connection()));
-                Ok(glium::backend::Context::new(
-                    Rc::clone(&state),
-                    true,
-                    if cfg!(debug_assertions) {
-                        glium::debug::DebugCallbackBehavior::DebugMessageOnError
-                    } else {
-                        glium::debug::DebugCallbackBehavior::Ignore
-                    },
-                )?)
-            }
-        })?;
-
-        Ok(gl_state)
     }
 
     /// Add a region to the list of exposed/damaged/dirty regions.
@@ -1617,14 +1580,9 @@ impl XWindowInner {
         conn.flush()
             .context("flush pending requests prior to issuing DestroyWindow")
             .ok();
-        // Drop the event handler first, because it indirectly owns the TermWindow
-        // and its glium resources. Those resources need a still-valid native window
-        // so that make_current() can succeed in their Drop impls.
+        // Drop the event handler first, because it indirectly owns the
+        // TermWindow and its renderer resources.
         self.drop_event_handler();
-        // Remove the window from the map now, as GL state
-        // requires that it is able to make_current() in its
-        // Drop impl, and that cannot succeed after we've
-        // destroyed the window at the X11 level.
         self.conn().windows.borrow_mut().remove(&self.window_id);
         self.conn()
             .child_to_parent_id
@@ -1632,8 +1590,8 @@ impl XWindowInner {
             .remove(&self.child_id);
 
         // Unmap the window first: calling DestroyWindow here may race
-        // with some requests made either by EGL or the IME, but I haven't
-        // been able to pin down the source.
+        // with some requests made by the IME, but I haven't been able
+        // to pin down the source.
         // We'll destroy the window in a couple of seconds
         conn.send_request_no_reply_log(&xcb::x::UnmapWindow {
             window: self.window_id,
@@ -1982,19 +1940,6 @@ impl HasWindowHandle for XWindow {
 
 #[async_trait(?Send)]
 impl WindowOps for XWindow {
-    async fn enable_opengl(&self) -> anyhow::Result<Rc<glium::backend::Context>> {
-        let window = self.0;
-        promise::spawn::spawn(async move {
-            if let Some(handle) = Connection::get().unwrap().x11().window_by_id(window) {
-                let mut inner = handle.lock().unwrap();
-                inner.enable_opengl()
-            } else {
-                anyhow::bail!("invalid window");
-            }
-        })
-        .await
-    }
-
     fn notify<T: Any + Send + Sync>(&self, t: T)
     where
         Self: Sized,

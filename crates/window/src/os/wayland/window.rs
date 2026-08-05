@@ -41,7 +41,6 @@ use wayland_client::protocol::wl_pointer::{ButtonState, WlPointer};
 use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{Connection as WConnection, Dispatch, Proxy, QueueHandle};
-use wayland_egl::{is_available as egl_is_available, WlEglSurface};
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_manager_v1::ExtBackgroundEffectManagerV1;
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur::OrgKdeKwinBlur;
@@ -337,8 +336,6 @@ impl WaylandWindow {
 
             title: None,
 
-            wegl_surface: None,
-            gl_state: None,
             ext_background_effect_surface: None,
         }));
 
@@ -381,19 +378,6 @@ impl WindowOps for WaylandWindow {
                 .dispatch(WindowEvent::Notification(Box::new(t)));
             Ok(())
         });
-    }
-
-    async fn enable_opengl(&self) -> anyhow::Result<Rc<glium::backend::Context>> {
-        let window = self.0;
-        promise::spawn::spawn(async move {
-            if let Some(handle) = Connection::get().unwrap().wayland().window_by_id(window) {
-                let mut inner = handle.borrow_mut();
-                inner.enable_opengl()
-            } else {
-                anyhow::bail!("invalid window");
-            }
-        })
-        .await
     }
 
     fn hide(&self) {
@@ -615,11 +599,6 @@ pub struct WaylandWindowInner {
     // cache the title for comparison to avoid spamming
     // the compositor with updates that don't actually change it
     title: Option<String>,
-    // wegl_surface is listed before gl_state because it
-    // must be dropped before gl_state otherwise the underlying
-    // libraries will segfault on shutdown
-    wegl_surface: Option<WlEglSurface>,
-    gl_state: Option<Rc<glium::backend::Context>>,
     ext_background_effect_surface: Option<ExtBackgroundEffectSurfaceV1>,
 }
 
@@ -652,70 +631,6 @@ impl WaylandWindowInner {
         if self.window_frame.is_dirty() && !self.window_frame.is_hidden() {
             self.window_frame.draw();
         }
-    }
-
-    fn enable_opengl(&mut self) -> anyhow::Result<Rc<glium::backend::Context>> {
-        let wayland_conn = Connection::get().unwrap().wayland();
-        let mut wegl_surface = None;
-
-        log::trace!("Enable opengl");
-
-        let gl_state = if !egl_is_available() {
-            Err(anyhow!("!egl_is_available"))
-        } else {
-            let window = self
-                .window
-                .as_ref()
-                .ok_or(anyhow!("Window does not exist"))?;
-            let object_id = window.wl_surface().id();
-
-            // Align pixel dimensions to the integer buffer scale factor
-            // to satisfy the Wayland protocol requirement that buffer
-            // dimensions must be an integer multiple of the buffer_scale.
-            let surface_udata = SurfaceUserData::from_wl(window.wl_surface());
-            let scale = surface_udata.surface_data.scale_factor();
-            let pixel_width = (self.dimensions.pixel_width as i32 / scale) * scale;
-            let pixel_height = (self.dimensions.pixel_height as i32 / scale) * scale;
-
-            wegl_surface = Some(WlEglSurface::new(object_id, pixel_width, pixel_height)?);
-
-            log::trace!("WEGL Surface here {:?}", wegl_surface);
-
-            match wayland_conn.gl_connection.borrow().as_ref() {
-                Some(glconn) => crate::egl::GlState::create_wayland_with_existing_connection(
-                    glconn,
-                    wegl_surface.as_ref().unwrap(),
-                ),
-                None => crate::egl::GlState::create_wayland(
-                    Some(wayland_conn.connection.backend().display_ptr() as *const _),
-                    wegl_surface.as_ref().unwrap(),
-                ),
-            }
-        };
-        let gl_state = gl_state.map(Rc::new).and_then(|state| {
-            // SAFETY: `state` is a freshly-created valid GL `Backend` owning a
-            // current context; `glium::backend::Context::new` only trusts that.
-            unsafe {
-                wayland_conn
-                    .gl_connection
-                    .borrow_mut()
-                    .replace(Rc::clone(state.get_connection()));
-                Ok(glium::backend::Context::new(
-                    Rc::clone(&state),
-                    true,
-                    if cfg!(debug_assertions) {
-                        glium::debug::DebugCallbackBehavior::DebugMessageOnError
-                    } else {
-                        glium::debug::DebugCallbackBehavior::Ignore
-                    },
-                )?)
-            }
-        })?;
-
-        self.gl_state.replace(gl_state.clone());
-        self.wegl_surface = wegl_surface;
-
-        Ok(gl_state)
     }
 
     fn get_dpi_factor(&self) -> f64 {
@@ -955,17 +870,9 @@ impl WaylandWindowInner {
                     // compositor; if it is going to double the size then
                     // we render at double the size anyway and tell it that
                     // the buffer is already doubled.
-                    // Take care to detach the current buffer (managed by EGL),
-                    // so that the compositor doesn't get annoyed by it not
-                    // having dimensions that match the scale.
-                    // The wegl_surface.resize won't take effect until
-                    // we paint later on.
                     // We do this only if the scale has actually changed,
                     // otherwise interactive window resize will keep removing
                     // the window contents!
-                    if let Some(wegl_surface) = self.wegl_surface.as_mut() {
-                        wegl_surface.resize(pixel_width, pixel_height, 0, 0);
-                    }
                     if self.surface_factor != factor {
                         let wayland_conn = Connection::get().unwrap().wayland();
                         let wayland_state = wayland_conn.wayland_state.borrow();
