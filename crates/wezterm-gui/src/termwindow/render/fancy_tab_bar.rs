@@ -60,11 +60,22 @@ impl crate::TermWindow {
         let font = self.fonts.title_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
         let items = self.tab_bar.items();
+        // Read from `resolved_palette` (explicit `colors` > named
+        // `color_scheme` > this fork's light default from
+        // `config_impl.rs`'s `default_colors()`), not the raw `colors`
+        // field directly: `default_colors()` is only ever overlaid onto
+        // `resolved_palette`, never written back into `colors` itself (see
+        // the comment above that overlay), so reading `config.colors` here
+        // skipped the fork's light default whenever no `colors`/
+        // `color_scheme` was configured, silently falling through to this
+        // struct's own upstream-dark `unwrap_or_else` fallbacks
+        // (`default_active_tab`/`default_inactive_tab` etc. in
+        // `config/src/color/tabbar.rs`) instead.
         let colors = self
             .config
-            .colors
+            .resolved_palette
+            .tab_bar
             .as_ref()
-            .and_then(|c| c.tab_bar.as_ref())
             .cloned()
             .unwrap_or_else(TabBarColors::default);
 
