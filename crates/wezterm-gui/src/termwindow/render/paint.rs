@@ -112,31 +112,53 @@ impl crate::TermWindow {
             log::error!("call_draw failed: {:#}", err);
         }
 
-        // Task #425: only now -- after a fully-built frame has actually been
-        // handed off for presentation (submitted synchronously, or queued to
-        // the render thread when `webgpu_render_thread` is active) -- is it
-        // safe to tear down the Windows GDI placeholder (task #330) that has
-        // been the only thing painting this window's client area up to this
-        // point. Doing this from `TermWindow::created` instead (the pre-#425
-        // behavior) cleared it as soon as the renderer/pipeline merely
-        // *existed*, which on Windows is well before the first real frame is
-        // built here: the render thread is spawned strictly after `created`
-        // returns, and even the synchronous fallback path still needs a
-        // `WM_PAINT` message the OS message loop hadn't dispatched yet at
-        // that point. That gap left the window showing undefined swapchain
-        // contents (typically a black flash) between the placeholder
-        // disappearing and this first real frame landing. Gated on
-        // `draw_result` being `Ok` -- if the very first `call_draw` fails
-        // (e.g. `build_webgpu_frame` erroring before anything was ever
-        // queued for presentation), leave the placeholder in place rather
-        // than tearing down the only thing painting the window over a frame
-        // that was never actually sent; the next successful paint will clear
-        // it instead. Checked-then-set so this only ever fires once per
-        // window, matching the old call's idempotency (a later renderer
-        // rebuild's `created()` call has nothing left to clear -- the
-        // placeholder was already dropped by the first successful frame,
-        // long before any rebuild).
-        if !self.placeholder_cleared && draw_result.is_ok() {
+        // Task #425: only after a fully-built frame has actually been
+        // *presented* is it safe to tear down the Windows GDI placeholder
+        // (task #330) that has been the only thing painting this window's
+        // client area up to this point. Doing this from `TermWindow::created`
+        // instead (the pre-#425 behavior) cleared it as soon as the
+        // renderer/pipeline merely *existed*, which on Windows is well before
+        // the first real frame is built here: the render thread is spawned
+        // strictly after `created` returns, and even the synchronous
+        // fallback path still needs a `WM_PAINT` message the OS message loop
+        // hadn't dispatched yet at that point.
+        //
+        // Task #407: "handed off for presentation" is NOT the same event as
+        // "presented" when `webgpu_render_thread` is active (the default on
+        // Windows) -- `call_draw` -> `RenderThreadHandle::send_frame` only
+        // enqueues the frame onto a channel and returns immediately; the
+        // actual `WebGpuState::submit_frame` call (which does the real
+        // `Queue::submit`/`SurfaceTexture::present`) runs later, on the
+        // separate render thread. Clearing the placeholder here, right after
+        // the enqueue, tore down the GDI placeholder while the WebGpu child
+        // window's swapchain had never actually been presented to yet --
+        // during that gap DWM has nothing of this window's own to composite
+        // for that region, so it fell back to whatever was visually behind
+        // it. Against the desktop that's invisible (both show as "empty"),
+        // but with a second OnlyTerm window overlapping underneath, that
+        // window's real content showed through -- the startup flicker and
+        // "white/transparent rectangles" reported in task #407. So on the
+        // render-thread path, clearing is deferred to `submit_one_frame`
+        // (see `renderthread.rs`), which calls
+        // `Window::clear_placeholder_background` itself immediately after
+        // the first successful `submit_frame` -- i.e. after the first real
+        // `present()` -- rather than doing it here. The synchronous
+        // (non-render-thread) path is unaffected: there, `call_draw`
+        // returning `Ok` really does mean `submit_frame`/`present()` already
+        // ran inline, so clearing immediately below is still correct and
+        // necessary (nothing else will do it for that path).
+        //
+        // Either way this is gated on `draw_result` being `Ok` -- if the very
+        // first `call_draw` fails (e.g. `build_webgpu_frame` erroring before
+        // anything was ever queued for presentation), leave the placeholder
+        // in place rather than tearing down the only thing painting the
+        // window over a frame that was never actually sent; the next
+        // successful paint will clear it instead. Checked-then-set so this
+        // only ever fires once per window, matching the old call's
+        // idempotency (a later renderer rebuild's `created()` call has
+        // nothing left to clear -- the placeholder was already dropped by
+        // the first successful frame, long before any rebuild).
+        if !self.placeholder_cleared && draw_result.is_ok() && self.render_thread.is_none() {
             self.placeholder_cleared = true;
             if let Some(window) = self.window.as_ref() {
                 window.clear_placeholder_background();

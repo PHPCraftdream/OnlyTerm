@@ -367,6 +367,14 @@ fn render_thread_loop(seed: RenderThreadSeed) {
     let window = seed.window.clone();
     let resize_webgpu = Arc::clone(&seed.webgpu);
     let resize_window_destroyed = Arc::clone(&seed.window_destroyed);
+    // Task #407: local (not `Arc`/atomic -- this closure only ever runs on
+    // this single render thread, one message at a time) one-shot guard so
+    // `submit_one_frame`'s `Window::clear_placeholder_background` call below
+    // fires at most once per window, right after the first successful
+    // `submit_frame`/`present()`, instead of on every frame forever. See
+    // `submit_one_frame`'s doc comment for why this needs to happen here
+    // rather than in `TermWindow::paint_impl`.
+    let mut placeholder_cleared = false;
     dispatch_loop(
         &seed.rx,
         &mut |frame| {
@@ -374,10 +382,13 @@ fn render_thread_loop(seed: RenderThreadSeed) {
                 &webgpu,
                 &window,
                 frame,
-                &in_flight,
-                &repaint_pending,
-                &window_destroyed,
-                &submit_started_at,
+                SubmitState {
+                    in_flight: &in_flight,
+                    repaint_pending: &repaint_pending,
+                    window_destroyed: &window_destroyed,
+                    submit_started_at: &submit_started_at,
+                },
+                &mut placeholder_cleared,
             );
         },
         &mut |dims| {
@@ -394,6 +405,20 @@ fn render_thread_loop(seed: RenderThreadSeed) {
     );
 }
 
+/// The `Arc`-shared back-pressure/hang-visibility state `submit_one_frame`
+/// needs, grouped into one borrow so that function takes one parameter for
+/// all of it instead of four separate references (keeps it under clippy's
+/// `too_many_arguments` threshold now that task #407 added
+/// `placeholder_cleared` on top). Purely a borrow-side grouping -- the
+/// fields themselves are still the same `Arc` clones `render_thread_loop`
+/// already held individually, just referenced through one struct here.
+struct SubmitState<'a> {
+    in_flight: &'a AtomicBool,
+    repaint_pending: &'a AtomicBool,
+    window_destroyed: &'a AtomicBool,
+    submit_started_at: &'a Mutex<Option<Instant>>,
+}
+
 /// Submits a single frame to the GPU and performs the back-pressure
 /// bookkeeping (clearing `in_flight`, honoring `repaint_pending`). Split out
 /// of `render_thread_loop` so the "what does a Frame message actually do"
@@ -407,15 +432,34 @@ fn render_thread_loop(seed: RenderThreadSeed) {
 /// destroyed is not interrupted by this check; that residual risk is
 /// accepted for now and belongs to future process-level isolation
 /// (task #224), not this task.
+///
+/// `placeholder_cleared` (task #407): `*placeholder_cleared` starts `false`
+/// and this function flips it to `true` and calls
+/// `Window::clear_placeholder_background` the first time `webgpu.submit_frame`
+/// (which does the real `Queue::submit` + `SurfaceTexture::present`) actually
+/// succeeds. This -- not `TermWindow::paint_impl` returning from `call_draw`
+/// -- is the true "a real frame has been presented" event on this path:
+/// `call_draw` only enqueues the frame via `RenderThreadHandle::send_frame`
+/// and returns immediately, well before this function (running here, on the
+/// render thread, potentially one or more GUI-thread iterations later) picks
+/// it up and actually presents it. Clearing the GDI placeholder any earlier
+/// than this left the WebGpu child window's swapchain surface exposed to DWM
+/// composition before it had ever been presented to -- invisible against the
+/// desktop, but showing another overlapping OnlyTerm window's real content
+/// through it, which is what task #407 reported.
 fn submit_one_frame(
     webgpu: &crate::termwindow::webgpu::WebGpuState,
     window: &::window::Window,
     frame: crate::termwindow::webgpu::GpuFrame,
-    in_flight: &AtomicBool,
-    repaint_pending: &AtomicBool,
-    window_destroyed: &AtomicBool,
-    submit_started_at: &Mutex<Option<Instant>>,
+    state: SubmitState<'_>,
+    placeholder_cleared: &mut bool,
 ) {
+    let SubmitState {
+        in_flight,
+        repaint_pending,
+        window_destroyed,
+        submit_started_at,
+    } = state;
     if window_destroyed.load(Ordering::Acquire) {
         // The window is gone (or on its way out): don't touch the GPU
         // surface at all. We still clear `in_flight` -- that bookkeeping is
@@ -448,6 +492,17 @@ fn submit_one_frame(
     }
     let result = webgpu.submit_frame(frame);
     *submit_started_at.lock() = None;
+    if result.is_ok() && !*placeholder_cleared {
+        // Task #407: this is the first frame this render thread has ever
+        // actually presented (see this function's doc comment) -- now, and
+        // only now, is it safe to tear down the Windows GDI placeholder.
+        // `Window::clear_placeholder_background` marshals onto the GUI
+        // thread itself (via `Connection::with_window_inner`) and is
+        // idempotent (`Option::take` on the GUI-thread side), so it's safe
+        // to call directly from here.
+        *placeholder_cleared = true;
+        window.clear_placeholder_background();
+    }
     if let Err(err) = result {
         match err {
             // `Lost`/`Outdated` mean the swapchain itself needs recreating,
