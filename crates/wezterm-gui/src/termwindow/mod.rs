@@ -406,16 +406,16 @@ pub struct TermWindow {
 
     /// Set once the very first real frame built by `paint_impl` has actually
     /// been handed off for presentation (task #425): `call_draw` returning
-    /// successfully from `do_paint`/`do_paint_webgpu`, which for the
+    /// successfully from `do_paint_webgpu`, which for the
     /// WebGpu-render-thread path (the default; see `config::
     /// webgpu_render_thread`) means `RenderThreadHandle::send_frame` queued
-    /// it, and for every other path means `WebGpuState::submit_frame`/
-    /// `Window::finish_frame` already ran synchronously. `created()`
+    /// it, and for every other path means `WebGpuState::submit_frame`
+    /// already ran synchronously. `created()`
     /// installing a working `RenderState` is *not* the same event: on
     /// Windows the render thread is spawned (and, before that, the GPU
     /// device/pipeline itself finishes initializing) strictly after
     /// `created()` returns, and even without a render thread the first
-    /// `NeedRepaint`/`do_paint*` call still needs a `WM_PAINT` message the
+    /// `NeedRepaint`/`do_paint_webgpu` call still needs a `WM_PAINT` message the
     /// message loop hasn't dispatched yet at that point. Calling
     /// `Window::clear_placeholder_background` from `created()` itself (the
     /// pre-#425 behavior) tore down the GDI placeholder -- the only thing
