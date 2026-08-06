@@ -7,10 +7,10 @@
 .DESCRIPTION
   Builds onlyterm / onlyterm-gui / onlyterm-mux-server in --release mode,
   then hot-swaps the fresh binaries plus their runtime dependencies
-  (conpty.dll, OpenConsole.exe, libEGL.dll, libGLESv2.dll, mesa\opengl32.dll,
-  strip-ansi-escapes.exe) and .pdb files into the install directory, and
-  makes sure Windows Error Reporting is configured to save a full crash dump
-  for onlyterm-gui.exe if it ever crashes.
+  (conpty.dll, OpenConsole.exe, strip-ansi-escapes.exe) and .pdb files into
+  the install directory, and makes sure Windows Error Reporting is
+  configured to save a full crash dump for onlyterm-gui.exe if it ever
+  crashes.
 
   "Hot-swap" means already-running OnlyTerm processes are never stopped:
   each destination file is renamed aside (to "<name>.old") instead of being
@@ -201,9 +201,7 @@ $requiredFiles = @(
     "onlyterm.exe",
     "onlyterm-gui.exe",
     "onlyterm-mux-server.exe",
-    "conpty.dll", "OpenConsole.exe", "strip-ansi-escapes.exe",
-    "libEGL.dll", "libGLESv2.dll",
-    "mesa\opengl32.dll"
+    "conpty.dll", "OpenConsole.exe", "strip-ansi-escapes.exe"
 )
 # Debug symbols: nice for reading crash dumps, but not fatal if absent.
 $optionalFiles = @(
@@ -225,7 +223,6 @@ You can point this script explicitly with:  -ReleaseDir <path>
 }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $InstallDir "mesa") | Out-Null
 
 Write-Host "`n==> Hot-swapping binaries into $InstallDir (running OnlyTerm processes are left running)" -ForegroundColor Cyan
 $copied = 0
