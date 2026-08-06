@@ -2203,8 +2203,8 @@ mod stack_overflow_repro {
     //! recursion. In an unoptimized/debug build this function's own
     //! stack frame measured as needing on the order of 256-512KiB to
     //! avoid overflowing (down to ~128-256KiB in an optimized release
-    //! build); `Config`'s own resting size is a modest 5136 bytes
-    //! (verified via `size_of`), so this is about the *construction*
+    //! build); `Config`'s own resting size (`std::mem::size_of::<Config>()`,
+    //! asserted below) is a few KiB, so this is about the *construction*
     //! being frame-heavy, not the final value being large.
     //!
     //! This is comfortably within the 1MiB stack Windows gives a
@@ -2231,19 +2231,40 @@ mod stack_overflow_repro {
         // not just a probe artifact.
         const HALF_OF_DEFAULT_MAIN_THREAD_STACK: usize = 512 * 1024;
 
+        // The struct's own resting size is unrelated to the derive-generated
+        // constructor's stack-frame cost above -- assert it stays small so
+        // the doc comment's "construction is frame-heavy, not the value
+        // itself" claim keeps being true rather than silently going stale.
+        assert!(
+            std::mem::size_of::<crate::Config>() < 16 * 1024,
+            "Config::size_of() grew unexpectedly large ({} bytes) -- re-check whether the \
+             frame-heavy-construction-not-large-value assumption in this module's doc comment \
+             still holds",
+            std::mem::size_of::<crate::Config>()
+        );
+
         let handle = std::thread::Builder::new()
             .name("config-default-stack-canary".into())
             .stack_size(HALF_OF_DEFAULT_MAIN_THREAD_STACK)
             .spawn(crate::Config::default)
             .expect("failed to spawn probe thread");
 
+        // Note: on Windows, an actual stack overflow hits the guard page and
+        // aborts the whole process (Rust cannot turn it into a catchable
+        // panic), so if this probe thread genuinely overflows, the test
+        // binary dies outright rather than this specific test failing with
+        // the message below -- that message is only reachable if
+        // `Config::default()` panics here for some *other* reason. The
+        // process-level abort is still a visible, loud CI failure either
+        // way, just not this friendlier one.
         handle.join().expect(
-            "Config::default() overflowed a thread stack half the size of Windows' default \
-             1MiB main-thread stack -- FromDynamic's generated from_dynamic for Config has \
-             grown large enough to be a real stack-overflow risk (see task #422); consider \
-             whether new fields can avoid growing this further, or whether the derive macro \
-             needs to split large structs' from_dynamic bodies into smaller, separately-framed \
-             helper functions",
+            "Config::default() panicked (not necessarily a stack overflow -- a real overflow \
+             would abort the whole process instead of reaching this message) on a thread stack \
+             half the size of Windows' default 1MiB main-thread stack -- FromDynamic's generated \
+             from_dynamic for Config has grown large enough to be a real stack-overflow risk \
+             (see task #422); consider whether new fields can avoid growing this further, or \
+             whether the derive macro needs to split large structs' from_dynamic bodies into \
+             smaller, separately-framed helper functions",
         );
     }
 }

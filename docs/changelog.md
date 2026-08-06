@@ -785,12 +785,21 @@ As features stabilize some brief notes about them will accumulate here.
   restarted.
 * On Windows, `GdiFontLocator` always asked DirectWrite for an exact
   `Normal` stretch match regardless of what was actually requested.
-  DirectWrite's exact-match lookup then failed for any installed family
-  whose real stretch isn't Normal (e.g. Lucida Console, whose only face is
-  SemiCondensed), silently falling through to the slower legacy GDI path
-  on every single resolution even though the config never asked for a
-  non-default stretch. The requested stretch is now passed through
-  correctly.
+  DirectWrite's exact-match lookup then failed for any config that
+  explicitly requests a non-`Normal` stretch matching an installed font's
+  real stretch (e.g. a config that asks for `stretch: SemiCondensed` to
+  match a font whose only face genuinely is SemiCondensed, such as Lucida
+  Console), silently falling through to the slower legacy GDI path even
+  though DirectWrite could have resolved it directly. The requested
+  stretch is now passed through correctly. Note: a config that does not
+  set `stretch` at all (the common case, including a plain `font: [{
+  family: "Lucida Console" }]`) already requested -- and still requests --
+  the default `Normal`, so this specific fix does not change DirectWrite's
+  answer for that case; it was investigated as part of a report that a
+  "Unable to load a font..." warning reappears after changing Windows'
+  system font-scaling setting and then the terminal's font size, but that
+  exact trigger was not reproduced and remains only a hardening fix, not a
+  confirmed resolution of that report.
 * The "No fonts contain glyphs for these codepoints" warning (log message
   and toast) now detects one specific, easy-to-hit misconfiguration and
   says so directly: when [font_dirs](config/reference/config/font_dirs.md)

@@ -1462,8 +1462,8 @@ impl WindowInner {
             // live WebGpu content for the entire fade duration (the exact
             // "abrupt flash" defect this feature exists to prevent, just
             // moved to a different trigger). Same reasoning applies to a
-            // renderer rebuild (`finish_opengl_fallback`/`finish_renderer_
-            // rebuild`) re-running `clear_placeholder_background` long
+            // renderer rebuild (`finish_renderer_rebuild`) re-running
+            // `clear_placeholder_background` long
             // after the original fade already completed: `renderer_ready`/
             // `shell_ready` are latched `true` forever, so without this
             // guard every later rebuild would restart a fade with nothing

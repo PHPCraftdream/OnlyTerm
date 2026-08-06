@@ -258,9 +258,9 @@ mod stack_overflow_repro {
     //! `FromDynamic` derive macro (`crates/wezterm-dynamic/derive`),
     //! which for a ~226-field struct generates one large, non-recursive
     //! `from_dynamic` function body; in an unoptimized/debug build this
-    //! measured as needing threads have stack headroom well beyond a
-    //! constrained (256KiB) stack, though comfortably under the 1MiB
-    //! Windows default. This test keeps a basic sanity check that a real
+    //! measured as needing more stack headroom than a constrained (256KiB)
+    //! stack provides, though comfortably under the 1MiB Windows default.
+    //! This test keeps a basic sanity check that a real
     //! `with_font_dirs` scan of the system fonts directory succeeds; the
     //! `Config::default()` stack-usage regression coverage lives in the
     //! `config` crate, closer to the actual root cause.
