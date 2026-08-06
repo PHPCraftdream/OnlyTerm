@@ -32,21 +32,16 @@ use wezterm_term::{Alert, StableRowIndex, TerminalSize};
 impl TermWindow {
     /// Builds and shows the OS window plus renderer for `mux_window_id`.
     ///
-    /// `is_first_window` tells apart the process's very first (and, at that
-    /// moment, only) window from any window opened later at runtime (eg. via
-    /// `KeyAssignment::SpawnWindow`, reconciled through
-    /// `GuiFrontEnd::reconcile_workspace`). Both paths funnel through this
-    /// same function -- there is no separate "startup" code path -- so this
-    /// flag is how a fatal-looking failure partway through construction
-    /// (currently: WebGpu adapter/device init) decides whether it is safe to
-    /// tear down the whole process (only true when this is the only window
-    /// keeping the process alive) or whether it must instead fail this one
-    /// window and leave any other already-running windows untouched. See the
-    /// WebGpu init failure handling below (task #428).
-    pub async fn new_window(
-        mux_window_id: MuxWindowId,
-        is_first_window: bool,
-    ) -> anyhow::Result<()> {
+    /// Every window -- the process's very first one and any opened later at
+    /// runtime (eg. via `KeyAssignment::SpawnWindow`) -- funnels through this
+    /// same function; there is no separate "startup" code path. A
+    /// fatal-looking failure partway through construction (currently: WebGpu
+    /// adapter/device init) decides whether it is safe to tear down the
+    /// whole process, or whether it must instead fail only this one window
+    /// and leave any other already-running windows untouched, by checking
+    /// `front_end().has_any_known_window()` *at the point of failure* --
+    /// see the WebGpu init failure handling below (task #428).
+    pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
         let config = configuration();
         let dpi = config.dpi.unwrap_or_else(::window::default_dpi) as usize;
         let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
@@ -365,7 +360,25 @@ impl TermWindow {
                      cannot open a window without a working WebGpu \
                      adapter/device."
                 );
-                if is_first_window {
+                // Whether it is safe to tear down the whole process over
+                // this failure, versus just this one window, is decided
+                // right here, right now, rather than from a flag captured
+                // before this `await`ed WebGpu init even started: WebGpu
+                // adapter/device creation can take up to several seconds on
+                // Windows/DX12 (see the comment on `window.show()` above),
+                // and `reconcile_workspace` can have several independent
+                // spawn loops racing each other (eg. session restore with
+                // multiple saved windows, possibly racing a concurrent
+                // `SpawnWindow`). A flag snapshotted ahead of time could go
+                // stale mid-`await` and let two windows both believe they
+                // are the process's only one. `known_windows` only gains an
+                // entry once `record_known_window` runs, at the very end of
+                // a *successful* `new_window`, well after this point -- so
+                // if it is empty right now, this window is genuinely the
+                // only live one, regardless of how many other
+                // `new_window` calls are concurrently in flight but haven't
+                // finished (or have also failed) yet.
+                if !front_end().has_any_known_window() {
                     // This is the only window the process has; the process
                     // cannot usefully continue running without it, so fail
                     // clean the same way any other fatal startup error does:
@@ -379,22 +392,36 @@ impl TermWindow {
                     // which fatal startup error they hit.
                     crate::terminate_with_error_message(&message);
                 } else {
-                    // This is an additional window opened at runtime (eg.
-                    // `KeyAssignment::SpawnWindow`) while other windows are
-                    // already up and running with their own panes/shells/
-                    // child processes attached. Killing the whole process
-                    // here (as task #414 originally did, unconditionally)
-                    // would take all of that down over a failure scoped to
-                    // just this one new window. Instead, notify the user
-                    // with the same message a fatal startup failure would
-                    // have shown, and return `Err` so the caller
+                    // At least one other window is already up and running
+                    // with its own panes/shells/child processes attached.
+                    // Killing the whole process here (as task #414
+                    // originally did, unconditionally) would take all of
+                    // that down over a failure scoped to just this one new
+                    // window. Instead, notify the user with the same
+                    // message a fatal startup failure would have shown, and
+                    // return `Err` so the caller
                     // (`GuiFrontEnd::reconcile_workspace`'s spawn loop, in
                     // `frontend.rs`) can clean up only this mux window --
                     // logging, `mux.kill_window`, and unregistering it --
                     // exactly like it already does for any other
                     // `new_window` failure, without touching the rest of the
                     // process.
-                    log::error!("{message}");
+                    //
+                    // `window.show()` above already made the OS window
+                    // (with its "Loading..." placeholder) visible before
+                    // WebGpu init even started, and this window was never
+                    // registered in `known_windows` (that only happens on
+                    // the success path, in `record_known_window` below) --
+                    // so nothing else will ever `close()` it for us. Windows
+                    // does not tear down the HWND on its own just because
+                    // this `TermWindow`/`Window` value is about to be
+                    // dropped (there is no `Drop` impl wired up to
+                    // `DestroyWindow` anywhere in `crates/window/src`), so
+                    // without an explicit `close()` here the OS window would
+                    // leak on screen forever as an empty, permanently
+                    // "Loading..." window with no `TermWindow` state behind
+                    // it able to ever finish it.
+                    window.close();
                     wezterm_toast_notification::persistent_toast_notification(
                         "OnlyTerm: failed to open window",
                         &message,

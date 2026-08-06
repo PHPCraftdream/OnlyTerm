@@ -10,7 +10,7 @@ use mux::client::ClientId;
 use mux::window::WindowId as MuxWindowId;
 use mux::{Mux, MuxNotification};
 use promise::{Future, Promise};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,15 +24,6 @@ pub struct GuiFrontEnd {
     known_windows: RefCell<BTreeMap<Window, MuxWindowId>>,
     client_id: Arc<ClientId>,
     config_subscription: RefCell<Option<ConfigSubscription>>,
-    // Set once the process's very first `TermWindow` has been successfully
-    // created. Used to tell apart "this is the only window the process has,
-    // so it cannot continue running without it" (fatal WebGpu init failure
-    // is a clean `process::exit`, same as any other fatal startup error)
-    // from "this is an additional window opened later, eg. via
-    // `KeyAssignment::SpawnWindow`" (a WebGpu init failure there should only
-    // close that one window and notify the user -- see
-    // `TermWindow::new_window`'s `is_first_window` parameter -- task #428).
-    first_window_created: Cell<bool>,
 }
 
 impl Drop for GuiFrontEnd {
@@ -56,7 +47,6 @@ impl GuiFrontEnd {
             known_windows: RefCell::new(BTreeMap::new()),
             client_id: client_id.clone(),
             config_subscription: RefCell::new(None),
-            first_window_created: Cell::new(false),
         });
 
         mux.subscribe(move |n| {
@@ -435,18 +425,22 @@ impl GuiFrontEnd {
                     .borrow_mut()
                     .insert(mux_window_id);
                 log::trace!("Creating TermWindow for mux_window_id={}", mux_window_id);
-                // Whether the process has successfully created any window
-                // yet decides how a fatal-looking error (eg. WebGpu init
-                // failure) inside `new_window` is handled: the very first
-                // window is the one thing keeping the process alive, so it
-                // is allowed to terminate the whole process cleanly; any
-                // later window is additional and must not take down windows
-                // that are already up and running (task #428).
-                let is_first_window = !front_end().first_window_created.get();
-                match TermWindow::new_window(mux_window_id, is_first_window).await {
-                    Ok(()) => {
-                        front_end().first_window_created.set(true);
-                    }
+                // Whether a fatal-looking error (eg. WebGpu init failure)
+                // inside `new_window` is safe to handle by tearing down the
+                // whole process, versus just this one window, is decided
+                // *inside* `new_window` itself, right at the point the error
+                // occurs, by checking `front_end().has_any_known_window()`
+                // (task #428, hardened against a startup race -- see that
+                // method's doc comment). It cannot be decided here ahead of
+                // time: `reconcile_workspace` can be invoked concurrently
+                // from several places (this spawn loop is one of
+                // potentially several in flight at once, eg. during session
+                // restore with multiple saved windows plus a racing
+                // `SpawnWindow`), so a flag captured before `await`-ing
+                // `new_window` could go stale while WebGpu init is still
+                // running on another window's task.
+                match TermWindow::new_window(mux_window_id).await {
+                    Ok(()) => {}
                     Err(err) => {
                         log::error!("Failed to create window: {:#}", err);
                         let mux = Mux::get();
@@ -472,6 +466,30 @@ impl GuiFrontEnd {
             }
         }
         false
+    }
+
+    /// True if at least one other `TermWindow` has already finished
+    /// construction and is registered here.
+    ///
+    /// This is the live, race-free replacement for the `first_window_created`
+    /// flag task #428 originally used (removed): that flag was read before
+    /// `TermWindow::new_window`'s `await` and only written after it
+    /// succeeded, so two `reconcile_workspace` spawn loops racing each other
+    /// (eg. session restore with several saved windows, or restore racing a
+    /// `SpawnWindow`) could both observe "no window created yet" and both
+    /// treat themselves as the process's sole window -- WebGpu init on
+    /// Windows/DX12 can take up several seconds (see
+    /// `render_pipeline.rs`'s comment near `window.show()`), which is easily
+    /// enough time for that race to land.
+    ///
+    /// `known_windows` only gains an entry once `record_known_window` runs
+    /// at the very end of a successful `new_window` (well after WebGpu init
+    /// finishes), so calling this *at the moment a WebGpu init failure is
+    /// being handled*, rather than caching a snapshot ahead of time,
+    /// correctly answers "is there any other live window right now" even
+    /// when multiple windows are being constructed concurrently.
+    pub fn has_any_known_window(&self) -> bool {
+        !self.known_windows.borrow().is_empty()
     }
 
     pub fn switch_workspace(&self, workspace: &str) {

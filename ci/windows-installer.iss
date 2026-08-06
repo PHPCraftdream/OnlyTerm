@@ -64,6 +64,23 @@ Source: "..\target\release\OpenConsole.exe"; DestDir: "{app}"; Flags: ignorevers
 Source: "..\target\release\strip-ansi-escapes.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
+; OpenGL was removed entirely (along with the bundled ANGLE/Mesa DLLs that
+; backed it, ~36MB) from the [Files] section above. These entries make sure
+; that an *upgrade* install (not a clean one) over a previous version that
+; still shipped those files actually removes them from disk, both when a
+; newer version is installed over an older one and when OnlyTerm itself is
+; uninstalled -- otherwise they'd silently linger forever, since Inno only
+; ever removes files it currently lists in [Files].
+[InstallDelete]
+Type: files; Name: "{app}\libEGL.dll"
+Type: files; Name: "{app}\libGLESv2.dll"
+Type: filesandordirs; Name: "{app}\mesa"
+
+[UninstallDelete]
+Type: files; Name: "{app}\libEGL.dll"
+Type: files; Name: "{app}\libGLESv2.dll"
+Type: filesandordirs; Name: "{app}\mesa"
+
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "org.wezfurlong.onlyterm"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; AppUserModelID: "org.wezfurlong.onlyterm"
