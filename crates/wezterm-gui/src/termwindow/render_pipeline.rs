@@ -30,7 +30,23 @@ use wezterm_font::FontConfiguration;
 use wezterm_term::{Alert, StableRowIndex, TerminalSize};
 
 impl TermWindow {
-    pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
+    /// Builds and shows the OS window plus renderer for `mux_window_id`.
+    ///
+    /// `is_first_window` tells apart the process's very first (and, at that
+    /// moment, only) window from any window opened later at runtime (eg. via
+    /// `KeyAssignment::SpawnWindow`, reconciled through
+    /// `GuiFrontEnd::reconcile_workspace`). Both paths funnel through this
+    /// same function -- there is no separate "startup" code path -- so this
+    /// flag is how a fatal-looking failure partway through construction
+    /// (currently: WebGpu adapter/device init) decides whether it is safe to
+    /// tear down the whole process (only true when this is the only window
+    /// keeping the process alive) or whether it must instead fail this one
+    /// window and leave any other already-running windows untouched. See the
+    /// WebGpu init failure handling below (task #428).
+    pub async fn new_window(
+        mux_window_id: MuxWindowId,
+        is_first_window: bool,
+    ) -> anyhow::Result<()> {
         let config = configuration();
         let dpi = config.dpi.unwrap_or_else(::window::default_dpi) as usize;
         let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
@@ -336,27 +352,55 @@ impl TermWindow {
             Err(err) => {
                 // WebGpu adapter/device creation can fail in RDP sessions, on
                 // old/software-only GPUs, in VMs without GPU passthrough, or
-                // due to a driver mismatch. There is no other renderer left
-                // to fall back to (task #414 removed the OpenGL/Mesa
-                // fallback that used to catch this), so rather than leave a
-                // blank/half-initialized window on screen or silently
-                // degrade, terminate the process the same way any other
-                // fatal startup error does: log the real cause, show the
-                // user a toast notification explaining what went wrong, and
-                // exit. See `crate::terminate_with_error_message` (used
-                // identically by `crate::terminate_with_error` for other
-                // fatal startup failures in `main.rs`) -- reusing that path
-                // here rather than inventing a second one means the user
-                // sees the exact same failure UX regardless of which fatal
-                // startup error they hit.
-                crate::terminate_with_error_message(&format!(
+                // due to a driver mismatch (eg. opening a new window on a
+                // second monitor driven by a different, weaker GPU adapter,
+                // or a transient driver hiccup). There is no other renderer
+                // left to fall back to (task #414 removed the OpenGL/Mesa
+                // fallback that used to catch this).
+                let message = format!(
                     "Failed to initialize the WebGpu renderer: {err:#}\n\n\
                      This can happen in a VM without GPU passthrough, over \
                      RDP, or due to a graphics driver mismatch. OnlyTerm has \
                      no other rendering backend to fall back to, so it \
                      cannot open a window without a working WebGpu \
                      adapter/device."
-                ));
+                );
+                if is_first_window {
+                    // This is the only window the process has; the process
+                    // cannot usefully continue running without it, so fail
+                    // clean the same way any other fatal startup error does:
+                    // log the real cause, show the user a toast notification
+                    // explaining what went wrong, and exit. See
+                    // `crate::terminate_with_error_message` (used
+                    // identically by `crate::terminate_with_error` for other
+                    // fatal startup failures in `main.rs`) -- reusing that
+                    // path here rather than inventing a second one means the
+                    // user sees the exact same failure UX regardless of
+                    // which fatal startup error they hit.
+                    crate::terminate_with_error_message(&message);
+                } else {
+                    // This is an additional window opened at runtime (eg.
+                    // `KeyAssignment::SpawnWindow`) while other windows are
+                    // already up and running with their own panes/shells/
+                    // child processes attached. Killing the whole process
+                    // here (as task #414 originally did, unconditionally)
+                    // would take all of that down over a failure scoped to
+                    // just this one new window. Instead, notify the user
+                    // with the same message a fatal startup failure would
+                    // have shown, and return `Err` so the caller
+                    // (`GuiFrontEnd::reconcile_workspace`'s spawn loop, in
+                    // `frontend.rs`) can clean up only this mux window --
+                    // logging, `mux.kill_window`, and unregistering it --
+                    // exactly like it already does for any other
+                    // `new_window` failure, without touching the rest of the
+                    // process.
+                    log::error!("{message}");
+                    wezterm_toast_notification::persistent_toast_notification(
+                        "OnlyTerm: failed to open window",
+                        &message,
+                    );
+                    return Err(anyhow!(message));
+                }
             }
         };
 
