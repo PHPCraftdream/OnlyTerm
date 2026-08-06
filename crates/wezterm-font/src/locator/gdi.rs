@@ -184,7 +184,21 @@ fn attributes_to_descriptor(font_attr: &FontAttributes) -> FontDescriptor {
     FontDescriptor {
         family_name: font_attr.family.to_string(),
         weight: FontWeight::from_u32(font_attr.weight.to_opentype_weight() as u32),
-        stretch: FontStretch::Normal,
+        // `FontCollection::font_from_descriptor` (dwrote) only accepts an
+        // *exact* match on weight/stretch/style -- it calls DirectWrite's
+        // `GetFirstMatchingFont` (which would happily return the closest
+        // available face) but then throws the result away unless it's a
+        // precise match on all three axes. Hardcoding `Normal` here used to
+        // mean that request always lost for any family whose actual stretch
+        // isn't Normal (e.g. Lucida Console, which is SemiCondensed): every
+        // single lookup fell through to the legacy GDI path
+        // (`load_font`/`CreateFontIndirectW`) instead of the faster/more
+        // capable DirectWrite one, even though the user never asked for a
+        // non-default stretch. Passing through the actually-requested
+        // stretch lets the exact-match path succeed whenever the font's
+        // real stretch happens to match what was asked for (task #426
+        // investigation).
+        stretch: FontStretch::from_u32(font_attr.stretch.to_opentype_stretch() as u32),
         style: match font_attr.style {
             WTFontStyle::Italic => FontStyle::Italic,
             WTFontStyle::Oblique => FontStyle::Oblique,
@@ -443,5 +457,83 @@ impl FontLocator for GdiFontLocator {
         fonts.sort();
 
         Ok(fonts)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use config::FontStretch as WTFontStretch;
+
+    /// Task #426 investigation: `attributes_to_descriptor` used to hardcode
+    /// `stretch: FontStretch::Normal` no matter what the caller actually
+    /// asked for. `dwrote::FontCollection::font_from_descriptor` requires an
+    /// *exact* match on weight/stretch/style (see its doc comment above),
+    /// so that hardcoding silently defeated DirectWrite resolution for any
+    /// family whose real stretch isn't Normal -- e.g. Lucida Console, which
+    /// is SemiCondensed -- even when the user's configuration never asked
+    /// for anything but the default stretch. Every such lookup fell through
+    /// to the legacy GDI path instead of ever getting a chance to succeed
+    /// via DirectWrite. This pins down that the descriptor now carries
+    /// through the caller's actual stretch instead of a fixed default.
+    #[test]
+    fn descriptor_carries_requested_stretch() {
+        for &stretch in &[
+            WTFontStretch::UltraCondensed,
+            WTFontStretch::ExtraCondensed,
+            WTFontStretch::Condensed,
+            WTFontStretch::SemiCondensed,
+            WTFontStretch::Normal,
+            WTFontStretch::SemiExpanded,
+            WTFontStretch::Expanded,
+            WTFontStretch::ExtraExpanded,
+            WTFontStretch::UltraExpanded,
+        ] {
+            let attr = FontAttributes {
+                stretch,
+                ..FontAttributes::new("Lucida Console")
+            };
+            let descriptor = attributes_to_descriptor(&attr);
+            assert_eq!(
+                descriptor.stretch.to_u32(),
+                stretch.to_opentype_stretch() as u32,
+                "descriptor.stretch should mirror the requested attr.stretch \
+                 ({:?}), not be hardcoded to Normal",
+                stretch
+            );
+        }
+    }
+
+    /// Task #426 live sweep: call the *actual* `GdiFontLocator::load_fonts`
+    /// entry point (not just `attributes_to_descriptor` in isolation) for
+    /// `Lucida Console` at every pixel_size reachable via repeated
+    /// Ctrl+=/Ctrl+- zooming (~10% steps) combined with common Windows
+    /// display/text-scaling ratios (100%-250%) applied to a 14pt starting
+    /// size, to find any pixel_size at which resolution actually fails.
+    /// Skips on machines where Lucida Console isn't installed (e.g. CI
+    /// images that don't ship it) rather than failing spuriously.
+    #[test]
+    fn load_fonts_sweep_pixel_sizes_for_lucida_console() {
+        if !std::path::Path::new(r"C:\Windows\Fonts\lucon.ttf").is_file() {
+            eprintln!("skipping: Lucida Console is not installed on this machine");
+            return;
+        }
+
+        let locator = GdiFontLocator {};
+        let attr = FontAttributes::new("Lucida Console");
+        let mut failures = vec![];
+        for pixel_size in 5u16..=80 {
+            let mut loaded = HashSet::new();
+            match locator.load_fonts(std::slice::from_ref(&attr), &mut loaded, pixel_size) {
+                Ok(fonts) if !fonts.is_empty() => {}
+                Ok(_) => failures.push((pixel_size, "empty result".to_string())),
+                Err(e) => failures.push((pixel_size, format!("{:#}", e))),
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "load_fonts failed to resolve Lucida Console at these pixel_sizes: {:?}",
+            failures
+        );
     }
 }

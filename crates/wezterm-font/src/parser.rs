@@ -862,3 +862,90 @@ pub(crate) use scan::parse_and_collect_font_info;
 
 #[cfg(test)]
 mod perf1_test;
+
+#[cfg(test)]
+#[cfg(windows)]
+mod task426_stretch_matching {
+    //! Task #426 investigation: a user reported the "Unable to load a font
+    //! specified by your font=... configuration" warning for
+    //! `family: Lucida Console` (default `stretch: Normal`, `weight:
+    //! Regular`, `style: Normal`) after (1) changing the Windows system
+    //! font-scaling setting and (2) repeatedly zooming the terminal's font
+    //! size with Ctrl+=/Ctrl+-. `lucon.ttf`'s real stretch is
+    //! `SemiCondensed`, not `Normal`, so every resolution of the user's
+    //! config exercises the "closest stretch" fallback branches of
+    //! `best_matching_index` (the exact-match branch at the top never
+    //! fires) rather than the exact-match fast path.
+    //!
+    //! Hypothesis 1 from the task (an unsigned underflow in the `None =>`
+    //! fallback arms of the stretch/weight matching, from subtracting
+    //! `u16` opentype values in the wrong order) does not hold up: those
+    //! arms only run over candidates that already passed a `filter` proving
+    //! the subtraction is non-negative (candidates narrower than the
+    //! request on one side, wider on the other). This test exercises that
+    //! exact code path against the real system `lucon.ttf` -- a single
+    //! SemiCondensed candidate, Normal requested -- across a wide range of
+    //! `pixel_size`s (covering the sizes produced by repeated Ctrl+=/
+    //! Ctrl+- zooming and by DPI ratios from common Windows text-scaling
+    //! settings), and asserts it always resolves to that one candidate
+    //! without panicking.
+    use super::*;
+    use crate::locator::{FontDataSource, FontOrigin};
+    use std::path::Path;
+
+    #[test]
+    fn lucida_console_semicondensed_resolves_at_every_pixel_size() {
+        let path = Path::new(r"C:\Windows\Fonts\lucon.ttf");
+        if !path.is_file() {
+            eprintln!("skipping: {:?} does not exist on this machine", path);
+            return;
+        }
+
+        let source = FontDataSource::OnDisk(path.to_path_buf());
+        let mut font_info = vec![];
+        parse_and_collect_font_info(&source, &mut font_info, FontOrigin::Gdi)
+            .expect("lucon.ttf should parse");
+
+        assert_eq!(
+            font_info.len(),
+            1,
+            "expected exactly one face in lucon.ttf, got {:?}",
+            font_info
+        );
+        assert_eq!(
+            font_info[0].stretch(),
+            FontStretch::SemiCondensed,
+            "this regression test assumes the real lucon.ttf is SemiCondensed; \
+             if that ever changes the premise of task #426 needs revisiting"
+        );
+
+        let attr = FontAttributes::new("Lucida Console");
+        assert_eq!(
+            attr.stretch,
+            FontStretch::Normal,
+            "default stretch is Normal"
+        );
+
+        let refs: Vec<&ParsedFont> = font_info.iter().collect();
+
+        // Sweep pixel sizes covering: small starting sizes, the range
+        // reachable via repeated Ctrl+=/Ctrl+- (each step is roughly a 10%
+        // font_size change), and DPI-scaled sizes corresponding to common
+        // Windows display/text-scaling factors (100%-250%) applied to a
+        // 14pt starting font, as in the user's reported configuration.
+        for pixel_size in [
+            5u16, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 18, 19, 20, 21, 22, 24, 26, 28, 32, 35, 40,
+            48, 58,
+        ] {
+            let idx = ParsedFont::best_matching_index(&attr, &refs, pixel_size);
+            assert_eq!(
+                idx,
+                Some(0),
+                "expected the sole SemiCondensed Lucida Console candidate to be \
+                 selected at pixel_size={}, got {:?}",
+                pixel_size,
+                idx
+            );
+        }
+    }
+}
