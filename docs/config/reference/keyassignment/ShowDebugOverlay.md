@@ -11,7 +11,7 @@
     entirely (see the [changelog](../../../changelog.md#continuousnightly)),
     there is nothing left for a REPL to evaluate against, so it has been
     deleted. The overlay now shows a static summary of the running OnlyTerm
-    process (version, target triple, window/OpenGL environment) plus a live
+    process (version, target triple, renderer/GPU environment) plus a live
     tail of the application's own log, and nothing else.
 
 Overlays the current tab with the debug overlay: a version/environment

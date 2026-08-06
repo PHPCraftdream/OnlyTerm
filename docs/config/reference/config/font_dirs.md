@@ -49,8 +49,11 @@ font_dirs: [C:/Windows/Fonts]
 A path like this only exists on Windows; on Linux or macOS it silently
 resolves to nothing, and even on Windows, scanning an entire system font
 directory through `font_dirs` is not the recommended way to reach the system
-fonts (it has been observed to be slow and, with a large enough directory, to
-crash the font parser). If you want wezterm to use the fonts that are already
+fonts -- it has been observed to be slow, and a crash was captured with
+`font_dirs` set this way (see
+[search_font_dirs_for_fallback](search_font_dirs_for_fallback.md#performance-and-stability-warning)
+for what was and wasn't confirmed about that crash's actual cause). If you
+want wezterm to use the fonts that are already
 installed on whichever OS you're running on, leave `font_locator` unset (or
 explicit per-OS via `Gdi`/`CoreText`/`FontConfig` -- see
 [font_locator](font_locator.md)): its default already resolves to the correct
