@@ -1376,14 +1376,20 @@ impl WindowInner {
     /// spinner's own timer/GDI resources (see `placeholder_spinner`'s doc
     /// comment) now that a working renderer is in place and responsible for
     /// painting every subsequent frame. Idempotent: safe to call more than
-    /// once (e.g. once from `TermWindow::paint_impl` -- task #425; see that
-    /// call site for why it waits for the first real frame to actually be
-    /// handed off for presentation rather than calling this as soon as
-    /// `TermWindow::created` installs a `RenderState` -- on the happy path,
-    /// and once more as a backstop from `wm_ncdestroy` if the window is
-    /// closed before a renderer ever came up) -- `Option::take` makes the
-    /// second call's spinner teardown a no-op, and `start_placeholder_fade`
-    /// is separately guarded by `placeholder_fade.is_some()`.
+    /// once -- on the happy path, once after the first real frame has
+    /// actually been *presented* (task #425, later corrected by task #407:
+    /// from `TermWindow::paint_impl` directly when there is no dedicated
+    /// render thread, or from `renderthread.rs`'s `submit_one_frame` after
+    /// its first successful `submit_frame`/`present()` when
+    /// `webgpu_render_thread` is active -- the Windows default -- since
+    /// `paint_impl` returning `Ok` only means the frame was *enqueued* to
+    /// that thread on that path, not yet presented; see either call site's
+    /// own comment for the full reasoning) -- rather than as soon as
+    /// `TermWindow::created` installs a `RenderState`, and once more as a
+    /// backstop from `wm_ncdestroy` if the window is closed before a
+    /// renderer ever came up -- `Option::take` makes the second call's
+    /// spinner teardown a no-op, and `start_placeholder_fade` is separately
+    /// guarded by `placeholder_fade.is_some()`.
     ///
     /// Order matters here: `start_placeholder_fade` must run (and, if
     /// it decides to start the fade, paint the overlay's one-shot frame)
@@ -1397,8 +1403,9 @@ impl WindowInner {
             if spinner.timer_running {
                 // SAFETY: `self.hwnd.0` is either a valid window handle
                 // that `SetTimer` was previously called on with this same
-                // id (see `wm_nccreate`), for the happy-path call from
-                // `TermWindow::paint_impl`; or null, for the `wm_ncdestroy`
+                // id (see `wm_nccreate`), for the happy-path call (from
+                // `TermWindow::paint_impl` or `renderthread.rs`, see this
+                // method's doc comment); or null, for the `wm_ncdestroy`
                 // backstop call, which runs after `wm_ncdestroy` has
                 // already reset `hwnd` to null -- `KillTimer(null, ..)`
                 // just fails and does nothing, which is fine, since Windows
