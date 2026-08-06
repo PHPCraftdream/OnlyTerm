@@ -824,6 +824,47 @@ As features stabilize some brief notes about them will accumulate here.
   names this and suggests setting `search_font_dirs_for_fallback = true`
   instead of leaving the reader to rediscover the two settings'
   relationship from scratch.
+* Startup was slow before the window appeared, dominated by resolving the
+  configured `color_scheme`: resolving a single named scheme used to
+  TOML-parse all ~1000 bundled
+  color schemes (755KB of data) just to find the one requested. Now only
+  the requested scheme is parsed (memoized after the first lookup);
+  measured on a debug build, the config-resolution step this fell under
+  dropped from 2.21s to 14ms and the window appeared roughly a second
+  sooner. Schemes only reachable via an alias still fall back to building
+  the full map, since aliases are only discoverable after parsing every
+  scheme's metadata -- a rare case.
+* The window shown at startup could flicker strongly right before the
+  first real terminal frame appeared. The Windows GDI placeholder (the
+  "Loading..." text painted while the WebGpu renderer initializes) was
+  torn down as soon as the renderer object merely existed, which is
+  measurably (~150-165ms) before the WebGpu child window's swapchain had
+  actually presented its first frame -- in that gap nothing was painting
+  the window's client area, showing undefined swapchain contents
+  (typically a black flash). The placeholder teardown now waits for a
+  frame to have actually been built and handed off for presentation
+  before clearing.
+* That fix above turned out not to fully close the gap: with
+  `webgpu_render_thread` enabled (the Windows default), handing a frame
+  off for presentation only means it was *enqueued* to the dedicated
+  per-window render thread -- the actual GPU submit and present happen
+  later, asynchronously, on that thread. Tearing the placeholder down
+  right after the enqueue left
+  the same undefined-swapchain-contents gap, just shifted slightly later
+  and asynchronous with the GUI thread. Invisible against the desktop
+  (nothing behind the window to show through), but with a second OnlyTerm
+  window overlapping in the background, that other window's real content
+  showed through instead -- the startup flicker and "white/transparent
+  rectangles" some users saw when running more than one OnlyTerm window.
+  The placeholder is now cleared only after the render thread's first
+  actual present, closing the gap for real.
+* The placeholder-to-terminal cross-fade (see above and the "Startup UX"
+  work in earlier releases) was cut short by *any* window-position change
+  notification, not just an actual resize -- so simply moving the window
+  while the fade was still playing interrupted it, even though the
+  fade overlay (a child window using client-relative coordinates) tracks
+  the parent automatically on a move and its bounds were still perfectly
+  valid. The fade is now only interrupted by a genuine size/DPI change.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
