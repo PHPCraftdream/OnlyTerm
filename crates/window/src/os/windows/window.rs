@@ -387,6 +387,42 @@ pub(crate) struct WindowInner {
     /// and `start_placeholder_fade`). `None` before the fade begins
     /// and after it completes and tears itself down.
     placeholder_fade: Option<PlaceholderFade>,
+    /// Set by `wm_ncdestroy` the moment it reclaims (via
+    /// `take_rc_from_pointer`) the extra `Rc` strong ref that `new_window`
+    /// stashed in `GWLP_USERDATA` for `wm_nccreate` to pick up (see
+    /// `rc_to_pointer`'s call site in `new_window`).
+    ///
+    /// Exists to fix a double-free (task #402): `CreateWindowExW` always
+    /// sends `WM_NCCREATE` before it can fail, so a *later* failure (e.g.
+    /// GDI/USER handle exhaustion) still runs `wm_nccreate` -> stores the
+    /// pointer in `GWLP_USERDATA` -> Windows then sends `WM_NCDESTROY` to
+    /// unwind the partially-created window -> `wm_ncdestroy` reclaims and
+    /// drops that same extra ref via `take_rc_from_pointer`. Without this
+    /// flag, `new_window`'s `Err(err)` branch would unconditionally reclaim
+    /// the pointer via `Rc::from_raw` too, double-dropping the same strong
+    /// reference. When `CreateWindowExW` instead fails *before*
+    /// `WM_NCCREATE` ever runs (e.g. a bad class/parent handle), this stays
+    /// `false`: `GWLP_USERDATA` was never populated, `wm_ncdestroy` never
+    /// runs, and `new_window` remains the sole owner responsible for
+    /// dropping the extra ref itself. See `should_new_window_drop_extra_ref`
+    /// for the decision this flag feeds and its unit tests for both orders.
+    extra_ref_reclaimed_by_ncdestroy: std::cell::Cell<bool>,
+}
+
+/// Decides whether `new_window`'s `CreateWindowExW`-failure path must itself
+/// reclaim (`Rc::from_raw`) the extra strong ref it stashed in
+/// `GWLP_USERDATA`, or whether `wm_ncdestroy` already did so as part of
+/// Windows unwinding a partially-constructed window (task #402).
+///
+/// `already_reclaimed` is `WindowInner::extra_ref_reclaimed_by_ncdestroy`
+/// read *after* `create_window` has returned, i.e. after any `WM_NCDESTROY`
+/// that `CreateWindowExW` triggered while unwinding has already run
+/// synchronously (Win32 delivers `WM_NCDESTROY` to `wnd_proc` before
+/// `CreateWindowExW` itself returns). Kept as a free function, independent
+/// of any real `HWND`/`Rc`, purely so it is unit-testable without driving
+/// actual window creation.
+fn should_new_window_drop_extra_ref(already_reclaimed: bool) -> bool {
+    !already_reclaimed
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -1091,6 +1127,7 @@ impl Window {
             renderer_ready: false,
             shell_ready: false,
             placeholder_fade: None,
+            extra_ref_reclaimed_by_ncdestroy: std::cell::Cell::new(false),
         }));
 
         // Careful: `raw` owns a ref to inner, but there is no Drop impl
@@ -1103,11 +1140,29 @@ impl Window {
         let hwnd = match Self::create_window(config, class_name, name, geometry, raw) {
             Ok(hwnd) => HWindow(hwnd),
             Err(err) => {
-                // Ensure that we drop the extra ref to raw before we return
-                // SAFETY: `raw` was produced by `rc_to_pointer` above (a valid
-                // `Rc` raw pointer with one extra strong ref); since window
-                // creation failed it was never stored, so we reclaim it here.
-                drop(unsafe { Rc::from_raw(raw) });
+                // `CreateWindowExW` always delivers `WM_NCCREATE` before it
+                // can fail. If it failed *after* `WM_NCCREATE` ran (e.g.
+                // GDI/USER handle exhaustion), Windows also synchronously
+                // sends `WM_NCDESTROY` to unwind the partially-created
+                // window, and `wm_ncdestroy` has already reclaimed (and
+                // will drop) this same extra ref via `take_rc_from_pointer`
+                // -- see `WindowInner::extra_ref_reclaimed_by_ncdestroy`.
+                // Reclaiming it again here would double-drop the same
+                // strong reference (task #402). Only reclaim it ourselves
+                // when `wm_ncdestroy` never ran, i.e. `CreateWindowExW`
+                // failed before `WM_NCCREATE` (bad class/parent handle,
+                // etc.), in which case `GWLP_USERDATA` was never populated
+                // and this is still the sole owner of that extra ref.
+                if should_new_window_drop_extra_ref(
+                    inner.borrow().extra_ref_reclaimed_by_ncdestroy.get(),
+                ) {
+                    // SAFETY: `raw` was produced by `rc_to_pointer` above (a
+                    // valid `Rc` raw pointer with one extra strong ref) and
+                    // `should_new_window_drop_extra_ref` confirmed
+                    // `wm_ncdestroy` has not already reclaimed it, so this
+                    // is the first and only reclaim of that ref.
+                    drop(unsafe { Rc::from_raw(raw) });
+                }
                 return Err(err);
             }
         };
@@ -2244,6 +2299,16 @@ unsafe fn wm_ncdestroy(
     if !raw.is_null() {
         let inner = take_rc_from_pointer(raw);
         let mut inner = inner.borrow_mut();
+        // Record that this call is the one reclaiming the extra strong ref
+        // `new_window` stashed for `wm_nccreate`/`GWLP_USERDATA` (see
+        // `WindowInner::extra_ref_reclaimed_by_ncdestroy`'s doc comment).
+        // This must happen even on the ordinary successful-creation teardown
+        // path (not just the `CreateWindowExW`-failure unwind case), because
+        // `new_window`'s error branch can't otherwise distinguish "window
+        // was destroyed after being fully created" from "still pending" --
+        // it simply never runs in the successful case, so setting this
+        // unconditionally here is harmless either way.
+        inner.extra_ref_reclaimed_by_ncdestroy.set(true);
         inner.events.dispatch(WindowEvent::Destroyed);
         inner.hwnd = HWindow(null_mut());
         // Backstop in case this window is closed before a renderer ever
@@ -4311,5 +4376,182 @@ unsafe extern "system" fn overlay_wnd_proc(
             log::error!("caught {:?}", e);
             std::process::exit(1)
         }
+    }
+}
+
+/// Covers task #402: a real double-free existed here because `new_window`'s
+/// `CreateWindowExW`-failure branch unconditionally reclaimed the extra
+/// `Rc` ref it had stashed for `wm_nccreate`, even on the failure order
+/// where `wm_ncdestroy` (Windows synchronously unwinding a
+/// partially-created window after `WM_NCCREATE` already ran) had already
+/// reclaimed and dropped that same ref.
+///
+/// These tests drive the actual `rc_to_pointer`/`take_rc_from_pointer`
+/// pointer-lifecycle helpers and the actual `should_new_window_drop_extra_ref`
+/// decision function that the fix introduced -- not reimplementations of
+/// them -- so a regression that reintroduces the double-drop (or a
+/// leak-in-the-other-direction fix) would be caught here. What they don't
+/// exercise is real `CreateWindowExW`/`WM_NCCREATE`/`WM_NCDESTROY` traffic,
+/// since reliably forcing `CreateWindowExW` to fail specifically *after*
+/// `WM_NCCREATE` (GDI/USER handle exhaustion) isn't practical to trigger
+/// deterministically in a test; instead, each test drives
+/// `WindowInner::extra_ref_reclaimed_by_ncdestroy` exactly the way
+/// `wm_ncdestroy`/`new_window` themselves would in each of the two possible
+/// orderings.
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{Appearance, WindowEventSender};
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    /// Builds a `WindowInner` with the placeholder spinner disabled (`None`)
+    /// so the test never touches GDI, only the fields this module's fix
+    /// actually cares about.
+    fn test_inner() -> Rc<RefCell<WindowInner>> {
+        config::use_test_configuration();
+        let config = config::configuration();
+        Rc::new(RefCell::new(WindowInner {
+            hwnd: HWindow(std::ptr::null_mut()),
+            webgpu_child_hwnd: HWindow(std::ptr::null_mut()),
+            retired_webgpu_children: Vec::new(),
+            appearance: Appearance::Light,
+            events: WindowEventSender::new(|_, _| {}),
+            vscroll_remainder: 0,
+            hscroll_remainder: 0,
+            keyboard_info: KeyboardLayoutInfo::new(),
+            last_size: None,
+            in_size_move: false,
+            dead_pending: None,
+            saved_placement: None,
+            track_mouse_leave: false,
+            window_drag_position: None,
+            maximize_button_position: None,
+            config,
+            paint_throttled: false,
+            invalidated: true,
+            placeholder_spinner: None,
+            renderer_ready: false,
+            shell_ready: false,
+            placeholder_fade: None,
+            extra_ref_reclaimed_by_ncdestroy: Cell::new(false),
+        }))
+    }
+
+    /// Order 1 (the buggy order pre-fix): `CreateWindowExW` fails *after*
+    /// `WM_NCCREATE` ran, so Windows also sends `WM_NCDESTROY`, which
+    /// (mirroring `wm_ncdestroy`'s real body) reclaims the extra ref via
+    /// `take_rc_from_pointer` and sets the flag. `new_window`'s failure path
+    /// must then NOT reclaim it again -- doing so would drop the same
+    /// strong reference twice.
+    #[test]
+    fn create_window_failure_after_nccreate_drops_extra_ref_exactly_once() {
+        let inner = test_inner();
+        // Baseline: the local `inner` binding is the only strong ref so far.
+        assert_eq!(Rc::strong_count(&inner), 1);
+
+        // Mirrors `new_window`: stash an extra ref for the (simulated)
+        // `WM_NCCREATE`/`GWLP_USERDATA` handoff.
+        let raw = rc_to_pointer(&inner);
+        assert_eq!(Rc::strong_count(&inner), 2);
+
+        // Mirrors `wm_nccreate` running successfully and Windows then
+        // unwinding via `WM_NCDESTROY`, whose handler (`wm_ncdestroy`)
+        // reclaims and drops the extra ref, then sets the flag.
+        {
+            let reclaimed = take_rc_from_pointer(raw as LPVOID);
+            assert_eq!(
+                Rc::strong_count(&inner),
+                2,
+                "take_rc_from_pointer reclaims ownership without adding a ref"
+            );
+            inner.borrow().extra_ref_reclaimed_by_ncdestroy.set(true);
+            drop(reclaimed);
+        }
+        // The extra ref is gone: back down to just the local `inner` binding.
+        assert_eq!(
+            Rc::strong_count(&inner),
+            1,
+            "wm_ncdestroy's reclaim should have dropped the extra ref"
+        );
+
+        // Mirrors `new_window`'s `Err(err)` branch consulting the flag.
+        let should_drop =
+            should_new_window_drop_extra_ref(inner.borrow().extra_ref_reclaimed_by_ncdestroy.get());
+        assert!(
+            !should_drop,
+            "wm_ncdestroy already reclaimed the extra ref; new_window must not drop it again"
+        );
+        if should_drop {
+            // Not reached given the assertion above, but mirrors the real
+            // guarded call site exactly, including what a regression would
+            // do: drop `raw` again, which -- since it already dropped to 0
+            // strong refs above -- would be the double-free this test guards
+            // against.
+            //
+            // SAFETY: this branch is unreachable (see the `assert!` above);
+            // mirrored here only so the shape matches the real guarded call
+            // site in `new_window`. If it ever did run, `raw` would already
+            // have been reclaimed by `take_rc_from_pointer` above, so this
+            // would be exactly the double-free/UB this test exists to catch.
+            drop(unsafe { Rc::from_raw(raw) });
+        }
+
+        // Final invariant: exactly one reclaim happened across the whole
+        // sequence, and `inner` is still alive and uncorrupted.
+        assert_eq!(Rc::strong_count(&inner), 1);
+        assert!(!inner.borrow().renderer_ready);
+    }
+
+    /// Order 2 (the always-safe order): `CreateWindowExW` fails *before*
+    /// `WM_NCCREATE` ever ran (bad class name/parent handle, etc.), so
+    /// `GWLP_USERDATA` was never populated and `wm_ncdestroy` never runs.
+    /// `new_window`'s failure path must be the one to reclaim the extra ref
+    /// itself here, or it would leak permanently.
+    #[test]
+    fn create_window_failure_before_nccreate_still_reclaims_extra_ref() {
+        let inner = test_inner();
+        assert_eq!(Rc::strong_count(&inner), 1);
+
+        let raw = rc_to_pointer(&inner);
+        assert_eq!(Rc::strong_count(&inner), 2);
+
+        // `WM_NCCREATE`/`wm_ncdestroy` never ran in this order, so the flag
+        // is untouched (still `false`, as `test_inner` initialized it).
+        assert!(!inner.borrow().extra_ref_reclaimed_by_ncdestroy.get());
+
+        let should_drop =
+            should_new_window_drop_extra_ref(inner.borrow().extra_ref_reclaimed_by_ncdestroy.get());
+        assert!(
+            should_drop,
+            "wm_ncdestroy never ran; new_window must reclaim the extra ref itself or it leaks"
+        );
+        if should_drop {
+            // SAFETY: `raw` was produced by `rc_to_pointer` above and never
+            // handed to `take_rc_from_pointer`/`wm_ncdestroy` in this order.
+            drop(unsafe { Rc::from_raw(raw) });
+        }
+
+        assert_eq!(
+            Rc::strong_count(&inner),
+            1,
+            "the extra ref must be reclaimed exactly once, not leaked"
+        );
+    }
+
+    /// Direct table test of the decision function in isolation, independent
+    /// of any `Rc`/pointer plumbing: the two inputs the real call site can
+    /// ever observe must map to opposite decisions, or either a leak or a
+    /// double-free is reachable.
+    #[test]
+    fn should_new_window_drop_extra_ref_table() {
+        assert!(
+            should_new_window_drop_extra_ref(false),
+            "wm_ncdestroy has not run: new_window must reclaim the ref itself"
+        );
+        assert!(
+            !should_new_window_drop_extra_ref(true),
+            "wm_ncdestroy already reclaimed the ref: new_window must not double-drop it"
+        );
     }
 }

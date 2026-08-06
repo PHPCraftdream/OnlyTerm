@@ -866,6 +866,19 @@ As features stabilize some brief notes about them will accumulate here.
   fade overlay (a child window using client-relative coordinates) tracks
   the parent automatically on a move and its bounds were still perfectly
   valid. The fade is now only interrupted by a genuine size/DPI change.
+* Windows: fixed a narrow but real double-free. If `CreateWindowExW` failed
+  *after* `WM_NCCREATE` had already run (in practice, only reachable via
+  GDI/USER handle exhaustion), Windows' own unwinding of the
+  partially-created window already reclaimed and dropped an internal
+  reference that window creation's own failure path then unconditionally
+  dropped a second time.
+* The version string reported by `wezterm -h` (and shown elsewhere in the
+  UI) never reflected the project's actual release tag -- the build script
+  only ever derived it from the current commit's date and short hash. It
+  now prefers `git describe --tags` against the nearest reachable `v*` tag
+  (falling back to the old date-hash form only when no tag is reachable at
+  all, e.g. a shallow clone with tags not fetched), so a tagged build now
+  reports a version like `v0.0.2-alpha` instead of a bare timestamp.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
