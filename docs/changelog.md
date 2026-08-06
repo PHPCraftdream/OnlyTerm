@@ -303,16 +303,21 @@ As features stabilize some brief notes about them will accumulate here.
   RDP sessions, or a driver mismatch), OnlyTerm now reports a clear,
   actionable error explaining what went wrong, instead of silently
   degrading to a different renderer or leaving a blank window on screen.
-  What happens next depends on whether this is the process's very first
-  window or an additional one: for the first (or only) window -- including
-  every window opened directly at startup -- the process cannot usefully
-  continue without it, so it exits cleanly, the same as any other fatal
-  startup error. For any window opened later at runtime while other windows
-  are already up (e.g. via `SpawnWindow`, or opening a new window on a
-  second monitor driven by a different GPU adapter), only that one window
-  fails to open -- the error is still reported to the user, but the rest of
-  the process and all of its other windows, tabs, panes, and their child
-  processes keep running untouched. WebGpu's dedicated per-window render thread
+  What happens next is decided at the moment the failure is handled by
+  whether any other window of this process is already up and running: the
+  first live window of the process (in practice, usually the one opened at
+  startup, but formally whichever window hits this failure while no sibling
+  window has finished opening yet) cannot usefully continue without it, so
+  it exits cleanly, the same as any other fatal startup error. Any other
+  window that already has at least one sibling window up by the time it
+  hits this failure -- e.g. a later window opened via `SpawnWindow`, a new
+  window on a second monitor driven by a different GPU adapter, or a
+  non-first window from a multi-window session restore -- fails to open on
+  its own instead: the error is still reported to the user, the placeholder
+  window it had already shown is closed rather than left stranded on
+  screen, and the rest of the process and all of its other windows, tabs,
+  panes, and their child processes keep running untouched. WebGpu's
+  dedicated per-window render thread
   (`webgpu_render_thread`) remains enabled by default, so a stuck GPU
   driver call on Windows still does not freeze the whole process's message
   loop.
