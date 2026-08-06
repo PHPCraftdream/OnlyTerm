@@ -288,18 +288,25 @@ As features stabilize some brief notes about them will accumulate here.
   the render pass is actively rebuilding. GPU frame submission (present/
   swapchain) has since moved off the shared message loop onto a dedicated
   per-window thread on Windows -- see the next bullet.
-* WebGpu is now the default rendering backend on Windows, with automatic
-  fallback to OpenGL if adapter/device initialization fails (e.g. in RDP
-  sessions, old/software-only GPUs, or VMs without GPU passthrough). Its
-  dedicated per-window render thread (`webgpu_render_thread`) is also now
-  enabled by default, so a stuck GPU driver call on Windows no longer
-  freezes the whole process's message loop.
-* The OpenGL and Software [front_end](config/reference/config/front_end.md)
-  backends do not get this isolation: a GL context is thread-affine and
-  can't be handed off to a render thread the way WebGpu's state can, so
-  they stay fully synchronous on the GUI thread as before. If you fall
-  back to (or intentionally select) `OpenGL`/`Software`, a hung GPU driver
-  call can still freeze every window in the process.
+* **Breaking**: OpenGL has been removed entirely, along with the `Software`
+  [front_end](config/reference/config/front_end.md) (which turned out to be
+  GL/Mesa-backed, not an independent renderer) and the automatic fallback
+  from WebGpu to OpenGL on adapter/device initialization failure. This
+  removes the `glium`/EGL/WGL code paths from both `wezterm-gui` and the
+  `window` crate and the bundled ANGLE/Mesa DLLs that backed them
+  (~42MB). WebGpu is now the only rendering backend. A config that still
+  sets `front_end` to `OpenGL` or `Software` continues to load -- it now
+  prints a warning and is treated as `WebGpu` -- so no config change is
+  strictly required, but the setting should be removed (or changed to
+  `WebGpu`) to silence the warning. If WebGpu's adapter/device
+  initialization fails outright at startup (e.g. a VM without GPU
+  passthrough, certain RDP sessions, or a driver mismatch), OnlyTerm now
+  reports a clear, actionable error explaining what went wrong and exits,
+  instead of silently degrading to a different renderer or leaving a blank
+  window on screen. WebGpu's dedicated per-window render thread
+  (`webgpu_render_thread`) remains enabled by default, so a stuck GPU
+  driver call on Windows still does not freeze the whole process's message
+  loop.
 * If a WebGpu window's render thread does get stuck in a GPU submit,
   reconfigure, or surface-error call for too long (or the GPU device itself
   is lost, e.g. a driver reset), that window's entire WebGpu renderer
@@ -307,12 +314,11 @@ As features stabilize some brief notes about them will accumulate here.
   automatically -- the window and every one of its tabs/panes and their
   child processes survive, at the cost of one dropped frame. This replaces
   the previous behavior of closing the window outright. If the renderer
-  keeps failing to recover (3 rebuild attempts within 30 seconds), the
-  window falls back to the OpenGL backend instead of continuing to retry
-  WebGpu; only if that fallback also fails does the window close, as a last
-  resort, with its panes' child processes cleaned up first as before.
-  Manually verified end-to-end on real hardware, reproduced identically
-  across multiple independent runs, using the
+  keeps failing to recover (3 rebuild attempts within 30 seconds), that one
+  window is now closed cleanly instead, with its panes' child processes
+  cleaned up first as before -- there is no longer an OpenGL backend for it
+  to fall back to. Manually verified end-to-end on real hardware,
+  reproduced identically across multiple independent runs, using the
   `debug_render_thread_stall_ms`/`render_thread_hang_threshold_ms` debug
   config options.
 * Hardened the above renderer-rebuild path against a handful of latent
@@ -327,15 +333,17 @@ As features stabilize some brief notes about them will accumulate here.
   watches for a stuck render thread could end up running two overlapping
   timer chains for the same window under an unlucky timing window
   between a hang being handled and the rebuilt renderer coming back
-  online (harmless in practice -- the OpenGL fallback collapses any
-  duplicates -- but no longer possible at all now that it's guarded
-  structurally instead of by timing). Also: the vertex-buffer rotation
-  scheme inherited from the OpenGL backend (three buffers per layer,
-  rotated frame to frame to avoid writing into one the GPU might still
-  be reading) bought nothing on WebGpu, where a fresh buffer is already
-  created every frame -- WebGpu windows now keep one buffer per layer
-  instead of three, saving a few MB of GPU-visible memory per window
-  with no behavior change.
+  online -- no longer possible now that it's guarded structurally instead
+  of by timing (previously this was harmless in practice because the
+  OpenGL-fallback path collapsed any duplicates, but that safety net is
+  gone along with OpenGL itself, so the structural guard now carries the
+  whole guarantee on its own). Also: the vertex-buffer rotation scheme
+  originally inherited from the (now-removed) OpenGL backend (three
+  buffers per layer, rotated frame to frame to avoid writing into one the
+  GPU might still be reading) bought nothing on WebGpu, where a fresh
+  buffer is already created every frame -- WebGpu windows keep one buffer
+  per layer instead of three, saving a few MB of GPU-visible memory per
+  window with no behavior change.
 * A background pane whose terminal is genuinely wedged (a full/unread pty
   pipe, a stuck escape-sequence handler, or similar) can no longer stall
   the GUI thread -- and by extension every window in the process -- while
@@ -541,6 +549,15 @@ As features stabilize some brief notes about them will accumulate here.
   See dedicated section in [CONTRIBUTING.md](https://github.com/wezterm/wezterm/blob/main/CONTRIBUTING.md)
 * The default tab bar rendering now shows an animated spinner when ConEmu style
   OSC 9 escapes set the progress state to "Indeterminate".
+* Documented how to keep [font_dirs](config/reference/config/font_dirs.md)
+  portable across operating systems: relative entries already resolve
+  safely against the config file's own directory on every platform, so the
+  only real risk is hardcoding an absolute, OS-specific path (e.g.
+  `C:/Windows/Fonts`) directly into the config. No new placeholder syntax
+  was added for this -- leaving `font_locator` unset already picks the
+  right per-OS system font locator (`Gdi`/`CoreText`/`FontConfig`) with no
+  path to hardcode at all, which is the recommended way to reach "the
+  system fonts" portably.
 
 #### Fixed
 * Many symbol codepoints (e.g. U+23BF and other Miscellaneous
@@ -761,6 +778,29 @@ As features stabilize some brief notes about them will accumulate here.
   [mux_synchronized_output_timeout_ms](config/reference/config/mux_synchronized_output_timeout_ms.md).
   Thanks to @luizribeiro! #7918
 * Fix render loop freeze when closing workspaces. Thanks to @JafarAbdi! #7444
+* `FontConfigInner` never rebuilt its font locator when
+  [font_locator](config/reference/config/font_locator.md) changed at
+  runtime -- only `font_dirs` was rebuilt, so switching locators via a
+  config reload silently kept using the old one until the process
+  restarted.
+* On Windows, `GdiFontLocator` always asked DirectWrite for an exact
+  `Normal` stretch match regardless of what was actually requested.
+  DirectWrite's exact-match lookup then failed for any installed family
+  whose real stretch isn't Normal (e.g. Lucida Console, whose only face is
+  SemiCondensed), silently falling through to the slower legacy GDI path
+  on every single resolution even though the config never asked for a
+  non-default stretch. The requested stretch is now passed through
+  correctly.
+* The "No fonts contain glyphs for these codepoints" warning (log message
+  and toast) now detects one specific, easy-to-hit misconfiguration and
+  says so directly: when [font_dirs](config/reference/config/font_dirs.md)
+  is set but
+  [search_font_dirs_for_fallback](config/reference/config/search_font_dirs_for_fallback.md)
+  is `false` (the default), those directories are scanned but never
+  actually consulted for fallback glyph resolution -- the warning now
+  names this and suggests setting `search_font_dirs_for_fallback = true`
+  instead of leaving the reader to rediscover the two settings'
+  relationship from scratch.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
