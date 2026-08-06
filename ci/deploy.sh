@@ -129,12 +129,7 @@ case $OSTYPE in
       $TARGET_DIR/release/onlyterm_gui.pdb \
       assets/windows/conhost/conpty.dll \
       assets/windows/conhost/OpenConsole.exe \
-      assets/windows/angle/libEGL.dll \
-      assets/windows/angle/libGLESv2.dll \
       $zipdir
-    mkdir $zipdir/mesa
-    cp $TARGET_DIR/release/mesa/opengl32.dll \
-        $zipdir/mesa
     7z a -tzip $zipname $zipdir
     iscc.exe -DMyAppVersion=${TAG_NAME#nightly} -F${instname} ci/windows-installer.iss
     ;;
