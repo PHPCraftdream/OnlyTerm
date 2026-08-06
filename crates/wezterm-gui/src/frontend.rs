@@ -10,7 +10,7 @@ use mux::client::ClientId;
 use mux::window::WindowId as MuxWindowId;
 use mux::{Mux, MuxNotification};
 use promise::{Future, Promise};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -24,6 +24,15 @@ pub struct GuiFrontEnd {
     known_windows: RefCell<BTreeMap<Window, MuxWindowId>>,
     client_id: Arc<ClientId>,
     config_subscription: RefCell<Option<ConfigSubscription>>,
+    // Set once the process's very first `TermWindow` has been successfully
+    // created. Used to tell apart "this is the only window the process has,
+    // so it cannot continue running without it" (fatal WebGpu init failure
+    // is a clean `process::exit`, same as any other fatal startup error)
+    // from "this is an additional window opened later, eg. via
+    // `KeyAssignment::SpawnWindow`" (a WebGpu init failure there should only
+    // close that one window and notify the user -- see
+    // `TermWindow::new_window`'s `is_first_window` parameter -- task #428).
+    first_window_created: Cell<bool>,
 }
 
 impl Drop for GuiFrontEnd {
@@ -47,6 +56,7 @@ impl GuiFrontEnd {
             known_windows: RefCell::new(BTreeMap::new()),
             client_id: client_id.clone(),
             config_subscription: RefCell::new(None),
+            first_window_created: Cell::new(false),
         });
 
         mux.subscribe(move |n| {
@@ -425,14 +435,27 @@ impl GuiFrontEnd {
                     .borrow_mut()
                     .insert(mux_window_id);
                 log::trace!("Creating TermWindow for mux_window_id={}", mux_window_id);
-                if let Err(err) = TermWindow::new_window(mux_window_id).await {
-                    log::error!("Failed to create window: {:#}", err);
-                    let mux = Mux::get();
-                    mux.kill_window(mux_window_id);
-                    front_end()
-                        .spawned_mux_window
-                        .borrow_mut()
-                        .remove(&mux_window_id);
+                // Whether the process has successfully created any window
+                // yet decides how a fatal-looking error (eg. WebGpu init
+                // failure) inside `new_window` is handled: the very first
+                // window is the one thing keeping the process alive, so it
+                // is allowed to terminate the whole process cleanly; any
+                // later window is additional and must not take down windows
+                // that are already up and running (task #428).
+                let is_first_window = !front_end().first_window_created.get();
+                match TermWindow::new_window(mux_window_id, is_first_window).await {
+                    Ok(()) => {
+                        front_end().first_window_created.set(true);
+                    }
+                    Err(err) => {
+                        log::error!("Failed to create window: {:#}", err);
+                        let mux = Mux::get();
+                        mux.kill_window(mux_window_id);
+                        front_end()
+                            .spawned_mux_window
+                            .borrow_mut()
+                            .remove(&mux_window_id);
+                    }
                 }
             }
             *front_end().switching_workspaces.borrow_mut() = false;
