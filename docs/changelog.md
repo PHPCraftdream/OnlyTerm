@@ -299,11 +299,20 @@ As features stabilize some brief notes about them will accumulate here.
   prints a warning and is treated as `WebGpu` -- so no config change is
   strictly required, but the setting should be removed (or changed to
   `WebGpu`) to silence the warning. If WebGpu's adapter/device
-  initialization fails outright at startup (e.g. a VM without GPU
-  passthrough, certain RDP sessions, or a driver mismatch), OnlyTerm now
-  reports a clear, actionable error explaining what went wrong and exits,
-  instead of silently degrading to a different renderer or leaving a blank
-  window on screen. WebGpu's dedicated per-window render thread
+  initialization fails outright (e.g. a VM without GPU passthrough, certain
+  RDP sessions, or a driver mismatch), OnlyTerm now reports a clear,
+  actionable error explaining what went wrong, instead of silently
+  degrading to a different renderer or leaving a blank window on screen.
+  What happens next depends on whether this is the process's very first
+  window or an additional one: for the first (or only) window -- including
+  every window opened directly at startup -- the process cannot usefully
+  continue without it, so it exits cleanly, the same as any other fatal
+  startup error. For any window opened later at runtime while other windows
+  are already up (e.g. via `SpawnWindow`, or opening a new window on a
+  second monitor driven by a different GPU adapter), only that one window
+  fails to open -- the error is still reported to the user, but the rest of
+  the process and all of its other windows, tabs, panes, and their child
+  processes keep running untouched. WebGpu's dedicated per-window render thread
   (`webgpu_render_thread`) remains enabled by default, so a stuck GPU
   driver call on Windows still does not freeze the whole process's message
   loop.
