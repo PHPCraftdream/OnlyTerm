@@ -356,14 +356,17 @@ pub(crate) struct WindowInner {
     /// `ShowWindow` and the renderer's first frame, where the alternative is
     /// whatever garbage happened to be in that region of the framebuffer, or
     /// (worse, on a dark theme) a stark white flash from an unpainted
-    /// client area. Cleared via `clear_placeholder_background` once
-    /// `TermWindow::paint_impl` confirms the first real frame has actually
-    /// been handed off for presentation (task #425 -- deliberately later
-    /// than `TermWindow::created` merely installing a working `RenderState`;
-    /// see that call site for why), at which point the renderer itself is
-    /// responsible for every subsequent frame and `WM_ERASEBKGND` goes back
-    /// to being a no-op (returning 1 without painting, matching today's
-    /// behavior of a null-brush class).
+    /// client area. Cleared via `clear_placeholder_background` once the
+    /// first real frame has actually been *presented* (task #425, hardened
+    /// by task #407 -- deliberately later than `TermWindow::created` merely
+    /// installing a working `RenderState`, and, when a dedicated render
+    /// thread is active (the Windows default), later still than that frame
+    /// merely being handed off/enqueued to that thread; see
+    /// `WindowOps::clear_placeholder_background`'s doc comment for the
+    /// full reasoning and both call sites), at which point the renderer
+    /// itself is responsible for every subsequent frame and `WM_ERASEBKGND`
+    /// goes back to being a no-op (returning 1 without painting, matching
+    /// today's behavior of a null-brush class).
     placeholder_spinner: Option<PlaceholderSpinner>,
     /// Set once `clear_placeholder_background` has run, i.e. a working
     /// `RenderState` is installed and producing frames (task #385's first
@@ -2951,9 +2954,10 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
 ///
 /// While `placeholder_spinner` is set, paint the spinner into `rcPaint` and
 /// report the background as erased (return 1). Once
-/// `clear_placeholder_background` has dropped it (called from
-/// `TermWindow::paint_impl` once the first real frame has actually been
-/// handed off for presentation -- task #425), fall straight back to
+/// `clear_placeholder_background` has dropped it (called once the first
+/// real frame has actually been *presented* -- task #425, hardened by task
+/// #407; see `WindowOps::clear_placeholder_background`'s doc comment for
+/// which call site does this on which path), fall straight back to
 /// returning 1 without painting -- identical to today's null-brush behavior.
 ///
 /// # Safety

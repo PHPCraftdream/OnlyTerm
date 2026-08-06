@@ -858,8 +858,9 @@ As features stabilize some brief notes about them will accumulate here.
   rectangles" some users saw when running more than one OnlyTerm window.
   The placeholder is now cleared only after the render thread's first
   actual present, closing the gap for real.
-* The placeholder-to-terminal cross-fade (see above and the "Startup UX"
-  work in earlier releases) was cut short by *any* window-position change
+* The placeholder-to-terminal cross-fade (see the startup-flicker entries
+  just above, and the earlier spinner/cross-fade work in this same section)
+  was cut short by *any* window-position change
   notification, not just an actual resize -- so simply moving the window
   while the fade was still playing interrupted it, even though the
   fade overlay (a child window using client-relative coordinates) tracks

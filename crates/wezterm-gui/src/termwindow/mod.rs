@@ -404,26 +404,36 @@ pub struct TermWindow {
     /// harmless if sent more than once, but there's no reason to.
     shell_output_seen: bool,
 
-    /// Set once the very first real frame built by `paint_impl` has actually
-    /// been handed off for presentation (task #425): `call_draw` returning
-    /// successfully from `do_paint_webgpu`, which for the
-    /// WebGpu-render-thread path (the default; see `config::
-    /// webgpu_render_thread`) means `RenderThreadHandle::send_frame` queued
-    /// it, and for every other path means `WebGpuState::submit_frame`
-    /// already ran synchronously. `created()`
-    /// installing a working `RenderState` is *not* the same event: on
-    /// Windows the render thread is spawned (and, before that, the GPU
+    /// Set once `paint_impl` has cleared the GDI startup placeholder itself
+    /// (task #425). This only ever happens on the *synchronous* path --
+    /// when there is no dedicated render thread (`self.render_thread` is
+    /// `None`) -- where `call_draw` returning `Ok` really does mean
+    /// `WebGpuState::submit_frame` already ran inline. On the
+    /// WebGpu-render-thread path (the default on Windows; see `config::
+    /// webgpu_render_thread`), `call_draw` only *enqueues* the frame via
+    /// `RenderThreadHandle::send_frame` and returns immediately -- the real
+    /// `submit_frame`/`present()` runs later, asynchronously, on the render
+    /// thread. Clearing here based on that enqueue (rather than the actual
+    /// present) left a gap where a second, overlapping OnlyTerm window's
+    /// content could show through instead of this window's own (task
+    /// #407), so on that path the clear is done by
+    /// `renderthread.rs`'s `submit_one_frame` itself, right after its first
+    /// successful `submit_frame` -- via its own one-shot flag local to the
+    /// render thread, not this field. `created()` installing a working
+    /// `RenderState` is *not* the same event as either of these: on Windows
+    /// the render thread is spawned (and, before that, the GPU
     /// device/pipeline itself finishes initializing) strictly after
     /// `created()` returns, and even without a render thread the first
-    /// `NeedRepaint`/`do_paint_webgpu` call still needs a `WM_PAINT` message the
-    /// message loop hasn't dispatched yet at that point. Calling
+    /// `NeedRepaint`/`do_paint_webgpu` call still needs a `WM_PAINT` message
+    /// the message loop hasn't dispatched yet at that point. Calling
     /// `Window::clear_placeholder_background` from `created()` itself (the
     /// pre-#425 behavior) tore down the GDI placeholder -- the only thing
     /// painting the window's client area -- before any real content was
     /// queued, leaving a gap where Windows/DXGI showed undefined swapchain
     /// contents (commonly a black flash) between the placeholder
     /// disappearing and the first real frame landing. Checked-then-set from
-    /// `paint_impl` so the clear happens at most once per window.
+    /// `paint_impl` so the clear happens at most once per window on the
+    /// synchronous path this field actually gates.
     placeholder_cleared: bool,
 
     pub last_frame_duration: Duration,

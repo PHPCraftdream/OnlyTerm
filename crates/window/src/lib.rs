@@ -264,13 +264,17 @@ pub trait WindowOps {
     /// Release any placeholder background painted before the renderer's
     /// first frame (Windows-only concern -- see
     /// `os::windows::window::WindowInner::placeholder_spinner`'s doc
-    /// comment for the full rationale). Called by `wezterm-gui`'s
-    /// `TermWindow::paint_impl` the first time a real frame has actually
-    /// been handed off for presentation (task #425), not merely once a
-    /// renderer object exists -- see that call site's comment for why the
-    /// two are not the same event. No-op default for platforms that never
-    /// needed a placeholder: on those, the window either isn't shown before
-    /// the renderer is ready, or its native window class doesn't leave the
+    /// comment for the full rationale). Called the first time a real frame
+    /// has actually been *presented* (task #425, hardened by task #407),
+    /// not merely once a renderer object exists or a frame has merely been
+    /// handed off for presentation -- the caller is `wezterm-gui`'s
+    /// `TermWindow::paint_impl` on the synchronous (no dedicated render
+    /// thread) path, or its `renderthread.rs`'s `submit_one_frame` after
+    /// its first successful `submit_frame` when a render thread is active
+    /// (the Windows default) -- see either call site's comment for the full
+    /// reasoning. No-op default for platforms that never needed a
+    /// placeholder: on those, the window either isn't shown before the
+    /// renderer is ready, or its native window class doesn't leave the
     /// client area unpainted the way Windows' `hbrBackground: null_mut()`
     /// class does.
     fn clear_placeholder_background(&self) {}

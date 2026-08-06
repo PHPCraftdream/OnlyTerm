@@ -88,9 +88,17 @@ impl TermWindow {
                 // presentation, leaving a gap where the window showed
                 // undefined swapchain contents -- typically a black flash --
                 // between the placeholder disappearing and the first real
-                // frame landing. `paint_impl` now does the actual clear,
-                // gated on `placeholder_cleared`, the first time a real
-                // frame is built and handed off for presentation.
+                // frame landing. `paint_impl` does the actual clear (gated
+                // on `placeholder_cleared`) on the synchronous no-render-
+                // thread path; on the render-thread path (the Windows
+                // default), `renderthread.rs`'s `submit_one_frame` does it
+                // instead, right after its own first successful
+                // `submit_frame` -- task #407 found that clearing as soon as
+                // a frame was merely handed off/enqueued to the render
+                // thread, rather than actually presented, still left the
+                // same undefined-swapchain-contents gap on that path. See
+                // `WindowOps::clear_placeholder_background`'s doc comment
+                // for both call sites.
                 //
                 // `window.invalidate()` still happens unconditionally here:
                 // `created` is the single funnel every renderer (re)build
