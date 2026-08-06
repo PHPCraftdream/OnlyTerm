@@ -566,14 +566,6 @@ impl WindowInner {
             }
         }
 
-        // If a placeholder fade is in progress, the overlay's bounds are
-        // stale the instant the WebGpu child underneath it resizes. A
-        // shifted/mismatched rectangle would look worse than an instant cut,
-        // so finish the fade now rather than trying to reposition the overlay.
-        if self.placeholder_fade.is_some() {
-            self.finish_placeholder_fade();
-        }
-
         let current_dims = Dimensions {
             pixel_width,
             pixel_height,
@@ -586,6 +578,21 @@ impl WindowInner {
             .map(|&dims| dims == current_dims)
             .unwrap_or(false);
         self.last_size.replace(current_dims);
+
+        // If a placeholder fade is in progress and the client area's actual
+        // pixel size (or DPI) really changed, the overlay's bounds are stale
+        // the instant the WebGpu child underneath it resizes. A
+        // shifted/mismatched rectangle would look worse than an instant cut,
+        // so finish the fade now rather than trying to reposition the
+        // overlay. This runs from both `wm_size` and `wm_windowposchanged`
+        // (task #399), and `WM_WINDOWPOSCHANGED` also fires for pure moves,
+        // z-order changes and activation with no size change at all -- `same`
+        // (computed from `GetClientRect`, above) is what distinguishes a
+        // real resize from those, so a plain move no longer cuts the fade
+        // short.
+        if !same && self.placeholder_fade.is_some() {
+            self.finish_placeholder_fade();
+        }
 
         if !same {
             self.set_ime_window_position(Rect::default());
