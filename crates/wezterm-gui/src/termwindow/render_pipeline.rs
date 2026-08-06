@@ -309,12 +309,14 @@ impl TermWindow {
         // stare at nothing that whole time. The client area is safe to show
         // unpainted because the Windows window class fills it with the
         // terminal's background color via `WM_ERASEBKGND` until the first
-        // real frame actually lands and `TermWindow::paint_impl` clears that
-        // placeholder (task #330; moved out of `created()` below by task
-        // #425 -- see `paint_impl`'s comment for why clearing it as soon as
-        // `created()` merely installs a `RenderState`, rather than once a
-        // real frame is confirmed handed off for presentation, left a gap
-        // where nothing painted the window). `NeedRepaint` before the
+        // real frame actually lands and that placeholder is cleared (task
+        // #330; moved out of `created()` below by task #425, then further
+        // hardened by task #407 to wait for an actual `present()` rather
+        // than just a frame being handed off/enqueued -- see
+        // `WindowOps::clear_placeholder_background`'s doc comment for why
+        // clearing it as soon as `created()` merely installs a
+        // `RenderState` left a gap where nothing painted the window).
+        // `NeedRepaint` before the
         // renderer exists is already a no-op (`do_paint_webgpu` is
         // unreachable until `self.webgpu` is set in `created()`), and pane
         // input keeps flowing to the pty regardless of whether a renderer is
