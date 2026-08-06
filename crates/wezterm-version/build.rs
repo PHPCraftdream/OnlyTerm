@@ -64,20 +64,37 @@ fn main() {
                 }
             }
 
-            if let Ok(output) = std::process::Command::new("git")
-                .args([
-                    "-c",
-                    "core.abbrev=8",
-                    "show",
-                    "-s",
-                    "--format=%cd-%h",
-                    "--date=format:%Y%m%d-%H%M%S",
-                ])
+            // Prefer a human-meaningful version derived from the nearest
+            // reachable `v*` tag (e.g. `v0.0.2-alpha`, or
+            // `v0.0.2-alpha-3-gabc1234` for commits past the tag) so that
+            // `wezterm -h` reflects the project's actual release number
+            // instead of only a commit date/hash. Falls back to the
+            // date-hash form below if no tag is reachable at all (e.g. a
+            // shallow clone with tags not fetched).
+            let describe = std::process::Command::new("git")
+                .args(["describe", "--tags", "--always", "--dirty=-dirty"])
                 .output()
-            {
-                let info = String::from_utf8_lossy(&output.stdout);
-                ci_tag = info.trim().to_string();
-            }
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|s| !s.is_empty());
+
+            ci_tag = match describe {
+                Some(tag) => tag,
+                None => std::process::Command::new("git")
+                    .args([
+                        "-c",
+                        "core.abbrev=8",
+                        "show",
+                        "-s",
+                        "--format=%cd-%h",
+                        "--date=format:%Y%m%d-%H%M%S",
+                    ])
+                    .output()
+                    .ok()
+                    .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                    .unwrap_or_default(),
+            };
         }
     }
 
