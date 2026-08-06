@@ -190,10 +190,16 @@ impl PlaceholderSpinner {
     }
 
     /// # Safety
-    /// Always safe to call: `DeleteObject` accepts any GDI object handle,
-    /// including ones already deleted (a no-op returning `FALSE`) or null
-    /// (also a harmless no-op), and neither of these two is ever shared
-    /// with another live GDI object.
+    /// Always safe to call: `bg_brush`/`font` are live GDI handles for the
+    /// whole lifetime of `self` (nothing else ever deletes them), so this
+    /// `DeleteObject` pair runs against still-valid handles. This must not
+    /// be called more than once per value: after the first `DeleteObject`,
+    /// Windows is free to recycle that same handle value for an unrelated
+    /// GDI object created elsewhere in the process, and a second
+    /// `DeleteObject` on it would then delete that *other* live object
+    /// instead of being a harmless no-op. `destroy` has exactly one caller
+    /// (`Drop::drop`, below), which Rust guarantees runs at most once per
+    /// value, so that double-delete can't happen here.
     unsafe fn destroy(&self) {
         DeleteObject(self.bg_brush as _);
         DeleteObject(self.font as _);
@@ -202,13 +208,13 @@ impl PlaceholderSpinner {
 
 impl Drop for PlaceholderSpinner {
     fn drop(&mut self) {
-        // SAFETY: `DeleteObject` accepts any GDI object handle, including
-        // ones already deleted (a no-op returning `FALSE`), and neither of
-        // these two is ever shared with another live GDI object. This
-        // guarantees the handles from `PlaceholderSpinner::new` are freed on
-        // every code path, including the early-return from `Window::
-        // new_window` when `create_window` fails after the spinner was
-        // already constructed.
+        // SAFETY: see `destroy`'s doc comment for why a double `DeleteObject`
+        // would be unsound in general and why it can't happen here: `drop`
+        // is the only caller of `destroy`, and Rust guarantees `Drop::drop`
+        // runs at most once per value, so this call frees the handles from
+        // `PlaceholderSpinner::new` exactly once, on every code path,
+        // including the early-return from `Window::new_window` when
+        // `create_window` fails after the spinner was already constructed.
         unsafe {
             self.destroy();
         }
