@@ -12,19 +12,7 @@ publish = false
 log.workspace = true
 wezterm-open-url.workspace = true
 
-[target.'cfg(all(not(windows), not(target_os="macos")))'.dependencies]
-async-io.workspace = true
-futures-util.workspace = true
-serde = {workspace=true, features = ["derive"]}
-zbus.workspace = true
-zvariant.workspace = true
-
-[target.'cfg(target_os="macos")'.dependencies]
-block2.workspace = true
-objc2.workspace = true
-objc2-user-notifications.workspace = true
-objc2-foundation.workspace = true
-uuid = { workspace=true, features=["v4", "fast-rng"] }
+# Unix and macOS toast notification implementations removed - Windows-only build
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace=true, features = [
