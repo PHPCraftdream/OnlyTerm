@@ -17,7 +17,7 @@ use config::{
     VerticalWindowContentAlignment, VisualBellTarget,
 };
 use euclid::num::Zero;
-use mux::pane::{Pane, PaneId};
+use mux::pane::{CachePolicy, Pane, PaneId};
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use ordered_float::NotNan;
 use std::ops::Range;
@@ -73,6 +73,15 @@ pub struct LineQuadCacheKey {
     pub reverse_video: bool,
     pub password_input: bool,
     pub is_wrap_continuation: bool,
+    /// Whether `disable_bidi_for_processes_named` currently suppresses bidi
+    /// for this line's pane (see `bidi_disabled_by_foreground_process`).
+    /// This is derived from the pane's *live* foreground process, which can
+    /// change without the line's own content (and thus `shape_hash`)
+    /// changing at all -- e.g. the same scrollback line redrawn before and
+    /// after `claude` exits back to a shell prompt. Without this in the
+    /// key, a stale cached quad from one state would incorrectly get
+    /// reused after the foreground process changes.
+    pub bidi_process_override: bool,
 }
 
 pub struct LineQuadCacheValue {
@@ -92,6 +101,8 @@ pub struct LineToElementParams<'a> {
     pub reverse_video: bool,
     pub shape_key: &'a Option<LineToEleShapeCacheKey>,
     pub is_wrap_continuation: bool,
+    /// See `LineQuadCacheKey::bidi_process_override`.
+    pub bidi_process_override: bool,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -100,6 +111,8 @@ pub struct LineToEleShapeCacheKey {
     pub composing: Option<(usize, String)>,
     pub shape_generation: usize,
     pub is_wrap_continuation: bool,
+    /// See `LineQuadCacheKey::bidi_process_override`.
+    pub bidi_process_override: bool,
 }
 
 pub struct LineToElementShapeItem {
@@ -1015,6 +1028,38 @@ fn update_next_frame_time(storage: &mut Option<Instant>, next_due: Option<Instan
             }
         }
     }
+}
+
+/// Whether `disable_bidi_for_processes_named` currently suppresses bidi for
+/// `pane`, based on its *live* foreground process (re-derived here rather
+/// than cached anywhere in this module -- the underlying
+/// `get_foreground_process_name` call already has its own short-lived
+/// cache, see `CachePolicy::AllowStale`). Callers that use this to decide
+/// whether to reorder a line must also fold the result into any cache key
+/// covering that decision (see `LineQuadCacheKey::bidi_process_override`),
+/// since the same line content can need different treatment as the
+/// foreground process changes.
+fn bidi_disabled_by_foreground_process(
+    pane: Option<&Arc<dyn Pane>>,
+    config: &ConfigHandle,
+) -> bool {
+    if config.disable_bidi_for_processes_named.is_empty() {
+        return false;
+    }
+    let Some(pane) = pane else {
+        return false;
+    };
+    let Some(proc_name) = pane.get_foreground_process_name(CachePolicy::AllowStale) else {
+        return false;
+    };
+    let basename = std::path::Path::new(&proc_name)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or(proc_name);
+    config
+        .disable_bidi_for_processes_named
+        .iter()
+        .any(|name| name.eq_ignore_ascii_case(&basename))
 }
 
 fn same_hyperlink(a: Option<&Arc<Hyperlink>>, b: Option<&Arc<Hyperlink>>) -> bool {

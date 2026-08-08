@@ -1,8 +1,8 @@
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
 use crate::termwindow::render::{
-    resolve_fg_color_attr, same_hyperlink, update_next_frame_time, ClusterStyleCache,
-    ComputeCellFgBgParams, ComputeCellFgBgResult, LineToElementParams, LineToElementShape,
-    RenderScreenLineParams, RenderScreenLineResult,
+    bidi_disabled_by_foreground_process, resolve_fg_color_attr, same_hyperlink,
+    update_next_frame_time, ClusterStyleCache, ComputeCellFgBgParams, ComputeCellFgBgResult,
+    LineToElementParams, LineToElementShape, RenderScreenLineParams, RenderScreenLineResult,
 };
 use crate::termwindow::LineToElementShapeItem;
 use ::window::DeadKeyStatus;
@@ -88,8 +88,13 @@ impl crate::TermWindow {
 
         let mut composition_width = 0;
 
-        let (_bidi_enabled, bidi_direction) = params.line.bidi_info();
-        let direction = bidi_direction.direction();
+        let (bidi_enabled, bidi_direction) = params.line.bidi_info();
+        let bidi_process_override = bidi_disabled_by_foreground_process(params.pane, params.config);
+        let direction = if bidi_enabled && !bidi_process_override {
+            bidi_direction.direction()
+        } else {
+            Direction::LeftToRight
+        };
 
         // Do we need to shape immediately, or can we use the pre-shaped data?
         if let Some(composing) = composing {
@@ -149,6 +154,7 @@ impl crate::TermWindow {
                 reverse_video: params.dims.reverse_video,
                 shape_key: &params.shape_key,
                 is_wrap_continuation: params.is_wrap_continuation,
+                bidi_process_override,
             };
 
             let (shaped, invalidate_on_hover) = self.build_line_element_shape(params)?;
@@ -726,7 +732,7 @@ impl crate::TermWindow {
         params: LineToElementParams,
     ) -> anyhow::Result<(Rc<Vec<LineToElementShape>>, bool)> {
         let (bidi_enabled, bidi_direction) = params.line.bidi_info();
-        let bidi_hint = if bidi_enabled {
+        let bidi_hint = if bidi_enabled && !params.bidi_process_override {
             Some(bidi_direction)
         } else {
             None
