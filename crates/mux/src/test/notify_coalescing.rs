@@ -1,33 +1,34 @@
-//! Regression coverage for task #148: `Mux::notify` no longer holds
-//! `subscribers.write()` while invoking callbacks, and repeated
-//! `MuxNotification::PaneOutput` notifications for the same pane are
-//! coalesced while one is already queued for delivery.
-//!
-//! Context (see the module docs on `Mux::notify`/`Mux::notify_from_any_thread`
-//! in `mux/src/lib.rs`): `parse_buffered_data` calls
-//! `Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id))` once
-//! per parser flush (default coalesce delay
-//! `mux_output_parser_coalesce_delay_ms` = 3ms), which, prior to this
-//! change, unconditionally scheduled a `spawn_into_main_thread` task for
-//! *every* flush. Each of those hops fans out through
-//! `subscribe_to_pane_updates`'s own `spawn_into_main_thread` callback and
-//! then `window.notify()` / `Connection::with_window_inner`, i.e. three
-//! main-thread message-pump iterations of pure scheduling overhead for
-//! what ultimately amounts to a single `InvalidateRect`. This module pins:
-//!
-//!  1. `Mux::notify` invokes every subscriber and does not hold
-//!     `subscribers.write()` while doing so (a subscriber that tries to
-//!     take the same lock from inside its callback -- eg. via
-//!     `Mux::subscribe` or a recursive `Mux::notify` -- must not
-//!     deadlock).
-//!  2. Repeated `PaneOutput` notifications for one pane collapse to a
-//!     single queued delivery while that delivery is in flight, but a
-//!     fresh notification is accepted again once the queued one has been
-//!     delivered.
 use super::*;
 use crate::pane::PaneId;
 use crate::{Mux, MuxNotification};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+/// Regression coverage for task #148: `Mux::notify` no longer holds
+/// `subscribers.write()` while invoking callbacks, and repeated
+/// `MuxNotification::PaneOutput` notifications for the same pane are
+/// coalesced while one is already queued for delivery.
+///
+/// Context (see the module docs on `Mux::notify`/`Mux::notify_from_any_thread`
+/// in `mux/src/lib.rs`): `parse_buffered_data` calls
+/// `Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id))` once
+/// per parser flush (default coalesce delay
+/// `mux_output_parser_coalesce_delay_ms` = 3ms), which, prior to this
+/// change, unconditionally scheduled a `spawn_into_main_thread` task for
+/// *every* flush. Each of those hops fans out through
+/// `subscribe_to_pane_updates`'s own `spawn_into_main_thread` callback and
+/// then `window.notify()` / `Connection::with_window_inner`, i.e. three
+/// main-thread message-pump iterations of pure scheduling overhead for
+/// what ultimately amounts to a single `InvalidateRect`. This module pins:
+///
+///  1. `Mux::notify` invokes every subscriber and does not hold
+///     `subscribers.write()` while doing so (a subscriber that tries to
+///     take the same lock from inside its callback -- eg. via
+///     `Mux::subscribe` or a recursive `Mux::notify` -- must not
+///     deadlock).
+///  2. Repeated `PaneOutput` notifications for one pane collapse to a
+///     single queued delivery while that delivery is in flight, but a
+///     fresh notification is accepted again once the queued one has been
+///     delivered.
 
 /// Routes `spawn_into_main_thread`/`spawn_into_main_thread_with_low_priority`
 /// through a queue that the test drains explicitly, mirroring the
@@ -296,5 +297,68 @@ fn pane_output_coalescing_is_scoped_per_pane() {
     );
 
     SCHEDULER_QUEUE.drain();
+    Mux::shutdown();
+}
+
+/// When output arrives *during* a PaneOutput delivery (in-flight race),
+/// the follow-up delivery must be scheduled. This test has a subscriber
+/// that triggers another PaneOutput for the same pane from within the
+/// delivery callback, simulating concurrent output. The follow-up must
+/// not be dropped. Note that if we're already on the main thread, the
+/// follow-up may run synchronously; the key assertion is that it runs at
+/// all (the callback count reaches 2), not how it's scheduled.
+#[test]
+fn pane_output_arriving_during_delivery_schedules_followup() {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+    install_queueing_scheduler();
+
+    let mux = Arc::new(Mux::new(None));
+    Mux::set_mux(&mux);
+
+    let pane_id: PaneId = 601;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let should_recurse = Arc::new(AtomicBool::new(true));
+
+    {
+        let calls = Arc::clone(&calls);
+        let should_recurse = Arc::clone(&should_recurse);
+        mux.subscribe(move |n| {
+            if matches!(n, MuxNotification::PaneOutput(id) if id == pane_id) {
+                let count = calls.fetch_add(1, Ordering::SeqCst);
+                // Only recurse on the first delivery to avoid infinite loop
+                if count == 0 && should_recurse.load(Ordering::SeqCst) {
+                    // Simulate output arriving concurrently with delivery
+                    Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id));
+                }
+            }
+            true
+        });
+    }
+
+    // Schedule first delivery from a spawned thread
+    thread::spawn(move || {
+        Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id));
+    })
+    .join()
+    .unwrap();
+
+    // Drain once: first delivery runs, queues/invokes second due to in-flight notify
+    SCHEDULER_QUEUE.drain();
+
+    // Both deliveries should have completed (even if second ran synchronously)
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "both the original delivery and the follow-up must be observed"
+    );
+
+    // Queue should be empty (no stuck pending state)
+    assert_eq!(
+        SCHEDULER_QUEUE.queue.lock().len(),
+        0,
+        "pending state should not get stuck after follow-up completes"
+    );
+
     Mux::shutdown();
 }

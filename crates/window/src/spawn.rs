@@ -83,12 +83,14 @@ impl SpawnQueue {
             func: f,
             at: Instant::now(),
         };
-        if high_pri {
-            self.spawned_funcs.lock().unwrap()
+        let depth = if high_pri {
+            self.spawned_funcs.lock().unwrap().push_back(f);
+            self.spawned_funcs.lock().unwrap().len()
         } else {
-            self.spawned_funcs_low_pri.lock().unwrap()
-        }
-        .push_back(f);
+            self.spawned_funcs_low_pri.lock().unwrap().push_back(f);
+            self.spawned_funcs_low_pri.lock().unwrap().len()
+        };
+        metrics::histogram!("executor.spawn_queue.depth", "pri" => if high_pri { "high" } else { "low" }).record(depth as f64);
     }
 
     fn has_any_queued(&self) -> bool {

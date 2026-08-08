@@ -36,6 +36,7 @@ use winreg::RegKey;
 pub struct Connection {
     event_handle: HANDLE,
     pub(crate) windows: RefCell<HashMap<HWindow, Rc<RefCell<WindowInner>>>>,
+    pub(crate) main_thread_id: Option<std::thread::ThreadId>,
 }
 
 pub(crate) fn get_appearance() -> Appearance {
@@ -165,6 +166,7 @@ impl Connection {
         Ok(Self {
             event_handle,
             windows: RefCell::new(HashMap::new()),
+            main_thread_id: Some(std::thread::current().id()),
         })
     }
 
