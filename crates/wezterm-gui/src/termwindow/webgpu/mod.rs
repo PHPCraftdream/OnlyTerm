@@ -1,5 +1,4 @@
 use config::GpuInfo;
-use parking_lot::Mutex;
 use std::sync::Arc;
 use window::bitmaps::Texture2d;
 #[cfg(windows)]
@@ -8,7 +7,7 @@ use window::raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
     RawWindowHandle, WindowHandle,
 };
-use window::{BitmapImage, Dimensions, Rect, Window};
+use window::{BitmapImage, Rect, Window};
 
 #[repr(C)]
 #[derive(Copy, Clone, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -40,71 +39,107 @@ pub struct GpuFrame {
     pub uniform: ShaderUniform,
 }
 
+/// WebGpuState is now a composition of a shared process-wide GPU context
+/// and per-window surface state.
+///
+/// The shared context (ProcessGpuContext) is created once per process and
+/// reused across all windows. It contains the expensive resources:
+/// Instance, Adapter, Device, Queue, shader, layouts, samplers, and a pipeline
+/// cache keyed by surface format.
+///
+/// The per-window surface (WindowGpuSurface) contains the surface itself,
+/// its configuration, dimensions, and the HWND it targets.
 pub struct WebGpuState {
-    pub adapter_info: wgpu::AdapterInfo,
-    pub downlevel_caps: wgpu::DownlevelCapabilities,
-    pub surface: wgpu::Surface<'static>,
-    pub device: wgpu::Device,
-    pub queue: Arc<wgpu::Queue>,
-    // Lock ordering: never hold either lock across a call to
-    // `self.surface.configure(...)`; if both are needed, take `dimensions`
-    // before `config`.
-    pub config: Mutex<wgpu::SurfaceConfiguration>,
-    pub dimensions: Mutex<Dimensions>,
-    pub render_pipeline: wgpu::RenderPipeline,
-    shader_uniform_bind_group_layout: wgpu::BindGroupLayout,
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
-    pub texture_nearest_sampler: wgpu::Sampler,
-    pub texture_linear_sampler: wgpu::Sampler,
-    /// The live HWND that the WebGpu surface actually targets, sampled from
-    /// the `RawWindowHandle` at construction time.
+    /// Shared process-wide GPU context
+    pub context: Arc<ProcessGpuContext>,
+    /// Per-window surface state
+    pub surface: WindowGpuSurface,
+    /// Liveness flag for this specific window's WebGpuState, checked by the
+    /// device-lost callback registered in `new`.
     ///
-    /// This used to be (and still is) used by `resize()`'s `GetClientRect`
-    /// workaround, but its role has expanded: since task #252, the surface
-    /// is no longer created against the application's own top-level HWND
-    /// directly -- it targets a dedicated `WS_CHILD` window (see
-    /// `window::os::windows::Window::webgpu_child_hwnd` /
-    /// `create_webgpu_child_window`) that exactly overlays the top-level
-    /// window's client area and is input-transparent
-    /// (`WM_NCHITTEST`->`HTTRANSPARENT`). This exists because DXGI only
-    /// allows one swapchain per HWND: putting the surface on its own child
-    /// HWND is what will let a future in-place renderer rebuild (task #253,
-    /// not yet implemented) tear down and recreate the surface without
-    /// fighting the top-level window's swapchain lifetime. So this field is
-    /// now simultaneously "the resize workaround's HWND" AND "the actual
-    /// surface target HWND" -- they're the same child HWND, not the
-    /// top-level one. We deliberately don't keep the `RawHandlePair` itself
-    /// around: `raw-window-handle`'s enums are `!Send`/`!Sync` on account of
-    /// non-Windows variants, even though we only ever hold a Windows one.
-    #[cfg(windows)]
-    client_hwnd: Option<isize>,
-    /// Liveness flag for this specific device/surface instance, checked by
-    /// the `set_device_lost_callback` closure registered in `new` (task
-    /// #254) before it acts on a device-lost event (task #267).
-    ///
-    /// `wgpu::Device::set_device_lost_callback` fires the callback for
-    /// however long the underlying `wgpu::Device` handle is alive, with no
-    /// way to unregister it -- and, since it's invoked from
-    /// `Device::handle_hal_error`/`Device::lose` on whatever thread
-    /// happened to make the wgpu call that observed the failure (see the
-    /// call site in `new` below), a device that this window has already
-    /// abandoned (superseded by an in-place rebuild, task #253) can still
-    /// fire a *late* device-lost event -- exactly what a real TDR produces
-    /// on the very device this whole recovery machinery exists to escape
-    /// from. Without this flag, that late event would reach
-    /// `TermWindow::handle_render_error_recovery` and charge a spurious
-    /// rebuild attempt against a perfectly healthy *new* WebGpu device.
-    ///
-    /// Set to `true` for the lifetime of this instance; the `TermWindow`
-    /// call site that abandons this `WebGpuState` (`begin_renderer_rebuild`
-    /// in `termwindow/render_pipeline.rs`) flips it to `false` at the moment
-    /// it takes/drops it, *before* the replacement
-    /// device (if any) exists -- so the callback's check can never
-    /// race-observe stale-but-not-yet-marked-stale state from the GUI
-    /// thread's perspective (both the flip and the `notify()` re-entry that
-    /// reads it are serialized through the GUI thread's `TermWindowNotif`
-    /// dispatch).
+    /// Since device-lost is now a process-wide event (all windows share the
+    /// same device), we still need per-window liveness tracking to avoid
+    /// triggering recovery for windows that have already been abandoned.
+    /// When a window's WebGpuState is dropped (or superseded by an in-place
+    /// rebuild), this flag is set to false.
     is_current: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl WebGpuState {
+    /// Convenience accessor for adapter_info (delegates to shared context)
+    pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
+        &self.context.adapter_info
+    }
+
+    /// Convenience accessor for downlevel_caps (delegates to shared context)
+    pub fn downlevel_caps(&self) -> &wgpu::DownlevelCapabilities {
+        &self.context.downlevel_caps
+    }
+
+    /// Convenience accessor for device (delegates to shared context)
+    pub fn device(&self) -> &wgpu::Device {
+        &self.context.device
+    }
+
+    /// Convenience accessor for queue (delegates to shared context)
+    pub fn queue(&self) -> &Arc<wgpu::Queue> {
+        &self.context.queue
+    }
+
+    /// Convenience accessor for shader_uniform_bind_group_layout (delegates to shared context)
+    pub fn shader_uniform_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.context.shader_uniform_bind_group_layout
+    }
+
+    /// Convenience accessor for texture_bind_group_layout (delegates to shared context)
+    pub fn texture_bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.context.texture_bind_group_layout
+    }
+
+    /// Convenience accessor for texture_nearest_sampler (delegates to shared context)
+    pub fn texture_nearest_sampler(&self) -> &wgpu::Sampler {
+        &self.context.texture_nearest_sampler
+    }
+
+    /// Convenience accessor for texture_linear_sampler (delegates to shared context)
+    pub fn texture_linear_sampler(&self) -> &wgpu::Sampler {
+        &self.context.texture_linear_sampler
+    }
+
+    /// Get the HWND for this surface (Windows only)
+    #[cfg(windows)]
+    pub fn client_hwnd(&self) -> Option<isize> {
+        self.surface.client_hwnd()
+    }
+
+    /// Get the render pipeline for this window's surface format.
+    /// The pipeline is cached in the shared context, keyed by format.
+    fn get_render_pipeline(&self) -> wgpu::RenderPipeline {
+        let config = self.surface.config.lock();
+        let supports_reinterpret_view = self
+            .context
+            .downlevel_caps
+            .flags
+            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
+        let render_format = if supports_reinterpret_view {
+            config.format.remove_srgb_suffix()
+        } else {
+            config.format
+        };
+        self.context.get_or_create_pipeline(render_format)
+    }
+
+    /// Marks this WebGpuState as abandoned (superseded by a rebuild).
+    /// Device-lost events that arrive after this are ignored.
+    pub fn mark_stale(&self) {
+        self.is_current
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Check if this WebGpuState is still the current one for its window.
+    pub fn is_current(&self) -> bool {
+        self.is_current.load(std::sync::atomic::Ordering::Acquire)
+    }
 }
 
 pub struct RawHandlePair {
@@ -232,7 +267,7 @@ impl WebGpuTexture {
     }
 
     pub fn new(width: u32, height: u32, state: &WebGpuState) -> anyhow::Result<Self> {
-        let limit = state.device.limits().max_texture_dimension_2d;
+        let limit = state.device().limits().max_texture_dimension_2d;
 
         if width > limit || height > limit {
             // Ideally, wgpu would have a fallible create_texture method,
@@ -248,7 +283,7 @@ impl WebGpuTexture {
 
         let format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let view_formats = if state
-            .downlevel_caps
+            .downlevel_caps()
             .flags
             .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
         {
@@ -256,7 +291,7 @@ impl WebGpuTexture {
         } else {
             vec![]
         };
-        let texture = state.device.create_texture(&wgpu::TextureDescriptor {
+        let texture = state.device().create_texture(&wgpu::TextureDescriptor {
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -274,7 +309,7 @@ impl WebGpuTexture {
             texture,
             width,
             height,
-            queue: Arc::clone(&state.queue),
+            queue: Arc::clone(state.queue()),
         })
     }
 }
@@ -340,6 +375,8 @@ fn clamp_surface_dimensions(width: u32, height: u32, max_texture_dimension_2d: u
 const _: fn() = || {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<WebGpuState>();
+    assert_send_sync::<ProcessGpuContext>();
+    assert_send_sync::<WindowGpuSurface>();
 };
 
 // Compile-time regression guard for this task specifically: every call site
@@ -431,4 +468,6 @@ mod tests {
     }
 }
 
+pub use self::context::{ProcessGpuContext, WindowGpuSurface};
+mod context;
 mod state_impl;

@@ -47,7 +47,7 @@ impl RenderContext {
     }
 
     pub fn renderer_info(&self) -> String {
-        let info = adapter_info_to_gpu_info(self.0.adapter_info.clone());
+        let info = adapter_info_to_gpu_info(self.0.adapter_info().clone());
         format!("WebGPU: {info}")
     }
 }
@@ -113,7 +113,7 @@ impl std::ops::Deref for WebGpuVertexBuffer {
 impl WebGpuVertexBuffer {
     pub fn new(num_vertices: usize, state: &Arc<WebGpuState>) -> Self {
         Self {
-            buf: state.device.create_buffer(&wgpu::BufferDescriptor {
+            buf: state.device().create_buffer(&wgpu::BufferDescriptor {
                 label: Some("Vertex Buffer"),
                 size: (num_vertices * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
                 usage: wgpu::BufferUsages::VERTEX,
@@ -134,7 +134,7 @@ impl WebGpuVertexBuffer {
     }
 
     pub fn recreate(&mut self) -> wgpu::Buffer {
-        let mut new_buf = self.state.device.create_buffer(&wgpu::BufferDescriptor {
+        let mut new_buf = self.state.device().create_buffer(&wgpu::BufferDescriptor {
             label: Some("Vertex Buffer"),
             size: (self.num_vertices * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX,
@@ -160,7 +160,7 @@ impl WebGpuIndexBuffer {
     pub fn new(indices: &[u32], state: &WebGpuState) -> Self {
         Self {
             buf: state
-                .device
+                .device()
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("Index Buffer"),
                     usage: wgpu::BufferUsages::INDEX,
