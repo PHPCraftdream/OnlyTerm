@@ -890,6 +890,21 @@ pub struct Config {
     #[dynamic(default = "default_bidi_direction")]
     pub bidi_direction: ParagraphDirectionHint,
 
+    /// Panes whose foreground process is one of these names never have bidi
+    /// reordering applied, even when `bidi_enabled` is true. Matched against
+    /// the foreground process's executable basename (case-insensitively),
+    /// re-checked live as the foreground process changes.
+    ///
+    /// This exists for TUI applications (like Claude Code) that lay out and
+    /// position their own text -- they assume the terminal shows exactly the
+    /// bytes they wrote, in the order they wrote them. Reordering their
+    /// Hebrew output at the terminal layer conflicts with the app's own
+    /// (bidi-unaware) cursor/layout bookkeeping and produces worse results
+    /// than not reordering at all, even though the same reordering is
+    /// correct for a plain shell.
+    #[dynamic(default = "default_disable_bidi_for_processes_named")]
+    pub disable_bidi_for_processes_named: Vec<String>,
+
     #[dynamic(default = "default_stateless_process_list")]
     pub skip_close_confirmation_for_processes_named: Vec<String>,
 
@@ -1377,6 +1392,13 @@ fn default_tiling_desktop_environments() -> Vec<String> {
     .iter()
     .map(|s| s.to_string())
     .collect()
+}
+
+fn default_disable_bidi_for_processes_named() -> Vec<String> {
+    ["claude.exe", "claude"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 fn default_stateless_process_list() -> Vec<String> {

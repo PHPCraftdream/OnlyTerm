@@ -2,8 +2,8 @@ use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
 use crate::termwindow::render::{
-    same_hyperlink, CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
-    RenderScreenLineParams,
+    bidi_disabled_by_foreground_process, same_hyperlink, CursorProperties, LineQuadCacheKey,
+    LineQuadCacheValue, LineToEleShapeCacheKey, RenderScreenLineParams,
 };
 use crate::termwindow::{ScrollHit, UIItem, UIItemType};
 use ::window::bitmaps::TextureRect;
@@ -459,6 +459,10 @@ impl crate::TermWindow {
                     };
 
                     let shape_hash = self.term_window.shape_hash_for_line(line);
+                    let bidi_process_override = bidi_disabled_by_foreground_process(
+                        Some(&self.pos.pane),
+                        &self.term_window.config,
+                    );
 
                     let quad_key = LineQuadCacheKey {
                         pane_id: self.pane_id,
@@ -478,6 +482,7 @@ impl crate::TermWindow {
                         phys_line_idx: line_idx,
                         reverse_video: self.dims.reverse_video,
                         is_wrap_continuation,
+                        bidi_process_override,
                     };
 
                     if let Some(cached_quad) =
@@ -547,6 +552,7 @@ impl crate::TermWindow {
                             None
                         },
                         is_wrap_continuation,
+                        bidi_process_override,
                     };
 
                     let render_result = self
