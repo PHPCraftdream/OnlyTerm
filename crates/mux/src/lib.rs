@@ -94,6 +94,10 @@ static LAST_SUBSCRIBER_ID: AtomicUsize = AtomicUsize::new(0);
 
 type MuxSubscriber = Arc<dyn Fn(MuxNotification) -> bool + Send + Sync>;
 
+/// Per-pane state for coalescing PaneOutput notifications.
+/// Tracks: (is_delivery_in_flight, has_more_output_pending)
+type PaneOutputState = (bool, bool, usize);
+
 pub struct Mux {
     tabs: RwLock<HashMap<TabId, Arc<Tab>>>,
     panes: RwLock<HashMap<PaneId, Arc<dyn Pane>>>,
@@ -108,25 +112,14 @@ pub struct Mux {
     num_panes_by_workspace: RwLock<HashMap<String, usize>>,
     main_thread_id: std::thread::ThreadId,
     agent: Option<AgentProxy>,
-    /// Coalescing state for `MuxNotification::PaneOutput`: the set of
-    /// pane ids for which a `PaneOutput` notification has already been
-    /// scheduled onto the main thread but not yet delivered to
-    /// subscribers. Without this, `parse_buffered_data`'s per-pane flush
-    /// loop (coalesce delay `mux_output_parser_coalesce_delay_ms`,
-    /// default 3ms) enqueues one `notify_from_any_thread` main-thread
-    /// task *per flush*, each of which fans out through
-    /// `subscribe_to_pane_updates` into a further `spawn_into_main_thread`
-    /// and then `window.notify()` -> `Connection::with_window_inner`,
-    /// i.e. 3 message-pump iterations of work for what is ultimately a
-    /// single `InvalidateRect`. When the GUI thread is momentarily busy
-    /// (rendering, or draining other spawned work) and multiple flushes
-    /// land before the first notification is processed, this lets us
-    /// collapse them down to one pending notification per pane: further
-    /// flushes just see the id is already pending and skip scheduling.
-    /// The GUI still ends up observing the latest output, because
-    /// `mux_pane_output_event` always reads current pane state rather
-    /// than replaying the notification payload.
-    pane_output_notify_pending: Mutex<HashSet<PaneId>>,
+    /// Coalescing state for `MuxNotification::PaneOutput`: maps pane id
+    /// to (in_flight, has_more_output, coalesce_count). When new output arrives:
+    ///
+    /// - If in_flight is false, we schedule delivery and set it to true
+    /// - If in_flight is true, we set has_more_output=true and increment coalesce_count
+    /// - When delivery completes, we check if coalesce_count increased (meaning output
+    ///   arrived during the callback) vs if it was already set before (pre-drain coalescing).
+    pane_output_notify_state: Mutex<HashMap<PaneId, PaneOutputState>>,
 }
 
 lazy_static::lazy_static! {
@@ -214,7 +207,7 @@ impl Mux {
             num_panes_by_workspace: RwLock::new(HashMap::new()),
             main_thread_id: std::thread::current().id(),
             agent,
-            pane_output_notify_pending: Mutex::new(HashSet::new()),
+            pane_output_notify_state: Mutex::new(HashMap::new()),
         }
     }
 
@@ -465,21 +458,19 @@ impl Mux {
             .insert(sub_id, Arc::new(subscriber));
     }
 
-    /// If `notification` is a `PaneOutput` for a pane that currently has
-    /// one already pending delivery, clear that pending marker (so this
-    /// call is the one that will observe/deliver the latest state) and
-    /// return `true`. Called right before a queued `PaneOutput`
-    /// notification is actually delivered to subscribers, so that any
-    /// flush racing with delivery still finds the marker gone and
-    /// schedules a fresh notification rather than silently being dropped.
-    fn clear_pane_output_pending(&self, notification: &MuxNotification) {
-        if let MuxNotification::PaneOutput(pane_id) = notification {
-            self.pane_output_notify_pending.lock().remove(pane_id);
-        }
-    }
-
     pub fn notify(&self, notification: MuxNotification) {
-        self.clear_pane_output_pending(&notification);
+        let (pane_id, initial_coalesce_count) =
+            if let MuxNotification::PaneOutput(pane_id) = &notification {
+                // Capture the coalesce_count BEFORE we start delivering.
+                // If it increases during delivery, output arrived during the callback.
+                let coalesce_count = {
+                    let state = self.pane_output_notify_state.lock();
+                    state.get(pane_id).map(|(_, _, count)| *count).unwrap_or(0)
+                };
+                (Some(*pane_id), coalesce_count)
+            } else {
+                (None, 0)
+            };
 
         // Snapshot the subscriber ids+callbacks under a short-lived read
         // lock, then release it before invoking any callbacks. Subscriber
@@ -523,6 +514,41 @@ impl Mux {
                 subscribers.remove(&id);
             }
         }
+
+        // After all subscribers have been notified, clear the pending marker
+        // for PaneOutput notifications and check if we need to schedule a
+        // follow-up delivery. We schedule a follow-up only if coalesce_count
+        // increased DURING the delivery (meaning output arrived from within
+        // the callback), not if it was already set BEFORE the delivery started.
+        if let Some(pane_id) = pane_id {
+            let should_reschedule = {
+                let mut state = self.pane_output_notify_state.lock();
+                if let Some((_, has_more_output, coalesce_count)) = state.get_mut(&pane_id) {
+                    // Check if coalesce_count increased during delivery.
+                    // If it did, output arrived from within the callback.
+                    let coalesce_count_increased = *coalesce_count > initial_coalesce_count;
+                    if coalesce_count_increased {
+                        // Keep in_flight=true for the new delivery, reset everything else
+                        *coalesce_count = 0;
+                        *has_more_output = false;
+                    } else {
+                        // No new output during delivery; clean up
+                        state.remove(&pane_id);
+                    }
+                    coalesce_count_increased
+                } else {
+                    false
+                }
+            };
+
+            if should_reschedule {
+                // More output arrived while we were delivering; schedule another round.
+                // We must call dispatch_notification OUTSIDE the lock to avoid
+                // lock-ordering issues (dispatch may acquire other locks).
+                metrics::counter!("mux.pane_output.rescheduled").increment(1);
+                Self::dispatch_notification(MuxNotification::PaneOutput(pane_id));
+            }
+        }
     }
 
     /// Schedules `notification` for delivery on the main thread (or
@@ -533,35 +559,43 @@ impl Mux {
     /// `mux_output_parser_coalesce_delay_ms`, default 3ms), which under
     /// sustained pty output can mean hundreds of calls per second per
     /// pane. Each call that reaches the `spawn_into_main_thread` branch
-    /// below costs a hop through the main-thread spawn queue, then a
-    /// further hop in `subscribe_to_pane_updates`'s callback, then a
-    /// third hop via `window.notify()` / `Connection::with_window_inner`
-    /// -- three message-pump iterations for what ultimately amounts to a
-    /// single `InvalidateRect`. If a `PaneOutput` for a given pane is
-    /// already scheduled and hasn't been delivered yet, we skip
-    /// scheduling another one; `mux_pane_output_event` always inspects
-    /// current pane state (not a snapshot carried by the notification),
-    /// so the single delivery that does go through still reflects
-    /// whatever is the latest state by the time it runs -- coalescing
-    /// only elides redundant wakeups, it never drops data.
+    /// below costs a hop through the main-thread spawn queue. To bound
+    /// the queue depth, we track pending delivery per pane and only
+    /// spawn when no delivery is already in-flight. When a delivery
+    /// completes, we check if more output arrived and schedule exactly
+    /// one more delivery if needed. `mux_pane_output_event` always
+    /// inspects current pane state (not a snapshot carried by the
+    /// notification), so the single delivery that does go through still
+    /// reflects whatever is the latest state by the time it runs --
+    /// coalescing only elides redundant wakeups, it never drops data.
     pub fn notify_from_any_thread(notification: MuxNotification) {
         if let MuxNotification::PaneOutput(pane_id) = &notification {
             let mux = match Mux::try_get() {
                 Some(mux) => mux,
                 None => {
-                    // No mux around to coalesce against (eg. shutting
-                    // down); fall through to the normal dispatch path,
-                    // which will itself no-op if there's no mux.
                     return Self::dispatch_notification(notification);
                 }
             };
-            let already_pending = {
-                let mut pending = mux.pane_output_notify_pending.lock();
-                !pending.insert(*pane_id)
+
+            let should_schedule = {
+                let mut state = mux.pane_output_notify_state.lock();
+                let entry = state.entry(*pane_id).or_insert((false, false, 0));
+                if entry.0 {
+                    // Already delivering; just mark that more arrived
+                    entry.1 = true;
+                    entry.2 += 1; // Track that we coalesced during this delivery
+                    metrics::counter!("mux.pane_output.coalesced").increment(1);
+                    false
+                } else {
+                    // Not delivering; schedule delivery now
+                    entry.0 = true;
+                    entry.2 = 0; // Reset coalesce counter for new delivery
+                    metrics::counter!("mux.pane_output.scheduled").increment(1);
+                    true
+                }
             };
-            if already_pending {
-                // Already pending delivery; the in-flight notification
-                // will observe the latest state, so drop this one.
+
+            if !should_schedule {
                 return;
             }
         }
@@ -1005,7 +1039,7 @@ impl Mux {
     /// rather than only inferring it from callback invocation counts.
     #[cfg(test)]
     pub(crate) fn pane_output_notify_is_pending(&self, pane_id: PaneId) -> bool {
-        self.pane_output_notify_pending.lock().contains(&pane_id)
+        self.pane_output_notify_state.lock().contains_key(&pane_id)
     }
 
     pub fn set_banner(&self, banner: Option<String>) {

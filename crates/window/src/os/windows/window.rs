@@ -1902,6 +1902,25 @@ impl WindowOps for Window {
         });
     }
 
+    #[cfg(windows)]
+    fn notify_inline<T: Any + Send + Sync>(&self, t: T)
+    where
+        Self: Sized,
+    {
+        let conn = Connection::get().expect("Connection::init has not been called");
+        let current_id = std::thread::current().id();
+        let main_id = conn.main_thread_id.expect("main_thread_id not set");
+        if current_id != main_id {
+            panic!("notify_inline called from non-main thread");
+        }
+        if let Some(handle) = conn.get_window(self.0) {
+            let mut inner = handle.borrow_mut();
+            inner
+                .events
+                .dispatch(WindowEvent::Notification(Box::new(t)));
+        }
+    }
+
     fn close(&self) {
         Connection::with_window_inner(self.0, |inner| {
             inner.close();

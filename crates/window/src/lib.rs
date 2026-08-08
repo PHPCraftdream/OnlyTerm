@@ -248,6 +248,24 @@ pub trait WindowOps {
     where
         Self: Sized;
 
+    /// Windows-specific: dispatch notification inline when already on
+    /// the main thread. This avoids an unnecessary spawn through
+    /// `Connection::with_window_inner` (which was spawn #3 in the
+    /// PaneOutput delivery path). Panics if called from a non-main thread.
+    #[cfg(windows)]
+    fn notify_inline<T: Any + Send + Sync>(&self, t: T)
+    where
+        Self: Sized;
+
+    /// Non-Windows stub for notify_inline
+    #[cfg(not(windows))]
+    fn notify_inline<T: Any + Send + Sync>(&self, t: T)
+    where
+        Self: Sized,
+    {
+        self.notify(t);
+    }
+
     /// Hide a visible window
     fn hide(&self);
 

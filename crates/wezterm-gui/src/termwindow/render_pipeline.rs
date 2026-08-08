@@ -1628,7 +1628,14 @@ impl TermWindow {
             }
         }
 
-        window.notify(TermWindowNotif::MuxNotification(n));
+        // For PaneOutput notifications, use notify_inline to avoid spawn #3
+        // (Connection::with_window_inner). We're already on the main thread,
+        // so we can dispatch directly.
+        if matches!(n, MuxNotification::PaneOutput(_)) {
+            window.notify_inline(TermWindowNotif::MuxNotification(n));
+        } else {
+            window.notify(TermWindowNotif::MuxNotification(n));
+        }
 
         true
     }
@@ -1643,14 +1650,11 @@ impl TermWindow {
                 // Unsubscribe this handler from the mux
                 return false;
             }
+            // We're already on the main thread here (Mux::notify only calls
+            // subscribers from the main thread, either directly or after
+            // spawning). No need to spawn again - this was spawn #2.
             let mux_window_id = *mux_window_id.lock().unwrap();
-            let window = window.clone();
-            let dead = dead.clone();
-            promise::spawn::spawn_into_main_thread(async move {
-                Self::mux_pane_output_event_callback(n, &window, mux_window_id, &dead)
-            })
-            .detach();
-            true
+            Self::mux_pane_output_event_callback(n, &window, mux_window_id, &dead)
         });
     }
 
