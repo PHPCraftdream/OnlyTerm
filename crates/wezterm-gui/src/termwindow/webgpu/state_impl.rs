@@ -1,18 +1,37 @@
 use super::*;
 
-use crate::quad::Vertex;
 use anyhow::anyhow;
-use config::{ConfigHandle, WebGpuPowerPreference};
-use parking_lot::Mutex;
+use config::ConfigHandle;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
-use window::raw_window_handle::RawWindowHandle;
-use window::{Dimensions, Window, WindowOps};
+use window::{Dimensions, Window};
+
+/// Helper function to compute a compatibility list for error messages.
+pub fn compute_compatibility_list(
+    instance: &wgpu::Instance,
+    backends: wgpu::Backends,
+    surface: &wgpu::Surface,
+) -> Vec<String> {
+    use super::adapter_info_to_gpu_info;
+    instance
+        .enumerate_adapters(backends)
+        .into_iter()
+        .map(|a| {
+            let info = adapter_info_to_gpu_info(a.get_info());
+            let compatible = a.is_surface_supported(surface);
+            format!(
+                "{}, compatible={}",
+                info,
+                if compatible { "yes" } else { "NO" }
+            )
+        })
+        .collect()
+}
 
 /// Runs `f` on a dedicated, one-shot background OS thread and returns a
 /// `promise::Future` that resolves with its result once the thread finishes.
 ///
-/// This exists specifically so `WebGpuState::new_impl` can move
+/// This exists specifically so `ProcessGpuContext::new` can move
 /// `Instance::new`/adapter selection (measured ~4s combined on some hardware
 /// -- see task #311) off the GUI thread. `promise::spawn`'s executor (backed
 /// by `window::spawn::SPAWN_QUEUE`, drained once per message-loop iteration
@@ -30,7 +49,7 @@ use window::{Dimensions, Window, WindowOps};
 /// depends on (`Promise`/`Future`'s shared `Core` is behind a `Mutex`, so
 /// this is race-free regardless of which thread calls `result`/`poll`
 /// first).
-fn run_on_background_thread<T, F>(f: F) -> promise::Future<T>
+pub(super) fn run_on_background_thread<T, F>(f: F) -> promise::Future<T>
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
@@ -64,26 +83,6 @@ where
     future
 }
 
-fn compute_compatibility_list(
-    instance: &wgpu::Instance,
-    backends: wgpu::Backends,
-    surface: &wgpu::Surface,
-) -> Vec<String> {
-    instance
-        .enumerate_adapters(backends)
-        .into_iter()
-        .map(|a| {
-            let info = adapter_info_to_gpu_info(a.get_info());
-            let compatible = a.is_surface_supported(surface);
-            format!(
-                "{}, compatible={}",
-                info,
-                if compatible { "yes" } else { "NO" }
-            )
-        })
-        .collect()
-}
-
 impl WebGpuState {
     pub async fn new(
         window: &Window,
@@ -106,631 +105,40 @@ impl WebGpuState {
         #[cfg(not(windows))]
         let handle = RawHandlePair::new(window);
 
-        let state = Self::new_impl(handle, dimensions, config).await?;
+        // Get or create the shared process-wide GPU context.
+        // This is the expensive part (Instance, adapter, device creation)
+        // that only happens once per process.
+        let config_clone = config.clone();
+        let context =
+            ProcessGpuContext::get_or_init(move || ProcessGpuContext::new(&config_clone))?;
 
-        // Wire up wgpu's device-lost signal (task #254) to the same
-        // in-place-rebuild recovery path task #253 built for a hung render
-        // thread. A real Windows TDR (Timeout Detection & Recovery) resets
-        // the GPU adapter, which wgpu surfaces by invalidating the device
-        // and invoking this callback -- see wgpu-core 25.0.2's
-        // `Device::lose` (called from `Device::handle_hal_error` on
-        // `hal::DeviceError::Lost`/`ResourceCreationFailed`/`Unexpected`),
-        // which runs the callback synchronously, inline, on whatever thread
-        // happened to make the wgpu call that observed the failure. In this
-        // codebase that's always our own render thread (`submit_one_frame`
-        // et al never call into wgpu from any other thread), so this
-        // closure -- like `submit_one_frame`'s own `SurfaceError::Other`
-        // handling right below it -- runs on the render thread, never on
-        // some wgpu-internal thread, and the same `window.notify(...)` +
-        // `TermWindowNotif::Apply` bridge back to the GUI thread applies
-        // unchanged. `set_device_lost_callback` only requires the closure to
-        // be `Fn(..) + Send + 'static`, which a cloned `Window` (itself
-        // `Clone + Send`, see `RenderThreadSeed::window`'s existing use)
-        // satisfies without any unsafe/FFI.
-        //
-        // Also capture `state.is_current` (task #267): `set_device_lost_callback`
-        // has no way to unregister itself, so this same closure keeps living
-        // for as long as `state.device` does, including after this
-        // `WebGpuState` has been abandoned by an in-place rebuild
-        // (`begin_renderer_rebuild`), which calls `mark_stale()` on the
-        // outgoing `WebGpuState` before dropping it. A device-lost event
-        // that fires after that point is a *late* signal from a device this
-        // window has already moved on from, and must not trigger recovery:
-        // mirrors `submit_one_frame`'s existing `window_destroyed` check in
-        // `renderthread.rs`, just gated on "is this device still the current
-        // one" instead of "is the window still alive".
-        let win = window.clone();
-        let is_current = Arc::clone(&state.is_current);
-        state
-            .device
-            .set_device_lost_callback(move |reason, message| {
-                if !is_current.load(std::sync::atomic::Ordering::Acquire) {
-                    // Stale event from an abandoned device (already superseded
-                    // by a rebuild, or this window has already permanently
-                    // fallen back to OpenGL): the recovery machinery this event
-                    // would otherwise trigger no longer applies to this device,
-                    // so just log and drop it.
-                    log::debug!(
-                        "wgpu device lost ({:?}): {}; ignoring -- this device was already \
-                     abandoned (superseded by a rebuild or a permanent OpenGL fallback)",
-                        reason,
-                        message
-                    );
-                    return;
-                }
-                log::error!(
-                    "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
-                 (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
-                    reason,
-                    message
-                );
-                metrics::counter!("gui.render_thread.device_lost").increment(1);
-                let win2 = win.clone();
-                let reason_msg = format!(
-                    "this window's wgpu device was lost ({:?}): {}",
-                    reason, message
-                );
-                win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                    move |tw| {
-                        tw.handle_render_error_recovery(&win2, &reason_msg);
-                    },
-                )));
-            });
+        // Create the per-window surface
+        let surface = WindowGpuSurface::new(&context, &handle, dimensions, config).await?;
 
-        Ok(state)
-    }
+        let is_current = Arc::new(std::sync::atomic::AtomicBool::new(true));
 
-    pub async fn new_impl(
-        handle: RawHandlePair,
-        dimensions: Dimensions,
-        config: &ConfigHandle,
-    ) -> anyhow::Result<Self> {
-        // `Backends::all()` used to be tried up front, but per-backend
-        // measurements (task #318) on an Intel UHD Windows laptop showed that
-        // is paying for two independent costs that don't need to be paid
-        // together:
-        //   - `Instance::new(DX12)`         ~16ms,  `request_adapter` ~2.0s
-        //   - `Instance::new(VULKAN)`       ~2.2s,  `request_adapter` ~3ms
-        //   - `Instance::new(GL)`           ~0.1s,  `request_adapter` ~0.4ms
-        // i.e. DX12's cost is almost entirely in enumerating/scoring
-        // adapters, while Vulkan's cost is almost entirely in
-        // `Instance::new` loading the Vulkan loader and every installed ICD
-        // (including software/LLVMpipe-style ones) just to then not use any
-        // of them. `Backends::all()` pays both bills even though Windows
-        // only needs one adapter. Since DX12 is the primary native backend
-        // on Windows (Vulkan/GL are only there as a fallback for machines
-        // where DX12 has no usable adapter), try DX12 alone first and only
-        // widen to `Backends::all()` if that comes up empty -- this is the
-        // same "narrow, then widen on failure" shape the preferred-adapter
-        // search already uses below, just applied one level up.
-        #[cfg(windows)]
-        let primary_backends = wgpu::Backends::DX12;
-        // Not measured on macOS/Linux for this task; leave them exactly as
-        // before (full enumeration) rather than guessing at a narrower set
-        // that could regress hardware this change was never tested against.
-        #[cfg(not(windows))]
-        let primary_backends = wgpu::Backends::all();
-
-        // Always used for the diagnostic adapter list on a hard failure
-        // (`compute_compatibility_list` below) and as the final fallback if
-        // `primary_backends` doesn't yield a usable adapter, so that neither
-        // the error message nor a non-default `webgpu_preferred_adapter`
-        // (which may name a Vulkan/GL adapter) ever silently lose visibility
-        // into backends this platform supports.
-        let all_backends = wgpu::Backends::all();
-
-        // `Instance::new` and adapter selection together are the expensive
-        // part of WebGpu startup (measured ~4s total on an Intel UHD laptop
-        // with `Backends::all()`; task #311). Neither one touches the window
-        // handle: an adapter is chosen against `compatible_surface: None`
-        // here (a documented no-op outside of WebGL2, which this native
-        // build never targets) rather than the real surface, deferring the
-        // actual surface-compatibility check to right after the (cheap)
-        // surface creation below. That means this whole block has no
-        // dependency on `handle`/`RawHandlePair` (which is `!Send` on
-        // account of `raw-window-handle`'s non-Windows enum variants) and
-        // can run on a dedicated background OS thread via
-        // `run_on_background_thread`, getting it off the GUI thread
-        // entirely: every other caller of this `async fn` (window creation,
-        // in-place renderer rebuild) executes on the GUI thread's
-        // single-threaded `promise::spawn` executor, where an `.await` only
-        // yields control back to `run_message_loop` at points that resolve
-        // via a waker -- it does NOT get a fair timeslice against a call
-        // that's synchronously CPU/driver-bound the entire time, which is
-        // exactly what `Instance::new`/`request_adapter` are.
-        let config_for_thread = config.clone();
-        let (instance, backends, adapter) = run_on_background_thread(move || {
-            // Try the cheap, platform-primary backend set first; only pay
-            // for the rest of `all_backends` (Vulkan's expensive loader/ICD
-            // enumeration on Windows, in particular) if it doesn't pan out.
-            for backends in [primary_backends, all_backends] {
-                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                    backends,
-                    ..Default::default()
-                });
-
-                let mut adapter: Option<wgpu::Adapter> = None;
-
-                if let Some(preference) = &config_for_thread.webgpu_preferred_adapter {
-                    for a in instance.enumerate_adapters(backends) {
-                        let info = a.get_info();
-
-                        if preference.name != info.name {
-                            continue;
-                        }
-
-                        if preference.device_type != format!("{:?}", info.device_type) {
-                            continue;
-                        }
-
-                        if preference.backend != format!("{:?}", info.backend) {
-                            continue;
-                        }
-
-                        if let Some(driver) = &preference.driver {
-                            if *driver != info.driver {
-                                continue;
-                            }
-                        }
-                        if let Some(vendor) = &preference.vendor {
-                            if *vendor != info.vendor {
-                                continue;
-                            }
-                        }
-                        if let Some(device) = &preference.device {
-                            if *device != info.device {
-                                continue;
-                            }
-                        }
-
-                        // Note: unlike the pre-#311 code, this can't check
-                        // `is_surface_supported` here (no surface exists yet on
-                        // this background thread) -- that check now happens back
-                        // on the GUI thread, right after the surface is created,
-                        // and falls back to `request_adapter` if it fails.
-                        adapter.replace(a);
-                        break;
-                    }
-
-                    if adapter.is_none() && backends == all_backends {
-                        // Only warn once we've exhausted every backend this
-                        // platform supports -- if `backends` is still the
-                        // narrow `primary_backends` set here, the outer loop
-                        // is about to retry with `all_backends`, so a warning
-                        // now would be a false alarm for e.g. a Vulkan/GL
-                        // preferred adapter on Windows.
-                        log::warn!(
-                            "Your webgpu preferred adapter '{}' was not found among the \
-                             enumerated adapters (name/device_type/backend/driver/vendor/device \
-                             did not match any of them)",
-                            preference,
-                        );
-                    }
-                }
-
-                // Falling back to "whatever `request_adapter` likes" would
-                // defeat an explicit `webgpu_preferred_adapter` that simply
-                // isn't reachable from the narrow backend set: on Windows a
-                // preference naming a Vulkan or GL adapter finds no match in
-                // the DX12-only pass, and grabbing the DX12 adapter here
-                // would return before the loop ever widens -- silently
-                // ignoring the setting, and skipping the warning above too,
-                // since that only fires on the widened pass. Keep looking
-                // while a preference is configured and backends are still
-                // narrowed.
-                let may_settle_for_any_adapter =
-                    config_for_thread.webgpu_preferred_adapter.is_none()
-                        || backends == all_backends;
-
-                if adapter.is_none() && may_settle_for_any_adapter {
-                    // This background thread has no async executor of its own,
-                    // and doesn't need one: on every native backend (DX12,
-                    // Vulkan, Metal), `request_adapter`'s returned future
-                    // resolves synchronously the first time it's polled (there's
-                    // no actual OS-level waiting involved, just CPU-bound
-                    // enumeration), so a single-poll `block_on` is sufficient and
-                    // avoids pulling in a whole reactor for one call. `futures`
-                    // is already a workspace dependency (used elsewhere in this
-                    // crate), so this doesn't add a new one.
-                    adapter = futures::executor::block_on(instance.request_adapter(
-                        &wgpu::RequestAdapterOptions {
-                            power_preference: match config_for_thread.webgpu_power_preference {
-                                WebGpuPowerPreference::HighPerformance => {
-                                    wgpu::PowerPreference::HighPerformance
-                                }
-                                WebGpuPowerPreference::LowPower => wgpu::PowerPreference::LowPower,
-                            },
-                            // No surface exists yet on this background thread --
-                            // see the doc comment above `run_on_background_thread`'s
-                            // call site. `compatible_surface` is documented as
-                            // only mandatory when targeting WebGL2 (it must be
-                            // `Some` there or `request_adapter` fails outright);
-                            // every other backend treats it as an optional hint.
-                            compatible_surface: None,
-                            force_fallback_adapter: config_for_thread.webgpu_force_fallback_adapter,
-                        },
-                    ))
-                    .ok();
-                }
-
-                if let Some(adapter) = adapter {
-                    return anyhow::Ok((instance, backends, adapter));
-                }
-
-                // Nothing usable on this backend set. If we just tried the
-                // narrow `primary_backends` set, fall through the loop and
-                // retry with `all_backends`; if `all_backends` itself came up
-                // empty there's nothing left to widen to.
-                log::debug!(
-                    "no compatible adapter found among backends {backends:?}; \
-                     widening backend search",
-                );
-            }
-
-            anyhow::bail!("no compatible adapter found (enumeration was empty)")
-        })
-        .await??;
-
-        // SAFETY: `create_surface_unsafe` is the only way to build a surface
-        // from a raw window handle. `handle` is a `RawHandlePair` whose owned
-        // handles are valid (obtained from a live window in
-        // `RawHandlePair::new`) and satisfy the `HasWindowHandle` contract for
-        // the surface's lifetime; the surface is dropped before the window.
-        let surface = unsafe {
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::from_window(&handle)?)?
-        };
-
-        // `Surface::configure`/`create_surface_unsafe` above have already
-        // copied out everything they need from `handle`, so it doesn't need
-        // to be kept alive for their sake. We do still need the raw HWND
-        // later for the `resize()` `GetClientRect` workaround, so extract
-        // just that (a plain `isize`, which is `Send`/`Sync`) rather than
-        // storing the whole `!Send`/`!Sync` `RawHandlePair`/`RawWindowHandle`.
-        #[cfg(windows)]
-        let client_hwnd = match handle.window {
-            RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
-            _ => None,
-        };
-
-        // The adapter chosen above (whether via the preferred-adapter match
-        // or `request_adapter`) was picked without knowledge of this surface.
-        // Confirm it's actually compatible now that the surface exists; if
-        // not (a real possibility for the preferred-adapter path, which used
-        // to check this before the surface existed and can no longer do so
-        // there), fall back to a fresh `request_adapter` call that does pass
-        // `compatible_surface`. This fallback is the cold/rare path (normal
-        // hardware setups have exactly one display-capable adapter that is
-        // trivially surface-compatible), so it's fine for it to run
-        // synchronously here on the GUI thread rather than round-tripping to
-        // the background thread again.
-        //
-        // Note: `instance` may have been built with the narrowed
-        // `primary_backends` set (see above) rather than `all_backends`, if
-        // that's where the chosen `adapter` was found. A surface-incompatible
-        // primary-backend adapter is exactly the "narrow set wasn't enough"
-        // case the backend search above widens for, so this retry -- and the
-        // diagnostic list on total failure -- must go through `all_backends`
-        // too, or a real adapter on a backend outside `primary_backends`
-        // (e.g. a Vulkan-only display path on Windows) would be missed here
-        // even though the earlier widening loop would have found it.
-        let adapter = if adapter.is_surface_supported(&surface) {
-            adapter
-        } else {
-            log::warn!(
-                "{} is not compatible with the window surface; falling back to request_adapter \
-                 with compatible_surface set",
-                adapter_info_to_gpu_info(adapter.get_info())
-            );
-            let instance = if backends == all_backends {
-                instance
-            } else {
-                wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                    backends: all_backends,
-                    ..Default::default()
-                })
-            };
-            match instance
-                .request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: match config.webgpu_power_preference {
-                        WebGpuPowerPreference::HighPerformance => {
-                            wgpu::PowerPreference::HighPerformance
-                        }
-                        WebGpuPowerPreference::LowPower => wgpu::PowerPreference::LowPower,
-                    },
-                    compatible_surface: Some(&surface),
-                    force_fallback_adapter: config.webgpu_force_fallback_adapter,
-                })
-                .await
-            {
-                Ok(adapter) => adapter,
-                Err(_) => {
-                    let adapters = compute_compatibility_list(&instance, all_backends, &surface);
-                    return Err(anyhow!(
-                        "no compatible adapter found. Available:\n{}",
-                        adapters.join("\n")
-                    ));
-                }
-            }
-        };
-
-        let adapter_info = adapter.get_info();
-        log::trace!("Using adapter: {adapter_info:?}");
-        let caps = surface.get_capabilities(&adapter);
-        log::trace!("caps: {caps:?}");
-        let downlevel_caps = adapter.get_downlevel_capabilities();
-        log::trace!("downlevel_caps: {downlevel_caps:?}");
-
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web we'll have to disable some.
-                required_limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::downlevel_defaults()
-                }
-                .using_resolution(adapter.limits()),
-                label: None,
-                memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
-            })
-            .await?;
-
-        let queue = Arc::new(queue);
-
-        // Explicitly request an SRGB format, if available
-        let pref_format_srgb = caps.formats[0].add_srgb_suffix();
-        let format = if caps.formats.contains(&pref_format_srgb) {
-            pref_format_srgb
-        } else {
-            caps.formats[0]
-        };
-
-        // Need to check that this is supported, as trying to set
-        // view_formats without it will cause surface.configure
-        // to panic
-        // <https://github.com/wezterm/wezterm/issues/3565>
-        let supports_reinterpret_view = downlevel_caps
-            .flags
-            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
-        let view_formats = if supports_reinterpret_view {
-            vec![format.add_srgb_suffix(), format.remove_srgb_suffix()]
-        } else {
-            vec![]
-        };
-
-        // The render pipeline and `submit_frame`'s render pass both target a
-        // non-sRGB *view* of the (possibly sRGB) surface format, when the
-        // adapter allows reinterpreting the view (`supports_reinterpret_view`,
-        // gated on the same `SURFACE_VIEW_FORMATS` capability that populates
-        // `view_formats` above). Writing/blending through a non-sRGB view
-        // means the GPU does not auto-linearize the blend operation, so
-        // blending happens directly on gamma-encoded bytes
-        // ("naive"/gamma-space blending) -- this is what shader.wgsl's
-        // `to_srgb()` call at the end of `fs_main` produces, matching the
-        // behavior of the OpenGL renderer this WebGpu backend replaced
-        // (removed in task #414; it used `outputs_srgb: true` plus its own
-        // manual `to_srgb()` in its now-deleted fragment shader for the same
-        // gamma-space blending). Skipping this (falling back to the sRGB
-        // view) would instead give physically-correct linear-space blending,
-        // which reads as visibly thinner glyph edges for the same coverage
-        // data. `submit_frame` re-derives this same condition from
-        // `self.downlevel_caps` when building the view, so both must stay in
-        // sync with this variable's logic.
-        let render_format = if supports_reinterpret_view {
-            format.remove_srgb_suffix()
-        } else {
-            format
-        };
-
-        let max_dim = device.limits().max_texture_dimension_2d;
-        let (init_width, init_height) = clamp_surface_dimensions(
-            dimensions.pixel_width as u32,
-            dimensions.pixel_height as u32,
-            max_dim,
-        );
-        // Only ask the compositor to alpha-blend this surface with whatever
-        // is behind the window when the user has actually configured window
-        // transparency (`window_background_opacity < 1.0` or a background
-        // image/gradient) -- mirrors the `window_is_transparent` condition in
-        // `paint_window_background`. Otherwise prefer `Opaque`: every frame's
-        // render pass clears the surface to alpha 0 before drawing (see the
-        // `LoadOp::Clear` below), and normal frames redraw an opaque
-        // full-window background quad over that, but any transient mismatch
-        // between that quad's bounds and the actual swapchain size (e.g.
-        // mid-resize, mid-DPI-change) would otherwise leave a strip of real,
-        // literal per-pixel transparency that DWM composites with whatever
-        // window happens to be behind this one -- reported as "white/
-        // transparent rectangles" when a second OnlyTerm window is in the
-        // background (task #407). `Opaque` makes the compositor ignore the
-        // surface's alpha channel entirely, so the same transient gap shows
-        // as a black flash (already documented as the acceptable fallback
-        // for the startup case in task #425) instead of literal transparency.
-        let wants_transparency = config.window_background_opacity != 1.0
-            || config.window_background_image.is_some()
-            || config.window_background_gradient.is_some()
-            || !config.background.is_empty();
-        let alpha_mode = if wants_transparency {
-            if caps
-                .alpha_modes
-                .contains(&wgpu::CompositeAlphaMode::PostMultiplied)
-            {
-                wgpu::CompositeAlphaMode::PostMultiplied
-            } else if caps
-                .alpha_modes
-                .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
-            {
-                wgpu::CompositeAlphaMode::PreMultiplied
-            } else {
-                wgpu::CompositeAlphaMode::Auto
-            }
-        } else if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
-            wgpu::CompositeAlphaMode::Opaque
-        } else {
-            wgpu::CompositeAlphaMode::Auto
-        };
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
-            width: init_width,
-            height: init_height,
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode,
-            view_formats,
-            desired_maximum_frame_latency: 2,
-        };
-        surface.configure(&device, &config);
-
-        let shader = device.create_shader_module(wgpu::include_wgsl!("../../shader.wgsl"));
-
-        let shader_uniform_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                }],
-                label: Some("ShaderUniform bind group layout"),
-            });
-
-        let texture_nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
-            ..Default::default()
-        });
-        let texture_linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        let texture_bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-                label: Some("texture bind group layout"),
-            });
-
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[
-                    &shader_uniform_bind_group_layout,
-                    &texture_bind_group_layout,
-                    &texture_bind_group_layout,
-                ],
-                push_constant_ranges: &[],
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::desc()],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: render_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-            cache: None,
-        });
+        // Register this window as a subscriber to device-lost events.
+        // The shared ProcessGpuContext has exactly one device-lost callback
+        // that fans out to all still-current windows via the subscriber registry.
+        context.register_device_lost_subscriber(window.clone(), Arc::clone(&is_current));
 
         Ok(Self {
-            adapter_info,
-            downlevel_caps,
+            context,
             surface,
-            device,
-            queue,
-            config: Mutex::new(config),
-            dimensions: Mutex::new(dimensions),
-            render_pipeline,
-            #[cfg(windows)]
-            client_hwnd,
-            shader_uniform_bind_group_layout,
-            texture_bind_group_layout,
-            texture_nearest_sampler,
-            texture_linear_sampler,
-            is_current: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            is_current,
         })
-    }
-
-    /// Marks this device/surface as abandoned: a device-lost event that
-    /// arrives after this point (see the `set_device_lost_callback` closure
-    /// registered in `new`) is stale and must not trigger recovery. Called
-    /// by `TermWindow::begin_renderer_rebuild` (in
-    /// `termwindow/render_pipeline.rs`, task #267) at the moment it
-    /// takes/drops this `WebGpuState`, before any replacement device exists.
-    pub fn mark_stale(&self) {
-        self.is_current
-            .store(false, std::sync::atomic::Ordering::Release);
     }
 
     pub fn create_uniform(&self, uniform: ShaderUniform) -> wgpu::BindGroup {
         let buffer = self
-            .device
+            .device()
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("ShaderUniform Buffer"),
                 contents: bytemuck::cast_slice(&[uniform]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             });
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.shader_uniform_bind_group_layout,
+        self.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: self.shader_uniform_bind_group_layout(),
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: buffer.as_entire_binding(),
@@ -745,19 +153,19 @@ impl WebGpuState {
     /// needs `&self` (no `TermWindow`/`RenderState` access), which is what
     /// makes it callable from a dedicated render thread in a later task.
     pub fn submit_frame(&self, frame: GpuFrame) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.get_current_texture()?;
+        let output = self.surface.surface.get_current_texture()?;
         // Reinterpret as the non-sRGB sibling format when the adapter
-        // supports it, matching `render_format` in `new_impl`'s render
-        // pipeline creation -- see the comment there for why. `None` (the
-        // texture's own, sRGB, format) is the correct fallback on adapters
+        // supports it, matching `render_format` in pipeline creation.
+        // `None` (the texture's own, sRGB, format) is the correct fallback on adapters
         // that lack `DownlevelFlags::SURFACE_VIEW_FORMATS`, since `format`
         // wasn't added to `view_formats` for them either.
         let render_view_format = if self
+            .context
             .downlevel_caps
             .flags
             .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
         {
-            Some(self.config.lock().format.remove_srgb_suffix())
+            Some(self.surface.config.lock().format.remove_srgb_suffix())
         } else {
             None
         };
@@ -766,7 +174,7 @@ impl WebGpuState {
             ..Default::default()
         });
         let mut encoder = self
-            .device
+            .device()
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
@@ -774,24 +182,9 @@ impl WebGpuState {
             .atlas
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let texture_linear_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            layout: &self.texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.texture_linear_sampler),
-                },
-            ],
-            label: Some("linear bind group"),
-        });
-
-        let texture_nearest_bind_group =
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                layout: &self.texture_bind_group_layout,
+        let texture_linear_bind_group =
+            self.device().create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: self.texture_bind_group_layout(),
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -799,7 +192,23 @@ impl WebGpuState {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.texture_nearest_sampler),
+                        resource: wgpu::BindingResource::Sampler(self.texture_linear_sampler()),
+                    },
+                ],
+                label: Some("linear bind group"),
+            });
+
+        let texture_nearest_bind_group =
+            self.device().create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: self.texture_bind_group_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(self.texture_nearest_sampler()),
                     },
                 ],
                 label: Some("nearest bind group"),
@@ -813,6 +222,8 @@ impl WebGpuState {
         // so the uniform buffer and its bind group only need to be built once
         // per frame rather than once per draw.
         let uniforms = self.create_uniform(frame.uniform);
+
+        let render_pipeline = self.get_render_pipeline();
 
         for draw in &frame.draws {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -840,7 +251,7 @@ impl WebGpuState {
             });
             cleared = true;
 
-            render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.set_pipeline(&render_pipeline);
             render_pass.set_bind_group(0, &uniforms, &[]);
             render_pass.set_bind_group(1, &texture_linear_bind_group, &[]);
             render_pass.set_bind_group(2, &texture_nearest_bind_group, &[]);
@@ -850,7 +261,7 @@ impl WebGpuState {
         }
 
         // submit will accept anything that implements IntoIter
-        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue().submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
@@ -872,12 +283,14 @@ impl WebGpuState {
     /// that case.
     #[allow(unused_mut)]
     pub fn resize(&self, mut dims: Dimensions) {
+        use super::state_impl::clamp_surface_dimensions;
+
         // During a live resize on Windows, the Dimensions that we're processing may be
         // lagging behind the true client size. We have to take the very latest value
         // from the window or else the underlying driver will raise an error about
         // the mismatch, so we need to sneakily read through the handle
         #[cfg(windows)]
-        if let Some(hwnd) = self.client_hwnd {
+        if let Some(hwnd) = self.surface.client_hwnd() {
             // SAFETY: `RECT` is a POD with no validity invariants, so
             // `mem::zeroed()` yields a valid all-zero value as an out-param.
             let mut rect = unsafe { std::mem::zeroed() };
@@ -890,15 +303,15 @@ impl WebGpuState {
             dims.pixel_height = (rect.bottom - rect.top) as usize;
         }
 
-        if dims == *self.dimensions.lock() {
+        if dims == *self.surface.dimensions.lock() {
             return;
         }
         // Store the unclamped dims: this field is only used to dedup resize
         // events against the size the window actually requested. Clamping is
         // applied below, only to the values handed to Surface::configure.
-        *self.dimensions.lock() = dims;
-        let mut config = self.config.lock();
-        let max = self.device.limits().max_texture_dimension_2d;
+        *self.surface.dimensions.lock() = dims;
+        let mut config = self.surface.config.lock();
+        let max = self.device().limits().max_texture_dimension_2d;
         let (clamped_width, clamped_height) =
             clamp_surface_dimensions(dims.pixel_width as u32, dims.pixel_height as u32, max);
         config.width = clamped_width;
@@ -907,7 +320,7 @@ impl WebGpuState {
             // Avoid reconfiguring with a 0 sized surface, as webgpu will
             // panic in that case
             // <https://github.com/wezterm/wezterm/issues/2881>
-            self.surface.configure(&self.device, &config);
+            self.surface.surface.configure(self.device(), &config);
         }
     }
 
@@ -917,9 +330,9 @@ impl WebGpuState {
     /// swapchain needs to be recreated even though the requested size hasn't
     /// changed.
     pub fn reconfigure(&self) {
-        let config = self.config.lock();
+        let config = self.surface.config.lock();
         if config.width > 0 && config.height > 0 {
-            self.surface.configure(&self.device, &config);
+            self.surface.surface.configure(self.device(), &config);
         }
     }
 }
