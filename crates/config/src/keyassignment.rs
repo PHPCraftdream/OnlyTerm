@@ -332,6 +332,14 @@ pub enum KeyAssignment {
     ReloadConfiguration,
     MoveTabRelative(isize),
     MoveTab(usize),
+    /// Prompts for a new title for the active tab (pre-filled with its
+    /// current title) and applies it once confirmed. Not itself a prompt
+    /// definition -- see `TermWindow::rename_current_tab` and
+    /// `show_line_prompt_overlay`'s handling of this variant, which drives
+    /// a `PromptInputLine` overlay built with the tab's live current title
+    /// (something a static config value can't express) and applies the
+    /// entered text via `Tab::set_title` when the prompt completes.
+    RenameCurrentTab,
     ScrollByPage(NotNan<f64>),
     ScrollByLine(isize),
     ScrollByCurrentEventWheelDelta,

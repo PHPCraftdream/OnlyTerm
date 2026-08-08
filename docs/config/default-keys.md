@@ -66,6 +66,7 @@ the [migration guide](../migration-to-ktav.md#key-bindings-and-actions)).
 | `CTRL`           | `PageDown` | `{ ActivateTabRelative: 1 }` |
 | `CTRL+SHIFT`     | `PageUp`      | `{ MoveTabRelative: -1 }` |
 | `CTRL+SHIFT`     | `PageDown`      | `{ MoveTabRelative: 1 }` |
+| none             | `F2`          | `RenameCurrentTab` (double-clicking the tab bar does the same) |
 | `SHIFT`          | `PageUp`      | `{ ScrollByPage: -1 }` |
 | `SHIFT`          | `PageDown`    | `{ ScrollByPage: 1 }` |
 | `SUPER`          | `r`    | `ReloadConfiguration` |

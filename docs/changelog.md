@@ -572,6 +572,23 @@ As features stabilize some brief notes about them will accumulate here.
   right per-OS system font locator (`Gdi`/`CoreText`/`FontConfig`) with no
   path to hardcode at all, which is the recommended way to reach "the
   system fonts" portably.
+* [wezterm start --start-conf](cli/start.md#--start-conf-opening-a-fixed-set-of-tabs-at-startup)
+  loads a startup layout from a ktav file: a set of tabs to open in a single
+  new window, each with its own title, working directory (`root_dir`),
+  extra environment variables and shell commands to run once its shell is
+  ready, plus layout-wide `root_dir`/vars/commands every tab inherits (a
+  tab's own value always wins). A relative `root_dir` resolves against the
+  layout file's own directory, not the process's launch directory, so a
+  layout file checked into a project stays portable. Mutually exclusive
+  with `PROG`/`--cwd`.
+* Tabs in the tab bar can now be reordered by dragging them with the
+  mouse, driving the same reordering logic the `MoveTab`/`MoveTabRelative`
+  key assignments already used. Scoped to reordering within the tab bar;
+  dragging a tab out to detach it into its own window is not implemented.
+* [RenameCurrentTab](config/reference/keyassignment/RenameCurrentTab.md)
+  prompts for a new title for the active tab, pre-filled with its current
+  one. Bound to `F2` by default (as in Windows Explorer); double-clicking
+  the tab bar does the same. No context menu is involved.
 
 #### Fixed
 * Many symbol codepoints (e.g. U+23BF and other Miscellaneous

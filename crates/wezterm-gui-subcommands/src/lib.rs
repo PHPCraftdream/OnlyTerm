@@ -45,8 +45,24 @@ pub struct StartCommand {
 
     /// Specify the current working directory for the initially
     /// spawned program
-    #[arg(long = "cwd", value_parser, value_hint=ValueHint::DirPath)]
+    #[arg(long = "cwd", value_parser, value_hint=ValueHint::DirPath, conflicts_with = "start_conf")]
     pub cwd: Option<PathBuf>,
+
+    /// Load a startup layout from a ktav file: declares a set of tabs to
+    /// open, each with its own title, working directory (root_dir), extra
+    /// environment variables (vars) and shell commands to run once its
+    /// shell is ready (commands), instead of the single tab this command
+    /// would otherwise spawn. root_dir/vars/commands can also be set once
+    /// at the top of the file to apply to every tab; a tab's own value
+    /// wins over that shared one (vars are merged key-by-key, commands run
+    /// shared-then-per-tab). A relative root_dir resolves against the
+    /// layout file's own directory, not the current directory this command
+    /// is run from. See the "wezterm start" page of the documentation for
+    /// the full file format and an example. Mutually exclusive with
+    /// PROG/--cwd (the layout file specifies its own per-tab
+    /// program/commands/working directory instead).
+    #[arg(long = "start-conf", value_parser, value_hint=ValueHint::FilePath, conflicts_with = "cwd")]
+    pub start_conf: Option<PathBuf>,
 
     /// Dummy argument that consumes "-e" and does nothing.
     /// This is meant as a compatibility layer for supporting the
@@ -102,7 +118,7 @@ pub struct StartCommand {
     /// Instead of executing your shell, run PROG.
     /// For example: `wezterm start -- bash -l` will spawn bash
     /// as if it were a login shell. [aliases: -e]
-    #[arg(value_parser, value_hint=ValueHint::CommandWithArguments, num_args=1..)]
+    #[arg(value_parser, value_hint=ValueHint::CommandWithArguments, num_args=1.., conflicts_with = "start_conf")]
     pub prog: Vec<OsString>,
 }
 

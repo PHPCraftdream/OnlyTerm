@@ -376,8 +376,41 @@ impl super::TermWindow {
             UIItemType::ScrollThumb => {
                 self.drag_scroll_thumb(item, start_event, event, context);
             }
+            UIItemType::TabBar(TabBarItem::Tab { .. }) => {
+                self.drag_tab(item, start_event, event, context);
+            }
             _ => {
                 log::error!("drag not implemented for {:?}", item);
+            }
+        }
+    }
+
+    /// Reorders the tab bar by mouse drag. The pressed tab is already the
+    /// active one (`mouse_event_tab_bar`'s Press branch activates it before
+    /// arming `self.dragging`), so this only needs to find which tab the
+    /// pointer is over *now* and hand that index to the same `move_tab`
+    /// the `MoveTab`/`MoveTabRelative` key assignments already use --
+    /// reordering itself isn't new logic, only driving it from the mouse
+    /// is. Scoped to reordering within this tab bar for now; dragging a
+    /// tab out to detach it into a new window is a separate, larger
+    /// feature, not attempted here.
+    fn drag_tab(
+        &mut self,
+        item: UIItem,
+        _start_event: MouseEvent,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        // Re-arm for the next Move event, the same way drag_split/
+        // drag_scroll_thumb keep themselves armed until mouse-up clears
+        // `self.dragging` (see the WMEK::Release handling above).
+        self.dragging.replace((item, event.clone()));
+
+        if let Some(target) = self.resolve_ui_item(&event) {
+            if let UIItemType::TabBar(TabBarItem::Tab { tab_idx, .. }) = target.item_type {
+                if self.move_tab(tab_idx).is_ok() {
+                    context.invalidate();
+                }
             }
         }
     }
@@ -392,8 +425,8 @@ impl super::TermWindow {
     ) {
         self.last_ui_item.replace(item.clone());
         match item.item_type {
-            UIItemType::TabBar(item) => {
-                self.mouse_event_tab_bar(item, event, context);
+            UIItemType::TabBar(tab_bar_item) => {
+                self.mouse_event_tab_bar(item, tab_bar_item, event, context);
             }
             UIItemType::AboveScrollThumb => {
                 self.mouse_event_above_scroll_thumb(item, pane, event, context);
@@ -457,6 +490,7 @@ impl super::TermWindow {
 
     pub fn mouse_event_tab_bar(
         &mut self,
+        ui_item: UIItem,
         item: TabBarItem,
         event: MouseEvent,
         context: &dyn WindowOps,
@@ -465,6 +499,24 @@ impl super::TermWindow {
             WMEK::Press(MousePress::Left) => match item {
                 TabBarItem::Tab { tab_idx, .. } => {
                     self.activate_tab(tab_idx as isize).ok();
+                    if self.last_mouse_click.as_ref().map(|c| c.streak) == Some(2) {
+                        // Double-click: same rename prompt as the F2
+                        // keybinding (task #430), not a drag. Skip arming
+                        // `self.dragging` below so the second press of the
+                        // double-click doesn't also start (and immediately
+                        // no-op) a reorder drag.
+                        self.rename_current_tab();
+                    } else {
+                        // Arm a potential drag-to-reorder: if the next Move
+                        // event before mouse-up lands over a different tab,
+                        // drag_ui_item's UIItemType::TabBar branch moves this
+                        // (now active) tab there via the same move_tab used by
+                        // the MoveTab/MoveTabRelative key assignments. A plain
+                        // click (press immediately followed by release, no
+                        // intervening Move past this tab) never reaches
+                        // drag_tab, so it's a no-op beyond the activation above.
+                        self.dragging = Some((ui_item, event));
+                    }
                 }
                 TabBarItem::NewTabButton => {
                     self.do_new_tab_button_click(MousePress::Left);
