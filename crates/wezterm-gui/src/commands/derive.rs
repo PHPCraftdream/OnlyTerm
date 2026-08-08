@@ -789,6 +789,18 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                 icon: None,
             }
         }
+        RenameCurrentTab => CommandDef {
+            brief: "Rename Tab".into(),
+            doc: "Prompts for a new title for the current tab, pre-filled \
+            with its current title (same convention as F2 in Windows \
+            Explorer). The tab bar can also be double-clicked to trigger \
+            this."
+                .into(),
+            keys: vec![(Modifiers::NONE, "F2".into())],
+            args: &[ArgType::ActiveTab],
+            menubar: &["Window"],
+            icon: Some("fa_pencil"),
+        },
         ScrollByPage(amount) => {
             let amount = amount.into_inner();
             if amount == -1.0 {

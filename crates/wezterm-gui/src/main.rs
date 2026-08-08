@@ -268,6 +268,92 @@ async fn spawn_tab_in_domain_if_mux_is_empty(
     Ok(())
 }
 
+/// Spawns every tab described by a `--start-conf` layout into a single new
+/// window, in order. Each tab's environment is `layout.vars` overlaid with
+/// that tab's own `vars` (a key present in both is won by the tab), and
+/// after the tab's shell starts, `layout.commands` followed by the tab's own
+/// `commands` are "typed" into it via `Pane::writer()` -- the same
+/// immediate, not-prompt-aware write used for the "open dropped file in a
+/// new tab" path (see `frontend.rs`'s drag-and-drop handling).
+async fn spawn_startup_layout(
+    layout: &config::StartupLayout,
+    domain: Option<Arc<dyn Domain>>,
+    workspace: Option<String>,
+) -> anyhow::Result<()> {
+    let mux = Mux::get();
+    let domain = domain.unwrap_or_else(|| mux.default_domain());
+
+    let window_id = {
+        // See spawn_tab_in_domain_if_mux_is_empty: force the builder to
+        // notify the frontend early, so the attach await below doesn't
+        // block it.
+        let position = None;
+        let builder = mux.new_empty_window(workspace, position);
+        *builder
+    };
+
+    let config = config::configuration();
+    config.update_ulimit()?;
+
+    domain.attach(Some(window_id)).await?;
+
+    let dpi = config.dpi.unwrap_or_else(::window::default_dpi);
+    let size = config.initial_size(dpi as u32, Some(cell_pixel_dims(&config, dpi)?));
+
+    for (idx, tab_conf) in layout.tabs.iter().enumerate() {
+        let mut builder = config.build_prog(
+            None,
+            config.default_prog.as_ref(),
+            config.default_cwd.as_ref(),
+        )?;
+        // A tab's own `root_dir` wins over the layout-wide one, which in
+        // turn wins over `config.default_cwd` that `build_prog` just
+        // applied above -- same override order `run_terminal_gui` already
+        // uses for the plain `--cwd` flag vs. `config.default_cwd`.
+        if let Some(root_dir) = tab_conf.root_dir.as_ref().or(layout.root_dir.as_ref()) {
+            builder.cwd(root_dir);
+        }
+        for (k, v) in layout.vars.iter().chain(tab_conf.vars.iter()) {
+            builder.env(k, v);
+        }
+
+        let tab = domain
+            .spawn(size, Some(builder), None, window_id)
+            .await
+            .with_context(|| {
+                format!(
+                    "spawning tab {} of {} (--start-conf)",
+                    idx + 1,
+                    layout.tabs.len()
+                )
+            })?;
+
+        if let Some(title) = &tab_conf.title {
+            tab.set_title(title);
+        }
+
+        if let Some(pane) = tab.get_active_pane() {
+            let mut writer = pane.writer();
+            for command in layout.commands.iter().chain(tab_conf.commands.iter()) {
+                // A real Enter keystroke is CR (`\r`), not LF (`\n`) --
+                // sending a bare `\n` (what `writeln!` would send) doesn't
+                // submit a line to a Windows shell reading from a ConPTY; a
+                // smoke test showed every command's text just piling up
+                // unexecuted on the same input line instead of running.
+                // Sending `\r` alone (not `\r\n`) is the portable fix:
+                // ConPTY treats `\r` as Enter directly, and a Unix pty's
+                // termios `ICRNL` (on by default) translates an incoming
+                // `\r` to `\n` -- which is what canonical mode treats as
+                // the actual line terminator -- so a trailing `\n` on top
+                // of that would submit a second, empty line on Unix.
+                write!(writer, "{command}\r").ok();
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn connect_to_auto_connect_domains() -> anyhow::Result<()> {
     let mux = Mux::get();
     let domains = mux.iter_domains();
@@ -323,6 +409,19 @@ async fn async_run_terminal_gui(
     } else {
         None
     };
+
+    // `--start-conf` replaces the single-tab spawn below entirely: it opens
+    // its own window and one tab per entry in the layout file, so it
+    // deliberately skips both the explicit-`--domain` single-spawn block
+    // and `spawn_tab_in_domain_if_mux_is_empty` further down. `--attach` is
+    // not meaningfully combinable with a from-scratch multi-tab layout, so
+    // it (like `--domain`'s "attach instead of spawn" behavior) is not
+    // specially handled here -- the full layout is always spawned into
+    // whichever domain was resolved above.
+    if let Some(start_conf) = &opts.start_conf {
+        let layout = config::StartupLayout::load(start_conf)?;
+        return spawn_startup_layout(&layout, domain, opts.workspace.clone()).await;
+    }
 
     let is_connecting = opts.attach;
 
@@ -1024,6 +1123,7 @@ fn run() -> anyhow::Result<()> {
                 _cmd: false,
                 no_auto_connect: false,
                 cwd: None,
+                start_conf: None,
             },
             Some(connect.domain_name),
         ),

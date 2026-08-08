@@ -514,7 +514,9 @@ impl TermWindow {
         }
     }
 
-    fn move_tab(&mut self, tab_idx: usize) -> anyhow::Result<()> {
+    // `pub(super)`: also called from mouseevent.rs's drag-to-reorder
+    // handling (task #429), not just the MoveTab key assignment below.
+    pub(super) fn move_tab(&mut self, tab_idx: usize) -> anyhow::Result<()> {
         let mux = Mux::get();
         let mut window = mux
             .get_window_mut(self.mux_window_id)
@@ -568,6 +570,31 @@ impl TermWindow {
         };
         self.assign_overlay(tab.tab_id(), overlay);
         promise::spawn::spawn(future).detach();
+    }
+
+    /// Entry point for `KeyAssignment::RenameCurrentTab` (task #430): shows
+    /// a `PromptInputLine` pre-filled with the active tab's current title.
+    /// A static config value can't express "whatever the tab is currently
+    /// called", so this builds the `PromptInputLine` here (dynamically)
+    /// rather than as a literal keybinding value, then reuses the same
+    /// `show_prompt_input_line` overlay path as any other prompt. The
+    /// entered text is applied back to the tab by
+    /// `show_line_prompt_overlay`'s own handling of this same
+    /// `RenameCurrentTab` action (see `overlay/prompt.rs`) once the prompt
+    /// completes -- this method only ever shows the prompt, it never
+    /// renames anything itself.
+    pub(super) fn rename_current_tab(&mut self) {
+        let mux = Mux::get();
+        let current_title = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab.get_title(),
+            None => return,
+        };
+        self.show_prompt_input_line(&PromptInputLine {
+            action: Box::new(KeyAssignment::RenameCurrentTab),
+            initial_value: Some(current_title),
+            description: "Enter new name for tab".to_string(),
+            prompt: "New name: ".to_string(),
+        });
     }
 
     fn show_prompt_input_line(&mut self, args: &PromptInputLine) {
@@ -1151,6 +1178,7 @@ impl TermWindow {
             ReloadConfiguration => config::reload(),
             MoveTab(n) => self.move_tab(*n)?,
             MoveTabRelative(n) => self.move_tab_relative(*n)?,
+            RenameCurrentTab => self.rename_current_tab(),
             ScrollByPage(n) => self.scroll_by_page(**n, pane)?,
             ScrollByLine(n) => self.scroll_by_line(*n, pane)?,
             ScrollByCurrentEventWheelDelta => self.scroll_by_current_event_wheel_delta(pane)?,
