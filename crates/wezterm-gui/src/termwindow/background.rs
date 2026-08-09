@@ -421,8 +421,8 @@ impl crate::TermWindow {
     ) -> anyhow::Result<bool> {
         let render_layer = gl_state.layer_for_zindex(layer_index)?;
         let vbs = render_layer.vb.borrow();
-        // `map_instances` creates a view for the specified sub-layer
-        let mut layer0 = vbs[0].map_instances(0);
+        // `map_instances` creates a view
+        let mut layer0 = vbs[0].map_instances();
 
         let color = bg_color.mul_alpha(layer.def.opacity);
 
@@ -591,6 +591,14 @@ impl crate::TermWindow {
                 quad.set_fg_color(color);
             }
         }
+
+        // `layer0` only collects into its own owned Vec (see
+        // `TripleVertexBuffer::map_instances`'s doc comment) -- unlike
+        // `with_quad_allocator`, this call site drives a `MappedQuadsView`
+        // directly, so it has to do the same merge-back itself, or every
+        // quad emitted above is simply dropped when `layer0` goes out of
+        // scope and the background never reaches the GPU.
+        vbs[0].accumulate_instances(layer0.into_instances());
 
         Ok(emitted)
     }

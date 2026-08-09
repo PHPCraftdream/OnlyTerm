@@ -74,20 +74,24 @@ impl crate::TermWindow {
                 let vb = &layer.vb.borrow()[idx];
                 let instance_count = vb.instance_count();
                 if instance_count > 0 {
-                    // Get the instance buffer (no longer need to recreate vertex buffer each frame)
-                    let instance_buffer_ref = vb.current_vb_mut();
-                    let instance_buffer =
-                        wgpu::Buffer::clone(instance_buffer_ref.webgpu().buffer());
-                    vertex_recreate_bytes +=
-                        (vb.capacity * std::mem::size_of::<crate::quad::QuadInstance>()) as u64;
+                    // Upload everything painting accumulated for this layer
+                    // this frame (write_instances_to_gpu does the actual
+                    // Queue::write_buffer) and use the buffer/count it
+                    // hands back -- `current_vb_mut()` alone would only
+                    // return whatever buffer object already exists, without
+                    // ever writing this frame's instances into it.
+                    let (instance_buffer, actual_count) = vb.write_instances_to_gpu();
+                    vertex_recreate_bytes += (actual_count as usize
+                        * std::mem::size_of::<crate::quad::QuadInstance>())
+                        as u64;
 
                     // Use shared index buffer from the WebGpu context
                     let index_buffer = wgpu::Buffer::clone(&webgpu_state.context.index_buffer);
                     draws.push(GpuDraw {
                         vertex_buffer: instance_buffer,
                         index_buffer,
-                        index_count: (instance_count * 6) as u32, // 6 indices per quad
-                        instance_count: instance_count as u32,
+                        index_count: actual_count * 6, // 6 indices per quad
+                        instance_count: actual_count,
                     });
                 }
 
