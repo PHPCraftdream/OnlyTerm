@@ -29,6 +29,8 @@ pub struct GpuDraw {
     pub vertex_buffer: wgpu::Buffer,
     pub index_buffer: wgpu::Buffer,
     pub index_count: u32,
+    /// Number of instances to draw (0 for vertex-mode, >0 for instance-mode)
+    pub instance_count: u32,
 }
 
 /// Everything needed to submit one frame's worth of draw calls, computed

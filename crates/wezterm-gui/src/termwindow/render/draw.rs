@@ -1,4 +1,3 @@
-use crate::quad::{Vertex, VERTICES_PER_CELL};
 use crate::termwindow::webgpu::{GpuDraw, GpuFrame, ShaderUniform};
 use crate::termwindow::RenderFrame;
 use std::time::Instant;
@@ -30,6 +29,7 @@ impl crate::TermWindow {
         use crate::termwindow::webgpu::WebGpuTexture;
 
         let render_state = self.render_state.as_ref().unwrap();
+        let webgpu_state = self.webgpu.as_ref().unwrap();
 
         let tex = render_state.glyph_cache.borrow().atlas.texture();
         let tex = tex.downcast_ref::<WebGpuTexture>().unwrap();
@@ -72,18 +72,22 @@ impl crate::TermWindow {
         for layer in render_state.layers.borrow().iter() {
             for idx in 0..3 {
                 let vb = &layer.vb.borrow()[idx];
-                let (vertex_count, index_count) = vb.vertex_index_count();
-                if vertex_count > 0 {
-                    let mut vertices = vb.current_vb_mut();
-                    let vertex_buffer = vertices.webgpu_mut().recreate();
-                    vertex_buffer.unmap();
+                let instance_count = vb.instance_count();
+                if instance_count > 0 {
+                    // Get the instance buffer (no longer need to recreate vertex buffer each frame)
+                    let instance_buffer_ref = vb.current_vb_mut();
+                    let instance_buffer =
+                        wgpu::Buffer::clone(instance_buffer_ref.webgpu().buffer());
                     vertex_recreate_bytes +=
-                        (vb.capacity * VERTICES_PER_CELL * std::mem::size_of::<Vertex>()) as u64;
-                    let index_buffer = wgpu::Buffer::clone(vb.indices.webgpu());
+                        (vb.capacity * std::mem::size_of::<crate::quad::QuadInstance>()) as u64;
+
+                    // Use shared index buffer from the WebGpu context
+                    let index_buffer = wgpu::Buffer::clone(&webgpu_state.context.index_buffer);
                     draws.push(GpuDraw {
-                        vertex_buffer,
+                        vertex_buffer: instance_buffer,
                         index_buffer,
-                        index_count: index_count as u32,
+                        index_count: (instance_count * 6) as u32, // 6 indices per quad
+                        instance_count: instance_count as u32,
                     });
                 }
 
