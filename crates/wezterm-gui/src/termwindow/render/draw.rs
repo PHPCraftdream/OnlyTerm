@@ -1,6 +1,77 @@
+use crate::quad::QuadInstance;
 use crate::termwindow::webgpu::{GpuDraw, GpuFrame, ShaderUniform};
 use crate::termwindow::RenderFrame;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::time::Instant;
+
+/// Computes a frame signature from its constituent parts.
+/// This is a pure function suitable for unit testing, extracted from
+/// `TermWindow::compute_frame_signature` (which is a thin wrapper around this).
+///
+/// The signature includes:
+/// - Window/surface dimensions (a resize with no content change still needs redraw)
+/// - foreground_text_hsb (changes on config reload)
+/// - projection matrix (changes on window resize)
+/// - All layer QuadInstance data (position/color/tex/hsv/flags)
+///
+/// Uses a fixed/deterministic hasher seed so that two calls with byte-identical
+/// inputs (across separate calls, i.e. separate frames) produce the same u64 output.
+/// This is critical for frame-to-frame equality comparison in `call_draw_webgpu`.
+///
+/// Explicitly does NOT accept a `milliseconds` parameter, guaranteeing that
+/// field's exclusion from the signature at the type level. This is critical:
+/// if `milliseconds` were included, every frame would hash differently and
+/// nothing would ever be skipped. The shader never reads milliseconds
+/// (verified by grep in shader.wgsl), so excluding it cannot cause stale-pixel bugs.
+///
+/// Note on ahash constructor choice:
+/// - `ahash::RandomState::new()` is "Each instance unique" - every call produces
+///   a different random seed via process-wide counter (verified in ahash source).
+///   This would defeat frame-to-frame comparison entirely.
+/// - `ahash::RandomState::with_seeds(k0, k1, k2, k3)` is "Fixed" - deterministic,
+///   identical calls produce identical hashers. This is the correct choice here.
+fn compute_frame_signature_from_parts(
+    pixel_width: usize,
+    pixel_height: usize,
+    foreground_text_hsb: &[f32; 3],
+    projection: &[[f32; 4]; 4],
+    layer_instances: &[Vec<QuadInstance>],
+) -> u64 {
+    // Use fixed/deterministic seeds so identical frames across calls produce identical signatures.
+    // These constants are arbitrary but must be fixed/literal for determinism.
+    const SIGNATURE_SEED_K0: u64 = 0x517cc1b727220a95;
+    const SIGNATURE_SEED_K1: u64 = 0x8123456789abcdef;
+    const SIGNATURE_SEED_K2: u64 = 0x0fedcba987654321;
+    const SIGNATURE_SEED_K3: u64 = 0x1a2b3c4d5e6f7890;
+
+    let state = ahash::RandomState::with_seeds(
+        SIGNATURE_SEED_K0,
+        SIGNATURE_SEED_K1,
+        SIGNATURE_SEED_K2,
+        SIGNATURE_SEED_K3,
+    );
+    let mut hasher = state.build_hasher();
+
+    // Hash window/surface dimensions
+    pixel_width.hash(&mut hasher);
+    pixel_height.hash(&mut hasher);
+
+    // Hash uniform fields that affect rendering (note: no milliseconds parameter)
+    let hsb_bytes = bytemuck::cast_slice::<f32, u8>(foreground_text_hsb);
+    hasher.write(hsb_bytes);
+
+    // Hash the projection matrix
+    let proj_bytes = bytemuck::cast_slice::<f32, u8>(projection.as_flattened());
+    hasher.write(proj_bytes);
+
+    // Hash each layer's QuadInstance data
+    for instances in layer_instances {
+        let bytes = bytemuck::cast_slice::<QuadInstance, u8>(instances.as_slice());
+        hasher.write(bytes);
+    }
+
+    hasher.finish()
+}
 
 impl crate::TermWindow {
     pub fn call_draw(&mut self, frame: &mut RenderFrame) -> anyhow::Result<()> {
@@ -10,13 +81,68 @@ impl crate::TermWindow {
     }
 
     fn call_draw_webgpu(&mut self) -> anyhow::Result<()> {
+        // Collect layer instances for signature computation BEFORE building the frame.
+        // This must happen before build_webgpu_frame because that function calls
+        // write_instances_to_gpu and next_index, which would rotate the buffers.
+        let layer_instances: Vec<Vec<QuadInstance>> = {
+            let render_state = self.render_state.as_ref().unwrap();
+            let mut all_instances = Vec::new();
+            for layer in render_state.layers.borrow().iter() {
+                for vb in layer.vb.borrow().iter() {
+                    all_instances.push(vb.instances.borrow().clone());
+                }
+            }
+            all_instances
+        };
+
         let frame = self.build_webgpu_frame()?;
+
+        // Compute the signature for this frame
+        let signature = self.compute_frame_signature(&frame, &layer_instances);
+
+        // Compare with the previous frame signature and skip if identical
+        if let Some(last_signature) = self.last_frame_signature {
+            if signature == last_signature {
+                metrics::counter!("gui.frame.skipped").increment(1);
+                return Ok(());
+            }
+        }
+
+        // New frame or signature differs - submit it
+        self.last_frame_signature = Some(signature);
+        metrics::counter!("gui.frame.submitted").increment(1);
+
         if let Some(rt) = self.render_thread.as_ref() {
             rt.send_frame(frame);
         } else {
             self.webgpu.as_ref().unwrap().submit_frame(frame)?;
         }
         Ok(())
+    }
+
+    /// Computes a content signature for a GpuFrame to detect identical consecutive frames.
+    /// The signature includes:
+    /// - All layer QuadInstance data (position/color/tex/hsv/flags)
+    /// - uniform.projection (changes on window resize)
+    /// - uniform.foreground_text_hsb (changes on config reload)
+    /// - Window/surface dimensions
+    ///
+    /// Explicitly excludes uniform.milliseconds because it increases every frame and
+    /// would prevent any frame from being judged identical. The shader never reads
+    /// milliseconds (verified by grep in shader.wgsl), so excluding it cannot cause
+    /// stale-pixel bugs.
+    fn compute_frame_signature(
+        &self,
+        frame: &GpuFrame,
+        layer_instances: &[Vec<QuadInstance>],
+    ) -> u64 {
+        compute_frame_signature_from_parts(
+            self.dimensions.pixel_width,
+            self.dimensions.pixel_height,
+            &frame.uniform.foreground_text_hsb,
+            &frame.uniform.projection,
+            layer_instances,
+        )
     }
 
     /// Builds a `GpuFrame`: everything that needs `self`/`render_state`
@@ -113,5 +239,255 @@ impl crate::TermWindow {
                 projection,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::quad::QuadInstance;
+
+    #[test]
+    fn test_signature_identical_frames() {
+        // Create two identical sets of layer instances, dimensions, and uniform data
+        let instances1: Vec<QuadInstance> = vec![QuadInstance {
+            position: [0.0, 0.0, 10.0, 10.0],
+            fg_color: [1.0, 0.0, 0.0, 1.0],
+            alt_color: [0.0, 1.0, 0.0, 1.0],
+            tex: [0.0, 1.0, 0.0, 1.0],
+            hsv: [0.0, 0.0, 1.0],
+            has_color: 0.0,
+            mix_value: 0.5,
+        }];
+
+        let instances2 = instances1.clone();
+
+        let foreground_text_hsb = [0.5, 0.5, 0.5];
+        let projection = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+
+        // Call the real signature computation function twice with identical arguments
+        // This test now validates that the function uses a fixed/deterministic hasher seed,
+        // so identical frames across separate calls produce identical signatures.
+        let sig1 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection,
+            std::slice::from_ref(&instances1),
+        );
+        let sig2 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection,
+            std::slice::from_ref(&instances2),
+        );
+
+        assert_eq!(
+            sig1, sig2,
+            "Identical frame data should produce identical signatures across separate calls"
+        );
+    }
+
+    #[test]
+    fn test_signature_differs_when_instances_differ() {
+        let instances1: Vec<QuadInstance> = vec![QuadInstance {
+            position: [0.0, 0.0, 10.0, 10.0],
+            fg_color: [1.0, 0.0, 0.0, 1.0],
+            alt_color: [0.0, 1.0, 0.0, 1.0],
+            tex: [0.0, 1.0, 0.0, 1.0],
+            hsv: [0.0, 0.0, 1.0],
+            has_color: 0.0,
+            mix_value: 0.5,
+        }];
+
+        let mut instances2 = instances1.clone();
+        // Change one pixel of position - this should produce a different signature
+        instances2[0].position[0] = 1.0; // Was 0.0, now 1.0
+
+        let foreground_text_hsb = [0.5, 0.5, 0.5];
+        let projection = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+
+        let sig1 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection,
+            &[instances1],
+        );
+        let sig2 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection,
+            &[instances2],
+        );
+
+        assert_ne!(
+            sig1, sig2,
+            "Differing instance data should produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_signature_includes_projection() {
+        let instances: Vec<QuadInstance> = vec![];
+        let foreground_text_hsb = [0.5, 0.5, 0.5];
+
+        let projection1 = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        let projection2 = [
+            [2.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]; // Different
+
+        let sig1 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection1,
+            std::slice::from_ref(&instances),
+        );
+        let sig2 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection2,
+            std::slice::from_ref(&instances),
+        );
+
+        assert_ne!(
+            sig1, sig2,
+            "Different projection matrices should produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_signature_includes_foreground_text_hsb() {
+        let instances: Vec<QuadInstance> = vec![];
+        let projection = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+
+        let hsb1 = [0.5, 0.5, 0.5];
+        let hsb2 = [0.6, 0.5, 0.5]; // Different hue
+
+        let sig1 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &hsb1,
+            &projection,
+            std::slice::from_ref(&instances),
+        );
+        let sig2 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &hsb2,
+            &projection,
+            std::slice::from_ref(&instances),
+        );
+
+        assert_ne!(
+            sig1, sig2,
+            "Different HSB values should produce different signatures"
+        );
+    }
+
+    #[test]
+    fn test_signature_includes_dimensions() {
+        let instances: Vec<QuadInstance> = vec![];
+        let foreground_text_hsb = [0.5, 0.5, 0.5];
+        let projection = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+
+        // Same content, different dimensions - should produce different signatures
+        // because a resize with no content change still needs a real redraw
+        let sig1 = compute_frame_signature_from_parts(
+            1920,
+            1080,
+            &foreground_text_hsb,
+            &projection,
+            std::slice::from_ref(&instances),
+        );
+        let sig2 = compute_frame_signature_from_parts(
+            2560,
+            1440,
+            &foreground_text_hsb,
+            &projection,
+            std::slice::from_ref(&instances),
+        );
+
+        assert_ne!(
+            sig1, sig2,
+            "Different dimensions should produce different signatures (resize must force redraw)"
+        );
+    }
+
+    /// This test confirms that `milliseconds` cannot affect the signature at the type level.
+    ///
+    /// The real `TermWindow::compute_frame_signature` method extracts `frame.uniform.foreground_text_hsb`,
+    /// `frame.uniform.projection`, and `self.dimensions`, then delegates to `compute_frame_signature_from_parts`.
+    /// Critically, `compute_frame_signature_from_parts` does NOT accept a `milliseconds` parameter at all.
+    ///
+    /// This type-level guarantee means:
+    /// 1. The milliseconds field from `ShaderUniform` is never passed into the signature computation.
+    /// 2. Even if someone edits the wrapper method to accidentally include it, they would need to change
+    ///    `compute_frame_signature_from_parts`'s signature, which is a more obvious breakage.
+    /// 3. The shader never reads milliseconds (verified by `grep -n "milliseconds" crates/wezterm-gui/src/shader.wgsl`),
+    ///    so excluding it from the signature is correct and cannot cause stale-pixel bugs.
+    ///
+    /// This is the most important property of task #450: if milliseconds were included, every frame would
+    /// hash differently and nothing would ever be skipped, defeating the entire purpose.
+    #[test]
+    fn test_milliseconds_excluded_from_signature_type_level() {
+        // The signature function's parameters are its only inputs - no `milliseconds` parameter exists.
+        // This is a compile-time proof that milliseconds cannot affect the result.
+        //
+        // Parameters (and their meanings):
+        // - pixel_width: usize - window width (resize detection)
+        // - pixel_height: usize - window height (resize detection)
+        // - foreground_text_hsb: &[f32; 3] - config foreground color transform
+        // - projection: &[[f32; 4]; 4] - projection matrix (resize detection)
+        // - layer_instances: &[Vec<QuadInstance>] - actual renderable content
+        //
+        // Notably absent: a `milliseconds` parameter of any type.
+        //
+        // The wrapper `TermWindow::compute_frame_signature(&self, frame: &GpuFrame, layer_instances: &[Vec<QuadInstance>])`
+        // extracts the above fields from `self.dimensions`, `frame.uniform.foreground_text_hsb`, and `frame.uniform.projection`,
+        // but never touches `frame.uniform.milliseconds`.
+        //
+        // This test documents that design choice. If future code incorrectly adds milliseconds to the signature,
+        // it would need to modify `compute_frame_signature_from_parts`'s signature, which is an obvious red flag.
+        let _ = compute_frame_signature_from_parts
+            as fn(usize, usize, &[f32; 3], &[[f32; 4]; 4], &[Vec<QuadInstance>]) -> u64;
+
+        // If milliseconds were included, the function signature would need a parameter like:
+        // - milliseconds: u32, or
+        // - uniform: &ShaderUniform (which includes milliseconds)
+        //
+        // Neither exists, proving exclusion at the type level.
     }
 }

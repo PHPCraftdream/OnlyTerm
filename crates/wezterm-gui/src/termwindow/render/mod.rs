@@ -936,6 +936,9 @@ impl crate::TermWindow {
     }
 
     pub fn recreate_texture_atlas(&mut self, size: Option<usize>) -> anyhow::Result<()> {
+        // Reset frame signature on atlas resize - texture content changed,
+        // so the previous frame is no longer comparable (task #450)
+        self.last_frame_signature = None;
         self.shape_generation += 1;
         self.shape_cache.borrow_mut().clear();
         self.line_to_ele_shape_cache.borrow_mut().clear();
