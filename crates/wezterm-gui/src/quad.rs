@@ -200,9 +200,38 @@ pub trait QuadTrait {
     fn set_position(&mut self, left: f32, top: f32, right: f32, bottom: f32);
 }
 
+impl QuadTrait for QuadInstance {
+    fn set_texture_discrete(&mut self, x1: f32, x2: f32, y1: f32, y2: f32) {
+        self.tex = [x1, x2, y1, y2];
+    }
+
+    fn set_has_color_impl(&mut self, has_color: f32) {
+        self.has_color = has_color;
+    }
+
+    fn set_fg_color(&mut self, color: LinearRgba) {
+        self.fg_color = color.into();
+    }
+
+    fn set_alt_color_and_mix_value(&mut self, color: LinearRgba, mix_value: f32) {
+        self.alt_color = color.into();
+        self.mix_value = mix_value;
+    }
+    fn set_hsv(&mut self, hsv: Option<HsbTransform>) {
+        let (h, s, v) = hsv
+            .map(|t| (t.hue, t.saturation, t.brightness))
+            .unwrap_or((1., 1., 1.));
+        self.hsv = [h, s, v];
+    }
+
+    fn set_position(&mut self, left: f32, top: f32, right: f32, bottom: f32) {
+        self.position = [left, top, right, bottom];
+    }
+}
+
 pub enum QuadImpl<'a> {
     Vert(Quad<'a>),
-    Boxed(&'a mut BoxedQuad),
+    Boxed(&'a mut QuadInstance),
 }
 
 impl<'a> QuadTrait for QuadImpl<'a> {
@@ -310,74 +339,18 @@ pub trait TripleLayerQuadAllocatorTrait {
     fn allocate(&mut self, layer_num: usize) -> anyhow::Result<QuadImpl<'_>>;
     // Legacy vertex path removed - now using instanced rendering with extend_with_instance
     fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance);
-}
-
-/// We prefer to allocate a quad at a time for HeapQuadAllocator
-/// because we tend to end up with fairly large arrays of Vertex
-/// and the total amount of contiguous memory is in the MB range,
-/// which is a bit gnarly to reallocate, and can waste several MB
-/// in unused capacity
-#[derive(Default)]
-pub struct BoxedQuad {
-    position: (f32, f32, f32, f32),
-    fg_color: [f32; 4],
-    alt_color: [f32; 4],
-    tex: (f32, f32, f32, f32),
-    hsv: [f32; 3],
-    has_color: f32,
-    mix_value: f32,
-}
-
-impl QuadTrait for BoxedQuad {
-    fn set_texture_discrete(&mut self, x1: f32, x2: f32, y1: f32, y2: f32) {
-        self.tex = (x1, x2, y1, y2);
-    }
-
-    fn set_has_color_impl(&mut self, has_color: f32) {
-        self.has_color = has_color;
-    }
-
-    fn set_fg_color(&mut self, color: LinearRgba) {
-        self.fg_color = color.into();
-    }
-    fn set_alt_color_and_mix_value(&mut self, color: LinearRgba, mix_value: f32) {
-        self.alt_color = color.into();
-        self.mix_value = mix_value;
-    }
-    fn set_hsv(&mut self, hsv: Option<HsbTransform>) {
-        let (h, s, v) = hsv
-            .map(|t| (t.hue, t.saturation, t.brightness))
-            .unwrap_or((1., 1., 1.));
-        self.hsv = [h, s, v];
-    }
-
-    fn set_position(&mut self, left: f32, top: f32, right: f32, bottom: f32) {
-        self.position = (left, top, right, bottom);
-    }
-}
-
-impl BoxedQuad {
-    /// Convert to QuadInstance (GPU wire format) for instanced rendering.
-    fn to_quad_instance(&self) -> QuadInstance {
-        let (left, top, right, bottom) = self.position;
-        let (x1, x2, y1, y2) = self.tex;
-        QuadInstance {
-            position: [left, top, right, bottom],
-            tex: [x1, x2, y1, y2],
-            fg_color: self.fg_color,
-            alt_color: self.alt_color,
-            hsv: self.hsv,
-            has_color: self.has_color,
-            mix_value: self.mix_value,
+    fn extend_from_slice(&mut self, layer_num: usize, instances: &[QuadInstance]) {
+        for instance in instances {
+            self.extend_with_instance(layer_num, *instance);
         }
     }
 }
 
 #[derive(Default)]
 pub struct HeapQuadAllocator {
-    layer0: Vec<BoxedQuad>,
-    layer1: Vec<BoxedQuad>,
-    layer2: Vec<BoxedQuad>,
+    layer0: Vec<QuadInstance>,
+    layer1: Vec<QuadInstance>,
+    layer2: Vec<QuadInstance>,
 }
 
 impl std::fmt::Debug for HeapQuadAllocator {
@@ -389,12 +362,9 @@ impl std::fmt::Debug for HeapQuadAllocator {
 impl HeapQuadAllocator {
     pub fn apply_to(&self, other: &mut TripleLayerQuadAllocator) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
-        for (layer_num, quads) in [(0, &self.layer0), (1, &self.layer1), (2, &self.layer2)] {
-            for quad in quads {
-                // Write instances directly instead of expanding to vertices
-                other.extend_with_instance(layer_num, quad.to_quad_instance());
-            }
-        }
+        other.extend_from_slice(0, &self.layer0);
+        other.extend_from_slice(1, &self.layer1);
+        other.extend_from_slice(2, &self.layer2);
         metrics::histogram!("quad_buffer_apply").record(start.elapsed());
         Ok(())
     }
@@ -409,44 +379,20 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
             _ => unreachable!(),
         };
 
-        quads.push(BoxedQuad::default());
+        quads.push(QuadInstance::default());
 
         let quad = quads.last_mut().unwrap();
         Ok(QuadImpl::Boxed(quad))
     }
 
     fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
-        // Convert QuadInstance back to BoxedQuad for storage in the heap allocator
-        let (left, top, right, bottom) = (
-            instance.position[0],
-            instance.position[1],
-            instance.position[2],
-            instance.position[3],
-        );
-        let (x1, x2, y1, y2) = (
-            instance.tex[0],
-            instance.tex[1],
-            instance.tex[2],
-            instance.tex[3],
-        );
-
-        let boxed = BoxedQuad {
-            position: (left, top, right, bottom),
-            tex: (x1, x2, y1, y2),
-            fg_color: instance.fg_color,
-            alt_color: instance.alt_color,
-            hsv: instance.hsv,
-            has_color: instance.has_color,
-            mix_value: instance.mix_value,
-        };
-
         let dest_quads = match layer_num {
             0 => &mut self.layer0,
             1 => &mut self.layer1,
             2 => &mut self.layer2,
             _ => unreachable!(),
         };
-        dest_quads.push(boxed);
+        dest_quads.push(instance);
     }
 }
 
@@ -469,6 +415,13 @@ impl<'a> TripleLayerQuadAllocatorTrait for TripleLayerQuadAllocator<'a> {
             Self::Heap(h) => h.extend_with_instance(layer_num, instance),
         }
     }
+
+    fn extend_from_slice(&mut self, layer_num: usize, instances: &[QuadInstance]) {
+        match self {
+            Self::Gpu(b) => b.extend_from_slice(layer_num, instances),
+            Self::Heap(h) => h.extend_from_slice(layer_num, instances),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -476,323 +429,82 @@ impl<'a> TripleLayerQuadAllocatorTrait for TripleLayerQuadAllocator<'a> {
 fn size() {
     // Old: 4 vertices per quad, each 68 bytes = 272 bytes per quad
     assert_eq!(std::mem::size_of::<Vertex>() * VERTICES_PER_CELL, 272);
-    // BoxedQuad is still 84 bytes (unchanged, still used for heap allocator)
-    assert_eq!(std::mem::size_of::<BoxedQuad>(), 84);
-    // QuadInstance is the GPU instance format, also 84 bytes
+    // QuadInstance is the GPU instance format, 84 bytes
     assert_eq!(std::mem::size_of::<QuadInstance>(), 84);
     // CornerVertex is 8 bytes (2 f32s)
     assert_eq!(std::mem::size_of::<CornerVertex>(), 8);
 }
 
-/// Benchmark for `HeapQuadAllocator` storage strategies.
+/// Test that HeapQuadAllocator::apply_to's bulk path preserves overflow-drop semantics.
+/// The old per-quad loop in MappedQuadsView::extend_with_instance silently drops quads
+/// once self.next.get() >= self.capacity; the new bulk path must truncate exactly the
+/// same way, not silently accept everything.
 ///
-/// This tests the miss-build path: creating a fresh allocator and allocating
-/// N quads, which is what actually happens per line (not the cache-hit path,
-/// which is already fast at ~2-3µs).
-///
-/// Tests three storage approaches:
-/// - Current: `Vec<Box<BoxedQuad>>` with `Box::new` per quad
-/// - Candidate A: `Vec<BoxedQuad>` with `reserve`
-/// - Candidate B: Chunked arena (only if A shows realloc problems)
+/// This test calls the REAL production code: HeapQuadAllocator::apply_to -> BorrowedLayers::extend_from_slice.
+/// It would fail if BorrowedLayers::extend_from_slice had a bug in its truncation logic.
 #[cfg(test)]
-mod heap_allocator_bench {
-    use super::*;
+#[test]
+fn test_apply_to_preserves_overflow_drop() {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
 
-    /// Current approach: `Vec<Box<BoxedQuad>>`
-    #[allow(clippy::vec_box)]
-    struct CurrentAllocator {
-        layer0: Vec<Box<BoxedQuad>>,
-        layer1: Vec<Box<BoxedQuad>>,
-        layer2: Vec<Box<BoxedQuad>>,
+    // Build a real TripleVertexBuffer with capacity 2 (empty bufs is safe for map_instances/accumulate)
+    let vb = crate::renderstate::TripleVertexBuffer::new(vec![], 2);
+
+    // Map instances to get MappedQuadsViews for all three layers
+    let view0 = vb.map_instances();
+    let view1 = vb.map_instances();
+    let view2 = vb.map_instances();
+
+    // Build real BorrowedLayers with capacity-limited views
+    let borrowed_layers = BorrowedLayers {
+        layers: [view0, view1, view2],
+    };
+
+    // Wrap in TripleLayerQuadAllocator::Gpu (the real production type used in apply_to)
+    let mut dest = TripleLayerQuadAllocator::Gpu(borrowed_layers);
+
+    // Build a HeapQuadAllocator with 5 quads in layer 0 (exceeds capacity 2)
+    let mut heap = HeapQuadAllocator::default();
+    for i in 0..5 {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        heap.layer0.push(q);
     }
+    assert_eq!(heap.layer0.len(), 5);
 
-    impl CurrentAllocator {
-        fn new() -> Self {
-            Self {
-                layer0: Vec::new(),
-                layer1: Vec::new(),
-                layer2: Vec::new(),
-            }
-        }
+    // Call the REAL HeapQuadAllocator::apply_to against the real capacity-limited destination
+    // This invokes BorrowedLayers::extend_from_slice with truncation logic
+    heap.apply_to(&mut dest).unwrap();
 
-        fn allocate(&mut self, layer_num: usize) -> QuadImpl<'_> {
-            let quads = match layer_num {
-                0 => &mut self.layer0,
-                1 => &mut self.layer1,
-                2 => &mut self.layer2,
-                _ => unreachable!(),
-            };
-            quads.push(Box::new(BoxedQuad::default()));
-            let quad = quads.last_mut().unwrap();
-            QuadImpl::Boxed(quad)
-        }
+    // Extract the result back out to verify truncation
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
+        panic!("Expected Gpu variant");
+    };
 
-        fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
-            let (left, top, right, bottom) = (
-                instance.position[0],
-                instance.position[1],
-                instance.position[2],
-                instance.position[3],
-            );
-            let (x1, x2, y1, y2) = (
-                instance.tex[0],
-                instance.tex[1],
-                instance.tex[2],
-                instance.tex[3],
-            );
+    // Extract layer 0 from the borrowed layers
+    // Note: borrowed_layers is consumed here, which is fine since we're done with it
+    let [layer_view, _, _] = borrowed_layers.layers;
 
-            let boxed = BoxedQuad {
-                position: (left, top, right, bottom),
-                tex: (x1, x2, y1, y2),
-                fg_color: instance.fg_color,
-                alt_color: instance.alt_color,
-                hsv: instance.hsv,
-                has_color: instance.has_color,
-                mix_value: instance.mix_value,
-            };
+    // Extract the instances from layer 0
+    let result = layer_view.into_instances();
 
-            let dest_quads = match layer_num {
-                0 => &mut self.layer0,
-                1 => &mut self.layer1,
-                2 => &mut self.layer2,
-                _ => unreachable!(),
-            };
-            dest_quads.push(Box::new(boxed));
-        }
-    }
-
-    /// Candidate A: `Vec<BoxedQuad>` with sensible reserve
-    struct ContiguousAllocator {
-        layer0: Vec<BoxedQuad>,
-        layer1: Vec<BoxedQuad>,
-        layer2: Vec<BoxedQuad>,
-    }
-
-    impl ContiguousAllocator {
-        fn new() -> Self {
-            Self {
-                layer0: Vec::new(),
-                layer1: Vec::new(),
-                layer2: Vec::new(),
-            }
-        }
-
-        fn allocate(&mut self, layer_num: usize) -> QuadImpl<'_> {
-            let quads = match layer_num {
-                0 => &mut self.layer0,
-                1 => &mut self.layer1,
-                2 => &mut self.layer2,
-                _ => unreachable!(),
-            };
-            quads.push(BoxedQuad::default());
-            let quad = quads.last_mut().unwrap();
-            QuadImpl::Boxed(quad)
-        }
-
-        fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
-            let (left, top, right, bottom) = (
-                instance.position[0],
-                instance.position[1],
-                instance.position[2],
-                instance.position[3],
-            );
-            let (x1, x2, y1, y2) = (
-                instance.tex[0],
-                instance.tex[1],
-                instance.tex[2],
-                instance.tex[3],
-            );
-
-            let boxed = BoxedQuad {
-                position: (left, top, right, bottom),
-                tex: (x1, x2, y1, y2),
-                fg_color: instance.fg_color,
-                alt_color: instance.alt_color,
-                hsv: instance.hsv,
-                has_color: instance.has_color,
-                mix_value: instance.mix_value,
-            };
-
-            let dest_quads = match layer_num {
-                0 => &mut self.layer0,
-                1 => &mut self.layer1,
-                2 => &mut self.layer2,
-                _ => unreachable!(),
-            };
-            dest_quads.push(boxed);
-        }
-    }
-
-    /// Create a realistic QuadInstance for benchmarking
-    fn make_test_instance(idx: usize) -> QuadInstance {
-        QuadInstance {
-            position: [idx as f32, 0.0, (idx + 1) as f32, 20.0],
-            fg_color: [1.0, 1.0, 1.0, 1.0],
-            alt_color: [0.0, 0.0, 0.0, 0.0],
-            tex: [0.0, 1.0, 0.0, 1.0],
-            hsv: [1.0, 1.0, 1.0],
-            has_color: 0.0,
-            mix_value: 0.0,
-        }
-    }
-
-    /// Benchmark the miss-build path: fresh allocator + allocate N quads
-    #[test]
-    fn bench_heap_allocator_storage() {
-        benchmarking::warm_up();
-
-        println!("\n=== HeapQuadAllocator Storage Benchmark ===");
-        println!("Testing miss-build path (fresh allocator, allocate + fill)");
-        println!("BoxedQuad size: {} bytes", std::mem::size_of::<BoxedQuad>());
-
-        for &n in &[80, 200, 500, 2000] {
-            println!(
-                "\n--- {} quads (typical line, wide line, very wide, extreme) ---",
-                n
-            );
-
-            // Current: Vec<Box<BoxedQuad>>
-            let bench_current = benchmarking::measure_function(move |measurer| {
-                measurer.measure(|| {
-                    let mut alloc = CurrentAllocator::new();
-                    for i in 0..n {
-                        let instance = make_test_instance(i);
-                        // Split across layers like real usage: roughly 60% layer0, 30% layer1, 10% layer2
-                        let layer = if i < n * 3 / 5 {
-                            0
-                        } else if i < n * 9 / 10 {
-                            1
-                        } else {
-                            2
-                        };
-                        alloc.extend_with_instance(layer, instance);
-                    }
-                    // Prevent optimizer from dropping the alloc too early
-                    std::hint::black_box(&alloc);
-                })
-            })
-            .unwrap();
-            println!(
-                "Current (Vec<Box<BoxedQuad>>): {:?}, {} bytes (estimated)",
-                bench_current.elapsed(),
-                n * std::mem::size_of::<BoxedQuad>() + n * std::mem::size_of::<*const ()>()
-            );
-
-            // Candidate A: Vec<BoxedQuad>
-            let bench_contiguous = benchmarking::measure_function(move |measurer| {
-                measurer.measure(|| {
-                    let mut alloc = ContiguousAllocator::new();
-                    for i in 0..n {
-                        let instance = make_test_instance(i);
-                        // Split across layers like real usage
-                        let layer = if i < n * 3 / 5 {
-                            0
-                        } else if i < n * 9 / 10 {
-                            1
-                        } else {
-                            2
-                        };
-                        alloc.extend_with_instance(layer, instance);
-                    }
-                    std::hint::black_box(&alloc);
-                })
-            })
-            .unwrap();
-            println!(
-                "Candidate A (Vec<BoxedQuad>): {:?}, {} bytes",
-                bench_contiguous.elapsed(),
-                n * std::mem::size_of::<BoxedQuad>()
-            );
-
-            // Show speedup/slowdown
-            let current_ns = bench_current.elapsed().as_nanos();
-            let contiguous_ns = bench_contiguous.elapsed().as_nanos();
-            if current_ns > 0 {
-                let ratio = (contiguous_ns as f64 / current_ns as f64) * 100.0;
-                if ratio < 100.0 {
-                    println!("  → Candidate A is {:.1}% faster", 100.0 - ratio);
-                } else {
-                    println!("  → Candidate A is {:.1}% slower", ratio - 100.0);
-                }
-            }
-        }
-
-        println!("\n=== Conclusion ===");
-        println!("If Vec<BoxedQuad> is consistently faster (likely), the audit's");
-        println!("analysis was correct: per-line allocation is too small to justify");
-        println!("the per-quad Box indirection. If Vec<BoxedQuad> is slower at larger");
-        println!("sizes due to reallocs, consider a chunked arena (Candidate B).");
-    }
-
-    /// Also benchmark the allocate() path, not just extend_with_instance
-    #[test]
-    fn bench_heap_allocator_allocate_path() {
-        benchmarking::warm_up();
-
-        println!("\n=== HeapQuadAllocator allocate() Path Benchmark ===");
-
-        for &n in &[80, 200, 500] {
-            println!("\n--- {} quads (allocate() only) ---", n);
-
-            // Current: Vec<Box<BoxedQuad>>
-            let bench_current = benchmarking::measure_function(move |measurer| {
-                measurer.measure(|| {
-                    let mut alloc = CurrentAllocator::new();
-                    for i in 0..n {
-                        let layer = if i < n * 3 / 5 {
-                            0
-                        } else if i < n * 9 / 10 {
-                            1
-                        } else {
-                            2
-                        };
-                        let _ = alloc.allocate(layer);
-                    }
-                    std::hint::black_box(&alloc);
-                })
-            })
-            .unwrap();
-            println!(
-                "Current (Vec<Box<BoxedQuad>>): {:?}",
-                bench_current.elapsed()
-            );
-
-            // Candidate A: Vec<BoxedQuad>
-            let bench_contiguous = benchmarking::measure_function(move |measurer| {
-                measurer.measure(|| {
-                    let mut alloc = ContiguousAllocator::new();
-                    for i in 0..n {
-                        let layer = if i < n * 3 / 5 {
-                            0
-                        } else if i < n * 9 / 10 {
-                            1
-                        } else {
-                            2
-                        };
-                        let _ = alloc.allocate(layer);
-                    }
-                    std::hint::black_box(&alloc);
-                })
-            })
-            .unwrap();
-            println!(
-                "Candidate A (Vec<BoxedQuad>): {:?}",
-                bench_contiguous.elapsed()
-            );
-
-            // Show speedup/slowdown
-            let current_ns = bench_current.elapsed().as_nanos();
-            let contiguous_ns = bench_contiguous.elapsed().as_nanos();
-            if current_ns > 0 {
-                let ratio = (contiguous_ns as f64 / current_ns as f64) * 100.0;
-                if ratio < 100.0 {
-                    println!("  → Candidate A is {:.1}% faster", 100.0 - ratio);
-                } else {
-                    println!("  → Candidate A is {:.1}% slower", ratio - 100.0);
-                }
-            }
-        }
-    }
+    // The destination must have exactly capacity (2) instances, not 5
+    // This proves the real BorrowedLayers::extend_from_slice truncate logic ran correctly
+    assert_eq!(
+        result.len(),
+        2,
+        "Bulk path should truncate overflow to capacity (real BorrowedLayers::extend_from_slice)"
+    );
+    // Verify the FIRST 2 quads were copied (truncation keeps the start, not the end)
+    assert_eq!(
+        result[0].position[0], 0.0,
+        "First instance should be position[0]=0.0"
+    );
+    assert_eq!(
+        result[1].position[0], 1.0,
+        "Second instance should be position[0]=1.0"
+    );
 }
 
 /// Regression coverage for the instanced-rendering vertex layout (task #447).
