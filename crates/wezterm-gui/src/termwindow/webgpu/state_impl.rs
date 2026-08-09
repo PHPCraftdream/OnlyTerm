@@ -83,6 +83,21 @@ where
     future
 }
 
+/// Determines whether an explicit clear render pass is needed.
+///
+/// After iterating through all draw calls, `cleared` indicates whether
+/// any render pass was created. If `cleared` is `false`, the surface texture
+/// was never written to, so we must add a clear-only render pass before
+/// presenting to avoid showing stale swapchain contents.
+///
+/// This is a pure function extracted for testability: constructing a real
+/// wgpu device/encoder for an end-to-end test is impractical in the test
+/// harness, so we test this decision logic directly instead.
+#[cfg_attr(test, allow(dead_code))]
+pub fn needs_explicit_clear(cleared: bool) -> bool {
+    !cleared
+}
+
 impl WebGpuState {
     pub async fn new(
         window: &Window,
@@ -266,6 +281,31 @@ impl WebGpuState {
             );
             // Draw with instancing: instance_count from draw, 6 indices from shared buffer
             render_pass.draw_indexed(0..6, 0, 0..draw.instance_count);
+        }
+
+        // If no draws were issued, we still need to clear the surface texture
+        // before presenting it; otherwise, we'd present stale contents from a
+        // previous frame in the swapchain rotation.
+        if needs_explicit_clear(cleared) {
+            let _clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Clear Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.,
+                            g: 0.,
+                            b: 0.,
+                            a: 0.,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
         }
 
         // submit will accept anything that implements IntoIter

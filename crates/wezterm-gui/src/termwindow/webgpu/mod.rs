@@ -403,6 +403,7 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::clamp_surface_dimensions;
+    use crate::termwindow::webgpu::state_impl::needs_explicit_clear;
 
     const SAMPLE_MAX_TEXTURE_DIMENSION_2D: u32 = 16384;
 
@@ -466,6 +467,26 @@ mod tests {
                 SAMPLE_MAX_TEXTURE_DIMENSION_2D,
                 SAMPLE_MAX_TEXTURE_DIMENSION_2D
             )
+        );
+    }
+
+    #[test]
+    fn needs_clear_when_no_draws_issued() {
+        // When cleared=false (no render passes were created in the draw loop),
+        // we need an explicit clear pass to avoid presenting stale swapchain contents.
+        assert!(
+            needs_explicit_clear(false),
+            "Should need explicit clear when no draws were issued"
+        );
+    }
+
+    #[test]
+    fn no_clear_needed_when_at_least_one_draw_issued() {
+        // When cleared=true (at least one render pass was created),
+        // the first render pass already cleared the surface, so no extra clear pass needed.
+        assert!(
+            !needs_explicit_clear(true),
+            "Should not need explicit clear when at least one draw was issued"
         );
     }
 }
