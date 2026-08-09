@@ -324,6 +324,78 @@ Line {
     );
 }
 
+#[test]
+fn last_cell_was_wrapped_lazily_caches_on_read() {
+    // A line that is only ever read, never explicitly told whether it
+    // wrapped, must still compute (and repeatedly return) the correct
+    // value: the cache must be populate-able from the read path, not
+    // only from `set_last_cell_was_wrapped`.
+    let line: Line = "hello".into();
+    assert_eq!(line.last_cell_was_wrapped(), false);
+    // Second read exercises the now-populated cache and must agree.
+    assert_eq!(line.last_cell_was_wrapped(), false);
+
+    let wrapped_line =
+        Line::from_text_with_wrapped_last_col("hello", &CellAttributes::default(), SEQ_ZERO);
+    assert_eq!(wrapped_line.last_cell_was_wrapped(), true);
+    assert_eq!(wrapped_line.last_cell_was_wrapped(), true);
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_survives_unrelated_mutation() {
+    // Sanity check that the cache doesn't need to be busted by changes
+    // that don't touch the last cell.
+    let mut line: Line = "hello".into();
+    assert_eq!(line.last_cell_was_wrapped(), false);
+    line.set_cell(
+        0,
+        Cell::new_grapheme("H", CellAttributes::default(), None),
+        1,
+    );
+    assert_eq!(line.last_cell_was_wrapped(), false);
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_overwriting_last_cell() {
+    // Regression test: caching `last_cell_was_wrapped()` must not let a
+    // direct overwrite of the last cell (e.g. cursor repositioned via
+    // CUP and a character printed, as TUI apps redrawing a status line
+    // routinely do) return a stale value.
+    let mut line = Line::with_width_and_cell(5, Cell::blank(), SEQ_ZERO);
+    line.set_last_cell_was_wrapped(true, 1);
+    assert_eq!(line.last_cell_was_wrapped(), true);
+
+    // Overwrite the last cell directly with plain (non-wrapped) content,
+    // at a later seqno.
+    line.set_cell(
+        4,
+        Cell::new_grapheme("X", CellAttributes::default(), None),
+        2,
+    );
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        false,
+        "stale cached `true` must not survive overwriting the last cell"
+    );
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_resize_and_clear() {
+    let mut line = Line::with_width_and_cell(5, Cell::blank(), SEQ_ZERO);
+    line.set_last_cell_was_wrapped(true, 1);
+    assert_eq!(line.last_cell_was_wrapped(), true);
+
+    line.resize_and_clear(5, 2, CellAttributes::default());
+    assert_eq!(line.last_cell_was_wrapped(), false);
+
+    line.set_last_cell_was_wrapped(true, 3);
+    assert_eq!(line.last_cell_was_wrapped(), true);
+
+    line.resize(10, 4);
+    // resize() pads with blank cells; the (now different) last cell is blank.
+    assert_eq!(line.last_cell_was_wrapped(), false);
+}
+
 fn bold() -> CellAttributes {
     use wezterm_cell::Intensity;
     let mut attr = CellAttributes::default();
