@@ -1,4 +1,4 @@
-use crate::quad::{HeapQuadAllocator, HeapQuadAllocatorExt, QuadTrait, TripleLayerQuadAllocator};
+use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
 use crate::termwindow::render::{
@@ -562,6 +562,11 @@ impl crate::TermWindow {
                         selection: selrange.clone(),
                         cursor,
                         shape_hash,
+                        top_pixel_y: NotNan::new(self.top_pixel_y).unwrap()
+                            + (line_idx + self.pos.top) as f32
+                                * self.term_window.render_metrics.cell_size.height as f32,
+                        left_pixel_x: NotNan::new(self.left_pixel_x).unwrap(),
+                        phys_line_idx: line_idx,
                         reverse_video: self.dims.reverse_video,
                         is_wrap_continuation,
                         bidi_process_override,
@@ -615,15 +620,10 @@ impl crate::TermWindow {
                         RowAction::EmitCached => {
                             // This branch is only reachable when cache_hit is true.
                             let cached_quad = maybe_cached_quad.unwrap();
-                            // Compute real screen position: quads are built at origin (0,0)
-                            let real_top = self.top_pixel_y
-                                + (line_idx + self.pos.top) as f32
-                                    * self.term_window.render_metrics.cell_size.height as f32;
-                            let real_left = self.left_pixel_x;
                             cached_quad
                                 .layers
-                                .apply_to_translated(self.layers, real_left, real_top)
-                                .context("cached_quad.layers.apply_to_translated")?;
+                                .apply_to(self.layers)
+                                .context("cached_quad.layers.apply_to")?;
                             self.term_window.update_next_frame_time(cached_quad.expires);
 
                             // Task #457: update retained_rows with this fresh cached data.
@@ -668,8 +668,8 @@ impl crate::TermWindow {
                                 .term_window
                                 .render_screen_line(
                                     RenderScreenLineParams {
-                                        top_pixel_y: 0.0,
-                                        left_pixel_x: 0.0,
+                                        top_pixel_y: *quad_key.top_pixel_y,
+                                        left_pixel_x: self.left_pixel_x,
                                         pixel_width: self.dims.cols as f32
                                             * self.term_window.render_metrics.cell_size.width
                                                 as f32,
@@ -711,13 +711,8 @@ impl crate::TermWindow {
                             let expires = self.term_window.has_animation.borrow().as_ref().cloned();
                             self.term_window.update_next_frame_time(next_due);
 
-                            // Compute real screen position: quads are built at origin (0,0)
-                            let real_top = self.top_pixel_y
-                                + (line_idx + self.pos.top) as f32
-                                    * self.term_window.render_metrics.cell_size.height as f32;
-                            let real_left = self.left_pixel_x;
-                            buf.apply_to_translated(self.layers, real_left, real_top)
-                                .context("HeapQuadAllocator::apply_to_translated")?;
+                            buf.apply_to(self.layers)
+                                .context("HeapQuadAllocator::apply_to")?;
 
                             // Store into line_quad_cache (existing).
                             let quads = Rc::new(buf);
@@ -757,15 +752,11 @@ impl crate::TermWindow {
                                 .and_then(|r| r.rows.get(slot))
                                 .and_then(|r| r.as_ref())
                                 .context("EmitRetained without retained quads for this slot")?;
-                            // Compute real screen position: quads are built at origin (0,0)
-                            let real_top = self.top_pixel_y
-                                + (line_idx + self.pos.top) as f32
-                                    * self.term_window.render_metrics.cell_size.height as f32;
-                            let real_left = self.left_pixel_x;
+
                             retained_row
                                 .quads
-                                .apply_to_translated(self.layers, real_left, real_top)
-                                .context("retained.quads.apply_to_translated")?;
+                                .apply_to(self.layers)
+                                .context("retained.quads.apply_to")?;
                             self.term_window
                                 .update_next_frame_time(retained_row.expires);
                         }
