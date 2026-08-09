@@ -200,7 +200,7 @@ impl TermWindow {
                 |config| config.shape_cache_size,
                 &config,
             )),
-            line_state_cache: RefCell::new(LfuCacheU64::new(
+            line_state_cache: RefCell::new(render::LruCacheWithMetrics::new(
                 "line_state_cache.hit.rate",
                 "line_state_cache.miss.rate",
                 |config| config.line_state_cache_size,
