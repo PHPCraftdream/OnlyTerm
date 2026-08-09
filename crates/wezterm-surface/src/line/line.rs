@@ -39,6 +39,16 @@ pub struct Line {
     #[cfg(feature = "appdata")]
     #[cfg_attr(feature = "use_serde", serde(skip))]
     appdata: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
+    // Memoizes `last_cell_was_wrapped`'s grapheme-cluster scan (expensive:
+    // it's re-run for every visible line on every paint by the
+    // wrap-boundary walk in `Screen::for_each_logical_line_in_stable_range_mut`).
+    // Validity is tied to `seqno` rather than an explicit dirty flag so that
+    // it can't be invalidated from `&self`, and so it can't be missed by a
+    // cell-mutating method that forgets to invalidate it explicitly: any
+    // method that bumps `seqno` already invalidates it for free, the same
+    // contract `shape_hash_for_line`'s cache already relies on.
+    cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool,
+    cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize,
 }
 
 // Manual impl (rather than `#[derive(Debug)]`) so that `Debug` output is
@@ -65,6 +75,14 @@ impl Clone for Line {
             zones: self.zones.clone(),
             seqno: self.seqno,
             bits: self.bits,
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(
+                self.cached_last_cell_was_wrapped
+                    .load(core::sync::atomic::Ordering::Relaxed),
+            ),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(
+                self.cached_last_cell_wrapped_seqno
+                    .load(core::sync::atomic::Ordering::Relaxed),
+            ),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(self.appdata.lock().unwrap().clone()),
         }
@@ -87,6 +105,8 @@ impl Line {
             cells: CellStorage::V(VecStorage::new(cells)),
             seqno,
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -99,6 +119,8 @@ impl Line {
             cells: CellStorage::V(VecStorage::new(cells)),
             seqno,
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -114,6 +136,8 @@ impl Line {
             cells: CellStorage::C(ClusteredLine::new()),
             seqno,
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -145,6 +169,8 @@ impl Line {
             cells: CellStorage::V(VecStorage::new(cells)),
             seqno,
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -172,6 +198,8 @@ impl Line {
             bits: LineBits::NONE,
             seqno,
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -665,6 +693,8 @@ impl Line {
             cells: CellStorage::V(VecStorage::new(cells)),
             seqno,
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -756,6 +786,8 @@ impl Line {
             cells: CellStorage::V(VecStorage::new(cells)),
             seqno: self.current_seqno(),
             zones: vec![],
+            cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
+            cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
             appdata: Mutex::new(None),
         }
@@ -1161,15 +1193,25 @@ impl Line {
     /// Return true if the last cell in the line has the wrapped attribute,
     /// indicating that the following line is logically a part of this one.
     pub fn last_cell_was_wrapped(&self) -> bool {
-        self.visible_cells()
+        use core::sync::atomic::Ordering::Relaxed;
+        if self.cached_last_cell_wrapped_seqno.load(Relaxed) == self.seqno {
+            return self.cached_last_cell_was_wrapped.load(Relaxed);
+        }
+        let wrapped = self
+            .visible_cells()
             .last()
             .map(|c| c.attrs().wrapped())
-            .unwrap_or(false)
+            .unwrap_or(false);
+        self.cached_last_cell_was_wrapped.store(wrapped, Relaxed);
+        self.cached_last_cell_wrapped_seqno
+            .store(self.seqno, Relaxed);
+        wrapped
     }
 
     /// Adjust the value of the wrapped attribute on the last cell of this
     /// line.
     pub fn set_last_cell_was_wrapped(&mut self, wrapped: bool, seqno: SequenceNo) {
+        use core::sync::atomic::Ordering::Relaxed;
         self.update_last_change_seqno(seqno);
         if let CellStorage::C(cl) = &mut self.cells {
             if cl.len() == 0 {
@@ -1178,6 +1220,9 @@ impl Line {
                 cl.append(Cell::blank());
             }
             cl.set_last_cell_was_wrapped(wrapped);
+            self.cached_last_cell_was_wrapped.store(wrapped, Relaxed);
+            self.cached_last_cell_wrapped_seqno
+                .store(self.seqno, Relaxed);
             return;
         }
 
@@ -1185,6 +1230,9 @@ impl Line {
         if let Some(cell) = cells.last_mut() {
             cell.attrs_mut().set_wrapped(wrapped);
         }
+        self.cached_last_cell_was_wrapped.store(wrapped, Relaxed);
+        self.cached_last_cell_wrapped_seqno
+            .store(self.seqno, Relaxed);
     }
 
     /// Concatenate the cells from other with this line, appending them
