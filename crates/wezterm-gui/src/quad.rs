@@ -2,6 +2,7 @@ use crate::renderstate::BorrowedLayers;
 use ::window::bitmaps::TextureRect;
 use ::window::color::LinearRgba;
 use config::HsbTransform;
+use std::ops::Deref;
 
 /// Each cell is composed of two triangles built from 4 vertices.
 /// The buffer is organized row by row.
@@ -421,6 +422,49 @@ impl<'a> TripleLayerQuadAllocatorTrait for TripleLayerQuadAllocator<'a> {
             Self::Gpu(b) => b.extend_from_slice(layer_num, instances),
             Self::Heap(h) => h.extend_from_slice(layer_num, instances),
         }
+    }
+}
+
+// Trait wrapper to allow calling HeapQuadAllocator methods through Rc
+pub trait HeapQuadAllocatorExt {
+    fn apply_to_translated(
+        &self,
+        other: &mut TripleLayerQuadAllocator,
+        dx: f32,
+        dy: f32,
+    ) -> anyhow::Result<()>;
+}
+
+impl HeapQuadAllocatorExt for HeapQuadAllocator {
+    fn apply_to_translated(
+        &self,
+        other: &mut TripleLayerQuadAllocator,
+        dx: f32,
+        dy: f32,
+    ) -> anyhow::Result<()> {
+        let start = std::time::Instant::now();
+        for (layer, instances) in [(0, &self.layer0), (1, &self.layer1), (2, &self.layer2)] {
+            for mut instance in instances.iter().copied() {
+                instance.position[0] += dx;
+                instance.position[1] += dy;
+                instance.position[2] += dx;
+                instance.position[3] += dy;
+                other.extend_with_instance(layer, instance);
+            }
+        }
+        metrics::histogram!("quad_buffer_apply").record(start.elapsed());
+        Ok(())
+    }
+}
+
+impl<T: Deref<Target = HeapQuadAllocator>> HeapQuadAllocatorExt for T {
+    fn apply_to_translated(
+        &self,
+        other: &mut TripleLayerQuadAllocator,
+        dx: f32,
+        dy: f32,
+    ) -> anyhow::Result<()> {
+        self.deref().apply_to_translated(other, dx, dy)
     }
 }
 
@@ -969,5 +1013,182 @@ mod pipeline_layout {
         assert_eq!(corners[V_TOP_RIGHT].corner_unit, [1.0, 0.0]);
         assert_eq!(corners[V_BOT_LEFT].corner_unit, [0.0, 1.0]);
         assert_eq!(corners[V_BOT_RIGHT].corner_unit, [1.0, 1.0]);
+    }
+}
+
+/// Test that HeapQuadAllocator::apply_to_translated offsets quad positions correctly.
+#[test]
+fn test_apply_to_translated_offsets_correctly() {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
+
+    // Build a real TripleVertexBuffer with capacity 10
+    let vb = crate::renderstate::TripleVertexBuffer::new(vec![], 10);
+
+    // Map instances to get MappedQuadsViews for all three layers
+    let view0 = vb.map_instances();
+    let view1 = vb.map_instances();
+    let view2 = vb.map_instances();
+
+    // Build real BorrowedLayers
+    let borrowed_layers = BorrowedLayers {
+        layers: [view0, view1, view2],
+    };
+
+    // Wrap in TripleLayerQuadAllocator::Gpu (the real production type)
+    let mut dest = TripleLayerQuadAllocator::Gpu(borrowed_layers);
+
+    // Build a HeapQuadAllocator with a quad at [0,0,10,10] in layer 0
+    let mut heap = HeapQuadAllocator::default();
+    let q = QuadInstance {
+        position: [0.0, 0.0, 10.0, 10.0], // [left, top, right, bottom]
+        ..Default::default()
+    };
+    heap.layer0.push(q);
+
+    // Call apply_to_translated with dx=5.0, dy=7.0
+    heap.apply_to_translated(&mut dest, 5.0, 7.0).unwrap();
+
+    // Extract the result back out
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
+        panic!("Expected Gpu variant");
+    };
+    let [layer_view, _, _] = borrowed_layers.layers;
+    let result = layer_view.into_instances();
+
+    // Verify the quad was offset correctly: [0+5, 0+7, 10+5, 10+7] = [5, 7, 15, 17]
+    assert_eq!(result.len(), 1, "Should have exactly 1 quad");
+    assert_eq!(
+        result[0].position,
+        [5.0, 7.0, 15.0, 17.0],
+        "apply_to_translated should add dx/dy to position"
+    );
+}
+
+/// Test that HeapQuadAllocator::apply_to_translated with zero offset matches apply_to.
+#[test]
+fn test_apply_to_translated_zero_offset_matches_apply_to() {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
+
+    // Build a HeapQuadAllocator with some quads in different layers
+    let mut heap = HeapQuadAllocator::default();
+    for i in 0..3 {
+        let q = QuadInstance {
+            position: [i as f32, i as f32 * 2.0, i as f32 * 3.0, i as f32 * 4.0],
+            ..Default::default()
+        };
+        heap.layer0.push(q);
+    }
+    for i in 0..2 {
+        let q = QuadInstance {
+            position: [
+                i as f32 + 10.0,
+                i as f32 + 20.0,
+                i as f32 + 30.0,
+                i as f32 + 40.0,
+            ],
+            ..Default::default()
+        };
+        heap.layer1.push(q);
+    }
+
+    // Create two destinations
+    let vb1 = crate::renderstate::TripleVertexBuffer::new(vec![], 20);
+    let vb2 = crate::renderstate::TripleVertexBuffer::new(vec![], 20);
+
+    let view0_1 = vb1.map_instances();
+    let view1_1 = vb1.map_instances();
+    let view2_1 = vb1.map_instances();
+    let borrowed_layers1 = BorrowedLayers {
+        layers: [view0_1, view1_1, view2_1],
+    };
+    let mut dest1 = TripleLayerQuadAllocator::Gpu(borrowed_layers1);
+
+    let view0_2 = vb2.map_instances();
+    let view1_2 = vb2.map_instances();
+    let view2_2 = vb2.map_instances();
+    let borrowed_layers2 = BorrowedLayers {
+        layers: [view0_2, view1_2, view2_2],
+    };
+    let mut dest2 = TripleLayerQuadAllocator::Gpu(borrowed_layers2);
+
+    // Call apply_to on dest1
+    heap.apply_to(&mut dest1).unwrap();
+
+    // Call apply_to_translated with zero offset on dest2
+    heap.apply_to_translated(&mut dest2, 0.0, 0.0).unwrap();
+
+    // Extract results
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers1) = dest1 else {
+        panic!("Expected Gpu variant");
+    };
+    let [layer_view1_0, layer_view1_1, layer_view1_2] = borrowed_layers1.layers;
+    let result1_0 = layer_view1_0.into_instances();
+    let result1_1 = layer_view1_1.into_instances();
+    let result1_2 = layer_view1_2.into_instances();
+
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers2) = dest2 else {
+        panic!("Expected Gpu variant");
+    };
+    let [layer_view2_0, layer_view2_1, layer_view2_2] = borrowed_layers2.layers;
+    let result2_0 = layer_view2_0.into_instances();
+    let result2_1 = layer_view2_1.into_instances();
+    let result2_2 = layer_view2_2.into_instances();
+
+    // Compare results across all three layers
+    assert_eq!(
+        result1_0.len(),
+        result2_0.len(),
+        "Layer 0: same number of quads"
+    );
+    assert_eq!(
+        result1_1.len(),
+        result2_1.len(),
+        "Layer 1: same number of quads"
+    );
+    assert_eq!(
+        result1_2.len(),
+        result2_2.len(),
+        "Layer 2: same number of quads"
+    );
+
+    for i in 0..result1_0.len() {
+        assert_eq!(
+            result1_0[i].position, result2_0[i].position,
+            "Layer 0 quad {}: position should match",
+            i
+        );
+        assert_eq!(
+            result1_0[i].fg_color, result2_0[i].fg_color,
+            "Layer 0 quad {}: fg_color should match",
+            i
+        );
+        assert_eq!(
+            result1_0[i].alt_color, result2_0[i].alt_color,
+            "Layer 0 quad {}: alt_color should match",
+            i
+        );
+    }
+
+    for i in 0..result1_1.len() {
+        assert_eq!(
+            result1_1[i].position, result2_1[i].position,
+            "Layer 1 quad {}: position should match",
+            i
+        );
+        assert_eq!(
+            result1_1[i].fg_color, result2_1[i].fg_color,
+            "Layer 1 quad {}: fg_color should match",
+            i
+        );
+    }
+
+    for i in 0..result1_2.len() {
+        assert_eq!(
+            result1_2[i].position, result2_2[i].position,
+            "Layer 2 quad {}: position should match",
+            i
+        );
     }
 }

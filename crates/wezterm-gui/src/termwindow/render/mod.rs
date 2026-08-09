@@ -63,9 +63,9 @@ pub struct LineQuadCacheKey {
     pub composing: Option<String>,
     pub selection: Range<usize>,
     pub shape_hash: [u8; 16],
-    pub top_pixel_y: NotNan<f32>,
-    pub left_pixel_x: NotNan<f32>,
-    pub phys_line_idx: usize,
+    // Position-independent: lines are built at origin (0,0) and translated
+    // at emission time, so absolute screen position and physical line index
+    // are no longer part of the cache key. This enables cache hits during scrolling.
     pub pane_id: PaneId,
     pub pane_is_active: bool,
     /// A cursor position with the y value fixed at 0.
@@ -140,6 +140,9 @@ pub struct RetainedStamp {
     pub pixel_width: usize,
     pub pixel_height: usize,
     pub cell_height: isize,
+    // Retained quads are now built at origin (0,0) and translated at emission
+    // time, so these track pane origin movement rather than pixel staleness.
+    // They still invalidate retained rows when the pane resizes or moves.
     pub left_pixel_x: NotNan<f32>,
     pub top_pixel_y: NotNan<f32>,
     pub num_rows: usize,
