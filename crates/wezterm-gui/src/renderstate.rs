@@ -247,20 +247,8 @@ impl QuadAllocator for MappedQuadsView {
             idx
         };
 
-        // Create a BoxedQuad by transmuting the QuadInstance
-        // This is safe because the memory layout is compatible (tuples and arrays of same types have same layout)
         self.instances.push(crate::quad::QuadInstance::default());
-        // SAFETY: BoxedQuad and QuadInstance have exactly the same memory layout (84 bytes each)
-        // with compatible field types, so this transmutation is safe for the duration
-        // of the returned QuadImpl borrow.
-        // SAFETY: BoxedQuad and QuadInstance have identical memory layout (both #[repr(C)] with
-        // same 7 f32/f32 arrays in same order), proven by size() test. The pointer remains valid
-        // for the lifetime of the returned &mut reference, which is tied to self.instances.
-        let boxed_quad: *mut crate::quad::BoxedQuad = self.instances.last_mut().unwrap()
-            as *mut crate::quad::QuadInstance
-            as *mut crate::quad::BoxedQuad;
-        // SAFETY: proven by comment above
-        Ok(QuadImpl::Boxed(unsafe { &mut *boxed_quad }))
+        Ok(QuadImpl::Boxed(self.instances.last_mut().unwrap()))
     }
 
     fn extend_with(&mut self, vertices: &[Vertex]) {
@@ -575,6 +563,16 @@ impl TripleLayerQuadAllocatorTrait for BorrowedLayers {
 
     fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
         self.layers[layer_num].extend_with_instance(instance)
+    }
+
+    fn extend_from_slice(&mut self, layer_num: usize, instances: &[QuadInstance]) {
+        let layer = &mut self.layers[layer_num];
+        // Preserve the exact overflow-drop behavior from the per-quad loop:
+        // truncate to the available capacity, then bulk-copy what fits.
+        let available = layer.capacity.saturating_sub(layer.next.get());
+        let to_copy = instances.get(..available).unwrap_or(&[]);
+        layer.instances.extend_from_slice(to_copy);
+        layer.next.set(layer.next.get() + to_copy.len());
     }
 }
 
