@@ -819,6 +819,11 @@ impl crate::TermWindow {
             let (stable_top, lines) = pos.pane.get_lines(stable_range.clone());
             render.render_lines(stable_top, &lines);
             let sweep_outcome = render.sweep.finish();
+
+            // Task #457: record how many rows were actually built this sweep for diagnostics.
+            metrics::histogram!("gui.paint.rows_built_per_sweep")
+                .record(sweep_outcome.built_count as f64);
+
             if let Some(error) = render.error.take() {
                 return Err(error).context("error while calling get_lines");
             }
