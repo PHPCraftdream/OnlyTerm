@@ -255,9 +255,17 @@ impl WebGpuState {
             render_pass.set_bind_group(0, &uniforms, &[]);
             render_pass.set_bind_group(1, &texture_linear_bind_group, &[]);
             render_pass.set_bind_group(2, &texture_nearest_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, draw.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(draw.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..draw.index_count, 0, 0..1);
+            // Set corner buffer (vertex step mode, binding 0)
+            render_pass.set_vertex_buffer(0, self.context.corner_buffer.slice(..));
+            // Set instance buffer (instance step mode, binding 1)
+            render_pass.set_vertex_buffer(1, draw.vertex_buffer.slice(..));
+            // Use shared index buffer from context
+            render_pass.set_index_buffer(
+                self.context.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            // Draw with instancing: instance_count from draw, 6 indices from shared buffer
+            render_pass.draw_indexed(0..6, 0, 0..draw.instance_count);
         }
 
         // submit will accept anything that implements IntoIter

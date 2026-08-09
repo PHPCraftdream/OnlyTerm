@@ -11,8 +11,6 @@ use std::sync::Arc;
 use wezterm_font::FontConfiguration;
 use wgpu::util::DeviceExt;
 
-const INDICES_PER_CELL: usize = 6;
-
 #[derive(Clone)]
 pub struct RenderContext(pub Arc<WebGpuState>);
 
@@ -25,19 +23,19 @@ impl RenderContext {
         Ok(IndexBuffer(WebGpuIndexBuffer::new(indices, &self.0)))
     }
 
-    pub fn allocate_vertex_buffer_initializer(&self, _num_quads: usize) -> Vec<Vertex> {
+    pub fn allocate_vertex_buffer_initializer(
+        &self,
+        _num_quads: usize,
+    ) -> Vec<crate::quad::QuadInstance> {
         vec![]
     }
 
     pub fn allocate_vertex_buffer(
         &self,
         num_quads: usize,
-        _initializer: &[Vertex],
+        _initializer: &[crate::quad::QuadInstance],
     ) -> anyhow::Result<VertexBuffer> {
-        Ok(VertexBuffer(WebGpuVertexBuffer::new(
-            num_quads * VERTICES_PER_CELL,
-            &self.0,
-        )))
+        Ok(VertexBuffer(WebGpuInstanceBuffer::new(num_quads, &self.0)))
     }
 
     pub fn allocate_texture_atlas(&self, size: usize) -> anyhow::Result<Rc<dyn Texture2d>> {
@@ -60,23 +58,14 @@ impl IndexBuffer {
     }
 }
 
-pub struct VertexBuffer(WebGpuVertexBuffer);
+pub struct VertexBuffer(WebGpuInstanceBuffer);
 
 impl VertexBuffer {
-    pub fn webgpu(&self) -> &WebGpuVertexBuffer {
+    pub fn webgpu(&self) -> &WebGpuInstanceBuffer {
         &self.0
     }
-    pub fn webgpu_mut(&mut self) -> &mut WebGpuVertexBuffer {
+    pub fn webgpu_mut(&mut self) -> &mut WebGpuInstanceBuffer {
         &mut self.0
-    }
-}
-
-struct MappedVertexBuffer<'a>(WebGpuMappedVertexBuffer<'a>);
-
-impl<'a> MappedVertexBuffer<'a> {
-    fn slice_mut(&mut self, range: std::ops::Range<usize>) -> &mut [Vertex] {
-        let mapping: &mut [Vertex] = bytemuck::cast_slice_mut(&mut self.0.mapping);
-        &mut mapping[range]
     }
 }
 
@@ -87,16 +76,7 @@ impl<'a> MappedVertexBuffer<'a> {
 /// owned value, so its lifetime is an ordinary borrow tied to whatever
 /// RefCell guards the caller is holding in its own stack frame, and the
 /// borrow checker verifies it exactly like any other nested borrow.
-pub struct MappedQuadsView<'a> {
-    mapping: MappedVertexBuffer<'a>,
-    next: &'a Cell<usize>,
-    capacity: usize,
-}
-
-pub struct WebGpuMappedVertexBuffer<'a> {
-    mapping: wgpu::BufferViewMut<'a>,
-}
-
+#[allow(dead_code)] // Kept for public API surface; may be revived in future
 pub struct WebGpuVertexBuffer {
     buf: wgpu::Buffer,
     num_vertices: usize,
@@ -110,6 +90,7 @@ impl std::ops::Deref for WebGpuVertexBuffer {
     }
 }
 
+#[allow(dead_code)] // Kept for public API surface; may be revived in future
 impl WebGpuVertexBuffer {
     pub fn new(num_vertices: usize, state: &Arc<WebGpuState>) -> Self {
         Self {
@@ -124,13 +105,12 @@ impl WebGpuVertexBuffer {
         }
     }
 
-    pub fn map(&self) -> WebGpuMappedVertexBuffer<'_> {
+    pub fn map(&self) -> wgpu::BufferViewMut<'_> {
         // `get_mapped_range_mut`'s returned `BufferViewMut` carries its own
         // internal copy of the slice descriptor (see wgpu's
         // `BufferSlice::get_mapped_range_mut`), so there's no need to also
         // keep the `BufferSlice` temporary around as a sibling field.
-        let mapping = self.buf.slice(..).get_mapped_range_mut();
-        WebGpuMappedVertexBuffer { mapping }
+        self.buf.slice(..).get_mapped_range_mut()
     }
 
     pub fn recreate(&mut self) -> wgpu::Buffer {
@@ -142,6 +122,69 @@ impl WebGpuVertexBuffer {
         });
         std::mem::swap(&mut new_buf, &mut self.buf);
         new_buf
+    }
+}
+
+/// Instance-mode vertex buffer for instanced rendering.
+/// Uses persistent buffer with Queue::write_buffer instead of per-frame recreation.
+pub struct WebGpuInstanceBuffer {
+    buf: wgpu::Buffer,
+    capacity: usize,
+    state: Arc<WebGpuState>,
+    used_instances: usize,
+}
+
+impl WebGpuInstanceBuffer {
+    pub fn new(capacity: usize, state: &Arc<WebGpuState>) -> Self {
+        let buf = state.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer"),
+            size: (capacity * std::mem::size_of::<crate::quad::QuadInstance>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            buf,
+            capacity,
+            state: Arc::clone(state),
+            used_instances: 0,
+        }
+    }
+
+    /// Ensure capacity is at least `new_capacity`. Reallocates buffer if needed.
+    pub fn ensure_capacity(&mut self, new_capacity: usize) {
+        if new_capacity <= self.capacity {
+            return;
+        }
+        // Round up to next multiple of 128
+        let new_capacity = (new_capacity + 127) & !127;
+        let new_buf = self.state.device().create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Instance Buffer (resized)"),
+            size: (new_capacity * std::mem::size_of::<crate::quad::QuadInstance>())
+                as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.buf = new_buf;
+        self.capacity = new_capacity;
+    }
+
+    /// Write instance data to the buffer using Queue::write_buffer.
+    /// Only writes the actually-used portion, not the full capacity.
+    pub fn write_instances(&mut self, instances: &[crate::quad::QuadInstance]) {
+        self.ensure_capacity(instances.len());
+        self.state
+            .queue()
+            .write_buffer(&self.buf, 0, bytemuck::cast_slice(instances));
+        self.used_instances = instances.len();
+    }
+
+    pub fn used_instances(&self) -> usize {
+        self.used_instances
+    }
+
+    pub fn buffer(&self) -> &wgpu::Buffer {
+        &self.buf
     }
 }
 
@@ -170,11 +213,23 @@ impl WebGpuIndexBuffer {
     }
 }
 
-impl<'a> QuadAllocator for MappedQuadsView<'a> {
+pub struct MappedQuadsView {
+    instances: Vec<crate::quad::QuadInstance>,
+    next: Cell<usize>,
+    capacity: usize,
+}
+
+impl MappedQuadsView {
+    pub fn instances(&mut self) -> &mut Vec<crate::quad::QuadInstance> {
+        &mut self.instances
+    }
+}
+
+impl QuadAllocator for MappedQuadsView {
     fn allocate<'b>(&'b mut self) -> anyhow::Result<QuadImpl<'b>> {
         let idx = self.next.get();
         self.next.set(idx + 1);
-        let idx = if idx >= self.capacity {
+        let _idx = if idx >= self.capacity {
             // We don't have enough quads, so we'll keep re-using
             // the first quad until we reach the end of the render
             // pass, at which point we'll detect this condition
@@ -184,46 +239,117 @@ impl<'a> QuadAllocator for MappedQuadsView<'a> {
             idx
         };
 
-        let idx = idx * VERTICES_PER_CELL;
-        let mut quad = Quad {
-            vert: self.mapping.slice_mut(idx..idx + VERTICES_PER_CELL),
-        };
-
-        quad.set_has_color(false);
-
-        Ok(QuadImpl::Vert(quad))
+        // Create a BoxedQuad by transmuting the QuadInstance
+        // This is safe because the memory layout is compatible (tuples and arrays of same types have same layout)
+        self.instances.push(crate::quad::QuadInstance::default());
+        // SAFETY: BoxedQuad and QuadInstance have exactly the same memory layout (84 bytes each)
+        // with compatible field types, so this transmutation is safe for the duration
+        // of the returned QuadImpl borrow.
+        // SAFETY: BoxedQuad and QuadInstance have identical memory layout (both #[repr(C)] with
+        // same 7 f32/f32 arrays in same order), proven by size() test. The pointer remains valid
+        // for the lifetime of the returned &mut reference, which is tied to self.instances.
+        let boxed_quad: *mut crate::quad::BoxedQuad = self.instances.last_mut().unwrap()
+            as *mut crate::quad::QuadInstance
+            as *mut crate::quad::BoxedQuad;
+        // SAFETY: proven by comment above
+        Ok(QuadImpl::Boxed(unsafe { &mut *boxed_quad }))
     }
 
     fn extend_with(&mut self, vertices: &[Vertex]) {
+        // Legacy path: expand vertices to instances
         let idx = self.next.get();
         let len = vertices.len();
 
         // idx and next are number of quads, so divide by number of vertices
-        self.next.set(idx + len / VERTICES_PER_CELL);
-        // Only copy in if there is enough room.
-        // We'll detect the out of space condition at the end of
-        // the render pass.
-        let idx = idx * VERTICES_PER_CELL;
-        let capacity = self.capacity * VERTICES_PER_CELL;
-        if idx + len <= capacity {
-            self.mapping
-                .slice_mut(idx..idx + len)
-                .copy_from_slice(vertices);
+        let num_quads = len / VERTICES_PER_CELL;
+        self.next.set(idx + num_quads);
+
+        if num_quads == 0 {
+            return;
         }
+
+        let start_quad_idx = self.instances.len();
+        self.instances.resize(
+            start_quad_idx + num_quads,
+            crate::quad::QuadInstance::default(),
+        );
+
+        // SAFETY: `vertices` is a `&[Vertex]` whose length is a multiple of
+        // `VERTICES_PER_CELL` (asserted below); reinterpreting it as a slice
+        // of `[Vertex; VERTICES_PER_CELL]` chunks is layout-compatible since
+        // both sides are the same repr and alignment.
+        assert_eq!(vertices.len() % VERTICES_PER_CELL, 0);
+        // SAFETY: `vertices` is a `&[Vertex]` whose length is a multiple of `VERTICES_PER_CELL`
+        // (asserted above); reinterpreting it as a slice of `[Vertex; VERTICES_PER_CELL]` chunks
+        // is layout-compatible since both sides are the same repr and alignment.
+        let src_quads: &[[Vertex; VERTICES_PER_CELL]] = unsafe {
+            std::slice::from_raw_parts(vertices.as_ptr().cast(), vertices.len() / VERTICES_PER_CELL)
+        };
+
+        for (i, quad) in src_quads.iter().enumerate() {
+            let instance = &mut self.instances[start_quad_idx + i];
+            // Extract instance data from the 4 vertices (all should be identical for per-quad data)
+            let tex_top_left = quad[V_TOP_LEFT].tex;
+            let tex_bot_right = quad[V_BOT_RIGHT].tex;
+            let position_top_left = quad[V_TOP_LEFT].position;
+            let position_bot_right = quad[V_BOT_RIGHT].position;
+
+            instance.tex = [
+                tex_top_left[0],
+                tex_bot_right[0],
+                tex_top_left[1],
+                tex_bot_right[1],
+            ];
+            instance.position = [
+                position_top_left[0],
+                position_top_left[1],
+                position_bot_right[0],
+                position_bot_right[1],
+            ];
+            instance.has_color = quad[V_TOP_LEFT].has_color;
+            instance.alt_color = quad[V_TOP_LEFT].alt_color;
+            instance.fg_color = quad[V_TOP_LEFT].fg_color;
+            instance.hsv = quad[V_TOP_LEFT].hsv;
+            instance.mix_value = quad[V_TOP_LEFT].mix_value;
+        }
+    }
+
+    fn extend_with_instance(&mut self, instance: crate::quad::QuadInstance) {
+        let idx = self.next.get();
+        if idx >= self.capacity {
+            return; // Out of space, skip
+        }
+        self.next.set(idx + 1);
+        self.instances.push(instance);
     }
 }
 
 pub struct TripleVertexBuffer {
     pub index: Cell<usize>,
     pub bufs: RefCell<Vec<VertexBuffer>>,
-    pub indices: IndexBuffer,
     pub capacity: usize,
     pub next_quad: Cell<usize>,
+    /// Collected instances for the current frame (one per layer per sub-layer)
+    pub instances: RefCell<Vec<Vec<crate::quad::QuadInstance>>>,
 }
 
 impl TripleVertexBuffer {
+    pub fn new(bufs: Vec<VertexBuffer>, capacity: usize) -> Self {
+        Self {
+            index: Cell::new(0),
+            bufs: RefCell::new(bufs),
+            capacity,
+            next_quad: Cell::new(0),
+            instances: RefCell::new(vec![Vec::new(); 3]), // 3 sub-layers
+        }
+    }
+
     pub fn clear_quad_allocation(&self) {
         self.next_quad.set(0);
+        // Clear collected instances for the new frame
+        for layer in self.instances.borrow_mut().iter_mut() {
+            layer.clear();
+        }
     }
 
     pub fn need_more_quads(&self) -> Option<usize> {
@@ -235,27 +361,38 @@ impl TripleVertexBuffer {
         }
     }
 
-    pub fn vertex_index_count(&self) -> (usize, usize) {
-        let num_quads = self.next_quad.get();
-        (num_quads * VERTICES_PER_CELL, num_quads * INDICES_PER_CELL)
+    pub fn instance_count(&self) -> usize {
+        self.next_quad.get()
     }
 
-    /// Maps the currently-active vertex buffer and returns a view over it,
-    /// tied to the borrow of `bufs` that the caller already holds.
-    /// Unlike the old `map()`, this doesn't return an owned, independent
-    /// value: the caller (`RenderLayer::with_quad_allocator`) keeps the
-    /// `RefMut` guard for `bufs` alive in its own stack frame for exactly
-    /// as long as the returned view is used, so this is an ordinary
-    /// nested borrow rather than a self-referential struct.
-    pub fn map<'a>(&'a self, bufs: &'a mut [VertexBuffer]) -> MappedQuadsView<'a> {
-        let index = self.index.get();
-        let mapping = MappedVertexBuffer(bufs[index].0.map());
-
+    /// Creates an instance-based view for allocation in a specific sub-layer.
+    /// `instances` is a fresh, owned `Vec` collected for this frame (not a
+    /// view into any pre-existing GPU buffer), so `next` starts its own
+    /// bump-allocator count at 0 rather than sharing `self.next_quad` --
+    /// that field belongs to the legacy vertex-based counting path and
+    /// tracks a different, unrelated position.
+    pub fn map_instances(&self, _sub_layer_idx: usize) -> MappedQuadsView {
         MappedQuadsView {
-            mapping,
-            next: &self.next_quad,
+            instances: Vec::with_capacity(self.capacity),
+            next: Cell::new(0),
             capacity: self.capacity,
         }
+    }
+
+    /// Writes collected instances to the GPU instance buffer.
+    /// Returns the buffer and instance count for draw submission.
+    pub fn write_instances_to_gpu(
+        &self,
+        _sub_layer_idx: usize,
+        instances: &[crate::quad::QuadInstance],
+    ) -> (wgpu::Buffer, u32) {
+        let mut bufs = self.bufs.borrow_mut();
+        let instance_buffer = &mut bufs[self.index.get()].0;
+        // Write instances via Queue::write_buffer
+        instance_buffer.write_instances(instances);
+        // Clone the buffer (Arc) for the draw
+        let buffer = wgpu::Buffer::clone(instance_buffer.buffer());
+        (buffer, instance_buffer.used_instances() as u32)
     }
 
     /// Borrows the currently-active vertex buffer. `RefMut::map` is a
@@ -269,8 +406,8 @@ impl TripleVertexBuffer {
     }
 
     /// Rotates to the next of `bufs.len()` slots. `bufs` holds a single
-    /// buffer -- `recreate()` swaps in a brand new GPU buffer every frame
-    /// regardless of slot, so a second/third rotation slot would never hold
+    /// buffer -- `write_instances` writes to it each frame,
+    /// so a second/third rotation slot would never hold
     /// a buffer the GPU has actually seen before and would just be wasted
     /// resident memory. With one slot, this is a no-op: index stays 0.
     pub fn next_index(&self) {
@@ -320,13 +457,10 @@ impl RenderLayer {
     /// the whole thing without any transmutes.
     pub fn with_quad_allocator<R>(&self, f: impl FnOnce(&mut TripleLayerQuadAllocator) -> R) -> R {
         let vbs = self.vb.borrow();
-        let mut bufs0 = vbs[0].bufs.borrow_mut();
-        let mut bufs1 = vbs[1].bufs.borrow_mut();
-        let mut bufs2 = vbs[2].bufs.borrow_mut();
 
-        let view0 = vbs[0].map(&mut bufs0);
-        let view1 = vbs[1].map(&mut bufs1);
-        let view2 = vbs[2].map(&mut bufs2);
+        let view0 = vbs[0].map_instances(0);
+        let view1 = vbs[1].map_instances(1);
+        let view2 = vbs[2].map_instances(2);
 
         let mut layers = TripleLayerQuadAllocator::Gpu(BorrowedLayers {
             layers: [view0, view1, view2],
@@ -361,20 +495,6 @@ impl RenderLayer {
             num_quads,
             verts.len() * std::mem::size_of::<Vertex>()
         );
-        let mut indices = Vec::with_capacity(num_quads * INDICES_PER_CELL);
-
-        for q in 0..num_quads {
-            let idx = (q * VERTICES_PER_CELL) as u32;
-
-            // Emit two triangles to form the glyph quad
-            indices.push(idx + V_TOP_LEFT as u32);
-            indices.push(idx + V_TOP_RIGHT as u32);
-            indices.push(idx + V_BOT_LEFT as u32);
-
-            indices.push(idx + V_TOP_RIGHT as u32);
-            indices.push(idx + V_BOT_LEFT as u32);
-            indices.push(idx + V_BOT_RIGHT as u32);
-        }
 
         // `recreate()` swaps in a brand new GPU buffer every frame regardless
         // of slot (see `call_draw_webgpu`), so more than one rotation slot
@@ -387,29 +507,23 @@ impl RenderLayer {
             bufs.push(context.allocate_vertex_buffer(num_quads, &verts)?);
         }
 
-        let buffer = TripleVertexBuffer {
-            index: Cell::new(0),
-            bufs: RefCell::new(bufs),
-            capacity: num_quads,
-            indices: context.allocate_index_buffer(&indices)?,
-            next_quad: Cell::new(0),
-        };
+        let buffer = TripleVertexBuffer::new(bufs, num_quads);
 
         Ok(buffer)
     }
 }
 
-pub struct BorrowedLayers<'a> {
-    pub layers: [MappedQuadsView<'a>; 3],
+pub struct BorrowedLayers {
+    pub layers: [MappedQuadsView; 3],
 }
 
-impl<'a> TripleLayerQuadAllocatorTrait for BorrowedLayers<'a> {
+impl TripleLayerQuadAllocatorTrait for BorrowedLayers {
     fn allocate(&mut self, layer_num: usize) -> anyhow::Result<QuadImpl<'_>> {
         self.layers[layer_num].allocate()
     }
 
-    fn extend_with(&mut self, layer_num: usize, vertices: &[Vertex]) {
-        self.layers[layer_num].extend_with(vertices)
+    fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
+        self.layers[layer_num].extend_with_instance(instance)
     }
 }
 

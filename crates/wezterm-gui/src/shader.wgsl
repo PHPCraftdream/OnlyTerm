@@ -1,13 +1,17 @@
 // Vertex shader
 
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) tex: vec2<f32>,
-    @location(2) fg_color: vec4<f32>,
-    @location(3) alt_color: vec4<f32>,
-    @location(4) hsv: vec3<f32>,
-    @location(5) has_color: f32,
-    @location(6) mix_value: f32,
+struct CornerInput {
+    @location(0) corner_unit: vec2<f32>,
+}
+
+struct InstanceInput {
+    @location(1) position: vec4<f32>,  // [left, top, right, bottom]
+    @location(2) tex: vec4<f32>,       // [x1, x2, y1, y2]
+    @location(3) fg_color: vec4<f32>,
+    @location(4) alt_color: vec4<f32>,
+    @location(5) hsv: vec3<f32>,
+    @location(6) has_color: f32,
+    @location(7) mix_value: f32,
 };
 
 struct VertexOutput {
@@ -89,14 +93,28 @@ fn to_srgb(linear_rgb: vec4<f32>) -> vec4<f32>
 
 @vertex
 fn vs_main(
-    model: VertexInput,
+    @builtin(vertex_index) vertex_index: u32,
+    corner: CornerInput,
+    instance: InstanceInput,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.tex = model.tex;
-    out.hsv = model.hsv;
-    out.has_color = model.has_color;
-    out.fg_color = mix(model.fg_color, model.alt_color, model.mix_value);
-    out.clip_position = uniforms.projection * vec4<f32>(model.position, 0.0, 1.0);
+
+    // corner_unit is in [0,1] range: (0,0) = top-left, (1,0) = top-right, (0,1) = bot-left, (1,1) = bot-right
+    // Interpolate position: mix(top-left, bottom-right, corner_unit)
+    let pos_min = vec2<f32>(instance.position.x, instance.position.y);
+    let pos_max = vec2<f32>(instance.position.z, instance.position.w);
+    out.clip_position = vec4<f32>(mix(pos_min, pos_max, corner.corner_unit), 0.0, 1.0);
+    out.clip_position = uniforms.projection * out.clip_position;
+
+    // Interpolate texture coordinates
+    let tex_min = vec2<f32>(instance.tex.x, instance.tex.z);
+    let tex_max = vec2<f32>(instance.tex.y, instance.tex.w);
+    out.tex = mix(tex_min, tex_max, corner.corner_unit);
+
+    out.hsv = instance.hsv;
+    out.has_color = instance.has_color;
+    out.fg_color = mix(instance.fg_color, instance.alt_color, instance.mix_value);
+
     return out;
 }
 

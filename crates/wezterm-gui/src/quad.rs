@@ -58,6 +58,88 @@ impl Vertex {
     }
 }
 
+/// GPU instance data for a single quad.
+/// This contains all per-quad-unique data; the 4 corners are shared across all quads.
+/// This is the instanced rendering wire format, ~84 bytes per quad (vs 272 for 4 full vertices).
+#[repr(C)]
+#[derive(Copy, Clone, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct QuadInstance {
+    /// Position rect as [left, top, right, bottom]
+    pub position: [f32; 4],
+    /// FG color as [r, g, b, a]
+    pub fg_color: [f32; 4],
+    /// Alt color as [r, g, b, a]
+    pub alt_color: [f32; 4],
+    /// Texture rect as [x1, x2, y1, y2]
+    pub tex: [f32; 4],
+    /// HSV transform as [hue, saturation, brightness]
+    pub hsv: [f32; 3],
+    /// Quad type flag (IS_GLYPH, IS_COLOR_EMOJI, etc.)
+    pub has_color: f32,
+    /// Mix value for fg_color/alt_color blending
+    pub mix_value: f32,
+}
+
+impl QuadInstance {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+            0 => Float32x4,
+            1 => Float32x4,
+            2 => Float32x4,
+            3 => Float32x4,
+            4 => Float32x3,
+            5 => Float32,
+            6 => Float32,
+        ];
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Instance,
+            attributes: &ATTRIBS,
+        }
+    }
+}
+
+/// Shared corner data: unit coordinates for the 4 corners of a quad.
+/// Used with VertexStepMode::Vertex to interpolate instance data.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CornerVertex {
+    /// Unit vector in [0,1] range for this corner (e.g., [0.0, 0.0] = top-left)
+    pub corner_unit: [f32; 2],
+}
+
+impl CornerVertex {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        const ATTRIBS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![
+            0 => Float32x2,
+        ];
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &ATTRIBS,
+        }
+    }
+
+    /// Create the 4 static corners for quad rendering.
+    /// Order must match V_TOP_LEFT, V_TOP_RIGHT, V_BOT_LEFT, V_BOT_RIGHT.
+    pub fn static_corners() -> [CornerVertex; 4] {
+        [
+            CornerVertex {
+                corner_unit: [0.0, 0.0],
+            }, // V_TOP_LEFT
+            CornerVertex {
+                corner_unit: [1.0, 0.0],
+            }, // V_TOP_RIGHT
+            CornerVertex {
+                corner_unit: [0.0, 1.0],
+            }, // V_BOT_LEFT
+            CornerVertex {
+                corner_unit: [1.0, 1.0],
+            }, // V_BOT_RIGHT
+        ]
+    }
+}
+
 pub trait QuadTrait {
     /// Assign the texture coordinates
     fn set_texture(&mut self, coords: TextureRect) {
@@ -203,11 +285,13 @@ impl<'a> QuadTrait for Quad<'a> {
 pub trait QuadAllocator {
     fn allocate(&mut self) -> anyhow::Result<QuadImpl<'_>>;
     fn extend_with(&mut self, vertices: &[Vertex]);
+    fn extend_with_instance(&mut self, instance: QuadInstance);
 }
 
 pub trait TripleLayerQuadAllocatorTrait {
     fn allocate(&mut self, layer_num: usize) -> anyhow::Result<QuadImpl<'_>>;
-    fn extend_with(&mut self, layer_num: usize, vertices: &[Vertex]);
+    // Legacy vertex path removed - now using instanced rendering with extend_with_instance
+    fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance);
 }
 
 /// We prefer to allocate a quad at a time for HeapQuadAllocator
@@ -255,49 +339,19 @@ impl QuadTrait for BoxedQuad {
 }
 
 impl BoxedQuad {
-    fn from_vertices(verts: &[Vertex; VERTICES_PER_CELL]) -> Self {
-        let [x1, y1] = verts[V_TOP_LEFT].tex;
-        let [x2, y2] = verts[V_BOT_RIGHT].tex;
-
-        let [left, top] = verts[V_TOP_LEFT].position;
-        let [right, bottom] = verts[V_BOT_RIGHT].position;
-        Self {
-            tex: (x1, x2, y1, y2),
-            position: (left, top, right, bottom),
-            has_color: verts[V_TOP_LEFT].has_color,
-            alt_color: verts[V_TOP_LEFT].alt_color,
-            fg_color: verts[V_TOP_LEFT].fg_color,
-            hsv: verts[V_TOP_LEFT].hsv,
-            mix_value: verts[V_TOP_LEFT].mix_value,
-        }
-    }
-
-    fn to_vertices(&self) -> [Vertex; VERTICES_PER_CELL] {
-        let mut vert: [Vertex; VERTICES_PER_CELL] = Default::default();
-        let mut quad = Quad { vert: &mut vert };
-
-        let (x1, x2, y1, y2) = self.tex;
-        quad.set_texture_discrete(x1, x2, y1, y2);
-
+    /// Convert to QuadInstance (GPU wire format) for instanced rendering.
+    fn to_quad_instance(&self) -> QuadInstance {
         let (left, top, right, bottom) = self.position;
-        quad.set_position(left, top, right, bottom);
-
-        quad.set_has_color_impl(self.has_color);
-        let [hue, saturation, brightness] = self.hsv;
-        quad.set_hsv(Some(HsbTransform {
-            hue,
-            saturation,
-            brightness,
-        }));
-        quad.set_fg_color(LinearRgba::with_components(
-            self.fg_color[0],
-            self.fg_color[1],
-            self.fg_color[2],
-            self.fg_color[3],
-        ));
-        quad.set_alt_color_and_mix_value(self.alt_color.into(), self.mix_value);
-
-        vert
+        let (x1, x2, y1, y2) = self.tex;
+        QuadInstance {
+            position: [left, top, right, bottom],
+            tex: [x1, x2, y1, y2],
+            fg_color: self.fg_color,
+            alt_color: self.alt_color,
+            hsv: self.hsv,
+            has_color: self.has_color,
+            mix_value: self.mix_value,
+        }
     }
 }
 
@@ -325,7 +379,8 @@ impl HeapQuadAllocator {
         let start = std::time::Instant::now();
         for (layer_num, quads) in [(0, &self.layer0), (1, &self.layer1), (2, &self.layer2)] {
             for quad in quads {
-                other.extend_with(layer_num, &quad.to_vertices());
+                // Write instances directly instead of expanding to vertices
+                other.extend_with_instance(layer_num, quad.to_quad_instance());
             }
         }
         metrics::histogram!("quad_buffer_apply").record(start.elapsed());
@@ -348,10 +403,30 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
         Ok(QuadImpl::Boxed(quad))
     }
 
-    fn extend_with(&mut self, layer_num: usize, vertices: &[Vertex]) {
-        if vertices.is_empty() {
-            return;
-        }
+    fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
+        // Convert QuadInstance back to BoxedQuad for storage in the heap allocator
+        let (left, top, right, bottom) = (
+            instance.position[0],
+            instance.position[1],
+            instance.position[2],
+            instance.position[3],
+        );
+        let (x1, x2, y1, y2) = (
+            instance.tex[0],
+            instance.tex[1],
+            instance.tex[2],
+            instance.tex[3],
+        );
+
+        let boxed = BoxedQuad {
+            position: (left, top, right, bottom),
+            tex: (x1, x2, y1, y2),
+            fg_color: instance.fg_color,
+            alt_color: instance.alt_color,
+            hsv: instance.hsv,
+            has_color: instance.has_color,
+            mix_value: instance.mix_value,
+        };
 
         let dest_quads = match layer_num {
             0 => &mut self.layer0,
@@ -359,28 +434,12 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
             2 => &mut self.layer2,
             _ => unreachable!(),
         };
-
-        // This is logically equivalent to
-        // https://doc.rust-lang.org/std/primitive.slice.html#method.as_chunks_unchecked
-        // which is currently nightly-only
-        assert_eq!(vertices.len() % VERTICES_PER_CELL, 0);
-        // SAFETY: `vertices` is a `&[Vertex]` whose length is a multiple of
-        // `VERTICES_PER_CELL` (asserted above); reinterpreting it as a slice
-        // of `[Vertex; VERTICES_PER_CELL]` chunks is layout-compatible since
-        // both sides are the same repr and alignment, and the element count
-        // (`len() / VERTICES_PER_CELL`) exactly covers the original buffer.
-        let src_quads: &[[Vertex; VERTICES_PER_CELL]] = unsafe {
-            std::slice::from_raw_parts(vertices.as_ptr().cast(), vertices.len() / VERTICES_PER_CELL)
-        };
-
-        for quad in src_quads {
-            dest_quads.push(Box::new(BoxedQuad::from_vertices(quad)));
-        }
+        dest_quads.push(Box::new(boxed));
     }
 }
 
 pub enum TripleLayerQuadAllocator<'a> {
-    Gpu(BorrowedLayers<'a>),
+    Gpu(BorrowedLayers),
     Heap(&'a mut HeapQuadAllocator),
 }
 
@@ -392,10 +451,10 @@ impl<'a> TripleLayerQuadAllocatorTrait for TripleLayerQuadAllocator<'a> {
         }
     }
 
-    fn extend_with(&mut self, layer_num: usize, vertices: &[Vertex]) {
+    fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
         match self {
-            Self::Gpu(b) => b.extend_with(layer_num, vertices),
-            Self::Heap(h) => h.extend_with(layer_num, vertices),
+            Self::Gpu(b) => b.extend_with_instance(layer_num, instance),
+            Self::Heap(h) => h.extend_with_instance(layer_num, instance),
         }
     }
 }
@@ -403,6 +462,12 @@ impl<'a> TripleLayerQuadAllocatorTrait for TripleLayerQuadAllocator<'a> {
 #[cfg(test)]
 #[test]
 fn size() {
+    // Old: 4 vertices per quad, each 68 bytes = 272 bytes per quad
     assert_eq!(std::mem::size_of::<Vertex>() * VERTICES_PER_CELL, 272);
+    // BoxedQuad is still 84 bytes (unchanged, still used for heap allocator)
     assert_eq!(std::mem::size_of::<BoxedQuad>(), 84);
+    // QuadInstance is the GPU instance format, also 84 bytes
+    assert_eq!(std::mem::size_of::<QuadInstance>(), 84);
+    // CornerVertex is 8 bytes (2 f32s)
+    assert_eq!(std::mem::size_of::<CornerVertex>(), 8);
 }

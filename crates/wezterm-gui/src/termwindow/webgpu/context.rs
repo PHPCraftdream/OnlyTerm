@@ -5,6 +5,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use wgpu::util::DeviceExt;
 use window::raw_window_handle::RawWindowHandle;
 use window::{Dimensions, Window, WindowOps};
 
@@ -61,6 +62,11 @@ pub struct ProcessGpuContext {
     /// current windows (skipping dead entries where `is_current` upgrade fails).
     /// Wrapped in Arc so the device-lost callback can access it.
     device_lost_subscribers: Arc<Mutex<Vec<DeviceLostSubscriber>>>,
+    /// Static corner buffer for instanced rendering (4 corners).
+    /// Used with VertexStepMode::Vertex.
+    pub corner_buffer: wgpu::Buffer,
+    /// Shared index buffer for all quads (6 indices: 0,1,2,1,2,3).
+    pub index_buffer: wgpu::Buffer,
 }
 
 impl ProcessGpuContext {
@@ -241,6 +247,23 @@ impl ProcessGpuContext {
             ..Default::default()
         });
 
+        // Create static corner buffer for instanced rendering
+        use crate::quad::CornerVertex;
+        let corners = CornerVertex::static_corners();
+        let corner_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Corner Buffer (instanced rendering)"),
+            usage: wgpu::BufferUsages::VERTEX,
+            contents: bytemuck::cast_slice(&corners),
+        });
+
+        // Create shared index buffer (6 indices per quad: 0,1,2, 1,2,3)
+        let indices: [u32; 6] = [0, 1, 2, 1, 2, 3];
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Index Buffer (shared)"),
+            usage: wgpu::BufferUsages::INDEX,
+            contents: bytemuck::cast_slice(&indices),
+        });
+
         let texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[
@@ -329,6 +352,8 @@ impl ProcessGpuContext {
             texture_linear_sampler,
             pipeline_cache: Mutex::new(HashMap::new()),
             device_lost_subscribers: subscribers,
+            corner_buffer,
+            index_buffer,
         })
     }
 
@@ -372,7 +397,10 @@ impl ProcessGpuContext {
                 vertex: wgpu::VertexState {
                     module: &self.shader,
                     entry_point: Some("vs_main"),
-                    buffers: &[crate::quad::Vertex::desc()],
+                    buffers: &[
+                        crate::quad::CornerVertex::desc(),
+                        crate::quad::QuadInstance::desc(),
+                    ],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
