@@ -435,20 +435,20 @@ fn size() {
     assert_eq!(std::mem::size_of::<CornerVertex>(), 8);
 }
 
-/// Test that HeapQuadAllocator::apply_to's bulk path preserves overflow-drop semantics.
-/// The old per-quad loop in MappedQuadsView::extend_with_instance silently drops quads
-/// once self.next.get() >= self.capacity; the new bulk path must truncate exactly the
-/// same way, not silently accept everything.
+/// Test that HeapQuadAllocator::apply_to now preserves ALL quads even when
+/// the initial capacity is exceeded. The old bug (task #453) silently dropped
+/// overflow quads via capacity clamps; this test confirms that all quads
+/// survive after the fix.
 ///
 /// This test calls the REAL production code: HeapQuadAllocator::apply_to -> BorrowedLayers::extend_from_slice.
-/// It would fail if BorrowedLayers::extend_from_slice had a bug in its truncation logic.
+/// It would fail if BorrowedLayers::extend_from_slice still had truncation logic.
 #[cfg(test)]
 #[test]
-fn test_apply_to_preserves_overflow_drop() {
+fn test_apply_to_preserves_all_quads_beyond_capacity() {
     use crate::quad::TripleLayerQuadAllocator;
     use crate::renderstate::BorrowedLayers;
 
-    // Build a real TripleVertexBuffer with capacity 2 (empty bufs is safe for map_instances/accumulate)
+    // Build a real TripleVertexBuffer with capacity 2 (small by design)
     let vb = crate::renderstate::TripleVertexBuffer::new(vec![], 2);
 
     // Map instances to get MappedQuadsViews for all three layers
@@ -474,29 +474,27 @@ fn test_apply_to_preserves_overflow_drop() {
     assert_eq!(heap.layer0.len(), 5);
 
     // Call the REAL HeapQuadAllocator::apply_to against the real capacity-limited destination
-    // This invokes BorrowedLayers::extend_from_slice with truncation logic
     heap.apply_to(&mut dest).unwrap();
 
-    // Extract the result back out to verify truncation
+    // Extract the result back out to verify ALL quads survived
     let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
         panic!("Expected Gpu variant");
     };
 
     // Extract layer 0 from the borrowed layers
-    // Note: borrowed_layers is consumed here, which is fine since we're done with it
     let [layer_view, _, _] = borrowed_layers.layers;
 
     // Extract the instances from layer 0
     let result = layer_view.into_instances();
 
-    // The destination must have exactly capacity (2) instances, not 5
-    // This proves the real BorrowedLayers::extend_from_slice truncate logic ran correctly
+    // The destination must have ALL 5 instances, not just capacity (2)
+    // This proves the old truncation logic is gone
     assert_eq!(
         result.len(),
-        2,
-        "Bulk path should truncate overflow to capacity (real BorrowedLayers::extend_from_slice)"
+        5,
+        "All 5 instances should survive, even when exceeding capacity"
     );
-    // Verify the FIRST 2 quads were copied (truncation keeps the start, not the end)
+    // Verify all quads were copied in order
     assert_eq!(
         result[0].position[0], 0.0,
         "First instance should be position[0]=0.0"
@@ -504,6 +502,18 @@ fn test_apply_to_preserves_overflow_drop() {
     assert_eq!(
         result[1].position[0], 1.0,
         "Second instance should be position[0]=1.0"
+    );
+    assert_eq!(
+        result[2].position[0], 2.0,
+        "Third instance should be position[0]=2.0"
+    );
+    assert_eq!(
+        result[3].position[0], 3.0,
+        "Fourth instance should be position[0]=3.0"
+    );
+    assert_eq!(
+        result[4].position[0], 4.0,
+        "Fifth instance should be position[0]=4.0"
     );
 }
 
@@ -606,6 +616,60 @@ fn test_rc_heap_quad_allocator_apply_to() {
     assert_eq!(result[0].position[0], 0.0);
     assert_eq!(result[1].position[0], 1.0);
     assert_eq!(result[2].position[0], 2.0);
+}
+
+/// Test the exact scenario from the original bug report: >1024 glyph quads
+/// in one frame must all survive. The main content layer is created with
+/// capacity 1024 (see RenderLayer::new in renderstate.rs), and a dense
+/// terminal screen can easily need 1500-2500+ glyph quads. This test pins
+/// that fix.
+#[test]
+fn test_apply_to_glyphs_exceed_1024_capacity() {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
+
+    // Build a TripleVertexBuffer with exactly the content layer's initial capacity
+    let vb = crate::renderstate::TripleVertexBuffer::new(vec![], 1024);
+
+    let view0 = vb.map_instances();
+    let view1 = vb.map_instances();
+    let view2 = vb.map_instances();
+    let borrowed_layers = BorrowedLayers {
+        layers: [view0, view1, view2],
+    };
+    let mut dest = TripleLayerQuadAllocator::Gpu(borrowed_layers);
+
+    // Build a HeapQuadAllocator with 1500 quads in layer 1 (glyphs)
+    // - This exceeds the 1024 capacity by a significant margin
+    // - Simulates a dense terminal screen with many non-blank cells
+    let mut heap = HeapQuadAllocator::default();
+    for i in 0..1500 {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        heap.layer1.push(q);
+    }
+    assert_eq!(heap.layer1.len(), 1500);
+
+    heap.apply_to(&mut dest).unwrap();
+
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
+        panic!("Expected Gpu variant");
+    };
+    let [_, layer_view, _] = borrowed_layers.layers;
+    let result = layer_view.into_instances();
+
+    // ALL 1500 instances must survive
+    assert_eq!(
+        result.len(),
+        1500,
+        "All 1500 glyph quads should survive beyond the 1024 initial capacity"
+    );
+    // Spot-check a few values to ensure order and content are correct
+    assert_eq!(result[0].position[0], 0.0);
+    assert_eq!(result[511].position[0], 511.0);
+    assert_eq!(result[1023].position[0], 1023.0);
+    assert_eq!(result[1024].position[0], 1024.0);
+    assert_eq!(result[1499].position[0], 1499.0);
 }
 
 /// Regression coverage for the instanced-rendering vertex layout (task #447).
