@@ -507,6 +507,56 @@ fn test_apply_to_preserves_overflow_drop() {
     );
 }
 
+/// Companion to `test_apply_to_preserves_overflow_drop`: the common case is
+/// NOT overflow, it's a layer with plenty of spare capacity (e.g. one
+/// terminal line's ~80 quads against a layer pre-sized for thousands). A
+/// prior version of `BorrowedLayers::extend_from_slice` used
+/// `instances.get(..available)`, which returns `None` (and therefore an
+/// empty slice via `unwrap_or`) whenever `available > instances.len()` --
+/// i.e. in the overwhelmingly common non-overflow case, silently dropping
+/// every quad instead of copying it. This shipped as a real regression
+/// (task #453): line content stopped reaching the GPU, producing a white
+/// screen with an otherwise-responsive window. This test pins the fix.
+#[test]
+fn test_apply_to_copies_everything_when_under_capacity() {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
+
+    // Capacity (10) is well above the instance count (3) -- the normal case.
+    let vb = crate::renderstate::TripleVertexBuffer::new(vec![], 10);
+    let view0 = vb.map_instances();
+    let view1 = vb.map_instances();
+    let view2 = vb.map_instances();
+    let borrowed_layers = BorrowedLayers {
+        layers: [view0, view1, view2],
+    };
+    let mut dest = TripleLayerQuadAllocator::Gpu(borrowed_layers);
+
+    let mut heap = HeapQuadAllocator::default();
+    for i in 0..3 {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        heap.layer0.push(q);
+    }
+
+    heap.apply_to(&mut dest).unwrap();
+
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
+        panic!("Expected Gpu variant");
+    };
+    let [layer_view, _, _] = borrowed_layers.layers;
+    let result = layer_view.into_instances();
+
+    assert_eq!(
+        result.len(),
+        3,
+        "All 3 instances should survive when well under capacity, not be silently dropped"
+    );
+    assert_eq!(result[0].position[0], 0.0);
+    assert_eq!(result[1].position[0], 1.0);
+    assert_eq!(result[2].position[0], 2.0);
+}
+
 /// Regression coverage for the instanced-rendering vertex layout (task #447).
 ///
 /// The instanced pipeline binds two vertex buffers -- `CornerVertex` (one

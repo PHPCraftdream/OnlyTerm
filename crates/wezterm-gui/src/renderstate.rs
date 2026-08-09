@@ -570,7 +570,8 @@ impl TripleLayerQuadAllocatorTrait for BorrowedLayers {
         // Preserve the exact overflow-drop behavior from the per-quad loop:
         // truncate to the available capacity, then bulk-copy what fits.
         let available = layer.capacity.saturating_sub(layer.next.get());
-        let to_copy = instances.get(..available).unwrap_or(&[]);
+        let n = instances.len().min(available);
+        let to_copy = &instances[..n];
         layer.instances.extend_from_slice(to_copy);
         layer.next.set(layer.next.get() + to_copy.len());
     }
