@@ -38,19 +38,18 @@ impl crate::TermWindow {
 
         'pass: for pass in 0.. {
             match self.paint_pass() {
-                Ok(_) => match self.render_state.as_mut().unwrap().allocated_more_quads() {
-                    Ok(allocated) => {
-                        if !allocated {
-                            break 'pass;
-                        }
-                        self.invalidate_fancy_tab_bar();
-                        self.invalidate_modal();
-                    }
-                    Err(err) => {
-                        log::error!("{:#}", err);
-                        break 'pass;
-                    }
-                },
+                // A successful pass is always final now. Before the per-layer
+                // quad capacity clamp was removed, this arm additionally had
+                // to ask `allocated_more_quads()` whether the pass had
+                // overflowed a layer's fixed quad capacity and, if so,
+                // reallocate and run another pass. Layers no longer have a
+                // capacity ceiling -- `WebGpuInstanceBuffer::ensure_capacity`
+                // grows the real GPU buffer to whatever was actually
+                // collected -- so a pass returning `Ok` has genuinely drawn
+                // everything. The retries below (texture atlas growth,
+                // shape-cache invalidation) are the only reason this loop
+                // still exists.
+                Ok(_) => break 'pass,
                 Err(err) => {
                     if let Some(&OutOfTextureSpace {
                         size: Some(size),

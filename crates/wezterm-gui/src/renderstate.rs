@@ -4,7 +4,6 @@ use super::utilsprites::{RenderMetrics, UtilSprites};
 use crate::termwindow::webgpu::{adapter_info_to_gpu_info, WebGpuState, WebGpuTexture};
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::bitmaps::Texture2d;
-use anyhow::Context;
 use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -216,6 +215,7 @@ impl WebGpuIndexBuffer {
 pub struct MappedQuadsView {
     instances: Vec<crate::quad::QuadInstance>,
     next: Cell<usize>,
+    #[allow(dead_code)] // Kept as Vec::with_capacity sizing hint, no longer a ceiling
     capacity: usize,
 }
 
@@ -237,15 +237,6 @@ impl QuadAllocator for MappedQuadsView {
     fn allocate<'b>(&'b mut self) -> anyhow::Result<QuadImpl<'b>> {
         let idx = self.next.get();
         self.next.set(idx + 1);
-        let _idx = if idx >= self.capacity {
-            // We don't have enough quads, so we'll keep re-using
-            // the first quad until we reach the end of the render
-            // pass, at which point we'll detect this condition
-            // and re-allocate the quads.
-            0
-        } else {
-            idx
-        };
 
         self.instances.push(crate::quad::QuadInstance::default());
         Ok(QuadImpl::Boxed(self.instances.last_mut().unwrap()))
@@ -312,9 +303,6 @@ impl QuadAllocator for MappedQuadsView {
 
     fn extend_with_instance(&mut self, instance: crate::quad::QuadInstance) {
         let idx = self.next.get();
-        if idx >= self.capacity {
-            return; // Out of space, skip
-        }
         self.next.set(idx + 1);
         self.instances.push(instance);
     }
@@ -355,15 +343,6 @@ impl TripleVertexBuffer {
 
     pub fn clear_quad_allocation(&self) {
         self.instances.borrow_mut().clear();
-    }
-
-    pub fn need_more_quads(&self) -> Option<usize> {
-        let next = self.instances.borrow().len();
-        if next > self.capacity {
-            Some(next)
-        } else {
-            None
-        }
     }
 
     pub fn instance_count(&self) -> usize {
@@ -442,6 +421,7 @@ impl TripleVertexBuffer {
 
 pub struct RenderLayer {
     pub vb: RefCell<[TripleVertexBuffer; 3]>,
+    #[allow(dead_code)] // Kept for compute_vertices calls (if needed later)
     context: RenderContext,
     zindex: i8,
 }
@@ -508,16 +488,6 @@ impl RenderLayer {
         result
     }
 
-    pub fn need_more_quads(&self, vb_idx: usize) -> Option<usize> {
-        self.vb.borrow()[vb_idx].need_more_quads()
-    }
-
-    pub fn reallocate_quads(&self, idx: usize, num_quads: usize) -> anyhow::Result<()> {
-        let vb = Self::compute_vertices(&self.context, num_quads)?;
-        self.vb.borrow_mut()[idx] = vb;
-        Ok(())
-    }
-
     /// Compute a vertex buffer to hold the quads that comprise the visible
     /// portion of the screen.   We recreate this when the screen is resized.
     /// The idea is that we want to minimize any heavy lifting and computation
@@ -567,13 +537,8 @@ impl TripleLayerQuadAllocatorTrait for BorrowedLayers {
 
     fn extend_from_slice(&mut self, layer_num: usize, instances: &[QuadInstance]) {
         let layer = &mut self.layers[layer_num];
-        // Preserve the exact overflow-drop behavior from the per-quad loop:
-        // truncate to the available capacity, then bulk-copy what fits.
-        let available = layer.capacity.saturating_sub(layer.next.get());
-        let n = instances.len().min(available);
-        let to_copy = &instances[..n];
-        layer.instances.extend_from_slice(to_copy);
-        layer.next.set(layer.next.get() + to_copy.len());
+        layer.instances.extend_from_slice(instances);
+        layer.next.set(layer.next.get() + instances.len());
     }
 }
 
@@ -637,34 +602,6 @@ impl RenderState {
         layers.sort_by_key(|a| a.zindex);
 
         Ok(layer)
-    }
-
-    /// Returns true if any of the layers needed more quads to be allocated,
-    /// and if we successfully allocated them.
-    /// Returns false if the quads were sufficient.
-    /// Returns Err if we needed to allocate but failed.
-    pub fn allocated_more_quads(&mut self) -> anyhow::Result<bool> {
-        let mut allocated = false;
-
-        for layer in self.layers.borrow().iter() {
-            for vb_idx in 0..3 {
-                if let Some(need_quads) = layer.need_more_quads(vb_idx) {
-                    // Round up to next multiple of 128 that is >=
-                    // the number of needed quads for this frame
-                    let num_quads = (need_quads + 127) & !127;
-                    layer.reallocate_quads(vb_idx, num_quads).with_context(|| {
-                        format!(
-                            "Failed to allocate {} quads (needed {})",
-                            num_quads, need_quads,
-                        )
-                    })?;
-                    log::trace!("Allocated {} quads (needed {})", num_quads, need_quads);
-                    allocated = true;
-                }
-            }
-        }
-
-        Ok(allocated)
     }
 
     pub fn config_changed(&mut self) {
