@@ -7,12 +7,14 @@ use ::window::bitmaps::atlas::{Atlas, OutOfTextureSpace, Sprite};
 use ::window::bitmaps::{BitmapImage, Image, ImageTexture, Texture2d};
 use ::window::color::SrgbaPixel;
 use ::window::{Point, Rect};
+use ahash::AHasher;
 use anyhow::Context;
 use config::{AllowSquareGlyphOverflow, TextStyle};
 use euclid::num::Zero;
 use lfucache::LfuCache;
 use ordered_float::NotNan;
 use std::collections::HashMap;
+use std::hash::BuildHasherDefault;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,6 +23,9 @@ use termwiz::image::{ImageData, ImageDataType};
 use wezterm_font::{FontConfiguration, GlyphInfo, LoadedFont};
 use wezterm_term::Underline;
 
+// AHashMap: HashMap with ahash's AHasher for faster hashing on internal keys
+type AHashMap<K, V> = HashMap<K, V, BuildHasherDefault<AHasher>>;
+
 impl GlyphCache {
     pub fn new_in_memory(fonts: &Rc<FontConfiguration>, size: usize) -> anyhow::Result<Self> {
         let surface: Rc<dyn Texture2d> = Rc::new(ImageTexture::new(size, size));
@@ -28,7 +33,7 @@ impl GlyphCache {
 
         Ok(Self {
             fonts: Rc::clone(fonts),
-            glyph_cache: HashMap::new(),
+            glyph_cache: AHashMap::default(),
             image_cache: LfuCache::new(
                 "glyph_cache.image_cache.hit.rate",
                 "glyph_cache.image_cache.miss.rate",
@@ -37,8 +42,8 @@ impl GlyphCache {
             ),
             frame_cache: HashMap::new(),
             atlas,
-            line_glyphs: HashMap::new(),
-            block_glyphs: HashMap::new(),
+            line_glyphs: AHashMap::default(),
+            block_glyphs: AHashMap::default(),
             cursor_glyphs: HashMap::new(),
             color: HashMap::new(),
             min_frame_duration: Duration::from_millis(1000 / fonts.config().max_fps),
@@ -57,7 +62,7 @@ impl GlyphCache {
 
         Ok(Self {
             fonts: Rc::clone(fonts),
-            glyph_cache: HashMap::new(),
+            glyph_cache: AHashMap::default(),
             image_cache: LfuCache::new(
                 "glyph_cache.image_cache.hit.rate",
                 "glyph_cache.image_cache.miss.rate",
@@ -66,8 +71,8 @@ impl GlyphCache {
             ),
             frame_cache: HashMap::new(),
             atlas,
-            line_glyphs: HashMap::new(),
-            block_glyphs: HashMap::new(),
+            line_glyphs: AHashMap::default(),
+            block_glyphs: AHashMap::default(),
             cursor_glyphs: HashMap::new(),
             color: HashMap::new(),
             min_frame_duration: Duration::from_millis(1000 / fonts.config().max_fps),

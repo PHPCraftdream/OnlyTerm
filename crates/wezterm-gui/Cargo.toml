@@ -44,6 +44,7 @@ embed-resource.workspace = true
 [dependencies]
 anyhow.workspace = true
 arc-swap.workspace = true
+ahash.workspace = true
 bitflags.workspace = true
 bytemuck.workspace = true
 chrono.workspace = true
@@ -132,6 +133,7 @@ windows = { workspace=true, features = [
 ]}
 
 [dev-dependencies]
+ahash.workspace = true
 benchmarking.workspace = true
 env_logger.workspace = true
 k9.workspace = true
