@@ -4,11 +4,15 @@ struct CornerInput {
     @location(0) corner_unit: vec2<f32>,
 }
 
+// Field order here must match `QuadInstance`'s field declaration order in
+// quad.rs, because `vertex_attr_array!` there derives each attribute's byte
+// offset from its position in that list. A location that names the right
+// type but the wrong field still passes validation and just renders wrong.
 struct InstanceInput {
     @location(1) position: vec4<f32>,  // [left, top, right, bottom]
-    @location(2) tex: vec4<f32>,       // [x1, x2, y1, y2]
-    @location(3) fg_color: vec4<f32>,
-    @location(4) alt_color: vec4<f32>,
+    @location(2) fg_color: vec4<f32>,
+    @location(3) alt_color: vec4<f32>,
+    @location(4) tex: vec4<f32>,       // [x1, x2, y1, y2]
     @location(5) hsv: vec3<f32>,
     @location(6) has_color: f32,
     @location(7) mix_value: f32,
