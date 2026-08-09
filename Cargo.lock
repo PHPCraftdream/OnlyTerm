@@ -5933,6 +5933,7 @@ dependencies = [
  "lfucache",
  "libc",
  "log",
+ "lru",
  "metrics",
  "mux",
  "mux-funcs",

@@ -1068,3 +1068,384 @@ fn same_hyperlink(a: Option<&Arc<Hyperlink>>, b: Option<&Arc<Hyperlink>>) -> boo
         _ => false,
     }
 }
+
+/// LRU cache wrapper that preserves the metrics behavior of LfuCacheU64
+/// by manually emitting hit/miss metrics, similar to the original implementation.
+pub struct LruCacheWithMetrics<V> {
+    inner: lru::LruCache<u64, V>,
+    hit_metric: &'static str,
+    miss_metric: &'static str,
+    capacity_fn: fn(&ConfigHandle) -> usize,
+    config: ConfigHandle,
+}
+
+impl<V: Clone> LruCacheWithMetrics<V> {
+    pub fn new(
+        hit_metric: &'static str,
+        miss_metric: &'static str,
+        capacity_fn: fn(&ConfigHandle) -> usize,
+        config: &ConfigHandle,
+    ) -> Self {
+        let capacity = capacity_fn(config);
+        let capacity_nonzero = std::num::NonZeroUsize::new(capacity)
+            .unwrap_or(std::num::NonZeroUsize::new(1).unwrap());
+        Self {
+            inner: lru::LruCache::new(capacity_nonzero),
+            hit_metric,
+            miss_metric,
+            capacity_fn,
+            config: config.clone(),
+        }
+    }
+
+    fn get(&mut self, k: &u64) -> Option<&V> {
+        let result = self.inner.get(k);
+        if result.is_some() {
+            metrics::histogram!(self.hit_metric).record(1.0);
+        } else {
+            metrics::histogram!(self.miss_metric).record(1.0);
+        }
+        result
+    }
+
+    fn put(&mut self, k: u64, v: V) {
+        self.inner.put(k, v);
+    }
+
+    #[allow(dead_code)]
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn update_config(&mut self, config: &ConfigHandle) {
+        let new_capacity = (self.capacity_fn)(config);
+        self.config = config.clone();
+
+        // `lru::LruCache::resize` both grows and shrinks the actual cap
+        // used by future `put`s (evicting immediately if the new cap is
+        // smaller than the current length). The previous manual
+        // `pop_lru`-until-under-cap loop only ever shrank the *current
+        // length*, never the cache's own stored capacity -- so a config
+        // reload to a smaller size would look like it worked (the loop
+        // evicted down to the target) but every `put` after that would
+        // immediately be allowed to grow the cache straight back to the
+        // old, larger cap, and a reload to a *larger* size would never
+        // grow the cache at all, since nothing here changed what the
+        // cache itself considered full.
+        let new_capacity = std::num::NonZeroUsize::new(new_capacity)
+            .unwrap_or(std::num::NonZeroUsize::new(1).unwrap());
+        self.inner.resize(new_capacity);
+    }
+}
+
+/// Benchmark LfuCacheU64 vs lru::LruCache for line_state_cache patterns.
+/// Compares hit latency, insert/evict latency, bytes/entry, and hit ratio
+/// on two access patterns: (a) miss-heavy burst (flood output) and (b)
+/// stable screen (small repeatedly-accessed working set).
+#[cfg(test)]
+mod cache_bench {
+    use super::*;
+    use config::ConfigHandle;
+    use lfucache::LfuCacheU64;
+    use lru::LruCache;
+    use std::mem::size_of;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    // Static capacity for use with fn pointer
+    static BENCH_CAPACITY: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(1000);
+
+    fn bench_capacity_func(_config: &ConfigHandle) -> usize {
+        BENCH_CAPACITY.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Value type matching CachedLineState shape
+    #[derive(Debug, Clone)]
+    #[allow(dead_code)]
+    struct TestCachedLineState {
+        id: u64,
+        seqno: SequenceNo,
+        shape_hash: [u8; 16],
+    }
+
+    /// Create a test value matching CachedLineState structure
+    fn make_test_value(id: u64) -> Arc<TestCachedLineState> {
+        Arc::new(TestCachedLineState {
+            id,
+            seqno: SequenceNo::from(id as usize),
+            shape_hash: [id as u8; 16],
+        })
+    }
+
+    /// Simulate miss-heavy burst: mostly new keys, few repeats.
+    /// During flood output, renderer sees mostly new line states
+    /// with very few cache hits.
+    fn miss_heavy_sequence(count: usize, capacity: usize) -> Vec<u64> {
+        // Generate mostly unique keys with ~5% repeats to simulate rare hits
+        let mut keys = Vec::with_capacity(count);
+        for i in 0..count {
+            if i % 20 == 0 && i > capacity {
+                // Repeat a recent key ~5% of the time
+                keys.push((i - capacity / 2) as u64);
+            } else {
+                keys.push(i as u64);
+            }
+        }
+        keys
+    }
+
+    /// Simulate stable screen: small working set accessed repeatedly.
+    /// During static screen redraws, renderer repeatedly hits the same
+    /// small set of line states.
+    fn stable_screen_sequence(count: usize, working_set_size: usize) -> Vec<u64> {
+        let mut keys = Vec::with_capacity(count);
+        for i in 0..count {
+            // Cycle through a small working set (e.g., 24 lines for 80x24 screen)
+            keys.push((i % working_set_size) as u64);
+        }
+        keys
+    }
+
+    /// Measure LfuCacheU64 performance
+    fn benchmark_lfu(keys: &[u64], capacity: usize) -> (Duration, usize, usize, usize) {
+        benchmarking::warm_up();
+
+        // Set static capacity for fn pointer
+        BENCH_CAPACITY.store(capacity, std::sync::atomic::Ordering::Relaxed);
+        let config = ConfigHandle::default_config();
+        let keys = keys.to_vec();
+        let keys_for_bench = keys.clone();
+        let bench_result = benchmarking::measure_function(move |measurer| {
+            measurer.measure(|| {
+                let config = ConfigHandle::default_config();
+                let mut cache =
+                    LfuCacheU64::new("bench_hit", "bench_miss", bench_capacity_func, &config);
+                let mut hits = 0;
+                let mut misses = 0;
+
+                for key in &keys_for_bench {
+                    if cache.get(key).is_some() {
+                        hits += 1;
+                    } else {
+                        misses += 1;
+                        cache.put(*key, make_test_value(*key));
+                    }
+                }
+
+                std::hint::black_box(&mut cache);
+                std::hint::black_box(hits);
+                std::hint::black_box(misses);
+            })
+        })
+        .unwrap();
+
+        let mut cache = LfuCacheU64::new("bench_hit", "bench_miss", bench_capacity_func, &config);
+        let mut hits = 0;
+        let mut misses = 0;
+        for key in &keys {
+            if cache.get(key).is_some() {
+                hits += 1;
+            } else {
+                misses += 1;
+                cache.put(*key, make_test_value(*key));
+            }
+        }
+        let final_len = cache.len();
+
+        (bench_result.elapsed(), hits, misses, final_len)
+    }
+
+    /// Measure LruCache performance
+    fn benchmark_lru(keys: &[u64], capacity: usize) -> (Duration, usize, usize, usize) {
+        benchmarking::warm_up();
+        let capacity_nonzero = std::num::NonZeroUsize::new(capacity).unwrap();
+
+        let keys = keys.to_vec();
+        let keys_for_bench = keys.clone();
+        let bench_result = benchmarking::measure_function(move |measurer| {
+            measurer.measure(|| {
+                let mut cache = LruCache::new(capacity_nonzero);
+                let mut hits = 0;
+                let mut misses = 0;
+
+                for key in &keys_for_bench {
+                    if cache.get(key).is_some() {
+                        hits += 1;
+                    } else {
+                        misses += 1;
+                        cache.put(*key, make_test_value(*key));
+                    }
+                }
+
+                std::hint::black_box(&mut cache);
+                std::hint::black_box(hits);
+                std::hint::black_box(misses);
+            })
+        })
+        .unwrap();
+
+        let mut cache = LruCache::new(capacity_nonzero);
+        let mut hits = 0;
+        let mut misses = 0;
+        for key in &keys {
+            if cache.get(key).is_some() {
+                hits += 1;
+            } else {
+                misses += 1;
+                cache.put(*key, make_test_value(*key));
+            }
+        }
+        let final_len = cache.len();
+
+        (bench_result.elapsed(), hits, misses, final_len)
+    }
+
+    #[test]
+    fn bench_cache_comparison() {
+        println!("\n=== LfuCacheU64 vs lru::LruCache Benchmark ===");
+        println!(
+            "Value size: {} bytes (Arc<TestCachedLineState>)",
+            size_of::<Arc<TestCachedLineState>>()
+        );
+
+        // Size of internal node structures
+        println!("\nApproximate entry sizes:");
+        println!("  LfuCache Entry: estimated ~{}+ bytes (Rc<Entry<K,V>> with 3 links, 2 RefCells, key, value)",
+            size_of::<Rc<()>>() + size_of::<Arc<TestCachedLineState>>() + 32 // approx for links+RefCells
+        );
+        println!(
+            "  LruCache Node: estimated ~{}+ bytes (Key + Value + Node links)",
+            size_of::<u64>() + size_of::<Arc<TestCachedLineState>>() + 32 // approx for Node overhead
+        );
+
+        // Test parameters
+        let capacity = 1000; // Typical cache size
+        let operations = 10000;
+
+        // Pattern (a): Miss-heavy burst (flood output)
+        println!("\n--- Pattern (a): Miss-heavy burst (flood output) ---");
+        println!("Operations: {}, Cache capacity: {}", operations, capacity);
+        let miss_heavy_keys = miss_heavy_sequence(operations, capacity);
+
+        let (lfu_time, lfu_hits, lfu_misses, lfu_final) = benchmark_lfu(&miss_heavy_keys, capacity);
+        let (lru_time, lru_hits, lru_misses, lru_final) = benchmark_lru(&miss_heavy_keys, capacity);
+
+        let lfu_hit_ratio = (lfu_hits as f64) / (lfu_hits + lfu_misses) as f64;
+        let lru_hit_ratio = (lru_hits as f64) / (lru_hits + lru_misses) as f64;
+
+        println!("\nLfuCacheU64:");
+        println!("  Time: {:?}", lfu_time);
+        println!(
+            "  Hits: {}, Misses: {}, Hit ratio: {:.2}%",
+            lfu_hits,
+            lfu_misses,
+            lfu_hit_ratio * 100.0
+        );
+        println!("  Final cache size: {}", lfu_final);
+
+        println!("\nlru::LruCache:");
+        println!("  Time: {:?}", lru_time);
+        println!(
+            "  Hits: {}, Misses: {}, Hit ratio: {:.2}%",
+            lru_hits,
+            lru_misses,
+            lru_hit_ratio * 100.0
+        );
+        println!("  Final cache size: {}", lru_final);
+
+        // Show speedup/slowdown
+        let lfu_ns = lfu_time.as_nanos();
+        let lru_ns = lru_time.as_nanos();
+        if lfu_ns > 0 {
+            let ratio = (lru_ns as f64 / lfu_ns as f64) * 100.0;
+            if ratio < 100.0 {
+                println!("  → LruCache is {:.1}% faster", 100.0 - ratio);
+            } else {
+                println!("  → LruCache is {:.1}% slower", ratio - 100.0);
+            }
+        }
+
+        // Pattern (b): Stable screen (small working set)
+        println!("\n--- Pattern (b): Stable screen (small working set) ---");
+        let working_set_size = 24; // Typical terminal height
+        println!(
+            "Operations: {}, Cache capacity: {}, Working set: {}",
+            operations, capacity, working_set_size
+        );
+        let stable_keys = stable_screen_sequence(operations, working_set_size);
+
+        let (lfu_time_stable, lfu_hits_stable, lfu_misses_stable, lfu_final_stable) =
+            benchmark_lfu(&stable_keys, capacity);
+        let (lru_time_stable, lru_hits_stable, lru_misses_stable, lru_final_stable) =
+            benchmark_lru(&stable_keys, capacity);
+
+        let lfu_hit_ratio_stable =
+            (lfu_hits_stable as f64) / (lfu_hits_stable + lfu_misses_stable) as f64;
+        let lru_hit_ratio_stable =
+            (lru_hits_stable as f64) / (lru_hits_stable + lru_misses_stable) as f64;
+
+        println!("\nLfuCacheU64:");
+        println!("  Time: {:?}", lfu_time_stable);
+        println!(
+            "  Hits: {}, Misses: {}, Hit ratio: {:.2}%",
+            lfu_hits_stable,
+            lfu_misses_stable,
+            lfu_hit_ratio_stable * 100.0
+        );
+        println!("  Final cache size: {}", lfu_final_stable);
+
+        println!("\nlru::LruCache:");
+        println!("  Time: {:?}", lru_time_stable);
+        println!(
+            "  Hits: {}, Misses: {}, Hit ratio: {:.2}%",
+            lru_hits_stable,
+            lru_misses_stable,
+            lru_hit_ratio_stable * 100.0
+        );
+        println!("  Final cache size: {}", lru_final_stable);
+
+        // Show speedup/slowdown
+        let lfu_ns_stable = lfu_time_stable.as_nanos();
+        let lru_ns_stable = lru_time_stable.as_nanos();
+        if lfu_ns_stable > 0 {
+            let ratio = (lru_ns_stable as f64 / lfu_ns_stable as f64) * 100.0;
+            if ratio < 100.0 {
+                println!("  → LruCache is {:.1}% faster", 100.0 - ratio);
+            } else {
+                println!("  → LruCache is {:.1}% slower", ratio - 100.0);
+            }
+        }
+
+        // Summary and recommendation
+        println!("\n=== Summary ===");
+        println!("Miss-heavy pattern (flood):");
+        println!(
+            "  LfuCache: {:.2}%, LruCache: {:.2}%, Time: LruCache {:.1}% {}",
+            lfu_hit_ratio * 100.0,
+            lru_hit_ratio * 100.0,
+            if lfu_ns > 0 {
+                (lru_ns as f64 / lfu_ns as f64 * 100.0 - 100.0).abs()
+            } else {
+                0.0
+            },
+            if lru_ns < lfu_ns { "faster" } else { "slower" }
+        );
+        println!("Stable screen pattern:");
+        println!(
+            "  LfuCache: {:.2}%, LruCache: {:.2}%, Time: LruCache {:.1}% {}",
+            lfu_hit_ratio_stable * 100.0,
+            lru_hit_ratio_stable * 100.0,
+            if lfu_ns_stable > 0 {
+                (lru_ns_stable as f64 / lfu_ns_stable as f64 * 100.0 - 100.0).abs()
+            } else {
+                0.0
+            },
+            if lru_ns_stable < lfu_ns_stable {
+                "faster"
+            } else {
+                "slower"
+            }
+        );
+    }
+}

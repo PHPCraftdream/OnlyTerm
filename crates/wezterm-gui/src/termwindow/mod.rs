@@ -349,7 +349,7 @@ pub struct TermWindow {
     shape_cache: RefCell<LfuCache<ShapeCacheKey, anyhow::Result<Rc<Vec<ShapedInfo>>>>>,
     line_to_ele_shape_cache: RefCell<LfuCache<LineToEleShapeCacheKey, LineToElementShapeItem>>,
 
-    line_state_cache: RefCell<LfuCacheU64<Arc<CachedLineState>>>,
+    line_state_cache: RefCell<render::LruCacheWithMetrics<Arc<CachedLineState>>>,
     next_line_state_id: u64,
 
     line_quad_cache: RefCell<LfuCache<LineQuadCacheKey, LineQuadCacheValue>>,
