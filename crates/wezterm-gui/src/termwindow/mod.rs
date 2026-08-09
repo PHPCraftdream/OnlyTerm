@@ -493,6 +493,11 @@ pub struct TermWindow {
     /// unbounded across a long-lived window's lifetime.
     rebuild_attempts: RefCell<Vec<Instant>>,
     config_subscription: Option<config::ConfigSubscription>,
+    /// Frame signature for deduplicating identical consecutive frames (task #450).
+    /// `None` means "no valid previous frame signature to compare against" -
+    /// reset on window creation, resize, renderer rebuild, or atlas resize,
+    /// since these events can change what "identical" even means.
+    last_frame_signature: Option<u64>,
 }
 
 impl Drop for TermWindow {

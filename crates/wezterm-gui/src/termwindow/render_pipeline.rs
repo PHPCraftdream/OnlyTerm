@@ -256,6 +256,7 @@ impl TermWindow {
             key_table_state: KeyTableState::default(),
             modal: RefCell::new(None),
             renderer_info: None,
+            last_frame_signature: None,
         };
 
         let tw = Rc::new(RefCell::new(myself));
@@ -945,6 +946,9 @@ impl TermWindow {
         // called. So the surface/device just resolved above already targets
         // the fresh child HWND. Nothing left to do for the HWND here.
         self.webgpu.replace(Arc::clone(&webgpu));
+        // Reset frame signature on renderer rebuild - new renderer/surface,
+        // so the previous frame is no longer comparable (task #450)
+        self.last_frame_signature = None;
         if let Err(err) = self.created(RenderContext(Arc::clone(&webgpu))) {
             // Same reasoning as the `WebGpuState::new` failure arm above
             // (task #272): the device/surface rebuild itself just

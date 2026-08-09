@@ -55,6 +55,10 @@ impl super::TermWindow {
 
         self.resize_webgpu_surface(dimensions);
 
+        // Reset frame signature on resize - surface dimensions changed,
+        // so the previous frame is no longer comparable (task #450)
+        self.last_frame_signature = None;
+
         // For simple, user-interactive resizes where the dpi doesn't change,
         // skip our scaling recalculation. During a live resize where DPI changes,
         // we should also skip scaling_changed(). This can issue a SetWindowPos mid-drag,
