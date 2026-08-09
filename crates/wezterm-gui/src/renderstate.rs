@@ -223,6 +223,14 @@ impl MappedQuadsView {
     pub fn instances(&mut self) -> &mut Vec<crate::quad::QuadInstance> {
         &mut self.instances
     }
+
+    /// Consumes the view and returns everything collected into it, for a
+    /// caller that drives a `MappedQuadsView` directly (rather than through
+    /// `with_quad_allocator`, which does this merge-back itself) to hand off
+    /// to `TripleVertexBuffer::accumulate_instances`.
+    pub fn into_instances(self) -> Vec<crate::quad::QuadInstance> {
+        self.instances
+    }
 }
 
 impl QuadAllocator for MappedQuadsView {
@@ -328,9 +336,15 @@ pub struct TripleVertexBuffer {
     pub index: Cell<usize>,
     pub bufs: RefCell<Vec<VertexBuffer>>,
     pub capacity: usize,
-    pub next_quad: Cell<usize>,
-    /// Collected instances for the current frame (one per layer per sub-layer)
-    pub instances: RefCell<Vec<Vec<crate::quad::QuadInstance>>>,
+    /// Instances collected for this layer during the current frame.
+    /// `with_quad_allocator` can be called more than once per frame against
+    /// the same `RenderLayer` (the main content pass in `render/paint.rs`
+    /// and the UI-chrome pass in `box_model.rs` both write into it), so this
+    /// accumulates across calls rather than being overwritten by each one;
+    /// `clear_quad_allocation` empties it at the start of a new frame, and
+    /// `write_instances_to_gpu` uploads whatever has accumulated by the time
+    /// the frame is actually submitted (`render/draw.rs`).
+    pub instances: RefCell<Vec<crate::quad::QuadInstance>>,
 }
 
 impl TripleVertexBuffer {
@@ -339,21 +353,16 @@ impl TripleVertexBuffer {
             index: Cell::new(0),
             bufs: RefCell::new(bufs),
             capacity,
-            next_quad: Cell::new(0),
-            instances: RefCell::new(vec![Vec::new(); 3]), // 3 sub-layers
+            instances: RefCell::new(Vec::new()),
         }
     }
 
     pub fn clear_quad_allocation(&self) {
-        self.next_quad.set(0);
-        // Clear collected instances for the new frame
-        for layer in self.instances.borrow_mut().iter_mut() {
-            layer.clear();
-        }
+        self.instances.borrow_mut().clear();
     }
 
     pub fn need_more_quads(&self) -> Option<usize> {
-        let next = self.next_quad.get();
+        let next = self.instances.borrow().len();
         if next > self.capacity {
             Some(next)
         } else {
@@ -362,16 +371,17 @@ impl TripleVertexBuffer {
     }
 
     pub fn instance_count(&self) -> usize {
-        self.next_quad.get()
+        self.instances.borrow().len()
     }
 
-    /// Creates an instance-based view for allocation in a specific sub-layer.
-    /// `instances` is a fresh, owned `Vec` collected for this frame (not a
-    /// view into any pre-existing GPU buffer), so `next` starts its own
-    /// bump-allocator count at 0 rather than sharing `self.next_quad` --
-    /// that field belongs to the legacy vertex-based counting path and
-    /// tracks a different, unrelated position.
-    pub fn map_instances(&self, _sub_layer_idx: usize) -> MappedQuadsView {
+    /// Creates an instance-based view for allocation. The view collects into
+    /// its own fresh, owned `Vec` (not a live view into any pre-existing GPU
+    /// or accumulator state), so its internal bump-allocator counter starts
+    /// at 0 regardless of what's already accumulated in `self.instances`
+    /// from an earlier `with_quad_allocator` call this frame; the caller
+    /// (`with_quad_allocator`) merges the view's collected instances into
+    /// `self.instances` once painting for that call is done.
+    pub fn map_instances(&self) -> MappedQuadsView {
         MappedQuadsView {
             instances: Vec::with_capacity(self.capacity),
             next: Cell::new(0),
@@ -379,18 +389,20 @@ impl TripleVertexBuffer {
         }
     }
 
-    /// Writes collected instances to the GPU instance buffer.
-    /// Returns the buffer and instance count for draw submission.
-    pub fn write_instances_to_gpu(
-        &self,
-        _sub_layer_idx: usize,
-        instances: &[crate::quad::QuadInstance],
-    ) -> (wgpu::Buffer, u32) {
+    /// Merges instances collected by one `with_quad_allocator` call (i.e.
+    /// one `MappedQuadsView`'s worth) into this frame's accumulator.
+    pub fn accumulate_instances(&self, instances: Vec<crate::quad::QuadInstance>) {
+        self.instances.borrow_mut().extend(instances);
+    }
+
+    /// Uploads everything accumulated so far this frame to the GPU instance
+    /// buffer and returns the buffer plus the instance count for draw
+    /// submission.
+    pub fn write_instances_to_gpu(&self) -> (wgpu::Buffer, u32) {
+        let instances = self.instances.borrow();
         let mut bufs = self.bufs.borrow_mut();
         let instance_buffer = &mut bufs[self.index.get()].0;
-        // Write instances via Queue::write_buffer
-        instance_buffer.write_instances(instances);
-        // Clone the buffer (Arc) for the draw
+        instance_buffer.write_instances(&instances);
         let buffer = wgpu::Buffer::clone(instance_buffer.buffer());
         (buffer, instance_buffer.used_instances() as u32)
     }
@@ -458,15 +470,31 @@ impl RenderLayer {
     pub fn with_quad_allocator<R>(&self, f: impl FnOnce(&mut TripleLayerQuadAllocator) -> R) -> R {
         let vbs = self.vb.borrow();
 
-        let view0 = vbs[0].map_instances(0);
-        let view1 = vbs[1].map_instances(1);
-        let view2 = vbs[2].map_instances(2);
+        let view0 = vbs[0].map_instances();
+        let view1 = vbs[1].map_instances();
+        let view2 = vbs[2].map_instances();
 
         let mut layers = TripleLayerQuadAllocator::Gpu(BorrowedLayers {
             layers: [view0, view1, view2],
         });
 
-        f(&mut layers)
+        let result = f(&mut layers);
+
+        // `f` collected quads into each view's own owned `Vec` (see
+        // `TripleVertexBuffer::map_instances`'s doc comment); merge them
+        // into the per-layer accumulator now that painting for this call is
+        // done. Without this step the collected quads are simply dropped
+        // here and nothing this call painted ever reaches the GPU -- which
+        // is exactly what happened before this was wired up: no panic, no
+        // error, just an empty frame.
+        if let TripleLayerQuadAllocator::Gpu(borrowed) = layers {
+            let [view0, view1, view2] = borrowed.layers;
+            vbs[0].accumulate_instances(view0.instances);
+            vbs[1].accumulate_instances(view1.instances);
+            vbs[2].accumulate_instances(view2.instances);
+        }
+
+        result
     }
 
     pub fn need_more_quads(&self, vb_idx: usize) -> Option<usize> {
