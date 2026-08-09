@@ -367,6 +367,24 @@ impl crate::TermWindow {
                 /// subsequent row in this same paint_pane call also takes
                 /// the cheap path this frame.
                 budget_exceeded: bool,
+                /// Whether bidi reordering is disabled because the pane's
+                /// live foreground process matches
+                /// `disable_bidi_for_processes_named` (e.g. `claude.exe`).
+                /// This is a property of the *pane*, not of any individual
+                /// line -- computed once per `paint_pane` call rather than
+                /// once per row, because `bidi_disabled_by_foreground_process`
+                /// -> `divine_foreground_process` deep-clones the OS
+                /// process tree (`LocalProcessInfo::clone`, recursive over
+                /// `children: HashMap<u32, LocalProcessInfo>`) plus two
+                /// mutex locks and several heap allocations. At ~50 rows
+                /// this was ~50 process-tree clones per frame -- paid even
+                /// on a 100%-cache-hit frame, since it ran before the
+                /// `line_quad_cache` lookup -- and was expensive enough in
+                /// a debug build to regularly blow the 40ms
+                /// `tab_frame_build_budget_ms` deadline on its own while a
+                /// process-spawning foreground process (Claude Code) was
+                /// running, even with nothing else changing on screen.
+                bidi_process_override: bool,
             }
 
             let left_pixel_x = padding_left
@@ -374,6 +392,11 @@ impl crate::TermWindow {
                 + (pos.left as f32 * self.render_metrics.cell_size.width as f32);
 
             let deadline = frame_deadline;
+
+            // Computed once per pane per frame, not once per row -- see the
+            // doc comment on `LineRender::bidi_process_override`.
+            let bidi_process_override =
+                bidi_disabled_by_foreground_process(Some(&pos.pane), &self.config);
 
             let mut render = LineRender {
                 term_window: self,
@@ -401,6 +424,7 @@ impl crate::TermWindow {
                 error: None,
                 deadline,
                 budget_exceeded: false,
+                bidi_process_override,
             };
 
             impl<'a, 'b> LineRender<'a, 'b> {
@@ -459,10 +483,9 @@ impl crate::TermWindow {
                     };
 
                     let shape_hash = self.term_window.shape_hash_for_line(line);
-                    let bidi_process_override = bidi_disabled_by_foreground_process(
-                        Some(&self.pos.pane),
-                        &self.term_window.config,
-                    );
+                    // Computed once per pane per frame in `paint_pane`, not
+                    // per row -- see `LineRender::bidi_process_override`.
+                    let bidi_process_override = self.bidi_process_override;
 
                     let quad_key = LineQuadCacheKey {
                         pane_id: self.pane_id,
