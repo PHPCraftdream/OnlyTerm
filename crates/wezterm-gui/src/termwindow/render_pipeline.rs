@@ -213,6 +213,7 @@ impl TermWindow {
                 |config| config.line_quad_cache_size,
                 &config,
             )),
+            retained_rows: RefCell::new(std::collections::HashMap::new()),
             line_to_ele_shape_cache: RefCell::new(LfuCache::new(
                 "line_to_ele_shape_cache.hit.rate",
                 "line_to_ele_shape_cache.miss.rate",

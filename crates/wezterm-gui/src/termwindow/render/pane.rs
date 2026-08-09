@@ -2,8 +2,9 @@ use crate::quad::{HeapQuadAllocator, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
 use crate::termwindow::render::{
-    bidi_disabled_by_foreground_process, same_hyperlink, CursorProperties, LineQuadCacheKey,
-    LineQuadCacheValue, LineToEleShapeCacheKey, RenderScreenLineParams,
+    bidi_disabled_by_foreground_process, budget::RowAction, budget::RowSweep, same_hyperlink,
+    CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
+    RenderScreenLineParams,
 };
 use crate::termwindow::{ScrollHit, UIItem, UIItemType};
 use ::window::bitmaps::TextureRect;
@@ -14,6 +15,7 @@ use mux::pane::PaneId;
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::tab::PositionedPane;
 use ordered_float::NotNan;
+use std::rc::Rc;
 use std::time::Instant;
 use wezterm_dynamic::Value;
 use wezterm_term::color::{ColorAttribute, ColorPalette};
@@ -353,20 +355,18 @@ impl crate::TermWindow {
                 window_is_transparent: bool,
                 layers: &'a mut TripleLayerQuadAllocator<'b>,
                 error: Option<anyhow::Error>,
-                /// Task #251: wall-clock deadline for finishing this
+                /// Task #457: progressive sweep state for this pane's row-build budget.
+                /// Replaces the old sticky `budget_exceeded: bool` flag with a
+                /// bounded-lag policy that guarantees every row is refreshed
+                /// within a bounded number of frames and never leaves a row blank.
+                sweep: RowSweep,
+                /// Task #457: wall-clock deadline for finishing this
                 /// pane's row-building loop, derived from
                 /// `tab_frame_build_budget_ms`. `None` when the budget is
                 /// disabled (config value 0), in which case every row is
                 /// always fully (re)built exactly as before this task.
+                #[allow(dead_code)] // Used by sweep.decide for over_budget check
                 deadline: Option<Instant>,
-                /// Set once `deadline` is observed to have passed between
-                /// two row iterations. Sticky for the remainder of this
-                /// pane's rows so that once we fall back to the cheap
-                /// path we don't keep re-checking `Instant::now()` (and
-                /// so a single slow row can't un-trip it): every
-                /// subsequent row in this same paint_pane call also takes
-                /// the cheap path this frame.
-                budget_exceeded: bool,
                 /// Whether bidi reordering is disabled because the pane's
                 /// live foreground process matches
                 /// `disable_bidi_for_processes_named` (e.g. `claude.exe`).
@@ -398,6 +398,70 @@ impl crate::TermWindow {
             let bidi_process_override =
                 bidi_disabled_by_foreground_process(Some(&pos.pane), &self.config);
 
+            // Task #457: compute the cursor's visible row slot (0-indexed from viewport top),
+            // if the cursor is within the current viewport.
+            let cursor_row_slot = if cursor.y < dims.physical_top
+                || (cursor.y - dims.physical_top) >= dims.viewport_rows as StableRowIndex
+            {
+                None
+            } else {
+                Some((cursor.y - dims.physical_top) as usize)
+            };
+
+            use crate::termwindow::render::{RetainedPaneRows, RetainedRow, RetainedStamp};
+
+            // Task #457: build the fail-safe stamp for retained row invalidation.
+            // This captures everything that would invalidate the *pixels* of a
+            // retained row without necessarily changing its text content.
+            let current_stamp = RetainedStamp {
+                config_generation: self.config.generation(),
+                shape_generation: self.shape_generation,
+                quad_generation: self.quad_generation,
+                pixel_width: self.dimensions.pixel_width,
+                pixel_height: self.dimensions.pixel_height,
+                cell_height: self.render_metrics.cell_size.height,
+                left_pixel_x: NotNan::new(left_pixel_x).unwrap(),
+                top_pixel_y: NotNan::new(top_pixel_y).unwrap(),
+                num_rows: dims.viewport_rows,
+                num_cols: dims.cols,
+            };
+
+            // Task #457: get the work_start for the progressive sweep from retained_rows.
+            // ALSO handle stamp mismatch by resetting the retained row entry.
+            let work_start = {
+                let mut retained_rows = self.retained_rows.borrow_mut();
+                match retained_rows.get(&pane_id) {
+                    Some(existing) => {
+                        if existing.stamp == current_stamp {
+                            existing.resume_row
+                        } else {
+                            // Stamp mismatch: reset to a fresh RetainedPaneRows with work_start = 0
+                            retained_rows.insert(
+                                pane_id,
+                                RetainedPaneRows {
+                                    stamp: current_stamp.clone(),
+                                    rows: vec![None; dims.viewport_rows],
+                                    resume_row: 0,
+                                },
+                            );
+                            0
+                        }
+                    }
+                    None => {
+                        // No entry yet: initialize with work_start = 0
+                        retained_rows.insert(
+                            pane_id,
+                            RetainedPaneRows {
+                                stamp: current_stamp.clone(),
+                                rows: vec![None; dims.viewport_rows],
+                                resume_row: 0,
+                            },
+                        );
+                        0
+                    }
+                }
+            };
+
             let mut render = LineRender {
                 term_window: self,
                 selrange,
@@ -423,7 +487,7 @@ impl crate::TermWindow {
                 layers,
                 error: None,
                 deadline,
-                budget_exceeded: false,
+                sweep: RowSweep::new(deadline, work_start, dims.viewport_rows, cursor_row_slot),
                 bidi_process_override,
             };
 
@@ -508,140 +572,195 @@ impl crate::TermWindow {
                         bidi_process_override,
                     };
 
-                    if let Some(cached_quad) =
-                        self.term_window.line_quad_cache.borrow_mut().get(&quad_key)
-                    {
-                        let expired = cached_quad
-                            .expires
-                            .map(|i| Instant::now() >= i)
+                    // Task #457: slot is the 0-indexed row slot from viewport top.
+                    // This matches the loop variable `line_idx` in `render_lines`
+                    // and is what `RetainedPaneRows.rows` is indexed by.
+                    let slot = line_idx;
+
+                    // Task #457: look up whether this slot has retained quads.
+                    let has_retained = self
+                        .term_window
+                        .retained_rows
+                        .borrow()
+                        .get(&self.pane_id)
+                        .and_then(|r| r.rows.get(slot).and_then(|row| row.as_ref()))
+                        .is_some();
+
+                    // Task #457: do the cache lookup first, capturing cache_hit and the cached_quad if any.
+                    let (cache_hit, maybe_cached_quad) = {
+                        let mut cache = self.term_window.line_quad_cache.borrow_mut();
+                        let maybe_cached = cache.get(&quad_key).cloned();
+                        let cache_hit = maybe_cached
+                            .as_ref()
+                            .map(|cached_quad| {
+                                let expired = cached_quad
+                                    .expires
+                                    .map(|i| Instant::now() >= i)
+                                    .unwrap_or(false);
+                                let hover_changed = if cached_quad.invalidate_on_hover_change {
+                                    !same_hyperlink(
+                                        cached_quad.current_highlight.as_ref(),
+                                        self.term_window.current_highlight.as_ref(),
+                                    )
+                                } else {
+                                    false
+                                };
+                                !expired && !hover_changed
+                            })
                             .unwrap_or(false);
-                        let hover_changed = if cached_quad.invalidate_on_hover_change {
-                            !same_hyperlink(
-                                cached_quad.current_highlight.as_ref(),
-                                self.term_window.current_highlight.as_ref(),
-                            )
-                        } else {
-                            false
-                        };
-                        if !expired && !hover_changed {
+                        (cache_hit, maybe_cached)
+                    };
+
+                    // Task #457: ask the sweep what to do with this row.
+                    let action = self
+                        .sweep
+                        .decide(slot, cache_hit, has_retained, Instant::now());
+
+                    match action {
+                        RowAction::EmitCached => {
+                            // This branch is only reachable when cache_hit is true.
+                            let cached_quad = maybe_cached_quad.unwrap();
                             cached_quad
                                 .layers
                                 .apply_to(self.layers)
                                 .context("cached_quad.layers.apply_to")?;
                             self.term_window.update_next_frame_time(cached_quad.expires);
-                            return Ok(());
-                        }
-                    } else if self.budget_exceeded {
-                        // Task #251: the per-frame content-build budget
-                        // (`tab_frame_build_budget_ms`) was already
-                        // exceeded by an earlier row in this same pane
-                        // (checked between whole-row iterations in
-                        // `render_lines`, never mid-shape), and there is
-                        // no cached quad we can cheaply reuse for this
-                        // row (either it was never rendered before, or it
-                        // changed since). Shaping/rasterizing it now would
-                        // be exactly the unbounded-latency work this
-                        // budget exists to cap, so we leave this row
-                        // undrawn for this one frame rather than paying
-                        // that cost. It will be tried again -- with a
-                        // fresh budget and fresh deadline -- on the next
-                        // frame, at which point it may again be a cache
-                        // hit (nothing else changed) or, if the content
-                        // is genuinely still being produced, fall back
-                        // here again. Task #268: that next frame is not
-                        // automatic on an otherwise-idle window -- see the
-                        // `update_next_frame_time` call where
-                        // `budget_exceeded` is first set to `true` in
-                        // `render_lines`, which is what actually schedules
-                        // it.
-                        return Ok(());
-                    }
 
-                    let mut buf = HeapQuadAllocator::default();
-                    let next_due = self.term_window.has_animation.borrow_mut().take();
-
-                    let shape_key = LineToEleShapeCacheKey {
-                        shape_hash,
-                        shape_generation: quad_key.shape_generation,
-                        composing: if self.cursor.y == stable_row && self.pos.is_active {
-                            if let DeadKeyStatus::Composing(composing) =
-                                &self.term_window.dead_key_status
+                            // Task #457: update retained_rows with this fresh cached data.
+                            let retained_row = RetainedRow {
+                                quads: Rc::clone(&cached_quad.layers),
+                                expires: cached_quad.expires,
+                            };
+                            if let Some(slot_ref) = self
+                                .term_window
+                                .retained_rows
+                                .borrow_mut()
+                                .get_mut(&self.pane_id)
+                                .and_then(|r| r.rows.get_mut(slot))
                             {
-                                Some((self.cursor.x, composing.to_string()))
-                            } else {
-                                None
+                                *slot_ref = Some(retained_row);
                             }
-                        } else {
-                            None
-                        },
-                        is_wrap_continuation,
-                        bidi_process_override,
-                    };
+                        }
+                        RowAction::Build => {
+                            // Full rebuild path (existing logic).
+                            let mut buf = HeapQuadAllocator::default();
+                            let next_due = self.term_window.has_animation.borrow_mut().take();
 
-                    let render_result = self
-                        .term_window
-                        .render_screen_line(
-                            RenderScreenLineParams {
-                                top_pixel_y: *quad_key.top_pixel_y,
-                                left_pixel_x: self.left_pixel_x,
-                                pixel_width: self.dims.cols as f32
-                                    * self.term_window.render_metrics.cell_size.width as f32,
-                                stable_line_idx: Some(stable_row),
-                                line,
-                                selection: selrange.clone(),
-                                cursor: self.cursor,
-                                palette: self.palette,
-                                dims: &self.dims,
-                                config: &self.term_window.config,
-                                cursor_border_color: self.cursor_border_color,
-                                foreground: self.foreground,
-                                is_active: self.pos.is_active,
-                                pane: Some(&self.pos.pane),
-                                selection_fg: self.selection_fg,
-                                selection_bg: self.selection_bg,
-                                cursor_fg: self.cursor_fg,
-                                cursor_bg: self.cursor_bg,
-                                cursor_is_default_color: self.cursor_is_default_color,
-                                white_space: self.white_space,
-                                filled_box: self.filled_box,
-                                window_is_transparent: self.window_is_transparent,
-                                default_bg: self.default_bg,
-                                font: None,
-                                style: None,
-                                use_pixel_positioning: self
-                                    .term_window
-                                    .config
-                                    .experimental_pixel_positioning,
-                                render_metrics: self.term_window.render_metrics,
-                                shape_key: Some(shape_key),
-                                password_input,
+                            let shape_key = LineToEleShapeCacheKey {
+                                shape_hash,
+                                shape_generation: quad_key.shape_generation,
+                                composing: if self.cursor.y == stable_row && self.pos.is_active {
+                                    if let DeadKeyStatus::Composing(composing) =
+                                        &self.term_window.dead_key_status
+                                    {
+                                        Some((self.cursor.x, composing.to_string()))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                },
                                 is_wrap_continuation,
-                            },
-                            &mut TripleLayerQuadAllocator::Heap(&mut buf),
-                        )
-                        .context("render_screen_line")?;
+                                bidi_process_override,
+                            };
 
-                    let expires = self.term_window.has_animation.borrow().as_ref().cloned();
-                    self.term_window.update_next_frame_time(next_due);
+                            let render_result = self
+                                .term_window
+                                .render_screen_line(
+                                    RenderScreenLineParams {
+                                        top_pixel_y: *quad_key.top_pixel_y,
+                                        left_pixel_x: self.left_pixel_x,
+                                        pixel_width: self.dims.cols as f32
+                                            * self.term_window.render_metrics.cell_size.width
+                                                as f32,
+                                        stable_line_idx: Some(stable_row),
+                                        line,
+                                        selection: selrange.clone(),
+                                        cursor: self.cursor,
+                                        palette: self.palette,
+                                        dims: &self.dims,
+                                        config: &self.term_window.config,
+                                        cursor_border_color: self.cursor_border_color,
+                                        foreground: self.foreground,
+                                        is_active: self.pos.is_active,
+                                        pane: Some(&self.pos.pane),
+                                        selection_fg: self.selection_fg,
+                                        selection_bg: self.selection_bg,
+                                        cursor_fg: self.cursor_fg,
+                                        cursor_bg: self.cursor_bg,
+                                        cursor_is_default_color: self.cursor_is_default_color,
+                                        white_space: self.white_space,
+                                        filled_box: self.filled_box,
+                                        window_is_transparent: self.window_is_transparent,
+                                        default_bg: self.default_bg,
+                                        font: None,
+                                        style: None,
+                                        use_pixel_positioning: self
+                                            .term_window
+                                            .config
+                                            .experimental_pixel_positioning,
+                                        render_metrics: self.term_window.render_metrics,
+                                        shape_key: Some(shape_key),
+                                        password_input,
+                                        is_wrap_continuation,
+                                    },
+                                    &mut TripleLayerQuadAllocator::Heap(&mut buf),
+                                )
+                                .context("render_screen_line")?;
 
-                    buf.apply_to(self.layers)
-                        .context("HeapQuadAllocator::apply_to")?;
+                            let expires = self.term_window.has_animation.borrow().as_ref().cloned();
+                            self.term_window.update_next_frame_time(next_due);
 
-                    let quad_value = LineQuadCacheValue {
-                        layers: buf,
-                        expires,
-                        invalidate_on_hover_change: render_result.invalidate_on_hover_change,
-                        current_highlight: if render_result.invalidate_on_hover_change {
-                            self.term_window.current_highlight.clone()
-                        } else {
-                            None
-                        },
-                    };
+                            buf.apply_to(self.layers)
+                                .context("HeapQuadAllocator::apply_to")?;
 
-                    self.term_window
-                        .line_quad_cache
-                        .borrow_mut()
-                        .put(quad_key, quad_value);
+                            // Store into line_quad_cache (existing).
+                            let quads = Rc::new(buf);
+                            let quad_value = LineQuadCacheValue {
+                                layers: Rc::clone(&quads),
+                                expires,
+                                invalidate_on_hover_change: render_result
+                                    .invalidate_on_hover_change,
+                                current_highlight: if render_result.invalidate_on_hover_change {
+                                    self.term_window.current_highlight.clone()
+                                } else {
+                                    None
+                                },
+                            };
+                            self.term_window
+                                .line_quad_cache
+                                .borrow_mut()
+                                .put(quad_key, quad_value);
+
+                            // Task #457: ALSO store into retained_rows.
+                            let retained_row = RetainedRow { quads, expires };
+                            if let Some(slot_ref) = self
+                                .term_window
+                                .retained_rows
+                                .borrow_mut()
+                                .get_mut(&self.pane_id)
+                                .and_then(|r| r.rows.get_mut(slot))
+                            {
+                                *slot_ref = Some(retained_row);
+                            }
+                        }
+                        RowAction::EmitRetained => {
+                            // Task #457: fetch retained quads and re-emit them.
+                            let retained_rows = self.term_window.retained_rows.borrow();
+                            let retained_row = retained_rows
+                                .get(&self.pane_id)
+                                .and_then(|r| r.rows.get(slot))
+                                .and_then(|r| r.as_ref())
+                                .context("EmitRetained without retained quads for this slot")?;
+
+                            retained_row
+                                .quads
+                                .apply_to(self.layers)
+                                .context("retained.quads.apply_to")?;
+                            self.term_window
+                                .update_next_frame_time(retained_row.expires);
+                        }
+                    }
 
                     Ok(())
                 }
@@ -681,66 +800,6 @@ impl crate::TermWindow {
                             && line_idx > 0
                             && lines[line_idx - 1].last_cell_was_wrapped();
 
-                        // Task #251: only check the per-frame content-build
-                        // budget BETWEEN whole rows, here at the top of the
-                        // loop -- never partway through shaping/rendering a
-                        // single row. This is the finest-grained boundary
-                        // `paint_pane` has available without reaching into
-                        // `render_screen_line`/glyph shaping itself, and
-                        // it's what actually protects the common case of a
-                        // single, unsplit pane (where the outer per-pane
-                        // loop in `paint_tab_content` only ever runs once
-                        // and so provides no protection on its own). Once
-                        // tripped, stay tripped for the rest of this pane's
-                        // rows this frame -- no need to keep sampling the
-                        // clock, and it keeps the degrade behavior
-                        // deterministic (no row after the trip point does
-                        // real shaping this frame, even if it would have
-                        // been fast).
-                        if !self.budget_exceeded {
-                            if let Some(deadline) = self.deadline {
-                                if Instant::now() >= deadline {
-                                    self.budget_exceeded = true;
-                                    // Task #268: rows skipped below because of
-                                    // `budget_exceeded` (cache-miss branch in
-                                    // `render_line`) are left undrawn for
-                                    // *this* frame only -- the comment there
-                                    // promises they'll be tried again "on the
-                                    // next frame", but nothing else in this
-                                    // otherwise-idle-window path (no new
-                                    // input/output, no animation) actually
-                                    // asks for a next frame. Ask for one here,
-                                    // exactly once per pane per frame (this
-                                    // `if !self.budget_exceeded` guard only
-                                    // ever fires on the single row where the
-                                    // deadline is first observed to have
-                                    // passed).
-                                    //
-                                    // Task #271: task #268's original fix only
-                                    // wrote into has_animation/
-                                    // update_next_frame_time, which
-                                    // `paint_impl` only consumes when
-                                    // `self.focused.is_some()` -- so on an
-                                    // unfocused window (e.g. a second-monitor
-                                    // window that isn't focused) that
-                                    // follow-up repaint was silently dropped
-                                    // and the skipped rows stayed blank until
-                                    // the window was focused again. Keep the
-                                    // has_animation write for the focused
-                                    // path (cheap, and harmless if redundant),
-                                    // but also schedule an unconditional,
-                                    // focus-independent repaint via
-                                    // `schedule_budget_repaint`, which dedups
-                                    // internally so this can't turn into a
-                                    // busy loop even though it runs on every
-                                    // frame where the budget trips.
-                                    let now = Instant::now();
-                                    self.term_window.update_next_frame_time(Some(now));
-                                    self.term_window.schedule_budget_repaint(now);
-                                }
-                            }
-                        }
-
                         if let Err(err) =
                             self.render_line(stable_top, line_idx, line, is_wrap_continuation)
                         {
@@ -759,9 +818,14 @@ impl crate::TermWindow {
             // and input handling for as long as a frame took to build.
             let (stable_top, lines) = pos.pane.get_lines(stable_range.clone());
             render.render_lines(stable_top, &lines);
-            let budget_exceeded = render.budget_exceeded;
+            let sweep_outcome = render.sweep.finish();
             if let Some(error) = render.error.take() {
                 return Err(error).context("error while calling get_lines");
+            }
+
+            // Task #457: update retained_rows.resume_row for the next frame.
+            if let Some(r) = self.retained_rows.borrow_mut().get_mut(&pane_id) {
+                r.resume_row = sweep_outcome.next_resume;
             }
 
             // Task #251/#269: reflect whether this pane's content could be
@@ -779,7 +843,24 @@ impl crate::TermWindow {
             // times/second, `false` far more often than `true`) can never
             // clobber a genuine concurrent lock-timeout `true` for this
             // same pane (see task #269).
-            pos.pane.set_render_budget_exceeded(budget_exceeded);
+            //
+            // Task #457: use `deferred_any` instead of `budget_exceeded`. The old
+            // sticky flag only tracked whether the deadline passed, not whether
+            // any row actually failed to refresh. With the progressive sweep,
+            // a deadline that passes during a 100%-cache-hit frame should NOT
+            // count toward unresponsiveness, but a frame that defers any row
+            // SHOULD.
+            pos.pane
+                .set_render_budget_exceeded(sweep_outcome.deferred_any);
+
+            // Task #457: schedule a follow-up repaint if any row was deferred.
+            // This fixes Cause B's livelock by ensuring forward progress even
+            // when the deadline is consistently tripped.
+            if sweep_outcome.deferred_any {
+                let interval_ms = 1000 / self.config.max_fps.max(1);
+                let next_due = Instant::now() + std::time::Duration::from_millis(interval_ms);
+                self.schedule_budget_repaint(next_due);
+            }
         }
 
         /*

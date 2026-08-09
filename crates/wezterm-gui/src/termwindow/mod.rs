@@ -354,6 +354,14 @@ pub struct TermWindow {
 
     line_quad_cache: RefCell<LfuCache<LineQuadCacheKey, LineQuadCacheValue>>,
 
+    /// What was last actually emitted for each visible row slot of each pane.
+    /// Not a content cache (that's `line_quad_cache`, keyed by content) --
+    /// this answers "what is currently on screen at visual row N", which is
+    /// the only thing that can be re-emitted when the frame-build budget
+    /// defers a row's rebuild. See task #457 / the @oh design review this
+    /// implements.
+    retained_rows: RefCell<HashMap<mux::pane::PaneId, render::RetainedPaneRows>>,
+
     last_status_call: Instant,
     cursor_blink_state: RefCell<ColorEase>,
     blink_state: RefCell<ColorEase>,

@@ -557,6 +557,57 @@ fn test_apply_to_copies_everything_when_under_capacity() {
     assert_eq!(result[2].position[0], 2.0);
 }
 
+/// Test that Rc<HeapQuadAllocator> (post task #457's LineQuadCacheValue::layers type change)
+/// still applies correctly via .apply_to() when called through the Rc. This pins that the
+/// type change from HeapQuadAllocator to Rc<HeapQuadAllocator> didn't silently break anything
+/// about how apply_to is invoked at real call sites (both cache-hit and retained-row paths).
+#[test]
+fn test_rc_heap_quad_allocator_apply_to() {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
+    use crate::renderstate::TripleVertexBuffer;
+    use std::rc::Rc;
+
+    // Build a HeapQuadAllocator and wrap it in Rc.
+    let mut heap = HeapQuadAllocator::default();
+    for i in 0..3 {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        heap.layer0.push(q);
+    }
+    let rc_heap = Rc::new(heap);
+
+    // Create a layer accumulator.
+    let vb = TripleVertexBuffer::new(vec![], 10);
+    let view0 = vb.map_instances();
+    let view1 = vb.map_instances();
+    let view2 = vb.map_instances();
+    let borrowed_layers = BorrowedLayers {
+        layers: [view0, view1, view2],
+    };
+
+    // Call apply_to through the Rc (the real production usage pattern).
+    let mut dest = TripleLayerQuadAllocator::Gpu(borrowed_layers);
+    rc_heap.apply_to(&mut dest).unwrap();
+
+    // Extract the result.
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
+        panic!("Expected Gpu variant");
+    };
+    let [layer_view, _, _] = borrowed_layers.layers;
+    let result = layer_view.into_instances();
+
+    // Verify all 3 instances were copied correctly.
+    assert_eq!(
+        result.len(),
+        3,
+        "Rc<HeapQuadAllocator>::apply_to should copy all instances"
+    );
+    assert_eq!(result[0].position[0], 0.0);
+    assert_eq!(result[1].position[0], 1.0);
+    assert_eq!(result[2].position[0], 2.0);
+}
+
 /// Regression coverage for the instanced-rendering vertex layout (task #447).
 ///
 /// The instanced pipeline binds two vertex buffers -- `CornerVertex` (one

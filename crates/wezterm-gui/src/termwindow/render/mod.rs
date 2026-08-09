@@ -35,6 +35,7 @@ use wezterm_term::{CellAttributes, Line, StableRowIndex};
 use window::color::LinearRgba;
 
 pub mod borders;
+pub mod budget;
 pub mod corners;
 pub mod draw;
 pub mod fancy_tab_bar;
@@ -84,13 +85,65 @@ pub struct LineQuadCacheKey {
     pub bidi_process_override: bool,
 }
 
+#[derive(Clone, Debug, Default)]
 pub struct LineQuadCacheValue {
     pub expires: Option<Instant>,
-    pub layers: HeapQuadAllocator,
+    pub layers: Rc<HeapQuadAllocator>,
     // Only set if the line contains any hyperlinks, so
     // that we can invalidate when it changes
     pub current_highlight: Option<Arc<Hyperlink>>,
     pub invalidate_on_hover_change: bool,
+}
+
+/// What was last actually emitted for each visible row slot of a pane.
+/// Not a content cache (that's `line_quad_cache`, keyed by content) --
+/// this answers "what is currently on screen at visual row N", which is
+/// the only thing that can be re-emitted when the frame-build budget
+/// defers a row's rebuild. See task #457 / the @oh design review this
+/// implements.
+pub struct RetainedPaneRows {
+    /// Fail-safe stamp: everything that would invalidate the *pixels* of
+    /// a retained row without necessarily changing that row's text
+    /// content. Compared once per pane per frame; on any mismatch the
+    /// whole map for this pane is dropped (safe default: falls back to
+    /// Cause-A-vulnerable behavior only for one frame, not silently wrong
+    /// pixels). Deliberately a coarse stamp rather than requiring every
+    /// invalidation call site to remember to bump `retained_rows` too --
+    /// a missed call site there would render garbage, not just blank.
+    pub stamp: RetainedStamp,
+    /// Indexed by visible row slot (`line_idx + pos.top`), NOT by
+    /// StableRowIndex -- this must track screen position, not scrollback
+    /// content position.
+    pub rows: Vec<Option<RetainedRow>>,
+    /// Row slot at which the NEXT frame's sweep should start spending its
+    /// shaping budget. 0 means "a full clean sweep completed; start from
+    /// the top again".
+    pub resume_row: usize,
+}
+
+/// A retained row's quad data and its expiration (if animated).
+#[derive(Clone, Debug)]
+pub struct RetainedRow {
+    pub quads: Rc<HeapQuadAllocator>,
+    pub expires: Option<Instant>,
+}
+
+/// Fail-safe stamp for retained rows - anything that would invalidate the
+/// *pixels* of a retained row without necessarily changing its text content.
+/// Compared once per pane per frame; on any mismatch, the whole map for this
+/// pane is dropped (safe default).
+#[derive(Clone, PartialEq)]
+pub struct RetainedStamp {
+    pub config_generation: usize,
+    pub shape_generation: usize,
+    pub quad_generation: usize,
+    pub pixel_width: usize,
+    pub pixel_height: usize,
+    pub cell_height: isize,
+    pub left_pixel_x: NotNan<f32>,
+    pub top_pixel_y: NotNan<f32>,
+    pub num_rows: usize,
+    pub num_cols: usize,
 }
 
 pub struct LineToElementParams<'a> {

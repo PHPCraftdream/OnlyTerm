@@ -30,7 +30,7 @@ use std::time::Instant;
 ///   This would defeat frame-to-frame comparison entirely.
 /// - `ahash::RandomState::with_seeds(k0, k1, k2, k3)` is "Fixed" - deterministic,
 ///   identical calls produce identical hashers. This is the correct choice here.
-fn compute_frame_signature_from_parts(
+pub fn compute_frame_signature_from_parts(
     pixel_width: usize,
     pixel_height: usize,
     foreground_text_hsb: &[f32; 3],
@@ -71,6 +71,134 @@ fn compute_frame_signature_from_parts(
     }
 
     hasher.finish()
+}
+
+/// Extracts what a `HeapQuadAllocator::apply_to` call actually wrote into
+/// layer 0 of a fresh `BorrowedLayers` destination, as a `Vec<QuadInstance>`
+/// suitable for `compute_frame_signature_from_parts`.
+///
+/// `apply_to` writes into the destination `MappedQuadsView`s themselves
+/// (`BorrowedLayers::extend_from_slice`), NOT into the `TripleVertexBuffer`
+/// that `map_instances()` was called on to construct those views -- that
+/// buffer's own `instances` field only gets populated by a later,
+/// explicit `accumulate_instances()` call, which `apply_to` does not make.
+/// Reading `vb.instances` here would silently observe an empty Vec
+/// regardless of what was applied; this helper reads the actual
+/// destination instead.
+#[cfg(test)]
+fn applied_layer0_instances(
+    heap: &crate::quad::HeapQuadAllocator,
+    capacity: usize,
+) -> Vec<QuadInstance> {
+    use crate::quad::TripleLayerQuadAllocator;
+    use crate::renderstate::BorrowedLayers;
+    use crate::renderstate::TripleVertexBuffer;
+
+    let vb = TripleVertexBuffer::new(vec![], capacity);
+    let borrowed_layers = BorrowedLayers {
+        layers: [vb.map_instances(), vb.map_instances(), vb.map_instances()],
+    };
+    let mut dest = TripleLayerQuadAllocator::Gpu(borrowed_layers);
+    heap.apply_to(&mut dest).unwrap();
+
+    let TripleLayerQuadAllocator::Gpu(borrowed_layers) = dest else {
+        panic!("expected Gpu variant");
+    };
+    let [layer0, _layer1, _layer2] = borrowed_layers.layers;
+    layer0.into_instances()
+}
+
+/// Test that reemitting the same row quads yields the same signature.
+/// This pins that retained-row reuse is byte-stable so task #450 still skips truly-unchanged frames.
+#[cfg(test)]
+#[test]
+fn test_reemitting_same_row_quads_yields_same_signature() {
+    use crate::quad::{HeapQuadAllocator, TripleLayerQuadAllocatorTrait};
+    let mut heap1 = HeapQuadAllocator::default();
+    for i in 0..3 {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        heap1.extend_with_instance(0, q);
+    }
+
+    let mut heap2 = HeapQuadAllocator::default();
+    for i in 0..3 {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        heap2.extend_with_instance(0, q);
+    }
+
+    let layer_instances1 = vec![applied_layer0_instances(&heap1, 10)];
+    let layer_instances2 = vec![applied_layer0_instances(&heap2, 10)];
+    // Sanity check the fixture actually captured non-empty data -- if this
+    // ever fails, the test below would otherwise be vacuously comparing two
+    // empty Vecs and always pass regardless of whether reuse is byte-stable.
+    assert_eq!(layer_instances1[0].len(), 3);
+    assert_eq!(layer_instances2[0].len(), 3);
+
+    // Compute signatures for both using the real production function.
+    let hsb = [0.0, 0.0, 0.0];
+    let projection = [[0.0; 4]; 4];
+    let sig1 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances1);
+    let sig2 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances2);
+
+    // Both must produce identical hashes.
+    assert_eq!(
+        sig1, sig2,
+        "reemitting same quads must yield same signature"
+    );
+}
+
+/// Test that emission order affects the signature.
+/// This documents/pins WHY the sweep's row-order emission invariant matters:
+/// if two frames emit the same underlying quads in a different order, the byte
+/// sequence TripleVertexBuffer::instances accumulates changes, changing the
+/// content hash for what's actually a pixel-identical frame -- silently defeating
+/// task #450's frame-skipping optimization. Production code maintains row order
+/// (see render/pane.rs::render_lines, which processes slots in order 0..n_rows
+/// regardless of RowAction) -- this test just pins that the hash function itself
+/// is order-sensitive, so that invariant is actually load-bearing.
+#[cfg(test)]
+#[test]
+fn test_emission_order_affects_the_signature() {
+    use crate::quad::{HeapQuadAllocator, TripleLayerQuadAllocatorTrait};
+
+    // Three distinct quads (distinguishable by position[0]).
+    let make_quad = |i: usize| {
+        let mut q = QuadInstance::default();
+        q.position[0] = i as f32;
+        q
+    };
+
+    let mut heap_in_order = HeapQuadAllocator::default();
+    for i in 0..3 {
+        heap_in_order.extend_with_instance(0, make_quad(i));
+    }
+
+    let mut heap_reversed = HeapQuadAllocator::default();
+    for i in (0..3).rev() {
+        heap_reversed.extend_with_instance(0, make_quad(i));
+    }
+
+    let layer_instances1 = vec![applied_layer0_instances(&heap_in_order, 10)];
+    let layer_instances2 = vec![applied_layer0_instances(&heap_reversed, 10)];
+    assert_eq!(layer_instances1[0].len(), 3);
+    assert_eq!(layer_instances2[0].len(), 3);
+    assert_ne!(
+        bytemuck::cast_slice::<QuadInstance, u8>(&layer_instances1[0]),
+        bytemuck::cast_slice::<QuadInstance, u8>(&layer_instances2[0]),
+        "fixture bug: the two orderings must actually differ"
+    );
+
+    let hsb = [0.0, 0.0, 0.0];
+    let projection = [[0.0; 4]; 4];
+    let sig1 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances1);
+    let sig2 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances2);
+
+    assert_ne!(
+        sig1, sig2,
+        "the same quads emitted in a different order must produce a different signature"
+    );
 }
 
 impl crate::TermWindow {
