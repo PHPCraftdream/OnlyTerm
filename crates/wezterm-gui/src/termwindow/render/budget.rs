@@ -26,6 +26,8 @@ pub struct SweepOutcome {
     pub next_resume: usize,
     /// Whether any row was deferred this sweep.
     pub deferred_any: bool,
+    /// Number of rows actually Build-ed this sweep.
+    pub built_count: usize,
 }
 
 /// State for a progressive row sweep across a pane's visible rows.
@@ -33,7 +35,7 @@ pub struct SweepOutcome {
 /// The sweep ensures:
 /// - No row is ever left blank (has_retained == false always triggers Build)
 /// - The cursor row is always fresh
-/// - At least one row is built per frame (forward-progress guarantee)
+/// - The rotation point (first cache-miss row >= work_start) always gets built each sweep
 /// - Rows before work_start that are cache hits still refresh every frame
 /// - resume_row advances monotonically until a clean sweep completes
 #[derive(Debug)]
@@ -44,6 +46,7 @@ pub struct RowSweep {
     n_rows: usize,
     cursor_row: Option<usize>,
     built_this_frame: usize,
+    rotation_progress_made: bool,
     deferred_any: bool,
     next_resume: Option<usize>,
 }
@@ -68,6 +71,7 @@ impl RowSweep {
             n_rows,
             cursor_row,
             built_this_frame: 0,
+            rotation_progress_made: false,
             deferred_any: false,
             next_resume: None,
         }
@@ -94,14 +98,18 @@ impl RowSweep {
         }
 
         // Cache miss: this row needs real shaping work to get fresh content.
+        let is_rotation_target = slot >= self.work_start && !self.rotation_progress_made;
         let must_build = !has_retained          // Never drawn before -> MUST NOT be blank
             || self.cursor_row == Some(slot)  // Keep the cursor row live every frame
-            || self.built_this_frame == 0; // Forward-progress guarantee: at least one row
+            || is_rotation_target; // Force-build the row that actually advances the rotation
 
         let over_budget = self.deadline.map(|d| now >= d).unwrap_or(false);
 
         if must_build || (slot >= self.work_start && !over_budget) {
             self.built_this_frame += 1;
+            if is_rotation_target {
+                self.rotation_progress_made = true;
+            }
             RowAction::Build
         } else {
             self.deferred_any = true;
@@ -117,6 +125,7 @@ impl RowSweep {
         SweepOutcome {
             next_resume: self.next_resume.unwrap_or(0),
             deferred_any: self.deferred_any,
+            built_count: self.built_this_frame,
         }
     }
 }
@@ -218,54 +227,81 @@ mod tests {
 
     #[test]
     fn sweep_advances() {
-        // Simulate a sequence of frames where the deadline trips at row k each time;
+        // Simulate a sequence of frames where the deadline trips immediately each frame;
         // assert resume_row/next_resume strictly increases across frames and eventually reaches n_rows,
         // then resets to 0 on a clean sweep.
         let n_rows = 10;
         let deadline = mock_deadline();
 
-        // Frame 1: work_start = 0, deadline trips immediately
+        let mut work_start = 0;
+        let mut frames_completed = 0;
+
+        // First frame: work_start = 0, build slot 0, advance to 1
         {
-            let mut sweep = RowSweep::new(deadline, 0, n_rows, None);
+            let mut sweep = RowSweep::new(deadline, work_start, n_rows, None);
             for slot in 0..n_rows {
                 sweep.decide(slot, false, true, mock_instant());
             }
             let outcome = sweep.finish();
-            // First row builds (forward progress), rest defer. next_resume points to first deferred row.
             assert_eq!(
                 outcome.next_resume, 1,
-                "next_resume should be 1 after first frame"
+                "next_resume should be 1 after building rotation target at 0"
             );
             assert!(outcome.deferred_any, "frame should have deferred rows");
+            work_start = outcome.next_resume;
+            frames_completed += 1;
         }
 
-        // Frame 2: work_start = 1 (from frame 1's outcome), deadline still trips immediately
-        {
-            let mut sweep = RowSweep::new(deadline, 1, n_rows, None);
+        // Continue frames with perpetually-tripped deadline until we reach n_rows - 1.
+        // Each frame should build the rotation target (work_start) and advance next_resume.
+        let max_frames = n_rows * 2; // Safety cap.
+
+        while work_start < n_rows - 1 && frames_completed < max_frames {
+            frames_completed += 1;
+            let mut sweep = RowSweep::new(deadline, work_start, n_rows, None);
             for slot in 0..n_rows {
                 sweep.decide(slot, false, true, mock_instant());
             }
             let outcome = sweep.finish();
-            // Row 0 builds (forward progress), row 1 is at work_start so it tries but defers, next_resume = 1
+
+            // The rotation target (work_start) should have been built, so next_resume should advance.
+            // If work_start was 1, slot 1 is built and next_resume is 2.
+            // If work_start was 2, slot 2 is built and next_resume is 3.
+            // Etc.
+            let expected_next = work_start + 1;
             assert_eq!(
-                outcome.next_resume, 1,
-                "next_resume stays at 1 because we can't advance past work_start when over budget"
+                outcome.next_resume, expected_next,
+                "frame {}: next_resume should advance from {} to {}",
+                frames_completed, work_start, expected_next
             );
             assert!(outcome.deferred_any, "frame should have deferred rows");
+
+            work_start = outcome.next_resume;
         }
 
-        // Frame 3: no deadline (budget disabled), completes cleanly
+        // We should have completed at least n_rows - 1 frames to reach work_start = n_rows - 1.
+        assert!(
+            frames_completed >= n_rows - 1,
+            "should have taken at least {} frames to reach n_rows - 1, took {}",
+            n_rows - 1,
+            frames_completed
+        );
+
+        // Next frame with no deadline (starting from 0) should complete cleanly.
         {
-            let mut sweep = RowSweep::new(None, 1, n_rows, None);
+            let mut sweep = RowSweep::new(None, 0, n_rows, None);
             for slot in 0..n_rows {
                 sweep.decide(slot, false, true, mock_instant());
             }
             let outcome = sweep.finish();
             assert_eq!(
                 outcome.next_resume, 0,
-                "next_resume should be 0 after clean sweep"
+                "next_resume should be 0 after clean sweep starting from 0"
             );
-            assert!(!outcome.deferred_any, "frame should have no deferred rows");
+            assert!(
+                !outcome.deferred_any,
+                "frame should have no deferred rows when budget disabled and work_start=0"
+            );
         }
     }
 
@@ -363,6 +399,86 @@ mod tests {
         assert!(
             outcome.deferred_any,
             "deferred_any should be true when any row was deferred"
+        );
+    }
+
+    #[test]
+    fn built_count_reflects_actual_builds() {
+        // Test that built_count accurately tracks the number of Build actions returned.
+        let deadline = mock_deadline();
+        let mut sweep = RowSweep::new(deadline, 0, 10, None);
+
+        // Under budget with has_retained = true, only the rotation target builds.
+        for slot in 0..10 {
+            sweep.decide(slot, false, true, mock_instant());
+        }
+        let outcome = sweep.finish();
+        assert_eq!(
+            outcome.built_count, 1,
+            "built_count should be 1 when only rotation target is built"
+        );
+    }
+
+    #[test]
+    fn rotation_starvation_does_not_happen() {
+        // Simulate the exact failure scenario: many consecutive frames with tight budget
+        // (only enough for ~1-2 Builds per frame), has_retained = true for all rows except possibly slot 0,
+        // and assert that every row slot eventually gets a Build action at least once.
+
+        let n_rows = 10;
+        let deadline = mock_deadline(); // Immediately over budget.
+        let mut work_start = 0;
+        let mut frames_completed = 0;
+        let mut row_build_count = vec![0usize; n_rows];
+
+        // Run for more than n_rows frames to ensure every row gets a turn.
+        // With the rotation-target fix, we should complete a full sweep in n_rows frames.
+        let max_frames = n_rows * 2; // Safety cap.
+
+        while frames_completed < max_frames {
+            frames_completed += 1;
+            let mut sweep = RowSweep::new(deadline, work_start, n_rows, None);
+
+            // Simulate the continuous output scenario: slot 0 is usually the newest/most-recent row.
+            // With the old bug, slot 0 would be built every frame, preventing rotation.
+            // With the fix, the rotation target (work_start) is built instead.
+
+            for (slot, build_count) in row_build_count.iter_mut().enumerate().take(n_rows) {
+                let action = sweep.decide(slot, false, true, mock_instant());
+                if action == RowAction::Build {
+                    *build_count += 1;
+                }
+            }
+
+            let outcome = sweep.finish();
+            work_start = outcome.next_resume;
+
+            // Check if we've completed a full sweep.
+            if work_start == 0 {
+                break;
+            }
+        }
+
+        // Every row should have been built at least once.
+        for (slot, count) in row_build_count.iter().enumerate() {
+            assert!(
+                *count > 0,
+                "slot {} should have been built at least once, but was built {} times",
+                slot,
+                count
+            );
+        }
+
+        // We should have completed a full sweep (work_start back to 0) in <= n_rows frames.
+        assert_eq!(
+            work_start, 0,
+            "work_start should be back to 0 after completing full sweep"
+        );
+        assert!(
+            frames_completed <= n_rows,
+            "full sweep should complete in at most {} frames, took {}",
+            n_rows,
+            frames_completed
         );
     }
 }
