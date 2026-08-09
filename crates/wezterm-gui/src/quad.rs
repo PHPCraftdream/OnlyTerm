@@ -374,16 +374,10 @@ impl BoxedQuad {
 }
 
 #[derive(Default)]
-// `vec_box` wants `Vec<BoxedQuad>` here. That is exactly the layout
-// `BoxedQuad`'s own doc comment above explains this code is avoiding: a
-// single contiguous allocation in the megabyte range, gnarly to grow and
-// prone to wasting several MB in unused capacity. The extra indirection is
-// the point, not an oversight.
-#[allow(clippy::vec_box)]
 pub struct HeapQuadAllocator {
-    layer0: Vec<Box<BoxedQuad>>,
-    layer1: Vec<Box<BoxedQuad>>,
-    layer2: Vec<Box<BoxedQuad>>,
+    layer0: Vec<BoxedQuad>,
+    layer1: Vec<BoxedQuad>,
+    layer2: Vec<BoxedQuad>,
 }
 
 impl std::fmt::Debug for HeapQuadAllocator {
@@ -415,7 +409,7 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
             _ => unreachable!(),
         };
 
-        quads.push(Box::new(BoxedQuad::default()));
+        quads.push(BoxedQuad::default());
 
         let quad = quads.last_mut().unwrap();
         Ok(QuadImpl::Boxed(quad))
@@ -452,7 +446,7 @@ impl TripleLayerQuadAllocatorTrait for HeapQuadAllocator {
             2 => &mut self.layer2,
             _ => unreachable!(),
         };
-        dest_quads.push(Box::new(boxed));
+        dest_quads.push(boxed);
     }
 }
 
@@ -488,6 +482,317 @@ fn size() {
     assert_eq!(std::mem::size_of::<QuadInstance>(), 84);
     // CornerVertex is 8 bytes (2 f32s)
     assert_eq!(std::mem::size_of::<CornerVertex>(), 8);
+}
+
+/// Benchmark for `HeapQuadAllocator` storage strategies.
+///
+/// This tests the miss-build path: creating a fresh allocator and allocating
+/// N quads, which is what actually happens per line (not the cache-hit path,
+/// which is already fast at ~2-3µs).
+///
+/// Tests three storage approaches:
+/// - Current: `Vec<Box<BoxedQuad>>` with `Box::new` per quad
+/// - Candidate A: `Vec<BoxedQuad>` with `reserve`
+/// - Candidate B: Chunked arena (only if A shows realloc problems)
+#[cfg(test)]
+mod heap_allocator_bench {
+    use super::*;
+
+    /// Current approach: `Vec<Box<BoxedQuad>>`
+    #[allow(clippy::vec_box)]
+    struct CurrentAllocator {
+        layer0: Vec<Box<BoxedQuad>>,
+        layer1: Vec<Box<BoxedQuad>>,
+        layer2: Vec<Box<BoxedQuad>>,
+    }
+
+    impl CurrentAllocator {
+        fn new() -> Self {
+            Self {
+                layer0: Vec::new(),
+                layer1: Vec::new(),
+                layer2: Vec::new(),
+            }
+        }
+
+        fn allocate(&mut self, layer_num: usize) -> QuadImpl<'_> {
+            let quads = match layer_num {
+                0 => &mut self.layer0,
+                1 => &mut self.layer1,
+                2 => &mut self.layer2,
+                _ => unreachable!(),
+            };
+            quads.push(Box::new(BoxedQuad::default()));
+            let quad = quads.last_mut().unwrap();
+            QuadImpl::Boxed(quad)
+        }
+
+        fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
+            let (left, top, right, bottom) = (
+                instance.position[0],
+                instance.position[1],
+                instance.position[2],
+                instance.position[3],
+            );
+            let (x1, x2, y1, y2) = (
+                instance.tex[0],
+                instance.tex[1],
+                instance.tex[2],
+                instance.tex[3],
+            );
+
+            let boxed = BoxedQuad {
+                position: (left, top, right, bottom),
+                tex: (x1, x2, y1, y2),
+                fg_color: instance.fg_color,
+                alt_color: instance.alt_color,
+                hsv: instance.hsv,
+                has_color: instance.has_color,
+                mix_value: instance.mix_value,
+            };
+
+            let dest_quads = match layer_num {
+                0 => &mut self.layer0,
+                1 => &mut self.layer1,
+                2 => &mut self.layer2,
+                _ => unreachable!(),
+            };
+            dest_quads.push(Box::new(boxed));
+        }
+    }
+
+    /// Candidate A: `Vec<BoxedQuad>` with sensible reserve
+    struct ContiguousAllocator {
+        layer0: Vec<BoxedQuad>,
+        layer1: Vec<BoxedQuad>,
+        layer2: Vec<BoxedQuad>,
+    }
+
+    impl ContiguousAllocator {
+        fn new() -> Self {
+            Self {
+                layer0: Vec::new(),
+                layer1: Vec::new(),
+                layer2: Vec::new(),
+            }
+        }
+
+        fn allocate(&mut self, layer_num: usize) -> QuadImpl<'_> {
+            let quads = match layer_num {
+                0 => &mut self.layer0,
+                1 => &mut self.layer1,
+                2 => &mut self.layer2,
+                _ => unreachable!(),
+            };
+            quads.push(BoxedQuad::default());
+            let quad = quads.last_mut().unwrap();
+            QuadImpl::Boxed(quad)
+        }
+
+        fn extend_with_instance(&mut self, layer_num: usize, instance: QuadInstance) {
+            let (left, top, right, bottom) = (
+                instance.position[0],
+                instance.position[1],
+                instance.position[2],
+                instance.position[3],
+            );
+            let (x1, x2, y1, y2) = (
+                instance.tex[0],
+                instance.tex[1],
+                instance.tex[2],
+                instance.tex[3],
+            );
+
+            let boxed = BoxedQuad {
+                position: (left, top, right, bottom),
+                tex: (x1, x2, y1, y2),
+                fg_color: instance.fg_color,
+                alt_color: instance.alt_color,
+                hsv: instance.hsv,
+                has_color: instance.has_color,
+                mix_value: instance.mix_value,
+            };
+
+            let dest_quads = match layer_num {
+                0 => &mut self.layer0,
+                1 => &mut self.layer1,
+                2 => &mut self.layer2,
+                _ => unreachable!(),
+            };
+            dest_quads.push(boxed);
+        }
+    }
+
+    /// Create a realistic QuadInstance for benchmarking
+    fn make_test_instance(idx: usize) -> QuadInstance {
+        QuadInstance {
+            position: [idx as f32, 0.0, (idx + 1) as f32, 20.0],
+            fg_color: [1.0, 1.0, 1.0, 1.0],
+            alt_color: [0.0, 0.0, 0.0, 0.0],
+            tex: [0.0, 1.0, 0.0, 1.0],
+            hsv: [1.0, 1.0, 1.0],
+            has_color: 0.0,
+            mix_value: 0.0,
+        }
+    }
+
+    /// Benchmark the miss-build path: fresh allocator + allocate N quads
+    #[test]
+    fn bench_heap_allocator_storage() {
+        benchmarking::warm_up();
+
+        println!("\n=== HeapQuadAllocator Storage Benchmark ===");
+        println!("Testing miss-build path (fresh allocator, allocate + fill)");
+        println!("BoxedQuad size: {} bytes", std::mem::size_of::<BoxedQuad>());
+
+        for &n in &[80, 200, 500, 2000] {
+            println!(
+                "\n--- {} quads (typical line, wide line, very wide, extreme) ---",
+                n
+            );
+
+            // Current: Vec<Box<BoxedQuad>>
+            let bench_current = benchmarking::measure_function(move |measurer| {
+                measurer.measure(|| {
+                    let mut alloc = CurrentAllocator::new();
+                    for i in 0..n {
+                        let instance = make_test_instance(i);
+                        // Split across layers like real usage: roughly 60% layer0, 30% layer1, 10% layer2
+                        let layer = if i < n * 3 / 5 {
+                            0
+                        } else if i < n * 9 / 10 {
+                            1
+                        } else {
+                            2
+                        };
+                        alloc.extend_with_instance(layer, instance);
+                    }
+                    // Prevent optimizer from dropping the alloc too early
+                    std::hint::black_box(&alloc);
+                })
+            })
+            .unwrap();
+            println!(
+                "Current (Vec<Box<BoxedQuad>>): {:?}, {} bytes (estimated)",
+                bench_current.elapsed(),
+                n * std::mem::size_of::<BoxedQuad>() + n * std::mem::size_of::<*const ()>()
+            );
+
+            // Candidate A: Vec<BoxedQuad>
+            let bench_contiguous = benchmarking::measure_function(move |measurer| {
+                measurer.measure(|| {
+                    let mut alloc = ContiguousAllocator::new();
+                    for i in 0..n {
+                        let instance = make_test_instance(i);
+                        // Split across layers like real usage
+                        let layer = if i < n * 3 / 5 {
+                            0
+                        } else if i < n * 9 / 10 {
+                            1
+                        } else {
+                            2
+                        };
+                        alloc.extend_with_instance(layer, instance);
+                    }
+                    std::hint::black_box(&alloc);
+                })
+            })
+            .unwrap();
+            println!(
+                "Candidate A (Vec<BoxedQuad>): {:?}, {} bytes",
+                bench_contiguous.elapsed(),
+                n * std::mem::size_of::<BoxedQuad>()
+            );
+
+            // Show speedup/slowdown
+            let current_ns = bench_current.elapsed().as_nanos();
+            let contiguous_ns = bench_contiguous.elapsed().as_nanos();
+            if current_ns > 0 {
+                let ratio = (contiguous_ns as f64 / current_ns as f64) * 100.0;
+                if ratio < 100.0 {
+                    println!("  → Candidate A is {:.1}% faster", 100.0 - ratio);
+                } else {
+                    println!("  → Candidate A is {:.1}% slower", ratio - 100.0);
+                }
+            }
+        }
+
+        println!("\n=== Conclusion ===");
+        println!("If Vec<BoxedQuad> is consistently faster (likely), the audit's");
+        println!("analysis was correct: per-line allocation is too small to justify");
+        println!("the per-quad Box indirection. If Vec<BoxedQuad> is slower at larger");
+        println!("sizes due to reallocs, consider a chunked arena (Candidate B).");
+    }
+
+    /// Also benchmark the allocate() path, not just extend_with_instance
+    #[test]
+    fn bench_heap_allocator_allocate_path() {
+        benchmarking::warm_up();
+
+        println!("\n=== HeapQuadAllocator allocate() Path Benchmark ===");
+
+        for &n in &[80, 200, 500] {
+            println!("\n--- {} quads (allocate() only) ---", n);
+
+            // Current: Vec<Box<BoxedQuad>>
+            let bench_current = benchmarking::measure_function(move |measurer| {
+                measurer.measure(|| {
+                    let mut alloc = CurrentAllocator::new();
+                    for i in 0..n {
+                        let layer = if i < n * 3 / 5 {
+                            0
+                        } else if i < n * 9 / 10 {
+                            1
+                        } else {
+                            2
+                        };
+                        let _ = alloc.allocate(layer);
+                    }
+                    std::hint::black_box(&alloc);
+                })
+            })
+            .unwrap();
+            println!(
+                "Current (Vec<Box<BoxedQuad>>): {:?}",
+                bench_current.elapsed()
+            );
+
+            // Candidate A: Vec<BoxedQuad>
+            let bench_contiguous = benchmarking::measure_function(move |measurer| {
+                measurer.measure(|| {
+                    let mut alloc = ContiguousAllocator::new();
+                    for i in 0..n {
+                        let layer = if i < n * 3 / 5 {
+                            0
+                        } else if i < n * 9 / 10 {
+                            1
+                        } else {
+                            2
+                        };
+                        let _ = alloc.allocate(layer);
+                    }
+                    std::hint::black_box(&alloc);
+                })
+            })
+            .unwrap();
+            println!(
+                "Candidate A (Vec<BoxedQuad>): {:?}",
+                bench_contiguous.elapsed()
+            );
+
+            // Show speedup/slowdown
+            let current_ns = bench_current.elapsed().as_nanos();
+            let contiguous_ns = bench_contiguous.elapsed().as_nanos();
+            if current_ns > 0 {
+                let ratio = (contiguous_ns as f64 / current_ns as f64) * 100.0;
+                if ratio < 100.0 {
+                    println!("  → Candidate A is {:.1}% faster", 100.0 - ratio);
+                } else {
+                    println!("  → Candidate A is {:.1}% slower", ratio - 100.0);
+                }
+            }
+        }
+    }
 }
 
 /// Regression coverage for the instanced-rendering vertex layout (task #447).
