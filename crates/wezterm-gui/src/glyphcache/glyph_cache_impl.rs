@@ -34,6 +34,8 @@ impl GlyphCache {
         Ok(Self {
             fonts: Rc::clone(fonts),
             glyph_cache: AHashMap::default(),
+            glyph_cache_hit: metrics::histogram!("glyph_cache.glyph_cache.hit.rate"),
+            glyph_cache_miss: metrics::histogram!("glyph_cache.glyph_cache.miss.rate"),
             image_cache: LfuCache::new(
                 "glyph_cache.image_cache.hit.rate",
                 "glyph_cache.image_cache.miss.rate",
@@ -63,6 +65,8 @@ impl GlyphCache {
         Ok(Self {
             fonts: Rc::clone(fonts),
             glyph_cache: AHashMap::default(),
+            glyph_cache_hit: metrics::histogram!("glyph_cache.glyph_cache.hit.rate"),
+            glyph_cache_miss: metrics::histogram!("glyph_cache.glyph_cache.miss.rate"),
             image_cache: LfuCache::new(
                 "glyph_cache.image_cache.hit.rate",
                 "glyph_cache.image_cache.miss.rate",
@@ -103,10 +107,10 @@ impl GlyphCache {
         };
 
         if let Some(entry) = self.glyph_cache.get(&key as &dyn GlyphKeyTrait) {
-            metrics::histogram!("glyph_cache.glyph_cache.hit.rate").record(1.);
+            self.glyph_cache_hit.record(1.);
             return Ok(Rc::clone(entry));
         }
-        metrics::histogram!("glyph_cache.glyph_cache.miss.rate").record(1.);
+        self.glyph_cache_miss.record(1.);
 
         let glyph = match self.load_glyph(info, font, followed_by_space, num_cells) {
             Ok(g) => g,

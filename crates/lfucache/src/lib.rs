@@ -39,8 +39,14 @@ pub type CapFunc = fn(&ConfigHandle) -> usize;
 /// If K is u64 you should use LfuCacheU64 instead as it has
 /// a more optimal hasher for integer keys.
 pub struct LfuCache<K, V, S = BuildHasherDefault<AHasher>> {
-    hit: &'static str,
-    miss: &'static str,
+    // Resolved once (in `new`/`with_capacity`) rather than on every
+    // `get()`, since `metrics::histogram!(name)` re-resolves the handle
+    // through the recorder's `register_histogram` -- a global mutex plus a
+    // string-keyed hashmap lookup -- every time it's invoked. `get()` runs
+    // once per cache lookup, i.e. once per rendered line per frame, so
+    // paying that cost per call was measurable in profiling.
+    hit: metrics::Histogram,
+    miss: metrics::Histogram,
     cap: usize,
     cap_func: CapFunc,
     hasher: S,
@@ -74,8 +80,8 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
         }
 
         Self {
-            hit: "hit",
-            miss: "miss",
+            hit: metrics::histogram!("hit"),
+            miss: metrics::histogram!("miss"),
             cap,
             cap_func: dummy_cap_func,
             buckets,
@@ -103,8 +109,8 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
         let hasher = S::default();
 
         Self {
-            hit,
-            miss,
+            hit: metrics::histogram!(hit),
+            miss: metrics::histogram!(miss),
             cap,
             cap_func,
             buckets,
@@ -257,7 +263,7 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
                 }
 
                 let entry = cursor.into_ref()?;
-                metrics::histogram!(self.hit).record(1.);
+                self.hit.record(1.);
 
                 self.tick += 1;
 
@@ -285,7 +291,7 @@ impl<K: Hash + Eq + Clone + Debug, V, S: Default + BuildHasher> LfuCache<K, V, S
 
             cursor.move_next();
         }
-        metrics::histogram!(self.miss).record(1.);
+        self.miss.record(1.);
         None
     }
 
