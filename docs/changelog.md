@@ -973,6 +973,15 @@ As features stabilize some brief notes about them will accumulate here.
   un-wrapped, the character's column width bookkeeping for that internal
   representation could become corrupted, potentially splitting the wide
   character in two on subsequent redraws, copies, or resizes.
+* A line could appear visibly duplicated onto another row after scrolling,
+  with the duplicate never clearing no matter how much further you
+  scrolled. Root cause: a terminal application that sets a scroll region
+  covering only the top part of the screen (leaving some rows at the
+  bottom outside it) could, once scrollback filled up, silently shift
+  those bottom rows' internal row identity without marking them changed --
+  the line-shaping cache introduced above is keyed on that identity, so it
+  kept serving one row's cached appearance for a different row, forever,
+  since nothing ever told it the identity had moved.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
