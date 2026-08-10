@@ -951,12 +951,15 @@ fn pty_dependent_calls_dont_panic_after_kill() {
 fn divine_process_list_returns_stale_data_and_backgrounds_refresh() {
     let pane = make_pane_with_real_pid();
 
-    // First call: no cache yet, so this one is unavoidably
-    // synchronous (there's nothing stale to return). This seeds
-    // `proc_list` with a real `CachedProcInfo` for our own pid.
+    // Seed `proc_list` with a real `CachedProcInfo` for our own pid.
+    // Task #471: a cold cache under `AllowStale` no longer fetches
+    // synchronously (see `cold_cache_allow_stale_is_non_blocking` below),
+    // so this setup step deliberately uses `FetchImmediate` -- still
+    // synchronous by design, and exactly what this test needs to get a
+    // populated cache to rewind in the next step.
     let first_updated = {
         let info = pane
-            .divine_process_list(CachePolicy::AllowStale)
+            .divine_process_list(CachePolicy::FetchImmediate)
             .expect("with_root_pid(std::process::id()) must resolve for the test process");
         assert!(
             !info.updating,
@@ -1039,5 +1042,58 @@ fn divine_process_list_returns_stale_data_and_backgrounds_refresh() {
     assert!(
         refreshed > first_updated,
         "background thread must have actually recomputed and stored a newer `updated` value"
+    );
+}
+
+/// Task #471: the very *first* `divine_process_list(AllowStale)` call for
+/// a pane (cold cache, `proc_list` still `None`) must return `None`
+/// immediately rather than blocking the caller on a synchronous
+/// `with_root_pid` system-wide process snapshot -- that inline fetch used
+/// to be reachable from `WM_PAINT` for a newly created pane's first
+/// paint. It must still kick off a background fetch that eventually
+/// populates the cache, so the *next* call (once that fetch completes)
+/// sees real data instead of `None` forever.
+#[test]
+fn cold_cache_allow_stale_is_non_blocking() {
+    let pane = make_pane_with_real_pid();
+
+    // Cache is empty (`proc_list` is `None`): confirm nothing is cached
+    // yet before making the call under test.
+    assert!(pane.proc_list.lock().is_none());
+
+    let cold_result = pane.divine_process_list(CachePolicy::AllowStale);
+    assert!(
+        cold_result.is_none(),
+        "a cold cache under AllowStale must return None immediately rather than \
+         computing inline"
+    );
+    drop(cold_result);
+
+    // A background fetch must have been queued: `proc_list` should
+    // eventually become populated without any further calls into
+    // `divine_process_list`. Bounded poll rather than a fixed sleep,
+    // matching `divine_process_list_returns_stale_data_and_backgrounds_refresh`'s
+    // "generous bound against a real OS snapshot" approach.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if pane.proc_list.lock().is_some() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "cold-cache background fetch never populated proc_list within 5s"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // Once populated, a subsequent `AllowStale` call must return the
+    // now-cached data (still fresh, so no further background refresh is
+    // queued).
+    let info = pane
+        .divine_process_list(CachePolicy::AllowStale)
+        .expect("background cold fetch must have populated the cache by now");
+    assert!(
+        !info.updating,
+        "a freshly-populated cache entry must not itself be mid-refresh"
     );
 }

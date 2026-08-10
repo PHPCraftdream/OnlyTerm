@@ -300,6 +300,16 @@ pub struct LocalPane {
     /// the whole `LocalPane` alive or borrow `self` across the thread
     /// spawn.
     proc_list: Arc<Mutex<Option<CachedProcInfo>>>,
+    /// Task #471: guards the *cold-cache* case in `divine_process_list`
+    /// (no `CachedProcInfo` entry at all yet). Unlike the warm-refresh
+    /// case, there's no existing `CachedProcInfo` to stash an `updating`
+    /// flag on while the first fetch is in flight, so this lives
+    /// alongside `proc_list` instead. Set right before a background cold
+    /// fetch is kicked off, cleared once that fetch stores its result (or
+    /// fails) in `proc_list`; a second `AllowStale` call that observes a
+    /// cold cache while this is already `true` just returns `None` again
+    /// rather than queuing a duplicate concurrent fetch.
+    proc_list_cold_fetch_in_flight: Arc<AtomicBool>,
     #[cfg(unix)]
     leader: Arc<Mutex<Option<CachedLeaderInfo>>>,
     command_description: String,
@@ -1543,6 +1553,7 @@ impl LocalPane {
             domain_id,
             tmux_domain: Mutex::new(None),
             proc_list: Arc::new(Mutex::new(None)),
+            proc_list_cold_fetch_in_flight: Arc::new(AtomicBool::new(false)),
             #[cfg(unix)]
             leader: Arc::new(Mutex::new(None)),
             command_description,
@@ -1714,13 +1725,47 @@ impl LocalPane {
     /// This now mirrors `get_leader`'s already-correct pattern: when the
     /// caller allows stale data and a cached value already exists (even
     /// if expired), return it immediately and kick off a background
-    /// thread to refresh the cache for next time, guarded by
+    /// fetch to refresh the cache for next time, guarded by
     /// `CachedProcInfo::updating` against spawning a duplicate concurrent
-    /// refresh. Only two cases still do the synchronous fetch inline:
+    /// refresh.
+    ///
+    /// Task #471: the very first call for a pane (`proc_list` still
+    /// `None`, nothing cached at all yet) used to be the one case that
+    /// stayed synchronous even under `AllowStale`, on the theory that
+    /// there's no stale value to fall back to. In practice this made the
+    /// very first paint of a new pane (inside `WM_PAINT` on the GUI
+    /// thread) pay for a full system-wide process snapshot inline. Every
+    /// `AllowStale` caller of the methods that bottom out here
+    /// (`get_foreground_process_name`, `get_current_working_dir`) already
+    /// treats `None` as an expected, gracefully-handled case --
+    /// `bidi_disabled_by_foreground_process` just returns `false`,
+    /// `get_title` falls back to the existing title, `PaneNode`
+    /// serialization already models the field as `Option` -- so a cold
+    /// `AllowStale` call now returns `None` immediately and kicks off the
+    /// same kind of background fetch as the warm-refresh path, guarded by
+    /// `proc_list_cold_fetch_in_flight` (there's no existing
+    /// `CachedProcInfo` yet to stash an `updating` flag on). Only
     /// `CachePolicy::FetchImmediate` (an explicit "I need a fresh answer
     /// right now" request, e.g. `can_close_without_prompting`'s
-    /// close-tab-time stateful-process check), and the very first call
-    /// for a pane (there's no stale value yet to return).
+    /// close-tab-time stateful-process check) still fetches inline on a
+    /// cold cache, since that policy is a deliberate opt-out of the
+    /// stale/async contract this cache otherwise provides.
+    ///
+    /// Both background-fetch paths below use `smol::unblock` (the same
+    /// mechanism task #469 used for `Mux::resolve_cwd`'s
+    /// `FetchImmediate` case) rather than `std::thread::spawn`: this is a
+    /// periodic, independent, one-shot-per-refresh workload (one snapshot
+    /// per `PROC_INFO_CACHE_TTL` expiry per pane), not a persistent
+    /// request/response channel, so there's no long-lived state worth
+    /// building a dedicated worker thread for (contrast
+    /// `renderthread.rs`, which owns a GPU context that must stay pinned
+    /// to one thread for its whole lifetime). `smol::unblock` schedules
+    /// the closure onto its own pooled, reused blocking-thread executor
+    /// the moment it's called -- not lazily on first `.await` -- so
+    /// `.detach()`-ing the returned `Task` immediately below is a
+    /// fire-and-forget spawn with the same semantics as the
+    /// `std::thread::spawn` it replaces, minus the fresh ~1MB-stack OS
+    /// thread every 300ms per pane.
     fn divine_process_list(
         &self,
         policy: CachePolicy,
@@ -1730,12 +1775,36 @@ impl LocalPane {
             let mut proc_list = self.proc_list.lock();
 
             match proc_list.as_mut() {
-                None => {
-                    // First call for this pane: nothing cached yet to
-                    // return, so there's no way to avoid doing this one
-                    // fetch synchronously.
+                None if policy == CachePolicy::FetchImmediate => {
+                    // Caller explicitly wants a fresh answer right now
+                    // and there's nothing cached yet: no way to avoid
+                    // doing this one fetch synchronously.
                     let info = Self::compute_proc_info(pid)?;
                     proc_list.replace(info);
+                }
+                None => {
+                    // Cold cache, but the caller tolerates a stale (here:
+                    // entirely absent) answer: return `None` now and
+                    // queue a background fetch to populate the cache for
+                    // next time, rather than blocking the caller on a
+                    // full system-wide process snapshot.
+                    if !self
+                        .proc_list_cold_fetch_in_flight
+                        .swap(true, Ordering::SeqCst)
+                    {
+                        let proc_list_ref = Arc::clone(&self.proc_list);
+                        let in_flight_ref = Arc::clone(&self.proc_list_cold_fetch_in_flight);
+                        smol::unblock(move || {
+                            let result = Self::compute_proc_info(pid);
+                            let mut proc_list = proc_list_ref.lock();
+                            if let Some(info) = result {
+                                proc_list.replace(info);
+                            }
+                            in_flight_ref.store(false, Ordering::SeqCst);
+                        })
+                        .detach();
+                    }
+                    return None;
                 }
                 Some(info) if policy == CachePolicy::FetchImmediate => {
                     // Caller explicitly wants a fresh answer right now
@@ -1752,7 +1821,7 @@ impl LocalPane {
                     // exactly like `get_leader` does above.
                     info.updating = true;
                     let proc_list_ref = Arc::clone(&self.proc_list);
-                    std::thread::spawn(move || {
+                    smol::unblock(move || {
                         if let Some(fresh) = Self::compute_proc_info(pid) {
                             let mut proc_list = proc_list_ref.lock();
                             if let Some(info) = proc_list.as_mut() {
@@ -1766,7 +1835,8 @@ impl LocalPane {
                             // in the meantime.
                             info.updating = false;
                         }
-                    });
+                    })
+                    .detach();
                 }
                 Some(_) => {
                     // Either still fresh, or already being refreshed by
