@@ -1083,35 +1083,62 @@ impl Mux {
         Ok(domain)
     }
 
-    fn resolve_cwd(
+    /// Resolves the effective cwd for a newly spawned tab/pane.
+    ///
+    /// Task #469: when `command_dir` is already given, or there's no
+    /// candidate pane, this returns synchronously without ever touching
+    /// `pane.get_current_working_dir` -- that's the cheap, common path and
+    /// it stays exactly as inexpensive as before. Only the fallback lookup
+    /// (`pane.get_current_working_dir(policy)`) is `async`, and only its
+    /// `CachePolicy::FetchImmediate` case is offloaded via `smol::unblock`:
+    /// on Windows, when the shell hasn't reported OSC 7 (true for
+    /// `cmd.exe`/stock PowerShell), that call falls through to
+    /// `divine_foreground_process` -> `LocalProcessInfo::with_root_pid`,
+    /// a full-system `CreateToolhelp32Snapshot` walk that opens every
+    /// process on the machine. Both call sites (`spawn_tab_or_window`,
+    /// `split_pane`) run on the GUI thread's `promise::spawn` executor, so
+    /// running that snapshot inline here would stall the message loop on
+    /// every new tab/split. `CachePolicy::AllowStale` never reaches this
+    /// helper today (both call sites always pass `FetchImmediate`), but is
+    /// left running inline if it ever does, since it's the cheap,
+    /// non-blocking cache-hit/stale-return path.
+    async fn resolve_cwd(
         &self,
         command_dir: Option<String>,
         pane: Option<Arc<dyn Pane>>,
         target_domain: DomainId,
         policy: CachePolicy,
     ) -> Option<String> {
-        command_dir.or_else(|| {
-            match pane {
-                Some(pane) if pane.domain_id() == target_domain => pane
-                    .get_current_working_dir(policy)
-                    .and_then(|url| {
-                        percent_decode_str(url.path())
-                            .decode_utf8()
-                            .ok()
-                            .map(|path| path.into_owned())
-                    })
-                    .map(|path| {
-                        // On Windows the file URI can produce a path like:
-                        // `/C:\Users` which is valid in a file URI, but the leading slash
-                        // is not liked by the windows file APIs, so we strip it off here.
-                        let bytes = path.as_bytes();
-                        if bytes.len() > 2 && bytes[0] == b'/' && bytes[2] == b':' {
-                            path[1..].to_owned()
-                        } else {
-                            path
-                        }
-                    }),
-                _ => None,
+        if command_dir.is_some() {
+            return command_dir;
+        }
+
+        let pane = match pane {
+            Some(pane) if pane.domain_id() == target_domain => pane,
+            _ => return None,
+        };
+
+        let url = if policy == CachePolicy::FetchImmediate {
+            smol::unblock(move || pane.get_current_working_dir(policy)).await
+        } else {
+            pane.get_current_working_dir(policy)
+        };
+
+        url.and_then(|url| {
+            percent_decode_str(url.path())
+                .decode_utf8()
+                .ok()
+                .map(|path| path.into_owned())
+        })
+        .map(|path| {
+            // On Windows the file URI can produce a path like:
+            // `/C:\Users` which is valid in a file URI, but the leading slash
+            // is not liked by the windows file APIs, so we strip it off here.
+            let bytes = path.as_bytes();
+            if bytes.len() > 2 && bytes[0] == b'/' && bytes[2] == b':' {
+                path[1..].to_owned()
+            } else {
+                path
             }
         })
     }
@@ -1147,12 +1174,14 @@ impl Mux {
                 command_dir,
             } => SplitSource::Spawn {
                 command,
-                command_dir: self.resolve_cwd(
-                    command_dir,
-                    Some(Arc::clone(&current_pane)),
-                    domain.domain_id(),
-                    CachePolicy::FetchImmediate,
-                ),
+                command_dir: self
+                    .resolve_cwd(
+                        command_dir,
+                        Some(Arc::clone(&current_pane)),
+                        domain.domain_id(),
+                        CachePolicy::FetchImmediate,
+                    )
+                    .await,
             },
             other => other,
         };
@@ -1345,26 +1374,28 @@ impl Mux {
             domain.attach(Some(window_id)).await?;
         }
 
-        let cwd = self.resolve_cwd(
-            command_dir,
-            match current_pane_id {
-                Some(id) => {
-                    // Only use the cwd from the current pane if the domain
-                    // is the same as the one we are spawning into
-                    let (current_domain_id, _, _) = self
-                        .resolve_pane_id(id)
-                        .ok_or_else(|| anyhow!("pane_id {} invalid", id))?;
-                    if current_domain_id == domain.domain_id() {
-                        self.get_pane(id)
-                    } else {
-                        None
+        let cwd = self
+            .resolve_cwd(
+                command_dir,
+                match current_pane_id {
+                    Some(id) => {
+                        // Only use the cwd from the current pane if the domain
+                        // is the same as the one we are spawning into
+                        let (current_domain_id, _, _) = self
+                            .resolve_pane_id(id)
+                            .ok_or_else(|| anyhow!("pane_id {} invalid", id))?;
+                        if current_domain_id == domain.domain_id() {
+                            self.get_pane(id)
+                        } else {
+                            None
+                        }
                     }
-                }
-                None => None,
-            },
-            domain.domain_id(),
-            CachePolicy::FetchImmediate,
-        );
+                    None => None,
+                },
+                domain.domain_id(),
+                CachePolicy::FetchImmediate,
+            )
+            .await;
 
         let tab = domain
             .spawn(size, command.clone(), cwd.clone(), window_id)
