@@ -926,6 +926,12 @@ As features stabilize some brief notes about them will accumulate here.
   mechanism that could never actually hit once a line was cloned for
   rendering, which happens every frame) is now cached by TermWindow,
   keyed by `(pane, stable row)`, so it survives the clone.
+* Scrolling used to be a guaranteed cache miss for every visible line's
+  rendered quads: the cache key included the line's absolute screen
+  position, which changes on every scroll step even though the line's
+  actual text content is unchanged. The key is now based on the line's
+  position relative to the pane instead, so scrolling reuses cached quads
+  the same way an unscrolled, unchanged frame already did.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
