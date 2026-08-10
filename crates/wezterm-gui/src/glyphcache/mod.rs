@@ -193,6 +193,12 @@ struct LineKey {
 /// cursor_glyphs ((Option<CursorShape>, u8)), color ((RgbColor, NotNan<f32>)).
 pub struct GlyphCache {
     glyph_cache: AHashMap<GlyphKey, Rc<CachedGlyph>>,
+    // Resolved once rather than on every `cached_glyph()` call (once per
+    // rendered glyph per frame): `metrics::histogram!(name)` re-resolves
+    // through the recorder's `register_histogram` -- a global mutex plus a
+    // string-keyed hashmap lookup -- on every invocation.
+    glyph_cache_hit: metrics::Histogram,
+    glyph_cache_miss: metrics::Histogram,
     pub atlas: Atlas,
     pub fonts: Rc<FontConfiguration>,
     pub image_cache: LfuCache<[u8; 32], DecodedImage>,
