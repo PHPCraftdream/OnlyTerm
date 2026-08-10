@@ -40,8 +40,6 @@
 //!
 use anyhow::Error;
 use downcast_rs::{impl_downcast, Downcast};
-#[cfg(unix)]
-use libc;
 #[cfg(feature = "serde_support")]
 use serde::{Deserialize, Serialize};
 use std::io::Result as IoResult;
@@ -51,8 +49,6 @@ use std::os::windows::prelude::{AsRawHandle, RawHandle};
 pub mod cmdbuilder;
 pub use cmdbuilder::CommandBuilder;
 
-#[cfg(unix)]
-pub mod unix;
 #[cfg(windows)]
 pub mod win;
 
@@ -101,28 +97,6 @@ pub trait MasterPty: Downcast + Send {
     /// Dropping the writer will send EOF to the slave end.
     /// It is invalid to take the writer more than once.
     fn take_writer(&self) -> Result<Box<dyn std::io::Write + Send>, Error>;
-
-    /// If applicable to the type of the tty, return the local process id
-    /// of the process group or session leader
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<libc::pid_t>;
-
-    /// If get_termios() and process_group_leader() are both implemented and
-    /// return Some, then as_raw_fd() should return the same underlying fd
-    /// associated with the stream. This is to enable applications that
-    /// "know things" to query similar information for themselves.
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<unix::RawFd>;
-
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<std::path::PathBuf>;
-
-    /// If applicable to the type of the tty, return the termios
-    /// associated with the stream
-    #[cfg(unix)]
-    fn get_termios(&self) -> Option<nix::sys::termios::Termios> {
-        None
-    }
 }
 impl_downcast!(MasterPty);
 
@@ -208,31 +182,6 @@ impl ExitStatus {
 
 impl From<std::process::ExitStatus> for ExitStatus {
     fn from(status: std::process::ExitStatus) -> ExitStatus {
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-
-            if let Some(signal) = status.signal() {
-                // SAFETY: `strsignal` is a standard libc function that takes a
-                // valid signal number and returns a pointer to a static C string
-                // (or NULL if the signal is unknown).
-                let signame = unsafe { libc::strsignal(signal) };
-                let signal = if signame.is_null() {
-                    format!("Signal {}", signal)
-                } else {
-                    // SAFETY: `signame` is non-null (checked above) and points to
-                    // a valid NUL-terminated C string returned by `strsignal`.
-                    let signame = unsafe { std::ffi::CStr::from_ptr(signame) };
-                    signame.to_string_lossy().to_string()
-                };
-
-                return ExitStatus {
-                    code: status.code().map(|c| c as u32).unwrap_or(1),
-                    signal: Some(signal),
-                };
-            }
-        }
-
         let code =
             status
                 .code()
@@ -325,59 +274,8 @@ impl ChildKiller for ProcessSignaller {
     }
 }
 
-#[cfg(unix)]
-impl ChildKiller for ProcessSignaller {
-    fn kill(&mut self) -> IoResult<()> {
-        if let Some(pid) = self.pid {
-            // SAFETY: `pid` is a valid process id obtained from a spawned child.
-            // SIGHUP is a standard signal number.
-            let result = unsafe { libc::kill(pid as i32, libc::SIGHUP) };
-            if result != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-        }
-        Ok(())
-    }
-
-    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
-        Box::new(Self { pid: self.pid })
-    }
-}
-
 impl ChildKiller for std::process::Child {
     fn kill(&mut self) -> IoResult<()> {
-        #[cfg(unix)]
-        {
-            // On unix, we send the SIGHUP signal instead of trying to kill
-            // the process. The default behavior of a process receiving this
-            // signal is to be killed unless it configured a signal handler.
-            // SAFETY: `self.id()` is a valid child process id; SIGHUP is a
-            // standard signal number.
-            let result = unsafe { libc::kill(self.id() as i32, libc::SIGHUP) };
-            if result != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-
-            // We successfully delivered SIGHUP, but the semantics of Child::kill
-            // are that on success the process is dead or shortly about to
-            // terminate.  Since SIGUP doesn't guarantee termination, we
-            // give the process a bit of a grace period to shutdown or do whatever
-            // it is doing in its signal handler befre we proceed with the
-            // full on kill.
-            for attempt in 0..5 {
-                if attempt > 0 {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-
-                if let Ok(Some(_)) = self.try_wait() {
-                    // It completed, so report success!
-                    return Ok(());
-                }
-            }
-
-            // it's still alive after a grace period, so proceed with a kill
-        }
-
         std::process::Child::kill(self)
     }
 
@@ -397,20 +295,11 @@ impl ChildKiller for std::process::Child {
                 .and_then(|h| filedescriptor::OwnedHandle::dup(&RawDup(*h)).ok()),
         })
     }
-
-    #[cfg(unix)]
-    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
-        Box::new(ProcessSignaller {
-            pid: self.process_id(),
-        })
-    }
 }
 
 pub fn native_pty_system() -> Box<dyn PtySystem + Send> {
     Box::new(NativePtySystem::default())
 }
 
-#[cfg(unix)]
-pub type NativePtySystem = unix::UnixPtySystem;
 #[cfg(windows)]
 pub type NativePtySystem = win::conpty::ConPtySystem;

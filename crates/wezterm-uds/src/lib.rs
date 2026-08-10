@@ -1,83 +1,34 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, RawFd};
-#[cfg(unix)]
-use std::os::unix::net::UnixStream as StreamImpl;
-#[cfg(windows)]
 use std::os::windows::io::{
     AsRawSocket, AsSocket, BorrowedSocket, FromRawSocket, IntoRawSocket, RawSocket,
 };
 use std::path::Path;
-#[cfg(windows)]
+use uds_windows::SocketAddr;
+use uds_windows::UnixListener as ListenerImpl;
 use uds_windows::UnixStream as StreamImpl;
 
-#[cfg(unix)]
-use std::os::unix::net::UnixListener as ListenerImpl;
-#[cfg(windows)]
-use uds_windows::UnixListener as ListenerImpl;
-
-#[cfg(unix)]
-use std::os::unix::net::SocketAddr;
-#[cfg(windows)]
-use uds_windows::SocketAddr;
-
-/// This wrapper makes UnixStream IoSafe on all platforms.
-/// This isn't strictly needed on unix, because async-io
-/// includes an impl for the std UnixStream, but on Windows
-/// the uds_windows crate doesn't have an impl.
-/// Here we define it for all platforms in the interest of
-/// minimizing platform differences.
+/// This wrapper makes UnixStream IoSafe on Windows, where the
+/// uds_windows crate doesn't have an impl (async-io includes an impl
+/// for std's own UnixStream on unix, which OnlyTerm doesn't target).
 #[derive(Debug)]
 pub struct UnixStream(StreamImpl);
 
-#[cfg(unix)]
-impl AsFd for UnixStream {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        self.0.as_fd()
-    }
-}
-#[cfg(unix)]
-impl IntoRawFd for UnixStream {
-    fn into_raw_fd(self) -> RawFd {
-        self.0.into_raw_fd()
-    }
-}
-#[cfg(unix)]
-impl FromRawFd for UnixStream {
-    // SAFETY: forwards the `FromRawFd` contract to
-    // `StreamImpl::from_raw_fd` unchanged: the caller must pass ownership of a
-    // valid, open file descriptor that is not used or closed elsewhere.
-    unsafe fn from_raw_fd(fd: RawFd) -> UnixStream {
-        UnixStream(StreamImpl::from_raw_fd(fd))
-    }
-}
-#[cfg(unix)]
-impl AsRawFd for UnixStream {
-    fn as_raw_fd(&self) -> RawFd {
-        self.0.as_raw_fd()
-    }
-}
-
-#[cfg(windows)]
 impl IntoRawSocket for UnixStream {
     fn into_raw_socket(self) -> RawSocket {
         self.0.into_raw_socket()
     }
 }
-#[cfg(windows)]
 impl AsRawSocket for UnixStream {
     fn as_raw_socket(&self) -> RawSocket {
         self.0.as_raw_socket()
     }
 }
-#[cfg(windows)]
 impl AsSocket for UnixStream {
     fn as_socket(&self) -> BorrowedSocket<'_> {
         self.0.as_socket()
     }
 }
-#[cfg(windows)]
 impl FromRawSocket for UnixStream {
     // SAFETY: forwards the `FromRawSocket` contract to
     // `StreamImpl::from_raw_socket` unchanged: the caller must pass ownership of
@@ -103,11 +54,9 @@ impl Write for UnixStream {
 }
 
 // SAFETY: `IoSafe` is async-io's marker asserting that the type's I/O is
-// safe to drive via its reactor. `UnixStream` wraps `StreamImpl` (std
-// `UnixStream` on unix, `uds_windows::UnixStream` on windows) and forwards
-// `Read`/`Write`/`Async` to it unchanged; std's `UnixStream` already implements
-// `IoSafe`, and the Windows wrapper performs I/O on a real socket handle,
-// satisfying the trait's requirements on both platforms.
+// safe to drive via its reactor. `UnixStream` wraps `uds_windows::UnixStream`
+// and forwards `Read`/`Write` to it unchanged, performing I/O on a real
+// socket handle, satisfying the trait's requirements.
 unsafe impl async_io::IoSafe for UnixStream {}
 
 impl UnixStream {

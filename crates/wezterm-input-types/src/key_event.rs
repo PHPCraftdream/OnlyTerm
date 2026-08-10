@@ -148,11 +148,6 @@ impl KeyEvent {
         self
     }
 
-    #[cfg(not(windows))]
-    pub fn encode_win32_input_mode(&self) -> Option<String> {
-        None
-    }
-
     /// <https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md>
     #[cfg(windows)]
     pub fn encode_win32_input_mode(&self) -> Option<String> {

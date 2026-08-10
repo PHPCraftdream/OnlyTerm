@@ -2,8 +2,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-#[cfg(unix)]
-use std::path::Path;
 
 /// Used to deal with Windows having case-insensitive environment variables.
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
@@ -22,54 +20,13 @@ pub(super) struct EnvEntry {
 
 impl EnvEntry {
     pub(super) fn map_key(k: OsString) -> OsString {
-        if cfg!(windows) {
-            // Best-effort lowercase transformation of an os string
-            match k.to_str() {
-                Some(s) => s.to_lowercase().into(),
-                None => k,
-            }
-        } else {
-            k
+        // Best-effort lowercase transformation of an os string: Windows
+        // environment variables are case-insensitive.
+        match k.to_str() {
+            Some(s) => s.to_lowercase().into(),
+            None => k,
         }
     }
-}
-
-#[cfg(unix)]
-pub(super) fn get_shell() -> String {
-    use nix::unistd::{access, AccessFlags};
-    use std::ffi::CStr;
-    use std::str;
-
-    // SAFETY: `getuid` returns the current process's uid; `getpwuid` is a
-    // standard libc function that returns a pointer to a static passwd entry
-    // (or NULL if not found). The returned pointer is valid until the next
-    // libc call that modifies the passwd database.
-    let ent = unsafe { libc::getpwuid(libc::getuid()) };
-    if !ent.is_null() {
-        // SAFETY: `ent` is non-null (checked above) and was returned by
-        // getpwuid, so `(*ent).pw_shell` points to a valid NUL-terminated string.
-        let shell = unsafe { CStr::from_ptr((*ent).pw_shell) };
-        match shell.to_str().map(str::to_owned) {
-            Err(err) => {
-                log::warn!(
-                    "passwd database shell could not be \
-                     represented as utf-8: {err:#}, \
-                     falling back to /bin/sh"
-                );
-            }
-            Ok(shell) => {
-                if let Err(err) = access(Path::new(&shell), AccessFlags::X_OK) {
-                    log::warn!(
-                        "passwd database shell={shell:?} which is \
-                         not executable ({err:#}), falling back to /bin/sh"
-                    );
-                } else {
-                    return shell;
-                }
-            }
-        }
-    }
-    "/bin/sh".into()
 }
 
 pub(super) fn get_base_env() -> BTreeMap<OsString, EnvEntry> {
@@ -86,23 +43,6 @@ pub(super) fn get_base_env() -> BTreeMap<OsString, EnvEntry> {
         })
         .collect();
 
-    #[cfg(unix)]
-    {
-        let key = EnvEntry::map_key("SHELL".into());
-        // Only set the value of SHELL if it isn't already set
-        if !env.contains_key(&key) {
-            env.insert(
-                EnvEntry::map_key("SHELL".into()),
-                EnvEntry {
-                    is_from_base_env: true,
-                    preferred_key: "SHELL".into(),
-                    value: get_shell().into(),
-                },
-            );
-        }
-    }
-
-    #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStringExt;
         use winapi::um::processenv::ExpandEnvironmentStringsW;

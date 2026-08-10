@@ -1,18 +1,5 @@
 use super::*;
 
-#[cfg(unix)]
-use super::unix::is_cwd_relative_path;
-
-#[cfg(unix)]
-#[test]
-fn test_cwd_relative() {
-    assert!(is_cwd_relative_path("."));
-    assert!(is_cwd_relative_path("./foo"));
-    assert!(is_cwd_relative_path("../foo"));
-    assert!(!is_cwd_relative_path("foo"));
-    assert!(!is_cwd_relative_path("/foo"));
-}
-
 #[test]
 fn test_env() {
     let mut cmd = CommandBuilder::new("dummy");

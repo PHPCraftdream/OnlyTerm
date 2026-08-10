@@ -17,12 +17,6 @@ pub enum UIKeyCapRendering {
 
 impl Default for UIKeyCapRendering {
     fn default() -> Self {
-        if cfg!(target_os = "macos") {
-            Self::AppleSymbols
-        } else if cfg!(windows) {
-            Self::WindowsSymbols
-        } else {
-            Self::UnixLong
-        }
+        Self::WindowsSymbols
     }
 }

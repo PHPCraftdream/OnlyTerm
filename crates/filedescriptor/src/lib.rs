@@ -95,11 +95,6 @@
 //! # Ok::<(), Error>(())
 //! ```
 
-#[cfg(unix)]
-mod unix;
-#[cfg(unix)]
-pub use crate::unix::*;
-
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]

@@ -15,8 +15,6 @@ use serial2::{CharSize, FlowControl, Parity, SerialPort, StopBits};
 use std::cell::RefCell;
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Result as IoResult, Write};
-#[cfg(unix)]
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -235,22 +233,6 @@ impl MasterPty for Master {
         let port = Arc::clone(&self.port);
         Ok(Box::new(MasterWriter { port }))
     }
-
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<libc::pid_t> {
-        // N/A: there is no local process
-        None
-    }
-
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<crate::unix::RawFd> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<PathBuf> {
-        None
-    }
 }
 
 struct Reader {
@@ -263,31 +245,11 @@ impl Read for Reader {
         // as the timeout when we set up the port, but on unix it will
         // never block.
         loop {
-            #[cfg(unix)]
-            {
-                use filedescriptor::{poll, pollfd, AsRawSocketDescriptor, POLLIN};
-                // The serial crate puts the serial port in non-blocking mode,
-                // so we must explicitly poll for ourselves here to avoid a
-                // busy loop.
-                let mut poll_array = [pollfd {
-                    fd: self.fd.as_socket_descriptor(),
-                    events: POLLIN,
-                    revents: 0,
-                }];
-                let _ = poll(&mut poll_array, None);
-            }
-
             match self.fd.read(buf) {
                 Ok(0) => {
-                    if cfg!(windows) {
-                        // Read timeout with no data available yet;
-                        // loop and try again.
-                        continue;
-                    }
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::UnexpectedEof,
-                        "EOF on serial port",
-                    ));
+                    // Read timeout with no data available yet;
+                    // loop and try again.
+                    continue;
                 }
                 Ok(size) => {
                     return Ok(size);

@@ -12,9 +12,7 @@ documentation = "https://docs.rs/portable-pty"
 anyhow.workspace = true
 downcast-rs.workspace = true
 filedescriptor.workspace = true
-libc.workspace = true
 log.workspace = true
-nix = {workspace=true, features=["term", "fs"]}
 serde = {workspace=true, optional=true, features=["derive"]}
 serial2.workspace = true
 shell-words.workspace = true

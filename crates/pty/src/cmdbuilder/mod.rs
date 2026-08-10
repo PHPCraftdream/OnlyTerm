@@ -6,8 +6,6 @@ use std::ffi::{OsStr, OsString};
 mod env;
 #[cfg(test)]
 mod tests;
-#[cfg(unix)]
-mod unix;
 #[cfg(windows)]
 mod windows;
 
@@ -21,8 +19,6 @@ pub struct CommandBuilder {
     args: Vec<OsString>,
     envs: BTreeMap<OsString, EnvEntry>,
     cwd: Option<OsString>,
-    #[cfg(unix)]
-    pub(crate) umask: Option<libc::mode_t>,
     controlling_tty: bool,
 }
 
@@ -34,8 +30,6 @@ impl CommandBuilder {
             args: vec![program.as_ref().to_owned()],
             envs: get_base_env(),
             cwd: None,
-            #[cfg(unix)]
-            umask: None,
             controlling_tty: true,
         }
     }
@@ -46,8 +40,6 @@ impl CommandBuilder {
             args,
             envs: get_base_env(),
             cwd: None,
-            #[cfg(unix)]
-            umask: None,
             controlling_tty: true,
         }
     }
@@ -73,8 +65,6 @@ impl CommandBuilder {
             args: vec![],
             envs: get_base_env(),
             cwd: None,
-            #[cfg(unix)]
-            umask: None,
             controlling_tty: true,
         }
     }

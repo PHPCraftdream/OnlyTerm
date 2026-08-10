@@ -3,111 +3,36 @@
 // Copyright © 2015 Sebastian Thiel
 // <https://github.com/Byron/open-rs>
 
-#[cfg(not(windows))]
-pub fn open_url(url: &str) {
-    let url = url.to_string();
-    std::thread::spawn(move || {
-        #[cfg(target_os = "macos")]
-        let candidates: &[&[&str]] = &[&["/usr/bin/open", &url]];
-
-        #[cfg(not(target_os = "macos"))]
-        let candidates: &[&[&str]] = &[
-            &["xdg-open", &url],
-            &["gio", "open", &url] as &[_],
-            &["gnome-open", &url],
-            &["kde-open", &url],
-            &["wslview", &url],
-        ];
-
-        for candidate in candidates {
-            let mut cmd = std::process::Command::new(candidate[0]);
-            cmd.args(&candidate[1..]);
-
-            if let Ok(status) = cmd.status() {
-                if status.success() {
-                    return;
-                }
-            }
-        }
-    });
-}
-
-#[cfg(not(windows))]
-pub fn open_with(url: &str, app: &str) {
-    let url = url.to_string();
-    let app = app.to_string();
-
-    std::thread::spawn(move || {
-        #[cfg(target_os = "macos")]
-        let args: &[&str] = &["/usr/bin/open", "-a", &app, &url];
-
-        #[cfg(not(target_os = "macos"))]
-        let args: &[&str] = &[&app, &url];
-
-        let mut cmd = std::process::Command::new(args[0]);
-        cmd.args(&args[1..]);
-
-        if let Ok(status) = cmd.status() {
-            if status.success() {
-                return;
-            }
-        }
-    });
-}
-
 /// Open a local text file for editing.
 ///
 /// Distinct from `open_url` because our config files use a `.ktav`
 /// extension that nothing registers a handler for: handing that straight
 /// to the shell's "open" verb gets you an "how do you want to open this
-/// file?" dialog (Windows) or silence (xdg-open with an unknown mime
-/// type). Naming a text editor explicitly is the only way this reliably
-/// puts the file in front of the user.
+/// file?" dialog.
 ///
 /// Fire-and-forget, like the rest of this module -- the launch happens on
 /// a background thread and there is no result to wait for.
 pub fn open_text_file(path: &std::path::Path) {
     let path = path.to_string_lossy().to_string();
 
-    #[cfg(windows)]
-    {
-        // Deliberately `CreateProcess` (via `Command`) rather than
-        // `ShellExecuteW`: the shell API kept returning `SE_ERR_FNF` (2)
-        // here regardless of whether notepad was named bare or by absolute
-        // path, and since it launches through the shell there is no error
-        // to inspect beyond that opaque code. Spawning the editor directly
-        // is both simpler and diagnosable -- `spawn()` returns a real
-        // `io::Error` naming what failed.
-        //
-        // notepad.exe ships with every Windows install, so unlike a
-        // file-association lookup for our `.ktav` extension this cannot
-        // come up empty.
-        std::thread::spawn(move || {
-            if let Err(err) = std::process::Command::new("notepad.exe").arg(&path).spawn() {
-                log::error!("failed to launch notepad.exe for {path:?}: {err:#}");
-            }
-        });
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        std::thread::spawn(move || {
-            // `open -t` means "open in the default *text* editor",
-            // bypassing the (nonexistent) .ktav association.
-            let _ = std::process::Command::new("/usr/bin/open")
-                .arg("-t")
-                .arg(&path)
-                .status();
-        });
-    }
-
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        open_url(&path);
-    }
+    // Deliberately `CreateProcess` (via `Command`) rather than
+    // `ShellExecuteW`: the shell API kept returning `SE_ERR_FNF` (2)
+    // here regardless of whether notepad was named bare or by absolute
+    // path, and since it launches through the shell there is no error
+    // to inspect beyond that opaque code. Spawning the editor directly
+    // is both simpler and diagnosable -- `spawn()` returns a real
+    // `io::Error` naming what failed.
+    //
+    // notepad.exe ships with every Windows install, so unlike a
+    // file-association lookup for our `.ktav` extension this cannot
+    // come up empty.
+    std::thread::spawn(move || {
+        if let Err(err) = std::process::Command::new("notepad.exe").arg(&path).spawn() {
+            log::error!("failed to launch notepad.exe for {path:?}: {err:#}");
+        }
+    });
 }
 
-#[cfg(windows)]
 fn shell_execute(url: String, with: Option<String>) {
     use std::os::windows::ffi::OsStrExt;
     use winapi::um::shellapi::ShellExecuteW;
@@ -163,12 +88,10 @@ fn shell_execute(url: String, with: Option<String>) {
     });
 }
 
-#[cfg(windows)]
 pub fn open_url(url: &str) {
     shell_execute(url.to_string(), None);
 }
 
-#[cfg(windows)]
 pub fn open_with(url: &str, app: &str) {
     shell_execute(url.to_string(), Some(app.to_string()));
 }

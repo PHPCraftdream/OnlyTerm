@@ -10,11 +10,7 @@ pub enum IntegratedTitleButtonStyle {
 
 impl Default for IntegratedTitleButtonStyle {
     fn default() -> Self {
-        if cfg!(target_os = "macos") {
-            Self::MacOsNative
-        } else {
-            Self::Windows
-        }
+        Self::Windows
     }
 }
 
@@ -32,7 +28,7 @@ impl FromDynamic for IntegratedTitleButtonStyle {
             let style = match string.as_str() {
                 "Windows" => Self::Windows,
                 "Gnome" => Self::Gnome,
-                "MacOsNative" if cfg!(target_os = "macos") => Self::MacOsNative,
+                "MacOsNative" => Self::MacOsNative,
                 _ => {
                     return Err(wezterm_dynamic::Error::InvalidVariantForType {
                         variant_name: string.to_string(),

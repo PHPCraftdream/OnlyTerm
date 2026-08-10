@@ -1,13 +1,7 @@
 #![warn(clippy::undocumented_unsafe_blocks)]
-#[cfg(unix)]
-use libc::{mode_t, umask};
-#[cfg(unix)]
-use std::sync::Mutex;
-
-#[cfg(unix)]
-lazy_static::lazy_static! {
-static ref SAVED_UMASK: Mutex<Option<libc::mode_t>> = Mutex::new(None);
-}
+//! `umask(2)` is a Unix-only concept; OnlyTerm is Windows-only, so this is
+//! now just an inert placeholder kept for API compatibility with the
+//! callers that construct it during startup.
 
 /// Unfortunately, novice unix users can sometimes be running
 /// with an overly permissive umask so we take care to install
@@ -15,55 +9,19 @@ static ref SAVED_UMASK: Mutex<Option<libc::mode_t>> = Mutex::new(None);
 /// in the filesystem.
 /// This struct locks down the umask for its lifetime, restoring
 /// the prior umask when it is dropped.
-pub struct UmaskSaver {
-    #[cfg(unix)]
-    mask: mode_t,
-}
+///
+/// On Windows (the only platform this fork targets) there is no
+/// umask concept, so this is a no-op.
+pub struct UmaskSaver {}
 
-// `UmaskSaver::new()` is not a plain value constructor: it mutates the
-// process-wide umask as a side effect and relies on RAII (`Drop`) to
-// restore the prior mask. Adding a `Default` impl would let it be
-// constructed implicitly (e.g. via `Option::unwrap_or_default()`), which
-// would silently and unexpectedly change process-global state; requiring
-// an explicit `UmaskSaver::new()` call is deliberate.
+// `UmaskSaver::new()` is not a plain value constructor: on Unix it used to
+// mutate the process-wide umask as a side effect and rely on RAII (`Drop`)
+// to restore the prior mask. Keeping an explicit `UmaskSaver::new()` call
+// (rather than a `Default` impl) preserves that call-site shape even though
+// it is now a no-op on Windows.
 #[allow(clippy::new_without_default)]
 impl UmaskSaver {
     pub fn new() -> Self {
-        let me = Self {
-            #[cfg(unix)]
-            // SAFETY: `umask(2)` is a thread-safe syscall that simply sets the
-            // process file-creation mask and returns the previous mask; it has
-            // no preconditions and cannot fail.
-            mask: unsafe { umask(0o077) },
-        };
-
-        #[cfg(unix)]
-        {
-            SAVED_UMASK.lock().unwrap().replace(me.mask);
-        }
-
-        me
-    }
-
-    /// Retrieves the mask saved by a UmaskSaver, without
-    /// having a reference to the UmaskSaver.
-    /// This is only meaningful if a single UmaskSaver is
-    /// used in a program.
-    #[cfg(unix)]
-    pub fn saved_umask() -> Option<mode_t> {
-        *SAVED_UMASK.lock().unwrap()
-    }
-}
-
-impl Drop for UmaskSaver {
-    fn drop(&mut self) {
-        #[cfg(unix)]
-        // SAFETY: `umask(2)` is a thread-safe syscall that sets the process
-        // file-creation mask and returns the previous one; it cannot fail. We
-        // restore the mask captured in `new()` and clear the saved value.
-        unsafe {
-            umask(self.mask);
-            SAVED_UMASK.lock().unwrap().take();
-        }
+        Self {}
     }
 }

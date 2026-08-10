@@ -5,8 +5,6 @@ use std::path::PathBuf;
 #[cfg(feature = "lua")]
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
-mod linux;
-mod macos;
 mod windows;
 
 #[derive(Debug, Copy, Clone)]
@@ -173,17 +171,17 @@ impl LocalProcessInfo {
         names
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    #[cfg(not(windows))]
     pub fn with_root_pid(_pid: u32) -> Option<Self> {
         None
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    #[cfg(not(windows))]
     pub fn current_working_dir(_pid: u32) -> Option<PathBuf> {
         None
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    #[cfg(not(windows))]
     pub fn executable_path(_pid: u32) -> Option<PathBuf> {
         None
     }
