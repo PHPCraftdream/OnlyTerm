@@ -47,8 +47,22 @@ pub struct Line {
     // cell-mutating method that forgets to invalidate it explicitly: any
     // method that bumps `seqno` already invalidates it for free, the same
     // contract `shape_hash_for_line`'s cache already relies on.
+    #[cfg_attr(feature = "use_serde", serde(skip))]
     cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool,
+    // A plain `serde(skip)` would deserialize this to `AtomicUsize::default()`
+    // (0), which is a valid seqno (`SEQ_ZERO`) -- if the deserialized line's
+    // real `seqno` also happens to be 0, the cache would wrongly read as
+    // valid. Use a default that can never equal a real seqno instead.
+    #[cfg_attr(
+        feature = "use_serde",
+        serde(skip, default = "never_valid_cached_seqno")
+    )]
     cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize,
+}
+
+#[cfg(feature = "use_serde")]
+fn never_valid_cached_seqno() -> core::sync::atomic::AtomicUsize {
+    core::sync::atomic::AtomicUsize::new(usize::MAX)
 }
 
 // Manual impl (rather than `#[derive(Debug)]`) so that `Debug` output is
@@ -1235,10 +1249,15 @@ impl Line {
         let cells = self.coerce_vec_storage();
         if let Some(cell) = cells.last_mut() {
             cell.attrs_mut().set_wrapped(wrapped);
+            // Only cache when a cell was actually mutated: an empty line
+            // (no last cell to set the attribute on) means `wrapped` was
+            // never really applied, so caching it here would make
+            // `last_cell_was_wrapped()` return a value that was never true
+            // of the line's actual (empty) content.
+            self.cached_last_cell_was_wrapped.store(wrapped, Relaxed);
+            self.cached_last_cell_wrapped_seqno
+                .store(self.seqno, Relaxed);
         }
-        self.cached_last_cell_was_wrapped.store(wrapped, Relaxed);
-        self.cached_last_cell_wrapped_seqno
-            .store(self.seqno, Relaxed);
     }
 
     /// Concatenate the cells from other with this line, appending them
