@@ -97,6 +97,8 @@ impl crate::TermWindow {
                         self.shape_generation += 1;
                         self.shape_cache.borrow_mut().clear();
                         self.line_to_ele_shape_cache.borrow_mut().clear();
+                        // Task #439: clear shape_hash_cache on ClearShapeCache error
+                        self.shape_hash_cache.borrow_mut().clear();
                     } else {
                         log::error!("paint_pass failed: {:#}", err);
                         break 'pass;

@@ -546,7 +546,9 @@ impl crate::TermWindow {
                         (None, None, false)
                     };
 
-                    let shape_hash = self.term_window.shape_hash_for_line(line);
+                    let shape_hash =
+                        self.term_window
+                            .shape_hash_for_line(line, self.pane_id, stable_row);
                     // Computed once per pane per frame in `paint_pane`, not
                     // per row -- see `LineRender::bidi_process_override`.
                     let bidi_process_override = self.bidi_process_override;

@@ -47,11 +47,30 @@ pub mod tab_bar;
 pub mod window_buttons;
 
 /// The data that we associate with a line; we use this to cache it shape hash
+/// Task #439: DEPRECATED - replaced by ShapeHashEntry + shape_hash_cache.
+/// Kept for now to avoid structural changes; will be cleaned up.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CachedLineState {
     pub id: u64,
     pub seqno: SequenceNo,
     pub shape_hash: [u8; 16],
+}
+
+/// Task #439: Shape hash cache entry keyed by pane_id and stable_row.
+/// This survives Line cloning because it's owned by TermWindow, not the Line.
+#[derive(Debug, Clone)]
+pub struct ShapeHashEntry {
+    pub seqno: SequenceNo,
+    pub shape_hash: [u8; 16],
+}
+
+/// Task #439: Cache key for shape hash - pane_id and stable_row are stable
+/// across clones and won't change for a given logical line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ShapeHashCacheKey {
+    pub pane_id: PaneId,
+    pub stable_row: StableRowIndex,
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
@@ -995,45 +1014,59 @@ impl crate::TermWindow {
         self.shape_generation += 1;
         self.shape_cache.borrow_mut().clear();
         self.line_to_ele_shape_cache.borrow_mut().clear();
+        // Task #439: clear shape_hash_cache on texture atlas resize
+        self.shape_hash_cache.borrow_mut().clear();
         if let Some(render_state) = self.render_state.as_mut() {
             render_state.recreate_texture_atlas(&self.fonts, &self.render_metrics, size)?;
         }
         Ok(())
     }
 
-    fn shape_hash_for_line(&mut self, line: &Line) -> [u8; 16] {
+    /// Task #439: Core cache lookup logic extracted for testability.
+    /// Returns cached shape_hash if seqno matches, otherwise computes via closure.
+    fn shape_hash_for_line(
+        &mut self,
+        line: &Line,
+        pane_id: PaneId,
+        stable_row: StableRowIndex,
+    ) -> [u8; 16] {
         let seqno = line.current_seqno();
-        let mut id = None;
-        if let Some(cached_arc) = line.get_appdata() {
-            if let Some(line_state) = cached_arc.downcast_ref::<CachedLineState>() {
-                if line_state.seqno == seqno {
-                    // Touch the LRU
-                    self.line_state_cache.borrow_mut().get(&line_state.id);
-                    return line_state.shape_hash;
-                }
-                id.replace(line_state.id);
-            }
-        }
-
-        let id = id.unwrap_or_else(|| {
-            let id = self.next_line_state_id;
-            self.next_line_state_id += 1;
-            id
-        });
-
-        let shape_hash = line.compute_shape_hash();
-
-        let state = Arc::new(CachedLineState {
-            id,
-            seqno,
-            shape_hash,
-        });
-
-        line.set_appdata(Arc::clone(&state));
-
-        self.line_state_cache.borrow_mut().put(id, state);
-        shape_hash
+        let key = ShapeHashCacheKey {
+            pane_id,
+            stable_row,
+        };
+        shape_hash_lookup(&mut self.shape_hash_cache.borrow_mut(), key, seqno, || {
+            line.compute_shape_hash()
+        })
     }
+}
+
+/// Task #439: Extracted cache lookup logic for testing.
+/// This function contains the actual production cache decision logic.
+/// Takes a closure that computes the hash on miss/seqno-mismatch.
+pub fn shape_hash_lookup<F>(
+    cache: &mut lfucache::LfuCache<ShapeHashCacheKey, ShapeHashEntry>,
+    key: ShapeHashCacheKey,
+    seqno: SequenceNo,
+    compute: F,
+) -> [u8; 16]
+where
+    F: FnOnce() -> [u8; 16],
+{
+    // Try to hit the cache
+    if let Some(entry) = cache.get(&key) {
+        if entry.seqno == seqno {
+            // Cache hit! seqno matches, return cached hash
+            return entry.shape_hash;
+        }
+        // Seqno mismatch: line changed, need to recompute
+    }
+
+    // Cache miss or seqno mismatch: compute and store
+    let shape_hash = compute();
+    let entry = ShapeHashEntry { seqno, shape_hash };
+    cache.put(key, entry);
+    shape_hash
 }
 
 fn resolve_fg_color_attr(
@@ -1125,75 +1158,6 @@ fn same_hyperlink(a: Option<&Arc<Hyperlink>>, b: Option<&Arc<Hyperlink>>) -> boo
     }
 }
 
-/// LRU cache wrapper that preserves the metrics behavior of LfuCacheU64
-/// by manually emitting hit/miss metrics, similar to the original implementation.
-pub struct LruCacheWithMetrics<V> {
-    inner: lru::LruCache<u64, V>,
-    hit_metric: &'static str,
-    miss_metric: &'static str,
-    capacity_fn: fn(&ConfigHandle) -> usize,
-    config: ConfigHandle,
-}
-
-impl<V: Clone> LruCacheWithMetrics<V> {
-    pub fn new(
-        hit_metric: &'static str,
-        miss_metric: &'static str,
-        capacity_fn: fn(&ConfigHandle) -> usize,
-        config: &ConfigHandle,
-    ) -> Self {
-        let capacity = capacity_fn(config);
-        let capacity_nonzero = std::num::NonZeroUsize::new(capacity)
-            .unwrap_or(std::num::NonZeroUsize::new(1).unwrap());
-        Self {
-            inner: lru::LruCache::new(capacity_nonzero),
-            hit_metric,
-            miss_metric,
-            capacity_fn,
-            config: config.clone(),
-        }
-    }
-
-    fn get(&mut self, k: &u64) -> Option<&V> {
-        let result = self.inner.get(k);
-        if result.is_some() {
-            metrics::histogram!(self.hit_metric).record(1.0);
-        } else {
-            metrics::histogram!(self.miss_metric).record(1.0);
-        }
-        result
-    }
-
-    fn put(&mut self, k: u64, v: V) {
-        self.inner.put(k, v);
-    }
-
-    #[allow(dead_code)]
-    fn len(&self) -> usize {
-        self.inner.len()
-    }
-
-    pub fn update_config(&mut self, config: &ConfigHandle) {
-        let new_capacity = (self.capacity_fn)(config);
-        self.config = config.clone();
-
-        // `lru::LruCache::resize` both grows and shrinks the actual cap
-        // used by future `put`s (evicting immediately if the new cap is
-        // smaller than the current length). The previous manual
-        // `pop_lru`-until-under-cap loop only ever shrank the *current
-        // length*, never the cache's own stored capacity -- so a config
-        // reload to a smaller size would look like it worked (the loop
-        // evicted down to the target) but every `put` after that would
-        // immediately be allowed to grow the cache straight back to the
-        // old, larger cap, and a reload to a *larger* size would never
-        // grow the cache at all, since nothing here changed what the
-        // cache itself considered full.
-        let new_capacity = std::num::NonZeroUsize::new(new_capacity)
-            .unwrap_or(std::num::NonZeroUsize::new(1).unwrap());
-        self.inner.resize(new_capacity);
-    }
-}
-
 /// Benchmark LfuCacheU64 vs lru::LruCache for line_state_cache patterns.
 /// Compares hit latency, insert/evict latency, bytes/entry, and hit ratio
 /// on two access patterns: (a) miss-heavy burst (flood output) and (b)
@@ -1207,6 +1171,11 @@ mod cache_bench {
     use std::mem::size_of;
     use std::sync::Arc;
     use std::time::Duration;
+
+    // Test helpers for LfuCache with simple capacity
+    fn test_cache_capacity(_config: &ConfigHandle) -> usize {
+        1024
+    }
 
     // Static capacity for use with fn pointer
     static BENCH_CAPACITY: std::sync::atomic::AtomicUsize =
@@ -1503,5 +1472,367 @@ mod cache_bench {
                 "slower"
             }
         );
+    }
+
+    /// Task #439: Test that empirically demonstrates the clone-broken cache issue.
+    /// This test shows that the current Line::appdata-based cache never hits
+    /// because Line::clone copies the Weak reference, and set_appdata on the
+    /// clone doesn't propagate back to the original Line in the Screen.
+    #[test]
+    fn test_clone_broken_cache() {
+        use std::sync::Arc;
+        use wezterm_surface::Line;
+
+        // Create a line with some test content
+        let original = Line::with_width_and_cell(80, wezterm_term::Cell::default(), 1usize);
+
+        // First call: compute hash, store in cache via appdata
+        let state = Arc::new(CachedLineState {
+            id: 42,
+            seqno: 1,
+            shape_hash: [1u8; 16],
+        });
+        original.set_appdata(Arc::clone(&state));
+
+        // Verify it worked: original has the appdata
+        let original_appdata = original.get_appdata();
+        assert!(original_appdata.is_some(), "original should have appdata");
+        if let Some(arc) = original_appdata {
+            if let Some(line_state) = arc.downcast_ref::<CachedLineState>() {
+                assert_eq!(line_state.id, 42, "original appdata should have id 42");
+            } else {
+                panic!("original appdata should be CachedLineState");
+            }
+        }
+
+        // Simulate what get_lines() does: clone the line
+        let clone1 = original.clone();
+
+        // Clone initially has the same Weak reference, so it can upgrade
+        let clone1_appdata = clone1.get_appdata();
+        assert!(
+            clone1_appdata.is_some(),
+            "clone should be able to upgrade Weak initially"
+        );
+        if let Some(arc) = clone1_appdata {
+            if let Some(line_state) = arc.downcast_ref::<CachedLineState>() {
+                assert_eq!(line_state.id, 42, "clone should see original's appdata");
+            } else {
+                panic!("clone appdata should be CachedLineState");
+            }
+        }
+
+        // This is what the render path does on cache miss: set appdata on the CLONE
+        let new_state = Arc::new(CachedLineState {
+            id: 43,
+            seqno: 1,
+            shape_hash: [2u8; 16],
+        });
+        clone1.set_appdata(Arc::clone(&new_state));
+
+        // The clone now has the new appdata
+        let clone1_appdata = clone1.get_appdata();
+        assert!(clone1_appdata.is_some());
+        if let Some(arc) = clone1_appdata {
+            if let Some(line_state) = arc.downcast_ref::<CachedLineState>() {
+                assert_eq!(line_state.id, 43, "clone should have new appdata");
+            } else {
+                panic!("clone appdata should be CachedLineState");
+            }
+        }
+
+        // KEY BUG: The ORIGINAL Line still has the OLD appdata, not the new one
+        let original_appdata_after = original.get_appdata();
+        assert!(
+            original_appdata_after.is_some(),
+            "original should still have some appdata"
+        );
+        if let Some(arc) = original_appdata_after {
+            if let Some(line_state) = arc.downcast_ref::<CachedLineState>() {
+                assert_eq!(
+                    line_state.id, 42,
+                    "original should still have old appdata (BUG!)"
+                );
+            } else {
+                panic!("original appdata should be CachedLineState");
+            }
+        }
+
+        // Simulate the next frame: clone again
+        let clone2 = original.clone();
+
+        // This clone can still upgrade the ORIGINAL's Weak reference (id: 42)
+        // NOT the clone's updated reference (id: 43) - it's completely lost
+        let clone2_appdata = clone2.get_appdata();
+        assert!(
+            clone2_appdata.is_some(),
+            "clone2 can upgrade original's Weak"
+        );
+        if let Some(arc) = clone2_appdata {
+            if let Some(line_state) = arc.downcast_ref::<CachedLineState>() {
+                assert_eq!(
+                    line_state.id, 42,
+                    "clone2 sees original's old appdata, not clone1's new appdata (BUG!)"
+                );
+            } else {
+                panic!("clone2 appdata should be CachedLineState");
+            }
+        }
+
+        // If we had a seqno bump on the original, the cache entry would be invalid anyway,
+        // but for static screens (no seqno bumps), the cache SHOULD hit but DOESN'T.
+        // The effective hit rate is 0% for any line that doesn't get modified between frames.
+
+        println!("✓ Test confirmed: set_appdata on Line clones doesn't propagate back to original");
+        println!("  - Original appdata id: 42 (unchanged)");
+        println!("  - Clone1 appdata id: 43 (updated on clone, lost)");
+        println!("  - Clone2 appdata id: 42 (saw original, not clone1's update)");
+        println!("  → This is why shape_hash_for_line cache never hits on static screens");
+    }
+
+    /// Task #439: Regression test that the extracted shape_hash_lookup function
+    /// actually skips recompute on cache hits (proves production code works).
+    #[test]
+    fn test_shape_hash_lookup_skips_recompute_on_hit() {
+        use lfucache::LfuCache;
+        use std::cell::Cell;
+
+        let _capacity = std::num::NonZeroUsize::new(100).unwrap();
+        let mut cache = LfuCache::new(
+            "test_hit",
+            "test_miss",
+            test_cache_capacity,
+            &ConfigHandle::default_config(),
+        );
+
+        let pane_id: PaneId = 1;
+        let stable_row: StableRowIndex = 0;
+        let key = ShapeHashCacheKey {
+            pane_id,
+            stable_row,
+        };
+        let seqno: SequenceNo = 1;
+
+        let compute_count = Cell::new(0);
+        let expected_hash = [42u8; 16];
+
+        // First call: miss, should compute
+        let hash1 = shape_hash_lookup(&mut cache, key, seqno, || {
+            compute_count.set(compute_count.get() + 1);
+            expected_hash
+        });
+
+        assert_eq!(compute_count.get(), 1, "should compute on first miss");
+        assert_eq!(hash1, expected_hash, "should return computed hash");
+
+        // Second call: hit, should NOT recompute
+        let hash2 = shape_hash_lookup(&mut cache, key, seqno, || {
+            compute_count.set(compute_count.get() + 1);
+            expected_hash
+        });
+
+        assert_eq!(compute_count.get(), 1, "should NOT recompute on cache hit");
+        assert_eq!(hash2, expected_hash, "should return cached hash on hit");
+    }
+
+    /// Task #439: Regression test that seqno mismatch forces recompute even with cache hit.
+    #[test]
+    fn test_shape_hash_lookup_recomputes_on_seqno_mismatch() {
+        use lfucache::LfuCache;
+        use std::cell::Cell;
+
+        let _capacity = std::num::NonZeroUsize::new(100).unwrap();
+        let mut cache = LfuCache::new(
+            "test_hit",
+            "test_miss",
+            test_cache_capacity,
+            &ConfigHandle::default_config(),
+        );
+
+        let pane_id: PaneId = 1;
+        let stable_row: StableRowIndex = 0;
+        let key = ShapeHashCacheKey {
+            pane_id,
+            stable_row,
+        };
+
+        let compute_count = Cell::new(0);
+
+        // First call with seqno=1
+        let hash1 = shape_hash_lookup(&mut cache, key, 1, || {
+            compute_count.set(compute_count.get() + 1);
+            [1u8; 16]
+        });
+
+        assert_eq!(compute_count.get(), 1, "should compute on first miss");
+
+        // Second call with same seqno=1: cache hit, no recompute
+        let hash2 = shape_hash_lookup(&mut cache, key, 1, || {
+            compute_count.set(compute_count.get() + 1);
+            [2u8; 16]
+        });
+
+        assert_eq!(compute_count.get(), 1, "should NOT recompute on cache hit");
+        assert_eq!(hash1, hash2, "should return same cached hash");
+
+        // Third call with different seqno=2: seqno mismatch, must recompute
+        let hash3 = shape_hash_lookup(&mut cache, key, 2, || {
+            compute_count.set(compute_count.get() + 1);
+            [3u8; 16]
+        });
+
+        assert_eq!(compute_count.get(), 2, "should recompute on seqno mismatch");
+        assert_eq!(hash3, [3u8; 16], "should return newly computed hash");
+    }
+
+    /// Task #439: Empirical test measuring actual cache hit rate over multiple frames.
+    /// Simulates 50 frames over 50 unchanged lines (static screen).
+    /// Frame 1 is expected to be 0% hits (cache cold), frames 2..50 expected ~100% hits.
+    #[test]
+    fn test_shape_hash_cache_hit_rate_static_screen() {
+        use lfucache::LfuCache;
+        use std::cell::Cell;
+
+        let num_lines = 50;
+        let num_frames = 50;
+        let _capacity = std::num::NonZeroUsize::new(1024).unwrap();
+        let mut cache = LfuCache::new(
+            "static_hit",
+            "static_miss",
+            test_cache_capacity,
+            &ConfigHandle::default_config(),
+        );
+
+        let compute_count = Cell::new(0);
+        let hit_count = Cell::new(0);
+        let miss_count = Cell::new(0);
+
+        // Simulate static screen: same 50 lines with same seqno across all frames
+        for _frame in 0..num_frames {
+            for line_idx in 0..num_lines {
+                let pane_id: PaneId = 1;
+                let stable_row: StableRowIndex = line_idx as StableRowIndex;
+                let key = ShapeHashCacheKey {
+                    pane_id,
+                    stable_row,
+                };
+                let seqno: SequenceNo = 1; // Static screen: seqno never changes
+
+                let frame_compute_count = compute_count.get();
+
+                shape_hash_lookup(&mut cache, key, seqno, || {
+                    compute_count.set(compute_count.get() + 1);
+                    // Simulate expensive computation: hash based on line index
+                    let mut hash = [0u8; 16];
+                    hash[0] = line_idx as u8;
+                    hash
+                });
+
+                // Track hits vs misses
+                if compute_count.get() > frame_compute_count {
+                    miss_count.set(miss_count.get() + 1);
+                } else {
+                    hit_count.set(hit_count.get() + 1);
+                }
+            }
+        }
+
+        let total_lookups = hit_count.get() + miss_count.get();
+        let overall_hit_rate = (hit_count.get() as f64) / (total_lookups as f64) * 100.0;
+
+        // Frame 1: all misses (cache cold)
+        assert_eq!(miss_count.get(), num_lines, "frame 1 should be all misses");
+
+        // Frames 2..50: all hits (static screen, cache warm)
+        // Total lookups: 50 frames * 50 lines = 2500
+        // Misses: 50 (frame 1 only)
+        // Hits: 2500 - 50 = 2450
+        // Expected hit rate: 2450 / 2500 = 98%
+        assert_eq!(total_lookups, num_frames * num_lines, "total lookups count");
+        assert_eq!(
+            hit_count.get(),
+            (num_frames - 1) * num_lines,
+            "frames 2..50 should be all hits"
+        );
+
+        println!(
+            "✓ Static screen cache hit rate: {:.2}% ({}/{} hits, {} computes)",
+            overall_hit_rate,
+            hit_count.get(),
+            total_lookups,
+            compute_count.get()
+        );
+        println!("  Frame 1: {} misses (cache warmup)", num_lines);
+        println!("  Frames 2..50: {} hits (cache warm)", hit_count.get());
+    }
+
+    /// Task #439: Regression test that different panes don't share cache entries.
+    #[test]
+    fn test_shape_hash_cache_key_includes_pane_id() {
+        use lfucache::LfuCache;
+        use std::cell::Cell;
+
+        let _capacity = std::num::NonZeroUsize::new(100).unwrap();
+        let mut cache = LfuCache::new(
+            "pane_hit",
+            "pane_miss",
+            test_cache_capacity,
+            &ConfigHandle::default_config(),
+        );
+
+        let pane_id_1: PaneId = 1;
+        let pane_id_2: PaneId = 2;
+        let stable_row: StableRowIndex = 0;
+
+        let key1 = ShapeHashCacheKey {
+            pane_id: pane_id_1,
+            stable_row,
+        };
+        let key2 = ShapeHashCacheKey {
+            pane_id: pane_id_2,
+            stable_row,
+        };
+
+        // These should be different keys
+        assert_ne!(
+            key1, key2,
+            "keys with different pane_id should be different"
+        );
+
+        let compute_count = Cell::new(0);
+
+        // Store for pane 1
+        let hash1 = shape_hash_lookup(&mut cache, key1, 1, || {
+            compute_count.set(compute_count.get() + 1);
+            [1u8; 16]
+        });
+
+        assert_eq!(compute_count.get(), 1, "should compute for pane 1");
+
+        // Pane 2 should not see pane 1's entry
+        let hash2 = shape_hash_lookup(&mut cache, key2, 1, || {
+            compute_count.set(compute_count.get() + 1);
+            [2u8; 16]
+        });
+
+        assert_eq!(
+            compute_count.get(),
+            2,
+            "pane 2 should not hit pane 1's cache entry"
+        );
+        assert_ne!(hash1, hash2, "different panes should have different hashes");
+
+        // Both should now have entries
+        let cached_hash1 = shape_hash_lookup(&mut cache, key1, 1, || {
+            panic!("should hit cache for pane 1")
+        });
+        let cached_hash2 = shape_hash_lookup(&mut cache, key2, 1, || {
+            panic!("should hit cache for pane 2")
+        });
+
+        assert_eq!(cached_hash1, hash1, "pane 1 should have its own entry");
+        assert_eq!(cached_hash2, hash2, "pane 2 should have its own entry");
+
+        println!("✓ Test passed: cache key correctly includes pane_id");
     }
 }

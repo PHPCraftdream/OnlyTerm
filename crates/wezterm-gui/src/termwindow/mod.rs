@@ -15,8 +15,7 @@ use crate::termwindow::keyevent::KeyTableState;
 use crate::termwindow::modal::Modal;
 use crate::termwindow::render::paint::AllowImage;
 use crate::termwindow::render::{
-    CachedLineState, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
-    LineToElementShapeItem,
+    LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey, LineToElementShapeItem,
 };
 use crate::termwindow::webgpu::WebGpuState;
 use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
@@ -349,8 +348,11 @@ pub struct TermWindow {
     shape_cache: RefCell<LfuCache<ShapeCacheKey, anyhow::Result<Rc<Vec<ShapedInfo>>>>>,
     line_to_ele_shape_cache: RefCell<LfuCache<LineToEleShapeCacheKey, LineToElementShapeItem>>,
 
-    line_state_cache: RefCell<render::LruCacheWithMetrics<Arc<CachedLineState>>>,
-    next_line_state_id: u64,
+    /// Task #439: Shape hash cache keyed by (pane_id, stable_row) instead of Line appdata.
+    /// This survives Line cloning because it's owned by TermWindow, not the Line.
+    /// The key includes pane_id so that multiple panes in a tab (and multiple tabs)
+    /// don't share cached hashes for logically different content.
+    shape_hash_cache: RefCell<LfuCache<render::ShapeHashCacheKey, render::ShapeHashEntry>>,
 
     line_quad_cache: RefCell<LfuCache<LineQuadCacheKey, LineQuadCacheValue>>,
 
