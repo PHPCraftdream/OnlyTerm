@@ -102,6 +102,10 @@ impl crate::TermWindow {
                 shape_key: None,
                 password_input: false,
                 is_wrap_continuation: false,
+                // No pane here (this is the retro tab bar line), and
+                // `bidi_disabled_by_foreground_process` always returns
+                // `false` when there is no pane to check.
+                bidi_process_override: false,
             },
             layers,
         )?;

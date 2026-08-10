@@ -269,6 +269,17 @@ pub struct RenderScreenLineParams<'a> {
     pub shape_key: Option<LineToEleShapeCacheKey>,
     pub password_input: bool,
     pub is_wrap_continuation: bool,
+    /// Whether `disable_bidi_for_processes_named` currently suppresses bidi
+    /// for `pane`. Callers must compute this themselves (see
+    /// `bidi_disabled_by_foreground_process`) rather than have
+    /// `render_screen_line` recompute it per row: `paint_pane` already
+    /// hoists this to once-per-pane-per-frame (see
+    /// `LineRender::bidi_process_override`) because the underlying
+    /// foreground-process lookup is comparatively expensive. Callers with
+    /// no pane (e.g. the retro tab bar) should simply pass `false`, since
+    /// `bidi_disabled_by_foreground_process` always returns `false` when
+    /// there is no pane to check.
+    pub bidi_process_override: bool,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]

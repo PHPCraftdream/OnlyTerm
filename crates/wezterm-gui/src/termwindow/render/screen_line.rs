@@ -1,8 +1,8 @@
 use crate::quad::{QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait};
 use crate::termwindow::render::{
-    bidi_disabled_by_foreground_process, resolve_fg_color_attr, same_hyperlink,
-    update_next_frame_time, ClusterStyleCache, ComputeCellFgBgParams, ComputeCellFgBgResult,
-    LineToElementParams, LineToElementShape, RenderScreenLineParams, RenderScreenLineResult,
+    resolve_fg_color_attr, same_hyperlink, update_next_frame_time, ClusterStyleCache,
+    ComputeCellFgBgParams, ComputeCellFgBgResult, LineToElementParams, LineToElementShape,
+    RenderScreenLineParams, RenderScreenLineResult,
 };
 use crate::termwindow::LineToElementShapeItem;
 use ::window::DeadKeyStatus;
@@ -89,7 +89,11 @@ impl crate::TermWindow {
         let mut composition_width = 0;
 
         let (bidi_enabled, bidi_direction) = params.line.bidi_info();
-        let bidi_process_override = bidi_disabled_by_foreground_process(params.pane, params.config);
+        // Already computed once per pane per frame by the caller (see
+        // `RenderScreenLineParams::bidi_process_override`) -- recomputing
+        // it here on every row was pure duplicated work, since the
+        // underlying foreground-process lookup is comparatively expensive.
+        let bidi_process_override = params.bidi_process_override;
         let direction = if bidi_enabled && !bidi_process_override {
             bidi_direction.direction()
         } else {
