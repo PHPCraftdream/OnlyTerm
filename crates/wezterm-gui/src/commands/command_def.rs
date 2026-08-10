@@ -378,10 +378,7 @@ impl CommandDef {
         result
     }
 
-    #[cfg(not(target_os = "macos"))]
     pub fn recreate_menubar(_config: &ConfigHandle) {}
-
-    // macOS-specific recreate_menubar implementation removed - Windows-only build
 }
 
 /// Returns a list of key assignment actions that should be
@@ -391,10 +388,6 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
     vec![
         // ----------------- OnlyTerm
         ReloadConfiguration,
-        #[cfg(target_os = "macos")]
-        HideApplication,
-        #[cfg(target_os = "macos")]
-        QuitApplication,
         // ----------------- Shell
         SpawnTab(SpawnTabDomain::CurrentPaneDomain),
         SpawnWindow,
@@ -414,9 +407,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         // ----------------- Edit
         SendEnterOrNewline(Modifiers::CTRL),
         SendEnterOrNewline(Modifiers::SHIFT),
-        #[cfg(not(target_os = "macos"))]
         PasteFrom(ClipboardPasteSource::PrimarySelection),
-        #[cfg(not(target_os = "macos"))]
         CopyTo(ClipboardCopyDestination::PrimarySelection),
         CopyTo(ClipboardCopyDestination::Clipboard),
         CopySelectionOrInterrupt,

@@ -359,12 +359,6 @@ impl ConfigInner {
         let exe_name = std::env::current_exe().unwrap();
         let exe_dir = exe_name.parent().unwrap();
         config.font_dirs.push(exe_dir.join("../../../assets/fonts"));
-        // If we're building for a specific target, the dir
-        // level is one deeper.
-        #[cfg(target_os = "macos")]
-        config
-            .font_dirs
-            .push(exe_dir.join("../../../../assets/fonts"));
         // Specify the same DPI used on non-mac systems so
         // that we have consistent values regardless of the
         // operating system that we're running tests on

@@ -265,12 +265,6 @@ impl LocalDomain {
         Ok(Self::with_pty_system(&serial_domain.name, pty_system))
     }
 
-    #[cfg(unix)]
-    fn is_conpty(&self) -> bool {
-        false
-    }
-
-    #[cfg(windows)]
     fn is_conpty(&self) -> bool {
         let pty_system = self.pty_system.lock();
         let pty_system: &dyn PtySystem = &**pty_system;
@@ -419,21 +413,6 @@ impl portable_pty::MasterPty for NoPty {
     fn take_writer(&self) -> anyhow::Result<Box<dyn std::io::Write + Send + 'static>> {
         Ok(Box::new(std::io::sink()))
     }
-
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<i32> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<std::path::PathBuf> {
-        None
-    }
 }
 
 /// Wraps the underlying pty; we use this as a marker for when
@@ -454,21 +433,6 @@ impl portable_pty::MasterPty for FailedSpawnPty {
     }
     fn take_writer(&self) -> anyhow::Result<Box<dyn std::io::Write + Send + 'static>> {
         self.inner.lock().take_writer()
-    }
-
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<i32> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<std::path::PathBuf> {
-        None
     }
 }
 

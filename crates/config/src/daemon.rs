@@ -15,21 +15,9 @@ pub struct DaemonOptions {
 /// we create in the RUNTIME_DIR to not be removed by a potential
 /// tmpwatch daemon.
 pub fn set_sticky_bit(path: &Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(metadata) = path.metadata() {
-            let mut perms = metadata.permissions();
-            let mode = perms.mode();
-            perms.set_mode(mode | libc::S_ISVTX as u32);
-            let _ = std::fs::set_permissions(&path, perms);
-        }
-    }
-
-    #[cfg(windows)]
-    {
-        let _ = path;
-    }
+    // The sticky bit is a Unix filesystem permission concept with no
+    // Windows equivalent, so there is nothing to do here.
+    let _ = path;
 }
 
 fn open_log(path: PathBuf) -> anyhow::Result<File> {
@@ -45,7 +33,7 @@ fn open_log(path: PathBuf) -> anyhow::Result<File> {
 }
 
 impl DaemonOptions {
-    #[cfg_attr(windows, allow(dead_code))]
+    #[allow(dead_code)]
     pub fn pid_file(&self) -> PathBuf {
         self.pid_file
             .as_ref()

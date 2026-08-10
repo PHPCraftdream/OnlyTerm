@@ -52,27 +52,6 @@ fn safely_create_sock_path(unix_dom: &UnixDomain) -> anyhow::Result<UnixListener
 
     create_user_owned_dirs(sock_dir)?;
 
-    #[cfg(unix)]
-    {
-        use config::running_under_wsl;
-        use std::os::unix::fs::PermissionsExt;
-
-        if !running_under_wsl() && !unix_dom.skip_permissions_check {
-            // Let's be sure that the ownership looks sane
-            let meta = sock_dir.symlink_metadata()?;
-
-            let permissions = meta.permissions();
-            if (permissions.mode() & 0o22) != 0 {
-                anyhow::bail!(
-                    "The permissions for {} are insecure and currently \
-                     allow other users to write to it (permissions={:?})",
-                    sock_dir.display(),
-                    permissions
-                );
-            }
-        }
-    }
-
     // We want to remove the socket if it exists.
     // However, on windows, we can't tell if the unix domain socket
     // exists using the methods on Path, so instead we just unconditionally

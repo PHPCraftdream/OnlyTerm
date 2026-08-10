@@ -112,13 +112,10 @@ impl WebGpuState {
         // top-level window. If the child window couldn't be created for some
         // reason, fall back to the top-level window directly so WebGpu still
         // works (just without the future rebuild capability).
-        #[cfg(windows)]
         let handle = match window.webgpu_child_hwnd() {
             Some(child_hwnd) => RawHandlePair::from_child_hwnd(child_hwnd, window),
             None => RawHandlePair::new(window),
         };
-        #[cfg(not(windows))]
-        let handle = RawHandlePair::new(window);
 
         // Get or create the shared process-wide GPU context.
         // This is the expensive part (Instance, adapter, device creation)

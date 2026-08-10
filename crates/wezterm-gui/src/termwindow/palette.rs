@@ -308,11 +308,9 @@ impl CommandPalette {
                 keys.sort_by(|(a_mods, a_key), (b_mods, b_key)| {
                     fn score_mods(mods: &Modifiers) -> usize {
                         let mut score: usize = mods.bits() as usize;
-                        // Prefer keys with CMD on macOS, but not on other systems,
-                        // where CMD tends to be reserved by the desktop environment
-                        if (cfg!(target_os = "macos") && mods.contains(Modifiers::SUPER))
-                            || (!cfg!(target_os = "macos") && !mods.contains(Modifiers::SUPER))
-                        {
+                        // Prefer keys without SUPER: on Windows SUPER tends
+                        // to be reserved by the desktop environment.
+                        if !mods.contains(Modifiers::SUPER) {
                             score += 1000;
                         }
                         score

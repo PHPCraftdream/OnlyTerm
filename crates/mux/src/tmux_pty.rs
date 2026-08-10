@@ -150,19 +150,4 @@ impl MasterPty for TmuxPty {
             cmd_queue: self.cmd_queue.clone(),
         }))
     }
-
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<libc::pid_t> {
-        return None;
-    }
-
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
-        None
-    }
-
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<std::path::PathBuf> {
-        None
-    }
 }

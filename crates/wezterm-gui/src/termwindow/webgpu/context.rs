@@ -93,10 +93,7 @@ impl ProcessGpuContext {
     pub fn new(config: &ConfigHandle) -> anyhow::Result<Self> {
         use super::state_impl::run_on_background_thread;
 
-        #[cfg(windows)]
         let primary_backends = wgpu::Backends::DX12;
-        #[cfg(not(windows))]
-        let primary_backends = wgpu::Backends::all();
         let all_backends = wgpu::Backends::all();
 
         let config_for_thread = config.clone();

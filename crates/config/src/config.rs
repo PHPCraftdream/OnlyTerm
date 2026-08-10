@@ -1158,7 +1158,7 @@ fn default_command_palette_bg_color() -> RgbaColor {
 }
 
 fn default_swallow_mouse_click_on_window_focus() -> bool {
-    cfg!(target_os = "macos")
+    false
 }
 
 fn default_mux_output_parser_coalesce_delay_ms() -> u64 {
@@ -1285,9 +1285,6 @@ pub(crate) fn compute_runtime_dir() -> anyhow::Result<PathBuf> {
 }
 
 pub fn username_from_env() -> anyhow::Result<String> {
-    #[cfg(unix)]
-    const USER: &str = "USER";
-    #[cfg(windows)]
     const USER: &str = "USERNAME";
 
     std::env::var(USER).with_context(|| format!("while resolving {} env var", USER))
@@ -1310,14 +1307,8 @@ pub fn default_local_echo_threshold_ms() -> Option<u64> {
 /// (which is sometimes PowerShell, depending on how the shell was launched).
 /// Explicitly configuring `default_prog` makes this deterministic instead of
 /// relying on `CommandBuilder::new_default_prog()`'s `ComSpec` fallback.
-#[cfg(windows)]
 fn windows_default_prog() -> Option<Vec<String>> {
     Some(vec!["cmd.exe".to_string()])
-}
-
-#[cfg(not(windows))]
-fn windows_default_prog() -> Option<Vec<String>> {
-    None
 }
 
 fn default_bidi_direction() -> ParagraphDirectionHint {

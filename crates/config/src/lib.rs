@@ -6,8 +6,6 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::DirBuilder;
-#[cfg(unix)]
-use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -134,12 +132,6 @@ pub fn lookup_default_scheme(name: &str) -> Option<&'static Palette> {
 pub fn create_user_owned_dirs(p: &Path) -> Result<()> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
-
-    #[cfg(unix)]
-    {
-        builder.mode(0o700);
-    }
-
     builder.create(p)?;
     Ok(())
 }
@@ -152,15 +144,7 @@ fn xdg_config_home() -> PathBuf {
 }
 
 fn config_dirs() -> Vec<PathBuf> {
-    #[cfg_attr(not(unix), allow(unused_mut))]
-    let mut dirs = vec![xdg_config_home()];
-
-    #[cfg(unix)]
-    if let Some(d) = std::env::var_os("XDG_CONFIG_DIRS") {
-        dirs.extend(std::env::split_paths(&d).map(|s| PathBuf::from(s).join("onlyterm")));
-    }
-
-    dirs
+    vec![xdg_config_home()]
 }
 
 fn default_one_point_oh_f64() -> f64 {

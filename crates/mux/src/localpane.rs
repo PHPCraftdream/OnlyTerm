@@ -84,8 +84,7 @@ struct CachedProcInfo {
     /// Task #247: set while a background thread (spawned by
     /// `divine_process_list`) is busy recomputing this cache entry, so a
     /// second caller that also observes an expired-but-present cache
-    /// doesn't spawn a duplicate concurrent refresh. Mirrors
-    /// `CachedLeaderInfo::updating` above.
+    /// doesn't spawn a duplicate concurrent refresh.
     updating: bool,
 }
 
@@ -96,67 +95,6 @@ impl CachedProcInfo {
 
     fn can_update(&self) -> bool {
         !self.updating
-    }
-}
-
-/// This is a bit horrible; it can take 700us to tcgetpgrp, so if we have
-/// 10 tabs open and run the mouse over them, hovering them each in turn,
-/// we can spend 7ms per evaluation of the tab bar state on fetching those
-/// pids alone, which can easily lead to stuttering when moving the mouse
-/// over all of the tabs.
-///
-/// This implements a cache holding that fg process and the often queried
-/// cwd and process path that allows for stale reads to proceed quickly
-/// while the writes can happen in a background thread.
-#[cfg(unix)]
-#[derive(Clone)]
-struct CachedLeaderInfo {
-    updated: Instant,
-    fd: std::os::fd::RawFd,
-    pid: u32,
-    path: Option<std::path::PathBuf>,
-    current_working_dir: Option<std::path::PathBuf>,
-    updating: bool,
-}
-
-#[cfg(unix)]
-impl CachedLeaderInfo {
-    fn new(fd: Option<std::os::fd::RawFd>) -> Self {
-        let mut me = Self {
-            updated: Instant::now(),
-            fd: fd.unwrap_or(-1),
-            pid: 0,
-            path: None,
-            current_working_dir: None,
-            updating: false,
-        };
-        me.update();
-        me
-    }
-
-    fn can_update(&self) -> bool {
-        self.fd != -1 && !self.updating
-    }
-
-    fn update(&mut self) {
-        // SAFETY: `self.fd` is a valid open terminal file descriptor -- guarded
-        // by `can_update`, which requires `self.fd != -1`. `tcgetpgrp` only reads
-        // the foreground process group of that terminal and takes no pointers,
-        // so there is no aliasing or lifetime concern.
-        self.pid = unsafe { libc::tcgetpgrp(self.fd) } as u32;
-        if self.pid > 0 {
-            self.path = LocalProcessInfo::executable_path(self.pid);
-            self.current_working_dir = LocalProcessInfo::current_working_dir(self.pid);
-        } else {
-            self.path.take();
-            self.current_working_dir.take();
-        }
-        self.updated = Instant::now();
-        self.updating = false;
-    }
-
-    fn expired(&self) -> bool {
-        self.updated.elapsed() > PROC_INFO_CACHE_TTL
     }
 }
 
@@ -294,11 +232,10 @@ pub struct LocalPane {
     writer: Mutex<Box<dyn Write + Send>>,
     domain_id: DomainId,
     tmux_domain: Mutex<Option<Arc<TmuxDomainState>>>,
-    /// Task #247: `Arc`-wrapped (like `leader` below) so that
-    /// `divine_process_list`'s background refresh thread can clone just
-    /// this handle and update the cache in place without needing to keep
-    /// the whole `LocalPane` alive or borrow `self` across the thread
-    /// spawn.
+    /// Task #247: `Arc`-wrapped so that `divine_process_list`'s
+    /// background refresh thread can clone just this handle and update
+    /// the cache in place without needing to keep the whole `LocalPane`
+    /// alive or borrow `self` across the thread spawn.
     proc_list: Arc<Mutex<Option<CachedProcInfo>>>,
     /// Task #471: guards the *cold-cache* case in `divine_process_list`
     /// (no `CachedProcInfo` entry at all yet). Unlike the warm-refresh
@@ -310,8 +247,6 @@ pub struct LocalPane {
     /// cold cache while this is already `true` just returns `None` again
     /// rather than queuing a duplicate concurrent fetch.
     proc_list_cold_fetch_in_flight: Arc<AtomicBool>,
-    #[cfg(unix)]
-    leader: Arc<Mutex<Option<CachedLeaderInfo>>>,
     command_description: String,
     /// Lock-free mirror of `terminal.has_unseen_output()`, kept in sync
     /// by the terminal via the shared `Arc<AtomicBool>` whenever focus
@@ -413,23 +348,7 @@ impl Pane for LocalPane {
     }
 
     fn get_metadata(&self) -> Value {
-        #[allow(unused_mut)]
-        let mut map: BTreeMap<Value, Value> = BTreeMap::new();
-
-        #[cfg(unix)]
-        if let Some(tio) = self.pty.lock().as_ref().and_then(|pty| pty.get_termios()) {
-            use nix::sys::termios::LocalFlags;
-            // Detect whether we might be in password input mode.
-            // If local echo is disabled and canonical input mode
-            // is enabled, then we assume that we're in some kind
-            // of password-entry mode.
-            let pw_input = !tio.local_flags.contains(LocalFlags::ECHO)
-                && tio.local_flags.contains(LocalFlags::ICANON);
-            map.insert(
-                Value::String("password_input".to_string()),
-                Value::Bool(pw_input),
-            );
-        }
+        let map: BTreeMap<Value, Value> = BTreeMap::new();
 
         Value::Object(map.into())
     }
@@ -1048,49 +967,18 @@ impl Pane for LocalPane {
     }
 
     fn tty_name(&self) -> Option<String> {
-        #[cfg(unix)]
-        {
-            // `None` pty (already taken by `kill()`): nothing to name.
-            let name = self.pty.lock().as_ref()?.tty_name()?;
-            Some(name.to_string_lossy().into_owned())
-        }
-
-        #[cfg(windows)]
-        {
-            None
-        }
+        None
     }
 
     fn get_foreground_process_info(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
-        #[cfg(unix)]
-        if let Some(pid) = self
-            .pty
-            .lock()
-            .as_ref()
-            .and_then(|pty| pty.process_group_leader())
-        {
-            return LocalProcessInfo::with_root_pid(pid as u32);
-        }
-
         self.divine_foreground_process(policy)
     }
 
     fn get_foreground_process_name(&self, policy: CachePolicy) -> Option<String> {
-        #[cfg(unix)]
-        {
-            let leader = self.get_leader(policy);
-            if let Some(path) = &leader.path {
-                return Some(path.to_string_lossy().to_string());
-            }
-            return None;
-        }
-
-        #[cfg(windows)]
         if let Some(fg) = self.divine_foreground_process(policy) {
             return Some(fg.executable.to_string_lossy().to_string());
         }
 
-        #[allow(unreachable_code)]
         None
     }
 
@@ -1138,24 +1026,6 @@ impl Pane for LocalPane {
 
             !is_stateful
         } else {
-            #[cfg(unix)]
-            {
-                // If the process is dead but exit_behavior is holding the
-                // window, we don't need to prompt to confirm closing.
-                // That is detectable as no longer having a process group leader.
-                // A `None` pty (already taken by `kill()`) counts the same
-                // way: there's definitely no leader left to speak of.
-                let has_leader = self
-                    .pty
-                    .lock()
-                    .as_ref()
-                    .and_then(|pty| pty.process_group_leader())
-                    .is_some();
-                if !has_leader {
-                    return true;
-                }
-            }
-
             false
         }
     }
@@ -1554,8 +1424,6 @@ impl LocalPane {
             tmux_domain: Mutex::new(None),
             proc_list: Arc::new(Mutex::new(None)),
             proc_list_cold_fetch_in_flight: Arc::new(AtomicBool::new(false)),
-            #[cfg(unix)]
-            leader: Arc::new(Mutex::new(None)),
             command_description,
             unseen_output,
             unresponsive: Arc::new(AtomicBool::new(false)),
@@ -1605,58 +1473,11 @@ impl LocalPane {
         }
     }
 
-    #[cfg(unix)]
-    fn get_leader(&self, policy: CachePolicy) -> CachedLeaderInfo {
-        let mut leader = self.leader.lock();
-
-        if policy == CachePolicy::FetchImmediate {
-            // `None` pty (already taken by `kill()`) has no fd to offer;
-            // `CachedLeaderInfo::new(None)` degrades to fd `-1`, which
-            // `can_update()` already treats as "nothing to query".
-            leader.replace(CachedLeaderInfo::new(
-                self.pty.lock().as_ref().and_then(|pty| pty.as_raw_fd()),
-            ));
-        } else if let Some(info) = leader.as_mut() {
-            // If stale, queue up some work in another thread to update.
-            // Right now, we'll return the stale data.
-            if info.expired() && info.can_update() {
-                info.updating = true;
-                let leader_ref = Arc::clone(&self.leader);
-                std::thread::spawn(move || {
-                    let mut leader = leader_ref.lock();
-                    if let Some(leader) = leader.as_mut() {
-                        leader.update();
-                    }
-                });
-            }
-        } else {
-            // `None` pty (already taken by `kill()`) has no fd to offer;
-            // `CachedLeaderInfo::new(None)` degrades to fd `-1`, which
-            // `can_update()` already treats as "nothing to query".
-            leader.replace(CachedLeaderInfo::new(
-                self.pty.lock().as_ref().and_then(|pty| pty.as_raw_fd()),
-            ));
-        }
-
-        (*leader).clone().unwrap()
-    }
-
     fn divine_current_working_dir(&self, policy: CachePolicy) -> Option<Url> {
-        #[cfg(unix)]
-        {
-            let leader = self.get_leader(policy);
-            if let Some(path) = &leader.current_working_dir {
-                return Url::from_directory_path(path).ok();
-            }
-            return None;
-        }
-
-        #[cfg(windows)]
         if let Some(fg) = self.divine_foreground_process(policy) {
             return Url::from_directory_path(fg.cwd.clone()).ok();
         }
 
-        #[allow(unreachable_code)]
         None
     }
 
@@ -1722,8 +1543,8 @@ impl LocalPane {
     /// input/rendering on every cache expiry (every `PROC_INFO_CACHE_TTL`
     /// = 300ms).
     ///
-    /// This now mirrors `get_leader`'s already-correct pattern: when the
-    /// caller allows stale data and a cached value already exists (even
+    /// This now follows a stale-return-plus-background-refresh pattern:
+    /// when the caller allows stale data and a cached value already exists (even
     /// if expired), return it immediately and kick off a background
     /// fetch to refresh the cache for next time, guarded by
     /// `CachedProcInfo::updating` against spawning a duplicate concurrent
@@ -1817,8 +1638,7 @@ impl LocalPane {
                 Some(info) if info.expired() && info.can_update() => {
                     // Stale, but there's already something to return, and
                     // policy allows it: hand back the stale data now and
-                    // queue up a background refresh for next time,
-                    // exactly like `get_leader` does above.
+                    // queue up a background refresh for next time.
                     info.updating = true;
                     let proc_list_ref = Arc::clone(&self.proc_list);
                     smol::unblock(move || {

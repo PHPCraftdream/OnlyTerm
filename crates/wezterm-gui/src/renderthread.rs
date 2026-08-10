@@ -215,15 +215,6 @@ impl RenderThreadHandle {
         }
     }
 
-    #[cfg(not(windows))]
-    pub fn spawn(
-        _seed: RenderThreadSeed,
-        _tx: std::sync::mpsc::Sender<RenderMsg>,
-        _window_id: impl std::fmt::Display,
-    ) -> Option<Self> {
-        None
-    }
-
     /// Send a message to the render thread. Returns an error if the thread
     /// has already exited (its `Receiver` was dropped); callers generally
     /// don't need to do anything about that other than not panic.

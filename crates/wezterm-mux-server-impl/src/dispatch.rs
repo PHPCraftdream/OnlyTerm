@@ -7,9 +7,6 @@ use smol::Async;
 use std::sync::{Arc, Mutex};
 use wezterm_uds::UnixStream;
 
-#[cfg(unix)]
-pub trait AsRawDesc: std::os::unix::io::AsRawFd + std::os::unix::fd::AsFd {}
-#[cfg(windows)]
 pub trait AsRawDesc: std::os::windows::io::AsRawSocket + std::os::windows::io::AsSocket {}
 
 impl AsRawDesc for UnixStream {}

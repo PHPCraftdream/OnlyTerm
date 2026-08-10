@@ -281,25 +281,8 @@ fn delegate_to_gui(saver: UmaskSaver) -> anyhow::Result<()> {
 
     cmd.args(std::env::args_os().skip(1));
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        // Clean up random fds, except when we're running in an AppImage.
-        // AppImage relies on child processes keeping alive an fd that
-        // references the mount point and if we close it as part of execing
-        // the gui binary, the appimage gets unmounted before we can exec.
-        if std::env::var_os("APPIMAGE").is_none() {
-            portable_pty::unix::close_random_fds();
-        }
-        let res = cmd.exec();
-        return Err(anyhow::anyhow!("failed to exec {cmd:?}: {res:?}"));
-    }
-
-    #[cfg(windows)]
-    {
-        let mut child = cmd.spawn()?;
-        let status = child.wait()?;
-        let code = status.code().unwrap_or(1);
-        std::process::exit(code);
-    }
+    let mut child = cmd.spawn()?;
+    let status = child.wait()?;
+    let code = status.code().unwrap_or(1);
+    std::process::exit(code);
 }

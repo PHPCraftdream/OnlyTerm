@@ -112,70 +112,6 @@ pub fn fixup_appimage() {
     }
 }
 
-/// If LANG isn't set in the environment, make an attempt at setting
-/// it to a UTF-8 version of the current locale known to NSLocale.
-#[cfg(target_os = "macos")]
-pub fn set_lang_from_locale() {
-    use objc2_foundation::{NSLocale, NSString};
-
-    fn lang_is_set() -> bool {
-        match std::env::var_os("LANG") {
-            None => false,
-            Some(lang) => !lang.is_empty(),
-        }
-    }
-
-    if !lang_is_set() {
-        // SAFETY: `nsstring_to_str` borrows the internal buffer of an
-        // NSString for the duration of the reference. The output lifetime is
-        // tied to the input `&'a NSString` below (rather than left unbound),
-        // so the borrow checker enforces that the NSString outlives the
-        // returned &str; the string must also contain valid UTF-8 (which
-        // NSString.UTF8String guarantees by contract).
-        unsafe fn nsstring_to_str<'a>(ns: &'a NSString) -> &'a str {
-            let data = ns.UTF8String() as *const u8;
-            let len = ns.len();
-            // SAFETY: `data` is a valid pointer to `len` bytes (the UTF-8
-            // representation of the NSString), valid for the lifetime of `ns`.
-            let bytes = std::slice::from_raw_parts(data, len);
-            // SAFETY: NSString.UTF8String returns valid UTF-8 by contract.
-            std::str::from_utf8_unchecked(bytes)
-        }
-
-        // SAFETY: The objc2_foundation calls below are standard Objective-C
-        // runtime calls. NSLocale returns retained objects that are valid for
-        // the scope. `setlocale` is a standard libc function; `old` is a
-        // valid pointer returned by the first setlocale call.
-        unsafe {
-            let locale = NSLocale::autoupdatingCurrentLocale();
-            let lang_code_obj = locale.languageCode();
-            let lang_code = nsstring_to_str(&lang_code_obj);
-
-            #[allow(deprecated)]
-            let candidate = if let Some(country_code_obj) = locale.countryCode() {
-                let country_code = nsstring_to_str(&country_code_obj);
-                format!("{}_{}.UTF-8", lang_code, country_code)
-            } else {
-                format!("{}.UTF-8", lang_code)
-            };
-
-            let candidate_cstr =
-                std::ffi::CString::new(candidate.as_bytes()).expect("make cstr from str");
-
-            // If this looks like a working locale then export it to
-            // the environment so that our child processes inherit it.
-            let old = libc::setlocale(libc::LC_CTYPE, std::ptr::null());
-            if !libc::setlocale(libc::LC_CTYPE, candidate_cstr.as_ptr()).is_null() {
-                std::env::set_var("LANG", &candidate);
-            } else {
-                log::debug!("setlocale({}) failed, fall back to en_US.UTF-8", candidate);
-                std::env::set_var("LANG", "en_US.UTF-8");
-            }
-            libc::setlocale(libc::LC_CTYPE, old);
-        }
-    }
-}
-
 fn register_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -207,9 +143,6 @@ pub fn bootstrap() {
     register_panic_hook();
 
     set_wezterm_executable();
-
-    #[cfg(target_os = "macos")]
-    set_lang_from_locale();
 
     fixup_appimage();
     fixup_snap();

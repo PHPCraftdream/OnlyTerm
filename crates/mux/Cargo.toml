@@ -31,11 +31,9 @@ filedescriptor.workspace = true
 finl_unicode.workspace = true
 hostname.workspace = true
 lazy_static.workspace = true
-libc.workspace = true
 log.workspace = true
 metrics.workspace = true
 names.workspace = true
-nix = {workspace=true, features=["term"]}
 parking_lot.workspace = true
 percent-encoding.workspace = true
 portable-pty = { workspace=true, features = ["serde_support"]}

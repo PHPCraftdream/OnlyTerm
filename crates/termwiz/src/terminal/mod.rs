@@ -14,16 +14,10 @@ use serde::Deserialize;
 #[cfg(feature = "use_serde")]
 use serde::Serialize;
 
-#[cfg(unix)]
-pub mod unix;
-#[cfg(windows)]
 pub mod windows;
 
 pub mod buffered;
 
-#[cfg(unix)]
-pub use self::unix::{UnixTerminal, UnixTerminalWaker as TerminalWaker};
-#[cfg(windows)]
 pub use self::windows::{WindowsTerminal, WindowsTerminalWaker as TerminalWaker};
 
 /// Represents the size of the terminal screen.
@@ -112,9 +106,6 @@ pub trait Terminal {
 /// Ideally you wouldn't reference `SystemTerminal` in consuming
 /// code.  This type is exposed for convenience if you are doing
 /// something unusual and want easier access to the constructors.
-#[cfg(unix)]
-pub type SystemTerminal = UnixTerminal;
-#[cfg(windows)]
 pub type SystemTerminal = WindowsTerminal;
 
 /// Construct a new instance of Terminal.

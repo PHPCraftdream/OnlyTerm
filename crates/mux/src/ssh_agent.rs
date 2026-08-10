@@ -2,9 +2,6 @@ use crate::{ClientId, Mux};
 use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::RwLock;
-#[cfg(unix)]
-use std::os::unix::fs::symlink as symlink_file;
-#[cfg(windows)]
 use std::os::windows::fs::symlink_file;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};

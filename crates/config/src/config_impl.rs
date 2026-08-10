@@ -59,65 +59,10 @@ impl Config {
         Self::load_with_overrides(&wezterm_dynamic::Value::default())
     }
 
+    /// `ulimit_nofile`/`ulimit_nproc` configure Unix `RLIMIT_NOFILE`/
+    /// `RLIMIT_NPROC`, which have no Windows equivalent, so there is
+    /// nothing to apply here.
     pub fn update_ulimit(&self) -> anyhow::Result<()> {
-        #[cfg(unix)]
-        {
-            use nix::sys::resource::{getrlimit, rlim_t, setrlimit, Resource};
-            use std::convert::TryInto;
-
-            let (no_file_soft, no_file_hard) = getrlimit(Resource::RLIMIT_NOFILE)?;
-
-            let ulimit_nofile: rlim_t = self.ulimit_nofile.try_into().with_context(|| {
-                format!(
-                    "ulimit_nofile value {} is out of range for this system",
-                    self.ulimit_nofile
-                )
-            })?;
-
-            if no_file_soft < ulimit_nofile {
-                setrlimit(
-                    Resource::RLIMIT_NOFILE,
-                    ulimit_nofile.min(no_file_hard),
-                    no_file_hard,
-                )
-                .with_context(|| {
-                    format!(
-                        "raise RLIMIT_NOFILE from {no_file_soft} to ulimit_nofile {}",
-                        ulimit_nofile
-                    )
-                })?;
-            }
-        }
-
-        #[cfg(all(unix, not(target_os = "macos")))]
-        {
-            use nix::sys::resource::{getrlimit, rlim_t, setrlimit, Resource};
-            use std::convert::TryInto;
-
-            let (nproc_soft, nproc_hard) = getrlimit(Resource::RLIMIT_NPROC)?;
-
-            let ulimit_nproc: rlim_t = self.ulimit_nproc.try_into().with_context(|| {
-                format!(
-                    "ulimit_nproc value {} is out of range for this system",
-                    self.ulimit_nproc
-                )
-            })?;
-
-            if nproc_soft < ulimit_nproc {
-                setrlimit(
-                    Resource::RLIMIT_NPROC,
-                    ulimit_nproc.min(nproc_hard),
-                    nproc_hard,
-                )
-                .with_context(|| {
-                    format!(
-                        "raise RLIMIT_NPROC from {nproc_soft} to ulimit_nproc {}",
-                        ulimit_nproc
-                    )
-                })?;
-            }
-        }
-
         Ok(())
     }
 
@@ -969,8 +914,6 @@ impl Config {
             cmd.env("WSLENV", wsl_env);
         }
 
-        #[cfg(unix)]
-        cmd.umask(umask::UmaskSaver::saved_umask());
         cmd.env("TERM", &self.term);
         cmd.env("COLORTERM", "truecolor");
         // TERM_PROGRAM and TERM_PROGRAM_VERSION are an emerging

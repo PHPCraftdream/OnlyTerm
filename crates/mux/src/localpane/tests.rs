@@ -114,18 +114,6 @@ impl MasterPty for FakeMasterPty {
     fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send>> {
         Ok(Box::new(Vec::new()))
     }
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<libc::pid_t> {
-        None
-    }
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
-        None
-    }
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<std::path::PathBuf> {
-        None
-    }
 }
 
 /// A `Write` double that records whether it has been dropped, so
@@ -901,30 +889,16 @@ fn pty_dependent_calls_dont_panic_after_kill() {
     // get_metadata(): must not panic digging for termios on a gone pty.
     let _ = pane.get_metadata();
 
-    #[cfg(unix)]
-    {
-        assert_eq!(pane.tty_name(), None);
-        assert_eq!(
-            pane.get_foreground_process_info(CachePolicy::FetchImmediate),
-            None
-        );
+    assert_eq!(pane.tty_name(), None);
+    assert!(pane
+        .get_foreground_process_info(CachePolicy::FetchImmediate)
+        .is_none());
 
-        // can_close_without_prompting()'s pty-derived "no leader"
-        // check only exists on unix (see the `#[cfg(unix)]` block in
-        // its `else` branch); a gone pty has no leader, so this
-        // should report "safe to close without prompting".
-        assert!(pane.can_close_without_prompting(CloseReason::Tab));
-    }
-
-    // On non-unix platforms `can_close_without_prompting` has no
-    // pty-derived fallback at all (it falls through to `false`
-    // regardless of pty state once `divine_process_list` finds no
-    // pid), so the only thing this call must do post-kill is *not
-    // panic* digging through a gone pty.
-    #[cfg(not(unix))]
-    {
-        let _ = pane.can_close_without_prompting(CloseReason::Tab);
-    }
+    // `can_close_without_prompting` has no pty-derived fallback (it
+    // falls through to `false` regardless of pty state once
+    // `divine_process_list` finds no pid), so the only thing this call
+    // must do post-kill is *not panic* digging through a gone pty.
+    let _ = pane.can_close_without_prompting(CloseReason::Tab);
 }
 
 /// Task #247: once a `CachedProcInfo` entry already exists, a

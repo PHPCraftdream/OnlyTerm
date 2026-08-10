@@ -170,21 +170,6 @@ impl LocalProcessInfo {
 
         names
     }
-
-    #[cfg(not(windows))]
-    pub fn with_root_pid(_pid: u32) -> Option<Self> {
-        None
-    }
-
-    #[cfg(not(windows))]
-    pub fn current_working_dir(_pid: u32) -> Option<PathBuf> {
-        None
-    }
-
-    #[cfg(not(windows))]
-    pub fn executable_path(_pid: u32) -> Option<PathBuf> {
-        None
-    }
 }
 
 /// Iteratively assemble a `LocalProcessInfo` tree rooted at `root_pid` from

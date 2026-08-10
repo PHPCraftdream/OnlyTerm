@@ -287,13 +287,7 @@ pub enum FontLocatorSelection {
 
 impl Default for FontLocatorSelection {
     fn default() -> Self {
-        if cfg!(windows) {
-            FontLocatorSelection::Gdi
-        } else if cfg!(target_os = "macos") {
-            FontLocatorSelection::CoreText
-        } else {
-            FontLocatorSelection::FontConfig
-        }
+        FontLocatorSelection::Gdi
     }
 }
 

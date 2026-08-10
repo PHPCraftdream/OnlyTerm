@@ -104,18 +104,6 @@ impl MasterPty for FakeMasterPty {
     fn take_writer(&self) -> anyhow::Result<Box<dyn Write + Send>> {
         Ok(Box::new(Vec::new()))
     }
-    #[cfg(unix)]
-    fn process_group_leader(&self) -> Option<libc::pid_t> {
-        None
-    }
-    #[cfg(unix)]
-    fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> {
-        None
-    }
-    #[cfg(unix)]
-    fn tty_name(&self) -> Option<std::path::PathBuf> {
-        None
-    }
 }
 
 /// A `Write` double whose `write` call blocks until the test explicitly

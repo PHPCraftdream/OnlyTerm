@@ -24,7 +24,6 @@ enum-display-derive.workspace = true
 hostname.workspace = true
 ktav.workspace = true
 lazy_static.workspace = true
-libc.workspace = true
 log.workspace = true
 notify.workspace = true
 ordered-float = { workspace=true, features = ["serde"] }
@@ -42,9 +41,6 @@ wezterm-config-derive.workspace = true
 wezterm-dynamic.workspace = true
 wezterm-input-types.workspace = true
 wezterm-term = { workspace = true, features=["use_serde"] }
-
-[target."cfg(unix)".dependencies]
-nix = {workspace=true, features=["resource"]}
 
 [target."cfg(windows)".dependencies]
 winapi = { workspace=true, features = ["winuser"]}
