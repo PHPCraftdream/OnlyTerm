@@ -896,6 +896,36 @@ As features stabilize some brief notes about them will accumulate here.
   (falling back to the old date-hash form only when no tag is reachable at
   all, e.g. a shallow clone with tags not fetched), so a tagged build now
   reports a version like `v0.0.2-alpha` instead of a bare timestamp.
+* Rendering could silently drop content -- typically visible as only the
+  top half of a pane rendering, with wrong colors on what did render, once
+  a window's content grew busy enough. Root cause: each content render
+  layer's three quad sub-layers had hardcoded, never-growing capacities
+  (32/1024/32 quad instances) left over from the instanced-rendering
+  rewrite; the old grow-and-retry signal that used to catch an overflowing
+  layer had been silently broken by that same rewrite, so anything past
+  the fixed cap was just dropped, top-to-bottom, every frame. The
+  now-vestigial capacity clamp is removed; the GPU-side instance buffer
+  already grows to whatever is actually submitted.
+* A busy pane whose per-frame row-shaping work exceeded
+  `tab_frame_build_budget_ms` could show blank rows instead of its last
+  known content, and the row(s) it deferred could get stuck rebuilding the
+  same row every sweep instead of progressing through the rest of the
+  pane. Deferred rows now keep showing their last successfully built quads
+  (falling only mildly stale, never blank) while the budget sweep makes
+  guaranteed forward progress across the pane frame over frame.
+* The renderer now skips re-submitting a frame to the GPU entirely when
+  its content is pixel-identical to the previous frame (compared via a
+  fixed-seed content hash over the frame's quad instances, dimensions,
+  and color/projection state), avoiding wasted GPU work on an idle window.
+* Two per-frame CPU costs that showed up under profiling as measurable
+  main-thread time even on otherwise idle screens are now cached instead
+  of recomputed every frame: `Line::last_cell_was_wrapped()` (used to find
+  soft-wrap/logical-line boundaries, e.g. for hyperlink detection) is
+  memoized on the line itself, keyed on its existing change-sequence
+  number; and each line's glyph-shaping cache key (previously cached via a
+  mechanism that could never actually hit once a line was cloned for
+  rendering, which happens every frame) is now cached by TermWindow,
+  keyed by `(pane, stable row)`, so it survives the clone.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
