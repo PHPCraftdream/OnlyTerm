@@ -688,6 +688,12 @@ impl Line {
         // <https://github.com/wezterm/wezterm/issues/2355>
         let idx = idx.min(my_cells.len());
         let cells = my_cells.split_off(idx);
+        // `self` keeps only the first `idx` cells, which changes its own
+        // last cell -- but unlike other mutators, this method never called
+        // `update_last_change_seqno` on `self` at all, so its wrap cache
+        // (and seqno) could go stale silently. Invalidate directly.
+        self.cached_last_cell_wrapped_seqno
+            .store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
         Self {
             bits: self.bits,
             cells: CellStorage::V(VecStorage::new(cells)),
@@ -1257,6 +1263,15 @@ impl Line {
         }
         self.update_last_change_seqno(seqno);
         self.invalidate_zones();
+        // `update_last_change_seqno` takes `max(self.seqno, seqno)`, and
+        // callers that join already-existing lines (e.g.
+        // `apply_hyperlink_rules`) pass `self.seqno.max(other.seqno)`,
+        // which is a no-op when `self` already has the larger seqno --
+        // even though the append always changes the last cell. Relying on
+        // the seqno alone would leave a stale cached value in that case,
+        // so invalidate directly instead.
+        self.cached_last_cell_wrapped_seqno
+            .store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// mutable access the cell data, but the caller must take care
