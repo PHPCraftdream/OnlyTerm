@@ -36,6 +36,22 @@ impl crate::TermWindow {
             }
         }
 
+        // Task #472: `ClearShapeCache` (unlike `OutOfTextureSpace`, which
+        // self-limits via the `AllowImage` ladder below -- 4 transitions,
+        // Yes -> Scale(2) -> Scale(4) -> Scale(8) -> No, before it gives up)
+        // has no built-in bound on how many times it can be requested in a
+        // row. Normally it's raised once per pass (font fallback resolution
+        // adds a handle, shape caches get cleared, the next pass shapes
+        // correctly), but nothing stops some future bug in fallback
+        // resolution from requesting it on every single pass forever, which
+        // would spin this loop indefinitely inside `WM_PAINT` -- each retry
+        // gets its own fresh 40ms budget from `paint_tab_content`, so this
+        // isn't just slow, it's unbounded. Cap it at the same depth as the
+        // `OutOfTextureSpace` ladder tolerates so the two arms give up after
+        // a comparable amount of retrying.
+        const MAX_CLEAR_SHAPE_CACHE_RETRIES: u32 = 4;
+        let mut clear_shape_cache_retries = 0;
+
         'pass: for pass in 0.. {
             match self.paint_pass() {
                 // A successful pass is always final now. Before the per-layer
@@ -92,6 +108,22 @@ impl crate::TermWindow {
                             );
                         }
                     } else if err.root_cause().downcast_ref::<ClearShapeCache>().is_some() {
+                        clear_shape_cache_retries += 1;
+                        if clear_shape_cache_retries > MAX_CLEAR_SHAPE_CACHE_RETRIES {
+                            // Task #472: give up rather than spin forever if
+                            // something keeps requesting a shape cache clear
+                            // on every pass. This is preventive hardening --
+                            // there's no known trigger for this today -- but
+                            // if there ever is a bug that causes this, we'd
+                            // rather drop this one frame than stall
+                            // `WM_PAINT` indefinitely.
+                            log::error!(
+                                "paint_pass requested ClearShapeCache {} times in a \
+                                 row; giving up on this frame",
+                                clear_shape_cache_retries
+                            );
+                            break 'pass;
+                        }
                         self.invalidate_fancy_tab_bar();
                         self.invalidate_modal();
                         self.shape_generation += 1;
