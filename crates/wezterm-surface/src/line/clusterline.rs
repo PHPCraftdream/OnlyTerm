@@ -112,7 +112,14 @@ impl ClusteredLine {
 
         for cell in iter {
             len += cell.width();
-            last_cell_width = NonZeroU8::new(1);
+            // Track the *actual* width of whichever cell turns out to be
+            // last, not a hardcoded 1: `set_last_cell_was_wrapped` uses
+            // this to know how many trailing columns the final cluster
+            // needs to be split into, and a wrong (too-narrow) width there
+            // corrupts the cluster's own column bookkeeping for a line
+            // ending in a double-width (e.g. CJK) grapheme, not just the
+            // wrapped attribute.
+            last_cell_width = NonZeroU8::new(cell.width().max(1) as u8);
 
             if cell.width() > 1 {
                 any_double = true;

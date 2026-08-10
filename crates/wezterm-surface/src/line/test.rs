@@ -221,7 +221,7 @@ C(
         ],
         len: 23,
         last_cell_width: Some(
-            1,
+            2,
         ),
     },
 )
@@ -321,6 +321,43 @@ Line {
     ),
 }
 "#
+    );
+}
+
+#[test]
+fn cluster_wrap_last_wide_trailing_grapheme() {
+    // Regression test for a 6th @oh review pass finding:
+    // `ClusteredLine::from_cell_vec` (used by `Line::compress_for_scrollback`)
+    // hardcoded `last_cell_width` to 1 regardless of the real last cell's
+    // width, so `set_last_cell_was_wrapped` on a compressed line ending in a
+    // double-width grapheme (e.g. CJK) split the final cluster at the wrong
+    // column count -- corrupting the cluster's own width bookkeeping, not
+    // just misplacing the wrapped attribute the way the V-storage bug did.
+    let mut line: Line = "a你".into();
+    line.compress_for_scrollback();
+    line.set_last_cell_was_wrapped(true, 1);
+    // Force a real recompute rather than reading the setter's own
+    // cache-primed value, same reasoning as the V-storage tests above.
+    line.update_last_change_seqno(2);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "wrap flag must be observable after set_last_cell_was_wrapped on a \
+         compressed (C-storage) line ending in a wide trailing grapheme"
+    );
+    assert_eq!(
+        line.len(),
+        3,
+        "splitting the final cluster to tag the wrap attribute must not \
+         change the line's total column count"
+    );
+    let mut roundtrip = line.clone();
+    roundtrip.coerce_vec_storage();
+    assert_eq!(
+        roundtrip.visible_cells().map(|c| c.width()).sum::<usize>(),
+        3,
+        "the wide grapheme must still occupy 2 columns after round-tripping \
+         back through vec storage, not have been split into two 1-column cells"
     );
 }
 
