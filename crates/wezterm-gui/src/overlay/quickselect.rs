@@ -302,6 +302,138 @@ struct QuickSelectRenderable {
     render_seqno: SequenceNo,
 }
 
+/// Plain-data view of a search-bar render for a single line, used by
+/// [`decorate_quickselect_line`]. Kept as owned/borrowed data (no `&self`,
+/// no `Window`) so the decoration logic can be exercised directly against a
+/// real `Line` from a unit test.
+struct SearchBarInfo<'a> {
+    cols: usize,
+    selection: &'a str,
+    label: &'a str,
+}
+
+/// The matches (if any) that fall on the line being decorated, plus the
+/// selection-prefix filter used by [`decorate_quickselect_line`] to decide
+/// which labels are currently visible.
+struct QuickSelectMatchHighlights<'a> {
+    matches: Option<&'a [MatchResult]>,
+    // `with_lines_mut` filters out labels that don't match the current
+    // selection prefix (so unmatched labels visually disappear as the user
+    // types); `get_lines` historically does not apply this filter. Preserve
+    // that pre-existing asymmetry via this flag rather than changing
+    // behavior as part of this refactor.
+    filter_by_selection: Option<&'a str>,
+}
+
+/// Decorates a single cloned pane `Line` for one QuickSelect render pass:
+/// either replacing it with the search UI bar, or highlighting any matches/
+/// labels that fall on this row. This is the exact per-line logic used by
+/// both `Pane::with_lines_mut` and `Pane::get_lines` for `QuickSelectOverlay`
+/// -- factored out so it can be unit tested against a real `Line` without a
+/// live `window::Window`.
+///
+/// `render_seqno` must be used for every mutating call so that downstream
+/// seqno-keyed caches (e.g. the GUI's shape_hash_cache) see each render pass
+/// as a distinct version of the line; see `QuickSelectRenderable::render_seqno`.
+fn decorate_quickselect_line(
+    line: &mut Line,
+    render_seqno: SequenceNo,
+    disable_attr: bool,
+    is_search_row: bool,
+    search_bar: &SearchBarInfo,
+    highlights: QuickSelectMatchHighlights,
+    colors: &config::Palette,
+) {
+    if disable_attr {
+        line.cells_mut_for_attr_changes_only()
+            .iter_mut()
+            .for_each(|cell| cell.attrs_mut().clear());
+        line.update_last_change_seqno(render_seqno);
+        line.clear_appdata();
+    }
+
+    if is_search_row {
+        // Replace with search UI
+        let rev = CellAttributes::default().set_reverse(true).clone();
+        line.fill_range(
+            0..search_bar.cols,
+            &Cell::new(' ', rev.clone()),
+            render_seqno,
+        );
+        line.overlay_text_with_attribute(
+            0,
+            &format!(
+                "Select: {}  (type highlighted prefix to {}, uppercase pastes, ESC to cancel)",
+                search_bar.selection,
+                if search_bar.label.is_empty() {
+                    "copy"
+                } else {
+                    search_bar.label
+                },
+            ),
+            rev,
+            render_seqno,
+        );
+        line.clear_appdata();
+        return;
+    }
+
+    let Some(matches) = highlights.matches else {
+        return;
+    };
+
+    for m in matches {
+        if let Some(lowered_prefix) = highlights.filter_by_selection {
+            if !label_matches_selection(&m.label, lowered_prefix) {
+                // Skip displaying this label, it doesn't match the current filter.
+                continue;
+            }
+        }
+        // highlight
+        for cell_idx in m.range.clone() {
+            if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(cell_idx) {
+                cell.attrs_mut()
+                    .set_background(
+                        colors
+                            .quick_select_match_bg
+                            .unwrap_or(AnsiColor::Black.into()),
+                    )
+                    .set_foreground(
+                        colors
+                            .quick_select_match_fg
+                            .unwrap_or(AnsiColor::Green.into()),
+                    )
+                    .set_reverse(false)
+                    .set_intensity(Intensity::Bold);
+            }
+        }
+        for (idx, c) in m.label.chars().enumerate() {
+            let mut attr = line
+                .get_cell(idx)
+                .map(|cell| cell.attrs().clone())
+                .unwrap_or_default();
+            attr.set_background(
+                colors
+                    .quick_select_label_bg
+                    .unwrap_or(AnsiColor::Black.into()),
+            )
+            .set_foreground(
+                colors
+                    .quick_select_label_fg
+                    .unwrap_or(AnsiColor::Olive.into()),
+            )
+            .set_reverse(false)
+            .set_intensity(Intensity::Bold);
+            line.set_cell(m.range.start + idx, Cell::new(c, attr), render_seqno);
+        }
+    }
+    // cells_mut_for_attr_changes_only() above mutates cells directly
+    // without bumping the line's seqno; do it explicitly so downstream
+    // seqno-keyed caches see this pass as a new version of the line.
+    line.update_last_change_seqno(render_seqno);
+    line.clear_appdata();
+}
+
 impl QuickSelectOverlay {
     pub fn with_pane(
         term_window: &TermWindow,
@@ -645,96 +777,29 @@ impl Pane for QuickSelectOverlay {
                 let lowered_prefix = self.renderer.selection.to_lowercase();
                 for (idx, line) in lines.iter_mut().enumerate() {
                     let mut line: Line = line.clone();
-                    if disable_attr {
-                        line.cells_mut_for_attr_changes_only()
-                            .iter_mut()
-                            .for_each(|cell| cell.attrs_mut().clear());
-                        line.update_last_change_seqno(render_seqno);
-                        line.clear_appdata();
-                    }
                     let stable_idx = idx as StableRowIndex + first_row;
                     self.renderer.dirty_results.remove(stable_idx);
-                    if stable_idx == self.search_row {
-                        // Replace with search UI
-                        let rev = CellAttributes::default().set_reverse(true).clone();
-                        line.fill_range(
-                            0..self.dims.cols,
-                            &Cell::new(' ', rev.clone()),
-                            render_seqno,
-                        );
-                        line.overlay_text_with_attribute(
-                            0,
-                            &format!(
-                                "Select: {}  (type highlighted prefix to {}, uppercase pastes, ESC to cancel)",
-                                self.renderer.selection,
-                                if self.renderer.args.label.is_empty() {
-                                    "copy"
-                                } else {
-                                    &self.renderer.args.label
-                                },
-                            ),
-                            rev,
-                            render_seqno,
-                        );
+                    let is_search_row = stable_idx == self.search_row;
+                    if is_search_row {
                         self.renderer.last_bar_pos = Some(self.search_row);
-                        line.clear_appdata();
-                    } else if let Some(matches) = self.renderer.by_line.get(&stable_idx) {
-                        for m in matches {
-                            if !label_matches_selection(&m.label, &lowered_prefix) {
-                                // Skip displaying this label, it doesn't match the current filter.
-                                continue;
-                            }
-                            // highlight
-                            for cell_idx in m.range.clone() {
-                                if let Some(cell) =
-                                    line.cells_mut_for_attr_changes_only().get_mut(cell_idx)
-                                {
-                                    cell.attrs_mut()
-                                        .set_background(
-                                            colors
-                                                .quick_select_match_bg
-                                                .unwrap_or(AnsiColor::Black.into()),
-                                        )
-                                        .set_foreground(
-                                            colors
-                                                .quick_select_match_fg
-                                                .unwrap_or(AnsiColor::Green.into()),
-                                        )
-                                        .set_reverse(false)
-                                        .set_intensity(Intensity::Bold);
-                                }
-                            }
-                            for (idx, c) in m.label.chars().enumerate() {
-                                let mut attr = line
-                                    .get_cell(idx)
-                                    .map(|cell| cell.attrs().clone())
-                                    .unwrap_or_default();
-                                attr.set_background(
-                                    colors
-                                        .quick_select_label_bg
-                                        .unwrap_or(AnsiColor::Black.into()),
-                                )
-                                .set_foreground(
-                                    colors
-                                        .quick_select_label_fg
-                                        .unwrap_or(AnsiColor::Olive.into()),
-                                )
-                                .set_reverse(false)
-                                .set_intensity(Intensity::Bold);
-                                line.set_cell(
-                                    m.range.start + idx,
-                                    Cell::new(c, attr),
-                                    render_seqno,
-                                );
-                            }
-                        }
-                        // cells_mut_for_attr_changes_only() above mutates
-                        // cells directly without bumping the line's seqno;
-                        // do it explicitly so downstream seqno-keyed caches
-                        // see this pass as a new version of the line.
-                        line.update_last_change_seqno(render_seqno);
-                        line.clear_appdata();
                     }
+                    let search_bar = SearchBarInfo {
+                        cols: self.dims.cols,
+                        selection: &self.renderer.selection,
+                        label: &self.renderer.args.label,
+                    };
+                    decorate_quickselect_line(
+                        &mut line,
+                        render_seqno,
+                        disable_attr,
+                        is_search_row,
+                        &search_bar,
+                        QuickSelectMatchHighlights {
+                            matches: self.renderer.by_line.get(&stable_idx).map(Vec::as_slice),
+                            filter_by_selection: Some(&lowered_prefix),
+                        },
+                        &colors,
+                    );
                     overlay_lines.push(line);
                 }
 
@@ -763,80 +828,31 @@ impl Pane for QuickSelectOverlay {
         // For rows with search results, we want to highlight the matching ranges
         let search_row = renderer.compute_search_row();
         for (idx, line) in lines.iter_mut().enumerate() {
-            if disable_attr {
-                line.cells_mut_for_attr_changes_only()
-                    .iter_mut()
-                    .for_each(|cell| cell.attrs_mut().clear());
-                line.update_last_change_seqno(render_seqno);
-            }
             let stable_idx = idx as StableRowIndex + top;
             renderer.dirty_results.remove(stable_idx);
-            if stable_idx == search_row {
-                // Replace with search UI
-                let rev = CellAttributes::default().set_reverse(true).clone();
-                line.fill_range(0..dims.cols, &Cell::new(' ', rev.clone()), render_seqno);
-                line.overlay_text_with_attribute(
-                    0,
-                    &format!(
-                        "Select: {}  (type highlighted prefix to {}, uppercase pastes, ESC to cancel)",
-                        renderer.selection,
-                        if renderer.args.label.is_empty() {
-                            "copy"
-                        } else {
-                            &renderer.args.label
-                        },
-                    ),
-                    rev,
-                    render_seqno,
-                );
+            let is_search_row = stable_idx == search_row;
+            if is_search_row {
                 renderer.last_bar_pos = Some(search_row);
-            } else if let Some(matches) = renderer.by_line.get(&stable_idx) {
-                for m in matches {
-                    // highlight
-                    for cell_idx in m.range.clone() {
-                        if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(cell_idx)
-                        {
-                            cell.attrs_mut()
-                                .set_background(
-                                    colors
-                                        .quick_select_match_bg
-                                        .unwrap_or(AnsiColor::Black.into()),
-                                )
-                                .set_foreground(
-                                    colors
-                                        .quick_select_match_fg
-                                        .unwrap_or(AnsiColor::Green.into()),
-                                )
-                                .set_reverse(false)
-                                .set_intensity(Intensity::Bold);
-                        }
-                    }
-                    for (idx, c) in m.label.chars().enumerate() {
-                        let mut attr = line
-                            .get_cell(idx)
-                            .map(|cell| cell.attrs().clone())
-                            .unwrap_or_else(CellAttributes::default);
-                        attr.set_background(
-                            colors
-                                .quick_select_label_bg
-                                .unwrap_or(AnsiColor::Black.into()),
-                        )
-                        .set_foreground(
-                            colors
-                                .quick_select_label_fg
-                                .unwrap_or(AnsiColor::Olive.into()),
-                        )
-                        .set_reverse(false)
-                        .set_intensity(Intensity::Bold);
-                        line.set_cell(m.range.start + idx, Cell::new(c, attr), render_seqno);
-                    }
-                }
-                // cells_mut_for_attr_changes_only() above mutates cells
-                // directly without bumping the line's seqno; do it
-                // explicitly so downstream seqno-keyed caches see this pass
-                // as a new version of the line.
-                line.update_last_change_seqno(render_seqno);
             }
+            let search_bar = SearchBarInfo {
+                cols: dims.cols,
+                selection: &renderer.selection,
+                label: &renderer.args.label,
+            };
+            decorate_quickselect_line(
+                line,
+                render_seqno,
+                disable_attr,
+                is_search_row,
+                &search_bar,
+                QuickSelectMatchHighlights {
+                    matches: renderer.by_line.get(&stable_idx).map(Vec::as_slice),
+                    // get_lines historically does not filter by selection
+                    // prefix; see decorate_quickselect_line's doc comment.
+                    filter_by_selection: None,
+                },
+                &colors,
+            );
         }
 
         (top, lines)
@@ -1116,16 +1132,18 @@ impl QuickSelectRenderable {
 /// identical to a stale pre-overlay frame and keep serving the old shape,
 /// so the search bar / highlights / labels could silently fail to appear.
 ///
-/// These tests exercise the fixed pattern directly against `Line` (seed a
-/// counter far above any real seqno, bump once per render pass, use it for
-/// every line-mutating call in that pass, including an explicit
-/// `update_last_change_seqno` call after direct `cells_mut_for_attr_changes_only`
-/// mutation) without needing a live TermWindow/GUI.
+/// These tests call the real `decorate_quickselect_line` function used by
+/// `QuickSelectOverlay::with_lines_mut`/`get_lines` directly against a real
+/// `Line`, without needing a live TermWindow/GUI (that function takes no
+/// `&self`/`Window`, only plain data). This means reverting
+/// `decorate_quickselect_line` (or its callers) back to tagging mutations
+/// with `SEQ_ZERO` -- the bug fixed by facb0646e -- makes these tests fail,
+/// unlike the old tests in this module which reimplemented the seqno-bump
+/// counter locally and so passed regardless of what the production code did.
 #[cfg(test)]
 mod render_seqno_test {
-    use termwiz::cell::{Cell, CellAttributes};
+    use super::*;
     use termwiz::surface::SEQ_ZERO;
-    use wezterm_term::Line;
 
     /// A line that already has server/terminal content at a real seqno,
     /// simulating a static (unchanging) pane that has been rendered once
@@ -1152,41 +1170,60 @@ mod render_seqno_test {
         );
     }
 
+    /// Two successive real render passes (via `decorate_quickselect_line`)
+    /// over the SAME underlying static delegate line (same seqno both
+    /// times, as happens while the user types into the search bar but the
+    /// underlying pane content does not change) must produce distinct
+    /// `current_seqno()` values on the decorated clones, and those values
+    /// must exceed the delegate's real seqno. If `decorate_quickselect_line`
+    /// were reverted to stamp mutations with `SEQ_ZERO` instead of
+    /// `render_seqno`, both assertions below would fail.
     #[test]
-    fn render_pass_counter_produces_distinct_seqno_per_pass() {
-        // Simulate two successive overlay render passes over the SAME
-        // underlying static line (same delegate content/seqno both times,
-        // as would happen while copy-mode search text changes but the
-        // underlying pane content does not).
+    fn quickselect_search_bar_render_bumps_seqno_past_delegate_and_across_passes() {
         let delegate_seqno = 5;
+        let search_bar_1 = SearchBarInfo {
+            cols: 10,
+            selection: "a",
+            label: "",
+        };
+        let search_bar_2 = SearchBarInfo {
+            cols: 10,
+            selection: "ab",
+            label: "",
+        };
 
-        // Mimic CopyRenderable::render_seqno / QuickSelectRenderable::render_seqno:
-        // seeded far above any real seqno, bumped once per render pass.
-        let mut render_seqno: usize = usize::MAX / 2;
-
-        // --- Render pass 1: e.g. search bar shows "Search: a" ---
         let mut line1 = make_line_with_seqno(delegate_seqno);
-        render_seqno += 1;
-        let pass1_seqno = render_seqno;
-        line1.fill_range(
-            0..10,
-            &Cell::new(' ', CellAttributes::default()),
+        let pass1_seqno = usize::MAX / 2 + 1;
+        decorate_quickselect_line(
+            &mut line1,
             pass1_seqno,
+            false,
+            true, // is_search_row
+            &search_bar_1,
+            QuickSelectMatchHighlights {
+                matches: None,
+                filter_by_selection: None,
+            },
+            &config::Palette::default(),
         );
-        line1.overlay_text_with_attribute(0, "Search: a", CellAttributes::default(), pass1_seqno);
 
-        // --- Render pass 2: e.g. search bar shows "Search: ab" (user typed) ---
-        // Delegate content/seqno is unchanged -- this is the crux of the bug.
         let mut line2 = make_line_with_seqno(delegate_seqno);
-        render_seqno += 1;
-        let pass2_seqno = render_seqno;
-        line2.fill_range(
-            0..10,
-            &Cell::new(' ', CellAttributes::default()),
+        let pass2_seqno = usize::MAX / 2 + 2;
+        decorate_quickselect_line(
+            &mut line2,
             pass2_seqno,
+            false,
+            true, // is_search_row
+            &search_bar_2,
+            QuickSelectMatchHighlights {
+                matches: None,
+                filter_by_selection: None,
+            },
+            &config::Palette::default(),
         );
-        line2.overlay_text_with_attribute(0, "Search: ab", CellAttributes::default(), pass2_seqno);
 
+        assert_eq!(line1.current_seqno(), pass1_seqno);
+        assert_eq!(line2.current_seqno(), pass2_seqno);
         assert_ne!(
             line1.current_seqno(),
             line2.current_seqno(),
@@ -1195,39 +1232,60 @@ mod render_seqno_test {
              (pane_id, stable_row, seqno)-keyed cache warmed by pass 1 is \
              correctly invalidated for pass 2's different content"
         );
-        assert!(line2.current_seqno() > line1.current_seqno());
-        // Both passes must also be strictly greater than anything the
-        // delegate's real content could plausibly reach.
         assert!(line1.current_seqno() > delegate_seqno);
         assert!(line2.current_seqno() > delegate_seqno);
+
+        // Content sanity: the search bar text was actually written.
+        let text: String = (0..10)
+            .filter_map(|i| line1.get_cell(i).map(|c| c.str().to_string()))
+            .collect();
+        assert!(text.starts_with("Select"));
     }
 
+    /// The match/label-highlight branch of `decorate_quickselect_line` uses
+    /// `cells_mut_for_attr_changes_only()`, which does NOT itself bump the
+    /// line's seqno tracking -- the function must call
+    /// `update_last_change_seqno` explicitly afterwards. This exercises
+    /// that branch directly.
     #[test]
-    fn direct_cell_mutation_requires_explicit_seqno_bump() {
-        // cells_mut_for_attr_changes_only() returns &mut [Cell] and does
-        // NOT itself touch the line's seqno tracking (see
-        // QuickSelectOverlay's/CopyOverlay's `by_line` highlight branches).
-        // The fix must call update_last_change_seqno explicitly afterwards.
-        let mut line = make_line_with_seqno(5);
-        assert_eq!(line.current_seqno(), 5);
+    fn quickselect_match_highlight_requires_explicit_seqno_bump() {
+        let delegate_seqno = 5;
+        let mut line = make_line_with_seqno(delegate_seqno);
+        assert_eq!(line.current_seqno(), delegate_seqno);
 
-        if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(0) {
-            cell.attrs_mut().set_reverse(true);
-        }
-        assert_eq!(
-            line.current_seqno(),
-            5,
-            "direct cell mutation alone must not silently bump seqno -- \
-             this documents why an explicit update_last_change_seqno call \
-             is required after cells_mut_for_attr_changes_only()"
+        let matches = vec![MatchResult {
+            range: 0..1,
+            label: "a".to_string(),
+        }];
+        let search_bar = SearchBarInfo {
+            cols: 10,
+            selection: "",
+            label: "",
+        };
+        let render_seqno = usize::MAX / 2 + 1;
+        decorate_quickselect_line(
+            &mut line,
+            render_seqno,
+            false,
+            false, // not the search row: takes the match-highlight branch
+            &search_bar,
+            QuickSelectMatchHighlights {
+                matches: Some(&matches),
+                filter_by_selection: None,
+            },
+            &config::Palette::default(),
         );
 
-        let render_seqno = usize::MAX / 2 + 1;
-        line.update_last_change_seqno(render_seqno);
         assert_eq!(
             line.current_seqno(),
             render_seqno,
-            "after the explicit bump, current_seqno() must reflect the new pass"
+            "decorate_quickselect_line's match-highlight branch mutates \
+             cells directly via cells_mut_for_attr_changes_only(), which \
+             does not itself bump the seqno -- an explicit \
+             update_last_change_seqno(render_seqno) call is required, and \
+             tagging with SEQ_ZERO here would be a silent no-op on this \
+             already-nonzero-seqno line"
         );
+        assert!(line.current_seqno() > delegate_seqno);
     }
 }
