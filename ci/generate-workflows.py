@@ -1001,33 +1001,24 @@ rustup default {toolchain}
         )
 
 
+# OnlyTerm only ships Windows builds -- the non-Windows Target entries
+# that used to live here (ubuntu/debian/centos/fedora/macos) generated
+# the workflows and packaging deleted along with assets/macos,
+# assets/flatpak, and the ci/*.sh scripts they depended on. The Target
+# class methods below still branch on eg. self.name == "macos" for
+# historical reasons; those branches are simply unreachable now that
+# only the "windows" target remains.
 TARGETS = [
-    Target(container="ubuntu:22.04", continuous_only=True),
-    Target(container="ubuntu:24.04", continuous_only=True),
-    Target(container="debian:12", continuous_only=True),
-    Target(name="centos9", container="quay.io/centos/centos:stream9"),
-    Target(name="macos", os="macos-latest"),
-    # https://fedoraproject.org/wiki/End_of_life?rd=LifeCycle/EOL
-    Target(container="fedora:41"),
-    # Target(container="alpine:3.15"),
-
     Target(name="windows", os="windows-2025", rust_target="x86_64-pc-windows-msvc"),
 ]
 
 
 def generate_actions(namer, jobber, trigger, is_continuous, is_tag=False):
-    have_gemfury = False
-    have_appimage = False
     for t in TARGETS:
         # Clone the definition, as some Target methods called
         # in the body below have side effects that we don't
         # want to bleed across into different schedule types
         t = deepcopy(t)
-
-        if t.app_image:
-            have_appimage = True
-        if t.container == GEMFURY_TARGET:
-            have_gemfury = True
 
         t.is_tag = is_tag
         # if t.continuous_only and not is_continuous:
@@ -1102,10 +1093,6 @@ jobs:
                 yaml.safe_load(f)
         except ImportError:
             pass
-    if not have_appimage:
-        raise NotImplementedError("no appimage target is present")
-    if not have_gemfury:
-        raise NotImplementedError("no gemfury target is present")
 
 
 def generate_pr_actions():

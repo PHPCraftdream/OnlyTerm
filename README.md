@@ -8,15 +8,15 @@
 [![Issues](https://img.shields.io/github/issues/PHPCraftdream/OnlyTerm)](https://github.com/PHPCraftdream/OnlyTerm/issues)
 [![Stars](https://img.shields.io/github/stars/PHPCraftdream/OnlyTerm?style=social)](https://github.com/PHPCraftdream/OnlyTerm/stargazers)
 
-OnlyTerm is a fork of [wezterm/wezterm](https://github.com/wezterm/wezterm) focused on stability and ease of use on Windows. Other platforms supported by upstream (macOS, Linux/X11, Wayland) are a secondary priority here — support for them will grow as additional maintainers join who are willing to put in the time and have access to modern AI tooling/subscriptions to help accelerate the work.
+OnlyTerm is a fork of [wezterm/wezterm](https://github.com/wezterm/wezterm) focused on stability and ease of use on Windows. This fork is Windows-only: the macOS/Linux (X11, Wayland) backends and packaging that upstream ships have been removed here, since those platforms already have plenty of good terminals — Windows didn't have a great one.
 
-*A GPU-accelerated cross-platform terminal emulator and multiplexer, forked from the project originally written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>.*
+*A GPU-accelerated terminal emulator and multiplexer, forked from the project originally written by <a href="https://github.com/wez">@wez</a> and implemented in <a href="https://www.rust-lang.org/">Rust</a>.*
 
 ## What this is
 
 OnlyTerm is a terminal emulator and multiplexer with GPU-accelerated rendering. Key capabilities inherited from upstream:
 
-* Cross-platform architecture (Windows/macOS/Linux, X11/Wayland) — with maintenance focus on Windows in this fork.
+* Windows-only: the cross-platform windowing backend has been trimmed down to just Windows.
 * Multiplexing of panes/tabs/windows, including across remote unix-domain mux domains.
 * Flexible configuration via rhai: color schemes, fonts, key bindings, custom events.
 * Support for modern terminal protocols (Kitty graphics/keyboard, OSC 52 clipboard, synchronized output, and more).
