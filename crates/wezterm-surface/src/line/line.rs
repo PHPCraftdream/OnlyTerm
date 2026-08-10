@@ -225,9 +225,13 @@ impl Line {
         seqno: SequenceNo,
     ) -> Line {
         let mut line = Self::from_text(s, attrs, seqno, None);
-        line.cells_mut()
-            .last_mut()
-            .map(|cell| cell.attrs_mut().set_wrapped(true));
+        // Use the same setter `last_cell_was_wrapped()` is meant to agree
+        // with, rather than a raw `cells_mut().last_mut()`: for a string
+        // ending in a double-width grapheme, the raw last cell is the
+        // padding cell that the visible-cell reader skips over, so this
+        // would otherwise silently build a line whose wrap flag is
+        // unobservable.
+        line.set_last_cell_was_wrapped(true, seqno);
         line
     }
 

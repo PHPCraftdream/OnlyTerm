@@ -459,10 +459,33 @@ fn last_cell_was_wrapped_wide_trailing_grapheme() {
     // cell index as the reader.
     let mut line = Line::from_text("a你", &CellAttributes::default(), SEQ_ZERO, None);
     line.set_last_cell_was_wrapped(true, 1);
+    // Bust the seqno-keyed wrap cache before reading: the setter primes it
+    // with the value it was *given*, at the same seqno it just wrote, so an
+    // immediate read would pass off the cache alone regardless of which
+    // cell the attribute actually landed on. Forcing a real recompute via
+    // `visible_cells()` is what actually exercises the fix.
+    line.update_last_change_seqno(2);
     assert_eq!(
         line.last_cell_was_wrapped(),
         true,
         "setter and reader must agree on which cell is 'last' for a wide trailing grapheme"
+    );
+}
+
+#[test]
+fn from_text_with_wrapped_last_col_wide_trailing_grapheme() {
+    // Regression test for a 4th @oh review pass finding: the test-only
+    // constructor `from_text_with_wrapped_last_col` had the exact same
+    // last_mut()-vs-visible_cells().last() mismatch as the setter fixed
+    // above, but unmasked by any cache (this constructor never goes
+    // through the seqno-keyed cache path), so it was wrong 100% of the
+    // time for wide-grapheme-terminated input.
+    let line = Line::from_text_with_wrapped_last_col("a你", &CellAttributes::default(), 1);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "from_text_with_wrapped_last_col must produce a line whose wrap flag is \
+         actually observable via last_cell_was_wrapped(), even for wide trailing graphemes"
     );
 }
 
