@@ -470,6 +470,19 @@ fn last_cell_was_wrapped_wide_trailing_grapheme() {
         true,
         "setter and reader must agree on which cell is 'last' for a wide trailing grapheme"
     );
+    // Cache-independent pin of the actual invariant (setter and reader
+    // resolve the same cell), found missing by a 5th @oh review pass: the
+    // assertion above alone depends on `last_cell_was_wrapped()`'s cache
+    // being keyed on `seqno` specifically, so if the cache were ever
+    // rekeyed on something else, a bare seqno bump would stop busting it
+    // and this test would silently degrade into a tautology.
+    assert_eq!(
+        line.visible_cells()
+            .last()
+            .map(|c| (c.cell_index(), c.attrs().wrapped())),
+        Some((1, true)),
+        "the wrap attribute must land on the wide grapheme's lead cell, not its padding cell"
+    );
 }
 
 #[test]
@@ -477,15 +490,26 @@ fn from_text_with_wrapped_last_col_wide_trailing_grapheme() {
     // Regression test for a 4th @oh review pass finding: the test-only
     // constructor `from_text_with_wrapped_last_col` had the exact same
     // last_mut()-vs-visible_cells().last() mismatch as the setter fixed
-    // above, but unmasked by any cache (this constructor never goes
-    // through the seqno-keyed cache path), so it was wrong 100% of the
-    // time for wide-grapheme-terminated input.
-    let line = Line::from_text_with_wrapped_last_col("a你", &CellAttributes::default(), 1);
+    // above. It's fixed by delegating to `set_last_cell_was_wrapped`, which
+    // means this constructor now goes through the very same seqno-keyed
+    // cache as the setter -- so, as a 5th @oh review pass found, an
+    // immediate read here is just as susceptible to passing off a
+    // cache-primed value as the setter test above was; it needs the same
+    // seqno bump to force a real recompute.
+    let mut line = Line::from_text_with_wrapped_last_col("a你", &CellAttributes::default(), 1);
+    line.update_last_change_seqno(2);
     assert_eq!(
         line.last_cell_was_wrapped(),
         true,
         "from_text_with_wrapped_last_col must produce a line whose wrap flag is \
          actually observable via last_cell_was_wrapped(), even for wide trailing graphemes"
+    );
+    assert_eq!(
+        line.visible_cells()
+            .last()
+            .map(|c| (c.cell_index(), c.attrs().wrapped())),
+        Some((1, true)),
+        "the wrap attribute must land on the wide grapheme's lead cell, not its padding cell"
     );
 }
 
