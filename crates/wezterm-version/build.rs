@@ -101,5 +101,5 @@ fn main() {
     let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_string());
 
     println!("cargo:rustc-env=ONLYTERM_TARGET_TRIPLE={}", target);
-    println!("cargo:rustc-env=WEZTERM_CI_TAG={}", ci_tag);
+    println!("cargo:rustc-env=ONLYTERM_CI_TAG={}", ci_tag);
 }

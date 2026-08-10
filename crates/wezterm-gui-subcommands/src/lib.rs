@@ -3,7 +3,7 @@ use config::GuiPosition;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-pub const DEFAULT_WINDOW_CLASS: &str = "org.wezfurlong.wezterm";
+pub const DEFAULT_WINDOW_CLASS: &str = "org.onlyterm.onlyterm";
 
 /// Helper for parsing config overrides
 pub fn name_equals_value(arg: &str) -> Result<(String, String), String> {
@@ -77,7 +77,7 @@ pub struct StartCommand {
     pub _cmd: bool,
 
     /// Override the default windowing system class.
-    /// The default is "org.wezfurlong.wezterm".
+    /// The default is "org.onlyterm.onlyterm".
     /// Under X11 and Windows this changes the window class.
     /// Under Wayland this changes the app_id.
     /// This changes the class for all windows spawned by this
@@ -129,7 +129,7 @@ pub struct SerialCommand {
     pub baud: Option<usize>,
 
     /// Override the default windowing system class.
-    /// The default is "org.wezfurlong.wezterm".
+    /// The default is "org.onlyterm.onlyterm".
     /// Under X11 and Windows this changes the window class.
     /// Under Wayland this changes the app_id.
     /// This changes the class for all windows spawned by this
@@ -166,7 +166,7 @@ pub struct ConnectCommand {
     pub new_tab: bool,
 
     /// Override the default windowing system class.
-    /// The default is "org.wezfurlong.wezterm".
+    /// The default is "org.onlyterm.onlyterm".
     /// Under X11 and Windows this changes the window class.
     /// Under Wayland this changes the app_id.
     /// This changes the class for all windows spawned by this

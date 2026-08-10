@@ -227,7 +227,7 @@ impl TmuxDomainState {
         let terminal = wezterm_term::Terminal::new_with_nonblocking_writer(
             size,
             std::sync::Arc::new(config::TermConfig::new()),
-            "WezTerm",
+            "OnlyTerm",
             config::wezterm_version(),
             Box::new(writer.clone()),
         );

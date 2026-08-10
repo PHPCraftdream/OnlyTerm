@@ -302,7 +302,14 @@ impl Capabilities {
                         "2.9.20150512",
                     )
                 }
-                Some("WezTerm") => true,
+                // OnlyTerm reports itself as "OnlyTerm" (see
+                // config_impl.rs's TERM_PROGRAM env var); "WezTerm" is
+                // also recognized here since OnlyTerm's iTerm2 image
+                // protocol support is unchanged from the upstream fork
+                // it inherited it from, so a real upstream wezterm
+                // session (e.g. nested inside OnlyTerm) still gets the
+                // right answer.
+                Some("OnlyTerm") | Some("WezTerm") => true,
                 _ => false,
             }
         });
