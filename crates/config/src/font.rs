@@ -273,22 +273,17 @@ pub enum AllowSquareGlyphOverflow {
     WhenFollowedBySpace,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, FromDynamic, ToDynamic, Default)]
 pub enum FontLocatorSelection {
     /// Use fontconfig APIs to resolve fonts (!macos, posix systems)
     FontConfig,
     /// Use GDI on win32 systems
+    #[default]
     Gdi,
     /// Use CoreText on macOS
     CoreText,
     /// Use only the font_dirs configuration to locate fonts
     ConfigDirsOnly,
-}
-
-impl Default for FontLocatorSelection {
-    fn default() -> Self {
-        FontLocatorSelection::Gdi
-    }
 }
 
 #[derive(Debug, Clone, Copy, FromDynamic, ToDynamic, Default)]

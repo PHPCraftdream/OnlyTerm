@@ -226,7 +226,7 @@ fn init_config(opts: &Opt) -> anyhow::Result<ConfigHandle> {
 fn run() -> anyhow::Result<()> {
     env_bootstrap::bootstrap();
 
-    let saver = UmaskSaver::new();
+    let _saver = UmaskSaver::new();
 
     let opts = Opt::parse();
 
@@ -241,7 +241,7 @@ fn run() -> anyhow::Result<()> {
         | SubCommand::LsFonts(_)
         | SubCommand::ShowKeys(_)
         | SubCommand::Serial(_)
-        | SubCommand::Connect(_) => delegate_to_gui(saver),
+        | SubCommand::Connect(_) => delegate_to_gui(),
         SubCommand::ImageCat(cmd) => cmd.run(),
         SubCommand::SetCwd(cmd) => cmd.run(),
         SubCommand::Cli(cli) => cli::run_cli(&opts, cli),
@@ -257,11 +257,8 @@ fn run() -> anyhow::Result<()> {
     }
 }
 
-fn delegate_to_gui(saver: UmaskSaver) -> anyhow::Result<()> {
+fn delegate_to_gui() -> anyhow::Result<()> {
     use std::process::Command;
-
-    // Restore the original umask
-    drop(saver);
 
     let exe_name = if cfg!(windows) {
         "onlyterm-gui.exe"

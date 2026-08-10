@@ -1,7 +1,7 @@
 use alloc::string::ToString;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
-#[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq)]
 pub enum UIKeyCapRendering {
     /// Super, Meta, Ctrl, Shift
     UnixLong,
@@ -12,11 +12,6 @@ pub enum UIKeyCapRendering {
     /// Win, Alt, Ctrl, Shift
     WindowsLong,
     /// Like WindowsLong, but using a logo for the Win key
+    #[default]
     WindowsSymbols,
-}
-
-impl Default for UIKeyCapRendering {
-    fn default() -> Self {
-        Self::WindowsSymbols
-    }
 }

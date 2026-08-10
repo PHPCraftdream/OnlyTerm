@@ -1,17 +1,12 @@
 use alloc::string::ToString;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
-#[derive(Debug, ToDynamic, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Default, ToDynamic, PartialEq, Eq, Clone, Copy)]
 pub enum IntegratedTitleButtonStyle {
+    #[default]
     Windows,
     Gnome,
     MacOsNative,
-}
-
-impl Default for IntegratedTitleButtonStyle {
-    fn default() -> Self {
-        Self::Windows
-    }
 }
 
 impl FromDynamic for IntegratedTitleButtonStyle {
