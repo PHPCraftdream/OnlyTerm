@@ -64,6 +64,23 @@ As features stabilize some brief notes about them will accumulate here.
   come back, only that the old rhai-shaped mechanism is gone. See the
   [migration guide](migration-to-ktav.md) for the ktav data-format syntax and
   a side-by-side translation of real configs.
+* **Breaking**: identity strings that still said "WezTerm"/"wezterm" in
+  places a program or script outside OnlyTerm could actually observe are now
+  "OnlyTerm"/"onlyterm". This project is a full, permanent split from
+  upstream wezterm, so these are deliberate, unapologetic renames, not
+  oversights being walked back — no upstream compatibility is preserved.
+  Affected: the `TERM_PROGRAM` environment variable set on every spawned
+  shell/child process is now `OnlyTerm` (was `WezTerm`); the default Win32
+  window class / Wayland app_id / Linux D-Bus notification app id is now
+  `org.onlyterm.onlyterm` (was `org.wezfurlong.wezterm`, configurable via
+  `--class` same as before); the embedded terminal engine now reports itself
+  as `OnlyTerm` rather than `WezTerm` for `TERM_PROGRAM`-style self-identification
+  and iTerm2-image-protocol capability probing (a nested real upstream
+  wezterm session is still recognized for that specific capability check, so
+  this doesn't regress running actual wezterm inside OnlyTerm). If you have
+  scripts, prompt themes, or tooling that specifically checked for
+  `TERM_PROGRAM=WezTerm` or the old window class, update them to look for
+  the new values instead.
 * Unlike `exec_domains` above, the
   [PromptInputLine](config/reference/keyassignment/PromptInputLine.md),
   [InputSelector](config/reference/keyassignment/InputSelector.md), and
