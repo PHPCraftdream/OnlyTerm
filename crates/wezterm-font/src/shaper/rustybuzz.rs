@@ -190,6 +190,23 @@ struct FontPair {
     variations: RefCell<Option<Vec<rustybuzz::Variation>>>,
     last_size_and_dpi: RefCell<Option<(f64, u32)>>,
     units_per_em: RefCell<Option<f64>>,
+    /// `rustybuzz::ShapePlan`s, keyed by (direction, script) - the two
+    /// buffer properties that vary across `do_shape` calls for a given
+    /// font/feature set (`language` is a fixed constant for the whole
+    /// shaper, see `RustybuzzShaper::lang`; `features` is fixed for the
+    /// lifetime of this `FontPair`, set once in `load_fallback`).
+    ///
+    /// `rustybuzz::shape()` (the convenience wrapper we used to call)
+    /// builds a fresh `ShapePlan` on every single call, which rustybuzz's
+    /// own doc comment on `shape()` calls out explicitly: "ShapePlan
+    /// initialization is pretty slow and should preferably be called once
+    /// for each Face" - it re-parses the face's GSUB/GPOS layout tables.
+    /// Measured via CPU-weighted profiling of a live debug session: plan
+    /// construction alone was ~5% of all main-thread CPU time, over a
+    /// third of total time spent shaping. We now build a plan once per
+    /// distinct (direction, script) this font is asked to shape and reuse
+    /// it via `shape_with_plan`.
+    shape_plans: RefCell<HashMap<(rustybuzz::Direction, rustybuzz::Script), rustybuzz::ShapePlan>>,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -346,6 +363,7 @@ impl RustybuzzShaper {
                         variations: RefCell::new(None),
                         last_size_and_dpi: RefCell::new(None),
                         units_per_em: RefCell::new(None),
+                        shape_plans: RefCell::new(HashMap::new()),
                     });
                 }
 
@@ -438,6 +456,15 @@ impl RustybuzzShaper {
         buf.guess_segment_properties();
         buf.set_cluster_level(rustybuzz::BufferClusterLevel::MonotoneGraphemes);
 
+        // Capture the buffer's (direction is fixed above; script is
+        // inferred by `guess_segment_properties()` from the text just
+        // pushed) properties now, before `buf` is consumed by
+        // `shape_with_plan` below - see `FontPair::shape_plans`'s doc
+        // comment for why we look up/build a plan keyed on these instead
+        // of calling `rustybuzz::shape()` directly.
+        let plan_direction = buf.direction();
+        let plan_script = buf.script();
+
         let shaped_any;
         let mut no_more_fallbacks = false;
 
@@ -522,7 +549,21 @@ impl RustybuzzShaper {
 
                     let rb_face = pair.rb_face.borrow();
                     let face = &rb_face.as_ref().unwrap().face;
-                    glyph_buffer = rustybuzz::shape(face, pair.features.as_slice(), buf);
+
+                    let plan_key = (plan_direction, plan_script);
+                    if !pair.shape_plans.borrow().contains_key(&plan_key) {
+                        let plan = rustybuzz::ShapePlan::new(
+                            face,
+                            plan_direction,
+                            Some(plan_script),
+                            Some(&self.lang),
+                            pair.features.as_slice(),
+                        );
+                        pair.shape_plans.borrow_mut().insert(plan_key, plan);
+                    }
+                    let shape_plans = pair.shape_plans.borrow();
+                    let plan = shape_plans.get(&plan_key).unwrap();
+                    glyph_buffer = rustybuzz::shape_with_plan(face, plan, buf);
                     log::trace!(
                         "rustybuzz shaped font_idx={} {:?} presentation={presentation:?}",
                         font_idx,

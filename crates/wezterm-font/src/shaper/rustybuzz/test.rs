@@ -999,6 +999,130 @@ fn shape_basic() {
     assert_eq!(info[2].cluster, 2);
 }
 
+/// Regression coverage for the `FontPair::shape_plans` cache added
+/// alongside this test: a repeat `shape()` call with the same
+/// (direction, script) must reuse the cached `rustybuzz::ShapePlan`
+/// (asserted by checking the cache doesn't grow), while a call with a
+/// *different* script must build and cache a distinct plan rather than
+/// silently reusing the wrong one (which `rustybuzz::shape_with_plan`'s
+/// own docs warn produces incorrect shaping, not a crash -- so this is
+/// the test that would actually catch a wrong cache key, not just an
+/// absent one).
+#[test]
+fn shape_plan_cache_is_reused_per_script_not_shared_across_scripts() {
+    let _ = env_logger::Builder::new()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Trace)
+        .try_init();
+
+    let config = config::configuration();
+    let shaper = RustybuzzShaper::new(&config, &[jetbrains_handle()]).unwrap();
+    let mut no_glyphs = vec![];
+
+    // `self.fonts[0]` (the `FontPair`) isn't loaded until the first
+    // `shape()` call reaches `load_fallback`, so this can only be called
+    // after that first call.
+    let plan_count = || {
+        shaper.fonts[0]
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .shape_plans
+            .borrow()
+            .len()
+    };
+
+    // First call, Latin script: builds and caches one plan.
+    let latin1 = shaper
+        .shape(
+            "abc",
+            10.,
+            72,
+            &mut no_glyphs,
+            None,
+            Direction::LeftToRight,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(no_glyphs.is_empty(), "{:?}", no_glyphs);
+    assert_eq!(
+        plan_count(),
+        1,
+        "one plan cached after the first (Latin) call"
+    );
+
+    // Second call, same script: must reuse the cached plan, not grow the
+    // cache, and must still shape correctly.
+    let latin2 = shaper
+        .shape(
+            "def",
+            10.,
+            72,
+            &mut no_glyphs,
+            None,
+            Direction::LeftToRight,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(no_glyphs.is_empty(), "{:?}", no_glyphs);
+    assert_eq!(
+        plan_count(),
+        1,
+        "a second call with the same (direction, script) must reuse the cached plan"
+    );
+    assert_eq!(latin1.len(), 3);
+    assert_eq!(latin2.len(), 3);
+    assert_eq!(latin2[0].only_char, Some('d'));
+
+    // Third call, different script (Cyrillic): must build and cache a
+    // *second*, distinct plan rather than reusing the Latin one.
+    let cyrillic = shaper
+        .shape(
+            "\u{431}\u{432}\u{433}", // "бвг"
+            10.,
+            72,
+            &mut no_glyphs,
+            None,
+            Direction::LeftToRight,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(no_glyphs.is_empty(), "{:?}", no_glyphs);
+    assert_eq!(
+        plan_count(),
+        2,
+        "a call with a different script must build and cache a distinct plan"
+    );
+    assert_eq!(cyrillic.len(), 3);
+    assert_eq!(cyrillic[0].only_char, Some('\u{431}'));
+    assert_eq!(cyrillic[1].only_char, Some('\u{432}'));
+    assert_eq!(cyrillic[2].only_char, Some('\u{433}'));
+
+    // Repeating the Cyrillic shape must reuse that second plan, not
+    // build a third.
+    let _ = shaper
+        .shape(
+            "\u{434}\u{435}\u{436}", // "дез" (different letters, same script)
+            10.,
+            72,
+            &mut no_glyphs,
+            None,
+            Direction::LeftToRight,
+            None,
+            None,
+        )
+        .unwrap();
+    assert!(no_glyphs.is_empty(), "{:?}", no_glyphs);
+    assert_eq!(
+        plan_count(),
+        2,
+        "a repeat call with an already-seen script must not grow the cache further"
+    );
+}
+
 /// Regression coverage for
 /// <https://github.com/wezterm/wezterm/issues/7963>: a fallback font
 /// candidate whose backing file cannot be opened (originally reported
