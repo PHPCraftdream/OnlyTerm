@@ -15,7 +15,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use termwiz::cell::{Cell, CellAttributes};
 use termwiz::color::AnsiColor;
-use termwiz::surface::{SequenceNo, SEQ_ZERO};
+use termwiz::surface::SequenceNo;
 use url::Url;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
@@ -288,6 +288,18 @@ struct QuickSelectRenderable {
 
     config: ConfigHandle,
     args: QuickSelectArguments,
+
+    /// Synthetic sequence number used to mark the overlay's own mutations
+    /// (search bar text, match/label highlighting) to the cloned lines it
+    /// hands back for rendering. These mutations happen on a clone of the
+    /// delegate's line, so they must never be tagged with the delegate's
+    /// real seqno space (SEQ_ZERO would be a no-op if the underlying line
+    /// already has a higher seqno, since `update_last_change_seqno` only
+    /// ever increases). Seeded far above any plausible real terminal seqno
+    /// so it can never collide, and incremented once per render pass so
+    /// that caches keyed on (pane_id, stable_row, seqno) -- e.g. the GUI's
+    /// shape_hash_cache -- correctly treat each render pass as distinct.
+    render_seqno: SequenceNo,
 }
 
 impl QuickSelectOverlay {
@@ -351,6 +363,10 @@ impl QuickSelectOverlay {
             height: dims.viewport_rows,
             config,
             args: args.clone(),
+            // Seeded far above any plausible real terminal seqno (which
+            // starts near 0/1 and increments once per actual content
+            // mutation) so it can never collide. See field doc comment.
+            render_seqno: usize::MAX / 2,
         };
 
         let search_row = renderer.compute_search_row();
@@ -614,6 +630,14 @@ impl Pane for QuickSelectOverlay {
                 let colors = config.resolved_palette.clone();
                 let disable_attr = config.quick_select_remove_styling;
 
+                // Bump once per render pass (not per line/cell) so that
+                // every mutation made below to the cloned lines in this
+                // pass is tagged with a seqno strictly greater than any
+                // prior pass. See QuickSelectRenderable::render_seqno doc
+                // comment.
+                self.renderer.render_seqno += 1;
+                let render_seqno = self.renderer.render_seqno;
+
                 // Process the lines; for the search row we want to render instead
                 // the search UI.
                 // For rows with search results, we want to highlight the matching ranges
@@ -625,6 +649,7 @@ impl Pane for QuickSelectOverlay {
                         line.cells_mut_for_attr_changes_only()
                             .iter_mut()
                             .for_each(|cell| cell.attrs_mut().clear());
+                        line.update_last_change_seqno(render_seqno);
                         line.clear_appdata();
                     }
                     let stable_idx = idx as StableRowIndex + first_row;
@@ -632,7 +657,11 @@ impl Pane for QuickSelectOverlay {
                     if stable_idx == self.search_row {
                         // Replace with search UI
                         let rev = CellAttributes::default().set_reverse(true).clone();
-                        line.fill_range(0..self.dims.cols, &Cell::new(' ', rev.clone()), SEQ_ZERO);
+                        line.fill_range(
+                            0..self.dims.cols,
+                            &Cell::new(' ', rev.clone()),
+                            render_seqno,
+                        );
                         line.overlay_text_with_attribute(
                             0,
                             &format!(
@@ -645,7 +674,7 @@ impl Pane for QuickSelectOverlay {
                                 },
                             ),
                             rev,
-                            SEQ_ZERO,
+                            render_seqno,
                         );
                         self.renderer.last_bar_pos = Some(self.search_row);
                         line.clear_appdata();
@@ -692,9 +721,18 @@ impl Pane for QuickSelectOverlay {
                                 )
                                 .set_reverse(false)
                                 .set_intensity(Intensity::Bold);
-                                line.set_cell(m.range.start + idx, Cell::new(c, attr), SEQ_ZERO);
+                                line.set_cell(
+                                    m.range.start + idx,
+                                    Cell::new(c, attr),
+                                    render_seqno,
+                                );
                             }
                         }
+                        // cells_mut_for_attr_changes_only() above mutates
+                        // cells directly without bumping the line's seqno;
+                        // do it explicitly so downstream seqno-keyed caches
+                        // see this pass as a new version of the line.
+                        line.update_last_change_seqno(render_seqno);
                         line.clear_appdata();
                     }
                     overlay_lines.push(line);
@@ -715,6 +753,11 @@ impl Pane for QuickSelectOverlay {
         let colors = renderer.config.resolved_palette.clone();
         let disable_attr = renderer.config.quick_select_remove_styling;
 
+        // Bump once per render pass (not per line/cell); see
+        // QuickSelectRenderable::render_seqno doc comment.
+        renderer.render_seqno += 1;
+        let render_seqno = renderer.render_seqno;
+
         // Process the lines; for the search row we want to render instead
         // the search UI.
         // For rows with search results, we want to highlight the matching ranges
@@ -724,13 +767,14 @@ impl Pane for QuickSelectOverlay {
                 line.cells_mut_for_attr_changes_only()
                     .iter_mut()
                     .for_each(|cell| cell.attrs_mut().clear());
+                line.update_last_change_seqno(render_seqno);
             }
             let stable_idx = idx as StableRowIndex + top;
             renderer.dirty_results.remove(stable_idx);
             if stable_idx == search_row {
                 // Replace with search UI
                 let rev = CellAttributes::default().set_reverse(true).clone();
-                line.fill_range(0..dims.cols, &Cell::new(' ', rev.clone()), SEQ_ZERO);
+                line.fill_range(0..dims.cols, &Cell::new(' ', rev.clone()), render_seqno);
                 line.overlay_text_with_attribute(
                     0,
                     &format!(
@@ -743,7 +787,7 @@ impl Pane for QuickSelectOverlay {
                         },
                     ),
                     rev,
-                    SEQ_ZERO,
+                    render_seqno,
                 );
                 renderer.last_bar_pos = Some(search_row);
             } else if let Some(matches) = renderer.by_line.get(&stable_idx) {
@@ -784,9 +828,14 @@ impl Pane for QuickSelectOverlay {
                         )
                         .set_reverse(false)
                         .set_intensity(Intensity::Bold);
-                        line.set_cell(m.range.start + idx, Cell::new(c, attr), SEQ_ZERO);
+                        line.set_cell(m.range.start + idx, Cell::new(c, attr), render_seqno);
                     }
                 }
+                // cells_mut_for_attr_changes_only() above mutates cells
+                // directly without bumping the line's seqno; do it
+                // explicitly so downstream seqno-keyed caches see this pass
+                // as a new version of the line.
+                line.update_last_change_seqno(render_seqno);
             }
         }
 
@@ -1049,5 +1098,136 @@ impl QuickSelectRenderable {
         self.result_pos.replace(n);
         let result = self.results[n];
         self.set_viewport(Some(result.start_y));
+    }
+}
+
+/// Regression tests for the overlay-render-seqno fix.
+///
+/// Both CopyOverlay and QuickSelectOverlay mutate a *clone* of the
+/// delegate pane's `Line` on every render pass (search bar text, match
+/// highlighting, quickselect labels). Those clones inherit whatever seqno
+/// the delegate's real line already has. Before this fix the overlays
+/// tagged their own mutations with `SEQ_ZERO`; since
+/// `Line::update_last_change_seqno` only ever increases a line's seqno
+/// (`self.seqno = self.seqno.max(seqno)`), tagging with SEQ_ZERO on a line
+/// whose seqno was already > 0 was a silent no-op. Downstream per-frame
+/// caches keyed on (pane_id, stable_row, seqno) -- e.g. the GUI's
+/// shape_hash_cache -- would then treat the overlay's mutated frame as
+/// identical to a stale pre-overlay frame and keep serving the old shape,
+/// so the search bar / highlights / labels could silently fail to appear.
+///
+/// These tests exercise the fixed pattern directly against `Line` (seed a
+/// counter far above any real seqno, bump once per render pass, use it for
+/// every line-mutating call in that pass, including an explicit
+/// `update_last_change_seqno` call after direct `cells_mut_for_attr_changes_only`
+/// mutation) without needing a live TermWindow/GUI.
+#[cfg(test)]
+mod render_seqno_test {
+    use termwiz::cell::{Cell, CellAttributes};
+    use termwiz::surface::SEQ_ZERO;
+    use wezterm_term::Line;
+
+    /// A line that already has server/terminal content at a real seqno,
+    /// simulating a static (unchanging) pane that has been rendered once
+    /// before an overlay was activated.
+    fn make_line_with_seqno(seqno: usize) -> Line {
+        let mut line = Line::with_width(10, SEQ_ZERO);
+        line.fill_range(0..10, &Cell::new(' ', CellAttributes::default()), seqno);
+        line
+    }
+
+    #[test]
+    fn seq_zero_mutation_is_a_no_op_on_nonzero_line() {
+        // This documents *why* the bug existed: update_last_change_seqno
+        // never decreases the seqno, so re-tagging with SEQ_ZERO after a
+        // real mutation leaves current_seqno() unchanged.
+        let mut line = make_line_with_seqno(5);
+        assert_eq!(line.current_seqno(), 5);
+
+        line.fill_range(0..10, &Cell::new('x', CellAttributes::default()), SEQ_ZERO);
+        assert_eq!(
+            line.current_seqno(),
+            5,
+            "SEQ_ZERO must not appear to change a line that already has a higher seqno"
+        );
+    }
+
+    #[test]
+    fn render_pass_counter_produces_distinct_seqno_per_pass() {
+        // Simulate two successive overlay render passes over the SAME
+        // underlying static line (same delegate content/seqno both times,
+        // as would happen while copy-mode search text changes but the
+        // underlying pane content does not).
+        let delegate_seqno = 5;
+
+        // Mimic CopyRenderable::render_seqno / QuickSelectRenderable::render_seqno:
+        // seeded far above any real seqno, bumped once per render pass.
+        let mut render_seqno: usize = usize::MAX / 2;
+
+        // --- Render pass 1: e.g. search bar shows "Search: a" ---
+        let mut line1 = make_line_with_seqno(delegate_seqno);
+        render_seqno += 1;
+        let pass1_seqno = render_seqno;
+        line1.fill_range(
+            0..10,
+            &Cell::new(' ', CellAttributes::default()),
+            pass1_seqno,
+        );
+        line1.overlay_text_with_attribute(0, "Search: a", CellAttributes::default(), pass1_seqno);
+
+        // --- Render pass 2: e.g. search bar shows "Search: ab" (user typed) ---
+        // Delegate content/seqno is unchanged -- this is the crux of the bug.
+        let mut line2 = make_line_with_seqno(delegate_seqno);
+        render_seqno += 1;
+        let pass2_seqno = render_seqno;
+        line2.fill_range(
+            0..10,
+            &Cell::new(' ', CellAttributes::default()),
+            pass2_seqno,
+        );
+        line2.overlay_text_with_attribute(0, "Search: ab", CellAttributes::default(), pass2_seqno);
+
+        assert_ne!(
+            line1.current_seqno(),
+            line2.current_seqno(),
+            "two different overlay render passes over the same underlying \
+             line must produce different current_seqno() values, so a \
+             (pane_id, stable_row, seqno)-keyed cache warmed by pass 1 is \
+             correctly invalidated for pass 2's different content"
+        );
+        assert!(line2.current_seqno() > line1.current_seqno());
+        // Both passes must also be strictly greater than anything the
+        // delegate's real content could plausibly reach.
+        assert!(line1.current_seqno() > delegate_seqno);
+        assert!(line2.current_seqno() > delegate_seqno);
+    }
+
+    #[test]
+    fn direct_cell_mutation_requires_explicit_seqno_bump() {
+        // cells_mut_for_attr_changes_only() returns &mut [Cell] and does
+        // NOT itself touch the line's seqno tracking (see
+        // QuickSelectOverlay's/CopyOverlay's `by_line` highlight branches).
+        // The fix must call update_last_change_seqno explicitly afterwards.
+        let mut line = make_line_with_seqno(5);
+        assert_eq!(line.current_seqno(), 5);
+
+        if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(0) {
+            cell.attrs_mut().set_reverse(true);
+        }
+        assert_eq!(
+            line.current_seqno(),
+            5,
+            "direct cell mutation alone must not silently bump seqno -- \
+             this documents why an explicit update_last_change_seqno call \
+             is required after cells_mut_for_attr_changes_only()"
+        );
+
+        let render_seqno = usize::MAX / 2 + 1;
+        line.update_last_change_seqno(render_seqno);
+        assert_eq!(
+            line.current_seqno(),
+            render_seqno,
+            "after the explicit bump, current_seqno() must reflect the new pass"
+        );
     }
 }

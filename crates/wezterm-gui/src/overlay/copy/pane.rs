@@ -13,7 +13,7 @@ use std::sync::Arc;
 use termwiz::cell::{Cell, CellAttributes};
 use termwiz::color::AnsiColor;
 use termwiz::lineedit::Movement;
-use termwiz::surface::{SequenceNo, SEQ_ZERO};
+use termwiz::surface::SequenceNo;
 use url::Url;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{
@@ -339,6 +339,13 @@ impl Pane for CopyOverlay {
                 let config = config::configuration();
                 let colors = &config.resolved_palette;
 
+                // Bump once per render pass (not per line/cell) so that
+                // every mutation made below to the cloned lines in this
+                // pass is tagged with a seqno strictly greater than any
+                // prior pass. See CopyRenderable::render_seqno doc comment.
+                self.renderer.render_seqno += 1;
+                let render_seqno = self.renderer.render_seqno;
+
                 for (idx, line) in lines.iter_mut().enumerate() {
                     let mut line: Line = line.clone();
 
@@ -350,7 +357,11 @@ impl Pane for CopyOverlay {
                     {
                         // Replace with search UI
                         let rev = CellAttributes::default().set_reverse(true).clone();
-                        line.fill_range(0..self.dims.cols, &Cell::new(' ', rev.clone()), SEQ_ZERO);
+                        line.fill_range(
+                            0..self.dims.cols,
+                            &Cell::new(' ', rev.clone()),
+                            render_seqno,
+                        );
                         let mode = &match pattern {
                             Pattern::CaseSensitiveString(_) => "case-sensitive",
                             Pattern::CaseInSensitiveString(_) => "ignore-case",
@@ -374,7 +385,7 @@ impl Pane for CopyOverlay {
                                 mode
                             ),
                             rev,
-                            SEQ_ZERO,
+                            render_seqno,
                         );
                         self.renderer.last_bar_pos = Some(self.search_row);
                         line.clear_appdata();
@@ -415,6 +426,11 @@ impl Pane for CopyOverlay {
                                 }
                             }
                         }
+                        // cells_mut_for_attr_changes_only() mutates cells
+                        // directly without bumping the line's seqno; do it
+                        // explicitly so downstream seqno-keyed caches see
+                        // this pass as a new version of the line.
+                        line.update_last_change_seqno(render_seqno);
                         line.clear_appdata();
                     }
                     overlay_lines.push(line);
@@ -440,6 +456,11 @@ impl Pane for CopyOverlay {
         let config = config::configuration();
         let colors = &config.resolved_palette;
 
+        // Bump once per render pass (not per line/cell); see
+        // CopyRenderable::render_seqno doc comment.
+        renderer.render_seqno += 1;
+        let render_seqno = renderer.render_seqno;
+
         // Process the lines; for the search row we want to render instead
         // the search UI.
         // For rows with search results, we want to highlight the matching ranges
@@ -451,7 +472,7 @@ impl Pane for CopyOverlay {
             if stable_idx == search_row && (renderer.editing_search || !pattern.is_empty()) {
                 // Replace with search UI
                 let rev = CellAttributes::default().set_reverse(true).clone();
-                line.fill_range(0..dims.cols, &Cell::new(' ', rev.clone()), SEQ_ZERO);
+                line.fill_range(0..dims.cols, &Cell::new(' ', rev.clone()), render_seqno);
                 let mode = &match pattern {
                     Pattern::CaseSensitiveString(_) => "case-sensitive",
                     Pattern::CaseInSensitiveString(_) => "ignore-case",
@@ -467,7 +488,7 @@ impl Pane for CopyOverlay {
                         mode
                     ),
                     rev,
-                    SEQ_ZERO,
+                    render_seqno,
                 );
                 renderer.last_bar_pos = Some(search_row);
             } else if let Some(matches) = renderer.by_line.get(&stable_idx) {
@@ -506,6 +527,11 @@ impl Pane for CopyOverlay {
                         }
                     }
                 }
+                // cells_mut_for_attr_changes_only() mutates cells directly
+                // without bumping the line's seqno; do it explicitly so
+                // downstream seqno-keyed caches see this pass as a new
+                // version of the line.
+                line.update_last_change_seqno(render_seqno);
             }
         }
 

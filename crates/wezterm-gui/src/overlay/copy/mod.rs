@@ -74,6 +74,17 @@ struct CopyRenderable {
     searching: Option<Searching>,
     pending_jump: Option<PendingJump>,
     last_jump: Option<Jump>,
+    /// Synthetic sequence number used to mark the overlay's own mutations
+    /// (search bar text, highlight colors) to the cloned lines it hands
+    /// back for rendering. These mutations happen on a clone of the
+    /// delegate's line, so they must never be tagged with the delegate's
+    /// real seqno space (SEQ_ZERO would be a no-op if the underlying line
+    /// already has a higher seqno, since `update_last_change_seqno` only
+    /// ever increases). Seeded far above any real terminal seqno so it can
+    /// never collide, and incremented once per render pass so that caches
+    /// keyed on (pane_id, stable_row, seqno) -- e.g. the GUI's
+    /// shape_hash_cache -- correctly treat each render pass as distinct.
+    render_seqno: SequenceNo,
 }
 
 struct Searching {
@@ -153,6 +164,10 @@ impl CopyOverlay {
             searching: None,
             pending_jump: None,
             last_jump: None,
+            // Seeded far above any plausible real terminal seqno (which
+            // starts near 0/1 and increments once per actual content
+            // mutation) so it can never collide. See field doc comment.
+            render_seqno: usize::MAX / 2,
         };
 
         let search_row = render.compute_search_row();

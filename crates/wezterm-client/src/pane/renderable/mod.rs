@@ -70,6 +70,23 @@ pub struct RenderableInner {
     pub working_dir: Option<Url>,
     pub seqno: SequenceNo,
 
+    /// Synthetic sequence number used to mark local-echo prediction edits
+    /// (`apply_prediction`/`apply_paste_prediction`) applied in place to
+    /// `Line`s that live in `self.lines`. Those lines already carry a real,
+    /// server-authoritative seqno (see `apply_changes_to_surface`, which
+    /// calls `update_last_change_seqno(self.seqno)`), so predictions must
+    /// never be tagged with `SEQ_ZERO` -- `update_last_change_seqno` only
+    /// ever increases a line's seqno, so SEQ_ZERO on an already-nonzero
+    /// line is a silent no-op and the GUI's seqno-keyed render caches
+    /// (e.g. shape_hash_cache) would keep serving the pre-prediction
+    /// shape/quads. This counter must also never reuse `self.seqno`'s
+    /// namespace, since that space is driven by the server and a
+    /// prediction is a local-only, unconfirmed edit. Seeded far above any
+    /// plausible real seqno and incremented once per prediction call (not
+    /// per cell) so each local-echo edit is visible to those caches as a
+    /// new version of the line.
+    prediction_seqno: SequenceNo,
+
     fetch_limiter: RateLimiter,
 
     last_send_time: Instant,
@@ -113,6 +130,10 @@ impl RenderableInner {
             last_input_rtt: 0,
             input_serial: InputSerial::empty(),
             seqno: SEQ_ZERO,
+            // Seeded far above any plausible real terminal seqno so it can
+            // never collide with the server-authoritative `seqno` space.
+            // See field doc comment.
+            prediction_seqno: usize::MAX / 2,
         }
     }
 
@@ -159,6 +180,11 @@ impl RenderableInner {
             return;
         }
 
+        // One synthetic seqno per prediction event, applied to every edit
+        // made to `line` below. See `prediction_seqno` doc comment.
+        self.prediction_seqno += 1;
+        let seqno = self.prediction_seqno;
+
         match c {
             KeyCode::Enter => {
                 self.cursor_position.x = 0;
@@ -177,11 +203,11 @@ impl RenderableInner {
                 self.cursor_position.x = self.cursor_position.x.saturating_sub(1);
             }
             KeyCode::Delete => {
-                line.erase_cell(self.cursor_position.x, SEQ_ZERO);
+                line.erase_cell(self.cursor_position.x, seqno);
             }
             KeyCode::Backspace => {
                 if self.cursor_position.x > 0 {
-                    line.erase_cell(self.cursor_position.x - 1, SEQ_ZERO);
+                    line.erase_cell(self.cursor_position.x - 1, seqno);
                     self.cursor_position.x -= 1;
                 }
             }
@@ -194,7 +220,7 @@ impl RenderableInner {
                 );
 
                 let width = cell.width();
-                line.set_cell(self.cursor_position.x, cell, SEQ_ZERO);
+                line.set_cell(self.cursor_position.x, cell, seqno);
                 // Adjust the cursor to reflect the width of this new cell
                 self.cursor_position.x += width;
             }
@@ -244,22 +270,28 @@ impl RenderableInner {
         }
     }
 
-    fn apply_paste_prediction(&mut self, row: usize, text: &str, line: &mut Line) {
+    fn apply_paste_prediction(
+        &mut self,
+        row: usize,
+        text: &str,
+        line: &mut Line,
+        seqno: SequenceNo,
+    ) {
         let attrs = CellAttributes::default()
             .set_underline(Underline::Double)
             .clone();
 
-        let text_line = Line::from_text(text, &attrs, SEQ_ZERO, None);
+        let text_line = Line::from_text(text, &attrs, seqno, None);
 
         if row == 0 {
             for cell in text_line.visible_cells() {
-                line.set_cell(self.cursor_position.x, cell.as_cell(), SEQ_ZERO);
+                line.set_cell(self.cursor_position.x, cell.as_cell(), seqno);
                 self.cursor_position.x += cell.width();
             }
         } else {
             // The pasted line replaces the data for the existing line
-            line.resize_and_clear(0, SEQ_ZERO, CellAttributes::default());
-            line.append_line(text_line, SEQ_ZERO);
+            line.resize_and_clear(0, seqno, CellAttributes::default());
+            line.append_line(text_line, seqno);
             self.cursor_position.x = line.len();
         }
     }
@@ -269,6 +301,11 @@ impl RenderableInner {
             return;
         }
 
+        // One synthetic seqno for the whole paste operation, applied to
+        // every row touched below. See `prediction_seqno` doc comment.
+        self.prediction_seqno += 1;
+        let seqno = self.prediction_seqno;
+
         let text = textwrap::fill(text, self.dimensions.cols);
         let lines: Vec<&str> = text.split("\n").collect();
 
@@ -277,11 +314,11 @@ impl RenderableInner {
 
             match self.lines.pop(&row) {
                 Some(LineEntry::Stale(mut line)) | Some(LineEntry::Line(mut line)) => {
-                    self.apply_paste_prediction(idx, paste_line, &mut line);
+                    self.apply_paste_prediction(idx, paste_line, &mut line, seqno);
                     self.lines.put(row, LineEntry::Line(line));
                 }
                 Some(LineEntry::LineAndFetching(mut line, instant)) => {
-                    self.apply_paste_prediction(idx, paste_line, &mut line);
+                    self.apply_paste_prediction(idx, paste_line, &mut line, seqno);
                     self.lines
                         .put(row, LineEntry::LineAndFetching(line, instant));
                 }
