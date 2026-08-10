@@ -16,9 +16,9 @@
 //! supervisor (task #223) can ask "is this window's render thread currently
 //! stuck inside a submit/reconfigure call".
 //!
-//! Only used behind `config::webgpu_render_thread`, which defaults to
-//! `false`, so none of this changes behavior until a later task flips the
-//! default (221.8).
+//! Gated behind `config::webgpu_render_thread`, which now defaults to
+//! `true` (221.8 flipped the default) -- this render thread is the live
+//! path for GPU frame submission, not dormant scaffolding.
 
 use ::window::WindowOps;
 use parking_lot::Mutex;
