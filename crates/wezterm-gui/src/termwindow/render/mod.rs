@@ -1838,4 +1838,126 @@ mod cache_bench {
 
         println!("✓ Test passed: cache key correctly includes pane_id");
     }
+
+    /// Task #476 regression: end-to-end check that the *production*
+    /// `shape_hash_lookup` never serves a stale hash for a row of a real
+    /// `Terminal`.
+    ///
+    /// `ShapeHashCacheKey{pane_id, stable_row}` validated by
+    /// `entry.seqno == line.current_seqno()` is only sound if the terminal
+    /// model guarantees that `(StableRowIndex, seqno)` identifies a unique
+    /// line content. `Screen::scroll_up` used to break that guarantee: with
+    /// a top-anchored scroll region that stops short of the bottom of the
+    /// screen (`CSI 1;Nr`, N < rows) and a full scrollback, every scroll
+    /// advanced `stable_row_index_offset` for the whole screen while the
+    /// rows *below* the region stayed physically put and were never
+    /// dirtied. Their StableRowIndex therefore slid by one per scroll with
+    /// no seqno change, so this cache would serve one row's shaping for a
+    /// different row -- a line duplicated onto a neighbouring row that no
+    /// amount of further scrolling could clear.
+    ///
+    /// This drives a real `Terminal` with real escape sequences, feeds the
+    /// real `Line`s and their real seqnos through the real
+    /// `shape_hash_lookup`, and asserts the answer always matches a freshly
+    /// computed `Line::compute_shape_hash` for the line actually being
+    /// rendered. It fails (many rows, every frame) without the
+    /// `Screen::scroll_up` fix.
+    #[test]
+    fn test_shape_hash_lookup_never_stale_under_top_anchored_scroll_region() {
+        use lfucache::LfuCache;
+        use wezterm_term::color::ColorPalette;
+        use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize};
+
+        #[derive(Debug)]
+        struct Cfg;
+        impl TerminalConfiguration for Cfg {
+            fn scrollback_size(&self) -> usize {
+                10
+            }
+            fn color_palette(&self) -> ColorPalette {
+                ColorPalette::default()
+            }
+        }
+
+        const ROWS: usize = 10;
+        const PANE_ID: PaneId = 7;
+
+        /// One frame of the renderer's per-row work: for every visible row,
+        /// ask the production cache for that row's shape hash and check it
+        /// against the hash of the line that row actually holds right now.
+        fn render_frame(
+            term: &Terminal,
+            cache: &mut LfuCache<ShapeHashCacheKey, ShapeHashEntry>,
+            label: &str,
+        ) {
+            let screen = term.screen();
+            let top = screen.visible_row_to_stable_row(0);
+            for i in 0..ROWS {
+                let stable_row = top + i as StableRowIndex;
+                let phys = match screen.stable_row_to_phys(stable_row) {
+                    Some(phys) => phys,
+                    None => continue,
+                };
+                let line = screen.lines_in_phys_range(phys..phys + 1).remove(0);
+                let truth = line.compute_shape_hash();
+                let served = shape_hash_lookup(
+                    cache,
+                    ShapeHashCacheKey {
+                        pane_id: PANE_ID,
+                        stable_row,
+                    },
+                    line.current_seqno(),
+                    || line.compute_shape_hash(),
+                );
+                assert_eq!(
+                    served,
+                    truth,
+                    "[{}] stable_row={} (seqno={}) was served a stale shape hash; \
+                     the row actually contains {:?}",
+                    label,
+                    stable_row,
+                    line.current_seqno(),
+                    line.as_str(),
+                );
+            }
+        }
+
+        let mut term = Terminal::new(
+            TerminalSize {
+                rows: ROWS,
+                cols: 20,
+                pixel_width: 160,
+                pixel_height: 160,
+                dpi: 0,
+            },
+            Arc::new(Cfg),
+            "OnlyTerm",
+            "0",
+            Box::new(Vec::new()),
+        );
+
+        let mut cache = LfuCache::new(
+            "t476_hit",
+            "t476_miss",
+            test_cache_capacity,
+            &ConfigHandle::default_config(),
+        );
+
+        // Fill the screen and overflow the scrollback so that subsequent
+        // scrolls have to recycle lines off the front of the buffer.
+        for i in 0..25 {
+            term.advance_bytes(format!("row{:02}\r\n", i));
+        }
+        render_frame(&term, &mut cache, "filled");
+
+        // Top-anchored scroll region covering only the upper half of the
+        // screen, leaving rows 5..10 below it untouched.
+        term.advance_bytes("\x1b[1;5r");
+
+        for step in 0..12 {
+            // Newline on the last row of the region scrolls the region.
+            term.advance_bytes(format!("\x1b[5;1Hnew{:02}\n", step));
+            render_frame(&term, &mut cache, &format!("region scroll {}", step));
+        }
+    }
 }

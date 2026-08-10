@@ -117,6 +117,19 @@ impl Screen {
         let scrollback_ok = scroll_region.start == 0 && self.allow_scrollback;
         let insert_at_end = scroll_region.end as usize == self.physical_rows;
 
+        // Remember where the first row *below* the scroll region currently
+        // sits in StableRowIndex space. Those rows keep their content, but
+        // this operation can still move them within that space (see the
+        // matching check at the end of this function), and anything that
+        // caches per-row state keyed by StableRowIndex has to be told when
+        // that happens or it will keep serving the previous occupant of
+        // that stable row.
+        let stable_below_region_before = if (scroll_region.end as usize) < self.physical_rows {
+            Some(self.phys_to_stable_row_index(self.phys_row(scroll_region.end)))
+        } else {
+            None
+        };
+
         debug!(
             "scroll_up {:?} num_rows={} phys_scroll={:?}",
             scroll_region, num_rows, phys_scroll
@@ -213,8 +226,37 @@ impl Screen {
             }
         }
 
-        // If we have invalidated the StableRowIndex, mark all subsequent lines as dirty
-        if to_remove > 0 || (to_add > 0 && !insert_at_end) {
+        // If we have invalidated the StableRowIndex of the rows below the
+        // scroll region, mark them as dirty.
+        //
+        // Comparing the before/after StableRowIndex of the first such row
+        // directly, rather than inferring it from the remove/add counts,
+        // is what makes this correct for the case that the old
+        // `to_remove > 0 || (to_add > 0 && !insert_at_end)` condition
+        // missed: a top-anchored region that stops short of the bottom of
+        // the screen (`CSI 1;Nr` with N < rows) on a screen whose
+        // scrollback is already full. There every scrolled-off row is
+        // *recycled* -- removed from the front of `self.lines` and
+        // re-inserted at the bottom of the region -- so `to_remove` and
+        // `to_add` are both 0, yet `stable_row_index_offset` still
+        // advances for the whole screen while the rows below the region
+        // stay put physically. Their StableRowIndex therefore shifted by
+        // `num_rows` with no seqno bump at all, so `(StableRowIndex,
+        // seqno)` stopped identifying a unique line: the GUI's per-row
+        // shape-hash cache (keyed by exactly that pair) would then serve a
+        // neighbouring row's cached shaping for that stable row
+        // indefinitely -- a line visibly duplicated onto another row that
+        // no amount of further scrolling clears, because nothing ever
+        // bumps the seqno again.
+        let stable_index_below_region_moved = match stable_below_region_before {
+            Some(before) => {
+                self.phys_to_stable_row_index(self.phys_row(scroll_region.end)) != before
+            }
+            // The region runs to the bottom of the screen: there are no
+            // rows below it to invalidate.
+            None => false,
+        };
+        if stable_index_below_region_moved {
             for y in self.phys_range(&(scroll_region.end..self.physical_rows as VisibleRowIndex)) {
                 self.line_mut(y).update_last_change_seqno(seqno);
             }
