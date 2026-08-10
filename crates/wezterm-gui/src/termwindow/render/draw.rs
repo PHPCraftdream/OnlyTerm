@@ -35,7 +35,7 @@ pub fn compute_frame_signature_from_parts(
     pixel_height: usize,
     foreground_text_hsb: &[f32; 3],
     projection: &[[f32; 4]; 4],
-    layer_instances: &[Vec<QuadInstance>],
+    layer_instances: &[&[QuadInstance]],
 ) -> u64 {
     // Use fixed/deterministic seeds so identical frames across calls produce identical signatures.
     // These constants are arbitrary but must be fixed/literal for determinism.
@@ -66,7 +66,7 @@ pub fn compute_frame_signature_from_parts(
 
     // Hash each layer's QuadInstance data
     for instances in layer_instances {
-        let bytes = bytemuck::cast_slice::<QuadInstance, u8>(instances.as_slice());
+        let bytes = bytemuck::cast_slice::<QuadInstance, u8>(instances);
         hasher.write(bytes);
     }
 
@@ -128,8 +128,8 @@ fn test_reemitting_same_row_quads_yields_same_signature() {
         heap2.extend_with_instance(0, q);
     }
 
-    let layer_instances1 = vec![applied_layer0_instances(&heap1, 10)];
-    let layer_instances2 = vec![applied_layer0_instances(&heap2, 10)];
+    let layer_instances1 = [applied_layer0_instances(&heap1, 10)];
+    let layer_instances2 = [applied_layer0_instances(&heap2, 10)];
     // Sanity check the fixture actually captured non-empty data -- if this
     // ever fails, the test below would otherwise be vacuously comparing two
     // empty Vecs and always pass regardless of whether reuse is byte-stable.
@@ -139,8 +139,10 @@ fn test_reemitting_same_row_quads_yields_same_signature() {
     // Compute signatures for both using the real production function.
     let hsb = [0.0, 0.0, 0.0];
     let projection = [[0.0; 4]; 4];
-    let sig1 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances1);
-    let sig2 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances2);
+    let refs1: Vec<&[QuadInstance]> = layer_instances1.iter().map(|v| v.as_slice()).collect();
+    let refs2: Vec<&[QuadInstance]> = layer_instances2.iter().map(|v| v.as_slice()).collect();
+    let sig1 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &refs1);
+    let sig2 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &refs2);
 
     // Both must produce identical hashes.
     assert_eq!(
@@ -180,8 +182,8 @@ fn test_emission_order_affects_the_signature() {
         heap_reversed.extend_with_instance(0, make_quad(i));
     }
 
-    let layer_instances1 = vec![applied_layer0_instances(&heap_in_order, 10)];
-    let layer_instances2 = vec![applied_layer0_instances(&heap_reversed, 10)];
+    let layer_instances1 = [applied_layer0_instances(&heap_in_order, 10)];
+    let layer_instances2 = [applied_layer0_instances(&heap_reversed, 10)];
     assert_eq!(layer_instances1[0].len(), 3);
     assert_eq!(layer_instances2[0].len(), 3);
     assert_ne!(
@@ -192,8 +194,10 @@ fn test_emission_order_affects_the_signature() {
 
     let hsb = [0.0, 0.0, 0.0];
     let projection = [[0.0; 4]; 4];
-    let sig1 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances1);
-    let sig2 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &layer_instances2);
+    let refs1: Vec<&[QuadInstance]> = layer_instances1.iter().map(|v| v.as_slice()).collect();
+    let refs2: Vec<&[QuadInstance]> = layer_instances2.iter().map(|v| v.as_slice()).collect();
+    let sig1 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &refs1);
+    let sig2 = compute_frame_signature_from_parts(100, 100, &hsb, &projection, &refs2);
 
     assert_ne!(
         sig1, sig2,
@@ -209,24 +213,50 @@ impl crate::TermWindow {
     }
 
     fn call_draw_webgpu(&mut self) -> anyhow::Result<()> {
-        // Collect layer instances for signature computation BEFORE building the frame.
-        // This must happen before build_webgpu_frame because that function calls
-        // write_instances_to_gpu and next_index, which would rotate the buffers.
-        let layer_instances: Vec<Vec<QuadInstance>> = {
+        // Borrow (not clone) each sub-layer's QuadInstance data to feed the
+        // signature hasher. `build_webgpu_frame` only *reads* `vb.instances`
+        // (via `write_instances_to_gpu`, itself just `instances.borrow()`)
+        // and rotates `vb.index`/`vb.bufs` -- it never mutates or clears
+        // `vb.instances`. Clearing only happens via `clear_quad_allocation`
+        // at the start of the *next* frame's paint (see `render/paint.rs`),
+        // so it's safe to hold these borrows across the `build_webgpu_frame`
+        // call below and hash straight from them afterwards, entirely
+        // avoiding a per-frame clone of every QuadInstance.
+        //
+        // Borrow-checker note: `render_state.layers` holds `Rc<RenderLayer>`,
+        // but `render_state` itself is reached through `&self`, so a
+        // `Ref<Vec<QuadInstance>>` borrowed from it would normally be tied
+        // to that `&self` borrow and couldn't survive the later
+        // `self.build_webgpu_frame()` call (which needs `&mut self`).
+        // Cloning the `Rc<RenderLayer>` handles first (a cheap refcount
+        // bump, not a data copy) breaks that dependency on `&self`, so the
+        // `Ref` guards taken from them afterwards are free to outlive it.
+        let layers: Vec<std::rc::Rc<crate::renderstate::RenderLayer>> = {
             let render_state = self.render_state.as_ref().unwrap();
-            let mut all_instances = Vec::new();
-            for layer in render_state.layers.borrow().iter() {
-                for vb in layer.vb.borrow().iter() {
-                    all_instances.push(vb.instances.borrow().clone());
-                }
-            }
-            all_instances
+            render_state.layers.borrow().iter().cloned().collect()
         };
+        // Keep the outer `Ref<[TripleVertexBuffer; 3]>` guards alive
+        // alongside the inner `Ref<Vec<QuadInstance>>` guards they were
+        // borrowed from -- `vb.instances.borrow()` borrows a `RefCell`
+        // nested inside a slot of the array, so the array's own borrow
+        // guard (`vbs_guards`) must outlive it too.
+        let vbs_guards: Vec<std::cell::Ref<[crate::renderstate::TripleVertexBuffer; 3]>> =
+            layers.iter().map(|layer| layer.vb.borrow()).collect();
+        let mut instance_guards: Vec<std::cell::Ref<Vec<QuadInstance>>> = Vec::new();
+        for vbs in &vbs_guards {
+            for vb in vbs.iter() {
+                instance_guards.push(vb.instances.borrow());
+            }
+        }
+        let layer_instances: Vec<&[QuadInstance]> =
+            instance_guards.iter().map(|g| g.as_slice()).collect();
 
         let frame = self.build_webgpu_frame()?;
 
-        // Compute the signature for this frame
+        // Compute the signature for this frame from the borrows taken above.
         let signature = self.compute_frame_signature(&frame, &layer_instances);
+        drop(instance_guards);
+        drop(vbs_guards);
 
         // Compare with the previous frame signature and skip if identical
         if let Some(last_signature) = self.last_frame_signature {
@@ -262,7 +292,7 @@ impl crate::TermWindow {
     fn compute_frame_signature(
         &self,
         frame: &GpuFrame,
-        layer_instances: &[Vec<QuadInstance>],
+        layer_instances: &[&[QuadInstance]],
     ) -> u64 {
         compute_frame_signature_from_parts(
             self.dimensions.pixel_width,
@@ -406,14 +436,14 @@ mod tests {
             1080,
             &foreground_text_hsb,
             &projection,
-            std::slice::from_ref(&instances1),
+            &[instances1.as_slice()],
         );
         let sig2 = compute_frame_signature_from_parts(
             1920,
             1080,
             &foreground_text_hsb,
             &projection,
-            std::slice::from_ref(&instances2),
+            &[instances2.as_slice()],
         );
 
         assert_eq!(
@@ -451,14 +481,14 @@ mod tests {
             1080,
             &foreground_text_hsb,
             &projection,
-            &[instances1],
+            &[instances1.as_slice()],
         );
         let sig2 = compute_frame_signature_from_parts(
             1920,
             1080,
             &foreground_text_hsb,
             &projection,
-            &[instances2],
+            &[instances2.as_slice()],
         );
 
         assert_ne!(
@@ -490,14 +520,14 @@ mod tests {
             1080,
             &foreground_text_hsb,
             &projection1,
-            std::slice::from_ref(&instances),
+            &[instances.as_slice()],
         );
         let sig2 = compute_frame_signature_from_parts(
             1920,
             1080,
             &foreground_text_hsb,
             &projection2,
-            std::slice::from_ref(&instances),
+            &[instances.as_slice()],
         );
 
         assert_ne!(
@@ -524,14 +554,14 @@ mod tests {
             1080,
             &hsb1,
             &projection,
-            std::slice::from_ref(&instances),
+            &[instances.as_slice()],
         );
         let sig2 = compute_frame_signature_from_parts(
             1920,
             1080,
             &hsb2,
             &projection,
-            std::slice::from_ref(&instances),
+            &[instances.as_slice()],
         );
 
         assert_ne!(
@@ -558,14 +588,14 @@ mod tests {
             1080,
             &foreground_text_hsb,
             &projection,
-            std::slice::from_ref(&instances),
+            &[instances.as_slice()],
         );
         let sig2 = compute_frame_signature_from_parts(
             2560,
             1440,
             &foreground_text_hsb,
             &projection,
-            std::slice::from_ref(&instances),
+            &[instances.as_slice()],
         );
 
         assert_ne!(
@@ -599,18 +629,18 @@ mod tests {
         // - pixel_height: usize - window height (resize detection)
         // - foreground_text_hsb: &[f32; 3] - config foreground color transform
         // - projection: &[[f32; 4]; 4] - projection matrix (resize detection)
-        // - layer_instances: &[Vec<QuadInstance>] - actual renderable content
+        // - layer_instances: &[&[QuadInstance]] - actual renderable content (borrowed, not owned)
         //
         // Notably absent: a `milliseconds` parameter of any type.
         //
-        // The wrapper `TermWindow::compute_frame_signature(&self, frame: &GpuFrame, layer_instances: &[Vec<QuadInstance>])`
+        // The wrapper `TermWindow::compute_frame_signature(&self, frame: &GpuFrame, layer_instances: &[&[QuadInstance]])`
         // extracts the above fields from `self.dimensions`, `frame.uniform.foreground_text_hsb`, and `frame.uniform.projection`,
         // but never touches `frame.uniform.milliseconds`.
         //
         // This test documents that design choice. If future code incorrectly adds milliseconds to the signature,
         // it would need to modify `compute_frame_signature_from_parts`'s signature, which is an obvious red flag.
         let _ = compute_frame_signature_from_parts
-            as fn(usize, usize, &[f32; 3], &[[f32; 4]; 4], &[Vec<QuadInstance>]) -> u64;
+            as fn(usize, usize, &[f32; 3], &[[f32; 4]; 4], &[&[QuadInstance]]) -> u64;
 
         // If milliseconds were included, the function signature would need a parameter like:
         // - milliseconds: u32, or
