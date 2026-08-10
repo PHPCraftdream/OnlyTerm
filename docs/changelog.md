@@ -932,6 +932,24 @@ As features stabilize some brief notes about them will accumulate here.
   actual text content is unchanged. The key is now based on the line's
   position relative to the pane instead, so scrolling reuses cached quads
   the same way an unscrolled, unchanged frame already did.
+* Copy Mode's search bar/match highlighting and QuickSelect's labels could
+  silently fail to appear: both overlays render by mutating a clone of the
+  underlying pane's line, but tagged those mutations with a hardcoded
+  sequence number of 0, which the line's `max()`-based sequence tracking
+  treated as a no-op once the line already had a higher (real) sequence
+  number. The line-shaping cache introduced just above is keyed on that
+  sequence number, so it could go on serving a stale, pre-overlay shape for
+  the same row. Both overlays (and the local-echo input-prediction path,
+  which had the same bug) now stamp their mutations with a counter reserved
+  far above any real sequence number, bumped once per render pass, so every
+  pass is seen as a genuinely new version of the line.
+* A line ending in a double-width (e.g. CJK) character right at the wrap
+  column could inconsistently reflow, copy, or search as either one logical
+  line or two, depending on unrelated cache state elsewhere on the line.
+  The function that marks a line as wrapped was writing the flag to a
+  different cell than the one the line-wrap reader actually inspects (the
+  padding cell trailing a wide character, versus that character's own lead
+  cell); both now agree on the same cell.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
