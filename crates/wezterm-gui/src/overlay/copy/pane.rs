@@ -21,6 +21,138 @@ use wezterm_term::{
     TerminalSize,
 };
 
+/// Plain-data view of a search-bar render for a single line, used by
+/// [`decorate_copy_line`]. Kept as owned/borrowed data (no `&self`) so the
+/// decoration logic can be exercised directly against a real `Line` from a
+/// unit test.
+struct CopySearchBarInfo<'a> {
+    cols: usize,
+    pattern: &'a Pattern,
+    result_pos: Option<usize>,
+    num_results: usize,
+    /// Extra "searching N lines" suffix shown while an async search is
+    /// still in flight. `with_lines_mut` includes this; `get_lines`
+    /// historically does not -- preserve that pre-existing asymmetry by
+    /// passing `None` from `get_lines`.
+    searching_remain: Option<StableRowIndex>,
+}
+
+/// The search matches (if any) that fall on the line being decorated, plus
+/// which result (by index) is the "active" one, used by
+/// [`decorate_copy_line`] to choose active-vs-inactive highlight colors.
+struct CopyMatchHighlights<'a> {
+    matches: Option<&'a [MatchResult]>,
+    active_result_index: Option<usize>,
+}
+
+/// Decorates a single cloned pane `Line` for one CopyMode render pass:
+/// either replacing it with the search UI bar, or highlighting any search
+/// matches that fall on this row. This is the exact per-line logic used by
+/// both `Pane::with_lines_mut` and `Pane::get_lines` for `CopyOverlay` --
+/// factored out so it can be unit tested against a real `Line` without a
+/// live `window::Window`.
+///
+/// `render_seqno` must be used for every mutating call so that downstream
+/// seqno-keyed caches (e.g. the GUI's shape_hash_cache) see each render pass
+/// as a distinct version of the line; see `CopyRenderable::render_seqno`.
+fn decorate_copy_line(
+    line: &mut Line,
+    render_seqno: SequenceNo,
+    is_search_row: bool,
+    search_bar: &CopySearchBarInfo,
+    highlights: CopyMatchHighlights,
+    colors: &config::Palette,
+    // `with_lines_mut` operates on clones of lines that may carry forward
+    // stale cached appdata, so it explicitly clears it after mutating.
+    // `get_lines` historically does not do this. Preserve that pre-existing
+    // asymmetry via this flag rather than changing behavior as part of this
+    // refactor.
+    clear_appdata: bool,
+) {
+    if is_search_row {
+        // Replace with search UI
+        let rev = CellAttributes::default().set_reverse(true).clone();
+        line.fill_range(
+            0..search_bar.cols,
+            &Cell::new(' ', rev.clone()),
+            render_seqno,
+        );
+        let mode = &match search_bar.pattern {
+            Pattern::CaseSensitiveString(_) => "case-sensitive",
+            Pattern::CaseInSensitiveString(_) => "ignore-case",
+            Pattern::Regex(_) => "regex",
+        };
+
+        let remain = match search_bar.searching_remain {
+            Some(remain) => format!(" searching {remain} lines"),
+            None => String::new(),
+        };
+
+        line.overlay_text_with_attribute(
+            0,
+            &format!(
+                "Search: {} ({}/{} matches. {}{remain})",
+                **search_bar.pattern,
+                search_bar.result_pos.map(|x| x + 1).unwrap_or(0),
+                search_bar.num_results,
+                mode
+            ),
+            rev,
+            render_seqno,
+        );
+        if clear_appdata {
+            line.clear_appdata();
+        }
+        return;
+    }
+
+    let Some(matches) = highlights.matches else {
+        return;
+    };
+
+    for m in matches {
+        // highlight
+        for cell_idx in m.range.clone() {
+            if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(cell_idx) {
+                if Some(m.result_index) == highlights.active_result_index {
+                    cell.attrs_mut()
+                        .set_background(
+                            colors
+                                .copy_mode_active_highlight_bg
+                                .unwrap_or(AnsiColor::Yellow.into()),
+                        )
+                        .set_foreground(
+                            colors
+                                .copy_mode_active_highlight_fg
+                                .unwrap_or(AnsiColor::Black.into()),
+                        )
+                        .set_reverse(false);
+                } else {
+                    cell.attrs_mut()
+                        .set_background(
+                            colors
+                                .copy_mode_inactive_highlight_bg
+                                .unwrap_or(AnsiColor::Fuchsia.into()),
+                        )
+                        .set_foreground(
+                            colors
+                                .copy_mode_inactive_highlight_fg
+                                .unwrap_or(AnsiColor::Black.into()),
+                        )
+                        .set_reverse(false);
+                }
+            }
+        }
+    }
+    // cells_mut_for_attr_changes_only() mutates cells directly without
+    // bumping the line's seqno; do it explicitly so downstream seqno-keyed
+    // caches see this pass as a new version of the line.
+    line.update_last_change_seqno(render_seqno);
+    if clear_appdata {
+        line.clear_appdata();
+    }
+}
+
 impl Pane for CopyOverlay {
     fn pane_id(&self) -> PaneId {
         self.delegate.pane_id()
@@ -352,87 +484,35 @@ impl Pane for CopyOverlay {
                     let stable_idx = idx as StableRowIndex + first_row;
                     self.renderer.dirty_results.remove(stable_idx);
                     let pattern = self.renderer.get_pattern();
-                    if stable_idx == self.search_row
-                        && (self.renderer.editing_search || !pattern.is_empty())
-                    {
-                        // Replace with search UI
-                        let rev = CellAttributes::default().set_reverse(true).clone();
-                        line.fill_range(
-                            0..self.dims.cols,
-                            &Cell::new(' ', rev.clone()),
-                            render_seqno,
-                        );
-                        let mode = &match pattern {
-                            Pattern::CaseSensitiveString(_) => "case-sensitive",
-                            Pattern::CaseInSensitiveString(_) => "ignore-case",
-                            Pattern::Regex(_) => "regex",
-                        };
-
-                        let remain = match &self.renderer.searching {
-                            Some(Searching { remain, .. }) => {
-                                format!(" searching {remain} lines")
-                            }
-                            None => String::new(),
-                        };
-
-                        line.overlay_text_with_attribute(
-                            0,
-                            &format!(
-                                "Search: {} ({}/{} matches. {}{remain})",
-                                *pattern,
-                                self.renderer.result_pos.map(|x| x + 1).unwrap_or(0),
-                                self.renderer.results.len(),
-                                mode
-                            ),
-                            rev,
-                            render_seqno,
-                        );
+                    let is_search_row = stable_idx == self.search_row
+                        && (self.renderer.editing_search || !pattern.is_empty());
+                    if is_search_row {
                         self.renderer.last_bar_pos = Some(self.search_row);
-                        line.clear_appdata();
-                    } else if let Some(matches) = self.renderer.by_line.get(&stable_idx) {
-                        for m in matches {
-                            // highlight
-                            for cell_idx in m.range.clone() {
-                                if let Some(cell) =
-                                    line.cells_mut_for_attr_changes_only().get_mut(cell_idx)
-                                {
-                                    if Some(m.result_index) == self.renderer.result_pos {
-                                        cell.attrs_mut()
-                                            .set_background(
-                                                colors
-                                                    .copy_mode_active_highlight_bg
-                                                    .unwrap_or(AnsiColor::Yellow.into()),
-                                            )
-                                            .set_foreground(
-                                                colors
-                                                    .copy_mode_active_highlight_fg
-                                                    .unwrap_or(AnsiColor::Black.into()),
-                                            )
-                                            .set_reverse(false);
-                                    } else {
-                                        cell.attrs_mut()
-                                            .set_background(
-                                                colors
-                                                    .copy_mode_inactive_highlight_bg
-                                                    .unwrap_or(AnsiColor::Fuchsia.into()),
-                                            )
-                                            .set_foreground(
-                                                colors
-                                                    .copy_mode_inactive_highlight_fg
-                                                    .unwrap_or(AnsiColor::Black.into()),
-                                            )
-                                            .set_reverse(false);
-                                    }
-                                }
-                            }
-                        }
-                        // cells_mut_for_attr_changes_only() mutates cells
-                        // directly without bumping the line's seqno; do it
-                        // explicitly so downstream seqno-keyed caches see
-                        // this pass as a new version of the line.
-                        line.update_last_change_seqno(render_seqno);
-                        line.clear_appdata();
                     }
+                    let searching_remain = self
+                        .renderer
+                        .searching
+                        .as_ref()
+                        .map(|Searching { remain, .. }| *remain);
+                    let search_bar = CopySearchBarInfo {
+                        cols: self.dims.cols,
+                        pattern: &pattern,
+                        result_pos: self.renderer.result_pos,
+                        num_results: self.renderer.results.len(),
+                        searching_remain,
+                    };
+                    decorate_copy_line(
+                        &mut line,
+                        render_seqno,
+                        is_search_row,
+                        &search_bar,
+                        CopyMatchHighlights {
+                            matches: self.renderer.by_line.get(&stable_idx).map(Vec::as_slice),
+                            active_result_index: self.renderer.result_pos,
+                        },
+                        colors,
+                        /* clear_appdata */ true,
+                    );
                     overlay_lines.push(line);
                 }
 
@@ -469,70 +549,35 @@ impl Pane for CopyOverlay {
             let stable_idx = idx as StableRowIndex + top;
             renderer.dirty_results.remove(stable_idx);
             let pattern = renderer.get_pattern();
-            if stable_idx == search_row && (renderer.editing_search || !pattern.is_empty()) {
-                // Replace with search UI
-                let rev = CellAttributes::default().set_reverse(true).clone();
-                line.fill_range(0..dims.cols, &Cell::new(' ', rev.clone()), render_seqno);
-                let mode = &match pattern {
-                    Pattern::CaseSensitiveString(_) => "case-sensitive",
-                    Pattern::CaseInSensitiveString(_) => "ignore-case",
-                    Pattern::Regex(_) => "regex",
-                };
-                line.overlay_text_with_attribute(
-                    0,
-                    &format!(
-                        "Search: {} ({}/{} matches. {})",
-                        *pattern,
-                        renderer.result_pos.map(|x| x + 1).unwrap_or(0),
-                        renderer.results.len(),
-                        mode
-                    ),
-                    rev,
-                    render_seqno,
-                );
+            let is_search_row =
+                stable_idx == search_row && (renderer.editing_search || !pattern.is_empty());
+            if is_search_row {
                 renderer.last_bar_pos = Some(search_row);
-            } else if let Some(matches) = renderer.by_line.get(&stable_idx) {
-                for m in matches {
-                    // highlight
-                    for cell_idx in m.range.clone() {
-                        if let Some(cell) = line.cells_mut_for_attr_changes_only().get_mut(cell_idx)
-                        {
-                            if Some(m.result_index) == renderer.result_pos {
-                                cell.attrs_mut()
-                                    .set_background(
-                                        colors
-                                            .copy_mode_active_highlight_bg
-                                            .unwrap_or(AnsiColor::Yellow.into()),
-                                    )
-                                    .set_foreground(
-                                        colors
-                                            .copy_mode_active_highlight_fg
-                                            .unwrap_or(AnsiColor::Black.into()),
-                                    )
-                                    .set_reverse(false);
-                            } else {
-                                cell.attrs_mut()
-                                    .set_background(
-                                        colors
-                                            .copy_mode_inactive_highlight_bg
-                                            .unwrap_or(AnsiColor::Fuchsia.into()),
-                                    )
-                                    .set_foreground(
-                                        colors
-                                            .copy_mode_inactive_highlight_fg
-                                            .unwrap_or(AnsiColor::Black.into()),
-                                    )
-                                    .set_reverse(false);
-                            }
-                        }
-                    }
-                }
-                // cells_mut_for_attr_changes_only() mutates cells directly
-                // without bumping the line's seqno; do it explicitly so
-                // downstream seqno-keyed caches see this pass as a new
-                // version of the line.
-                line.update_last_change_seqno(render_seqno);
             }
+            let search_bar = CopySearchBarInfo {
+                cols: dims.cols,
+                pattern: &pattern,
+                result_pos: renderer.result_pos,
+                num_results: renderer.results.len(),
+                // get_lines historically does not show the "searching N
+                // lines" suffix; see decorate_copy_line's doc comment.
+                searching_remain: None,
+            };
+            decorate_copy_line(
+                line,
+                render_seqno,
+                is_search_row,
+                &search_bar,
+                CopyMatchHighlights {
+                    matches: renderer.by_line.get(&stable_idx).map(Vec::as_slice),
+                    active_result_index: renderer.result_pos,
+                },
+                colors,
+                // get_lines historically does not clear_appdata; see
+                // decorate_copy_line's doc comment.
+                /* clear_appdata */
+                false,
+            );
         }
 
         (top, lines)
@@ -540,5 +585,185 @@ impl Pane for CopyOverlay {
 
     fn get_dimensions(&self) -> RenderableDimensions {
         self.delegate.get_dimensions()
+    }
+}
+
+/// Regression tests for the overlay-render-seqno fix (facb0646e).
+///
+/// `CopyOverlay` mutates a *clone* of the delegate pane's `Line` on every
+/// render pass (search bar text, match highlighting). Those clones inherit
+/// whatever seqno the delegate's real line already has. Before the fix,
+/// the overlay tagged its own mutations with `SEQ_ZERO`; since
+/// `Line::update_last_change_seqno` only ever increases a line's seqno
+/// (`self.seqno = self.seqno.max(seqno)`), tagging with SEQ_ZERO on a line
+/// whose seqno was already > 0 was a silent no-op. Downstream per-frame
+/// caches keyed on (pane_id, stable_row, seqno) -- e.g. the GUI's
+/// shape_hash_cache -- would then treat the overlay's mutated frame as
+/// identical to a stale pre-overlay frame and keep serving the old shape,
+/// so the search bar / highlights could silently fail to appear.
+///
+/// These tests call the real `decorate_copy_line` function used by
+/// `CopyOverlay::with_lines_mut`/`get_lines` directly against a real `Line`,
+/// without needing a live TermWindow/GUI (that function takes no
+/// `&self`/`Window`, only plain data). This means reverting
+/// `decorate_copy_line` (or its callers) back to tagging mutations with
+/// `SEQ_ZERO` makes these tests fail.
+#[cfg(test)]
+mod render_seqno_test {
+    use super::*;
+    use termwiz::surface::SEQ_ZERO;
+
+    /// A line that already has server/terminal content at a real seqno,
+    /// simulating a static (unchanging) pane that has been rendered once
+    /// before an overlay was activated.
+    fn make_line_with_seqno(seqno: usize) -> Line {
+        let mut line = Line::with_width(10, SEQ_ZERO);
+        line.fill_range(0..10, &Cell::new(' ', CellAttributes::default()), seqno);
+        line
+    }
+
+    #[test]
+    fn seq_zero_mutation_is_a_no_op_on_nonzero_line() {
+        // This documents *why* the bug existed: update_last_change_seqno
+        // never decreases the seqno, so re-tagging with SEQ_ZERO after a
+        // real mutation leaves current_seqno() unchanged.
+        let mut line = make_line_with_seqno(5);
+        assert_eq!(line.current_seqno(), 5);
+
+        line.fill_range(0..10, &Cell::new('x', CellAttributes::default()), SEQ_ZERO);
+        assert_eq!(
+            line.current_seqno(),
+            5,
+            "SEQ_ZERO must not appear to change a line that already has a higher seqno"
+        );
+    }
+
+    /// Two successive real render passes (via `decorate_copy_line`) over
+    /// the SAME underlying static delegate line (same seqno both times, as
+    /// happens while the user types into the copy-mode search bar but the
+    /// underlying pane content does not change) must produce distinct
+    /// `current_seqno()` values on the decorated clones, and those values
+    /// must exceed the delegate's real seqno. If `decorate_copy_line` were
+    /// reverted to stamp mutations with `SEQ_ZERO` instead of
+    /// `render_seqno`, both assertions below would fail.
+    #[test]
+    fn copy_search_bar_render_bumps_seqno_past_delegate_and_across_passes() {
+        let delegate_seqno = 5;
+        let pattern_1 = Pattern::CaseSensitiveString("a".to_string());
+        let pattern_2 = Pattern::CaseSensitiveString("ab".to_string());
+
+        let search_bar_1 = CopySearchBarInfo {
+            cols: 10,
+            pattern: &pattern_1,
+            result_pos: None,
+            num_results: 0,
+            searching_remain: None,
+        };
+        let search_bar_2 = CopySearchBarInfo {
+            cols: 10,
+            pattern: &pattern_2,
+            result_pos: None,
+            num_results: 0,
+            searching_remain: None,
+        };
+
+        let mut line1 = make_line_with_seqno(delegate_seqno);
+        let pass1_seqno = usize::MAX / 2 + 1;
+        decorate_copy_line(
+            &mut line1,
+            pass1_seqno,
+            true, // is_search_row
+            &search_bar_1,
+            CopyMatchHighlights {
+                matches: None,
+                active_result_index: None,
+            },
+            &config::Palette::default(),
+            true,
+        );
+
+        let mut line2 = make_line_with_seqno(delegate_seqno);
+        let pass2_seqno = usize::MAX / 2 + 2;
+        decorate_copy_line(
+            &mut line2,
+            pass2_seqno,
+            true, // is_search_row
+            &search_bar_2,
+            CopyMatchHighlights {
+                matches: None,
+                active_result_index: None,
+            },
+            &config::Palette::default(),
+            true,
+        );
+
+        assert_eq!(line1.current_seqno(), pass1_seqno);
+        assert_eq!(line2.current_seqno(), pass2_seqno);
+        assert_ne!(
+            line1.current_seqno(),
+            line2.current_seqno(),
+            "two different overlay render passes over the same underlying \
+             line must produce different current_seqno() values, so a \
+             (pane_id, stable_row, seqno)-keyed cache warmed by pass 1 is \
+             correctly invalidated for pass 2's different content"
+        );
+        assert!(line1.current_seqno() > delegate_seqno);
+        assert!(line2.current_seqno() > delegate_seqno);
+
+        // Content sanity: the search bar text was actually written.
+        let text: String = (0..10)
+            .filter_map(|i| line1.get_cell(i).map(|c| c.str().to_string()))
+            .collect();
+        assert!(text.starts_with("Search"));
+    }
+
+    /// The match-highlight branch of `decorate_copy_line` uses
+    /// `cells_mut_for_attr_changes_only()`, which does NOT itself bump the
+    /// line's seqno tracking -- the function must call
+    /// `update_last_change_seqno` explicitly afterwards. This exercises
+    /// that branch directly.
+    #[test]
+    fn copy_match_highlight_requires_explicit_seqno_bump() {
+        let delegate_seqno = 5;
+        let mut line = make_line_with_seqno(delegate_seqno);
+        assert_eq!(line.current_seqno(), delegate_seqno);
+
+        let matches = vec![MatchResult {
+            range: 0..1,
+            result_index: 0,
+        }];
+        let pattern = Pattern::default();
+        let search_bar = CopySearchBarInfo {
+            cols: 10,
+            pattern: &pattern,
+            result_pos: None,
+            num_results: 0,
+            searching_remain: None,
+        };
+        let render_seqno = usize::MAX / 2 + 1;
+        decorate_copy_line(
+            &mut line,
+            render_seqno,
+            false, // not the search row: takes the match-highlight branch
+            &search_bar,
+            CopyMatchHighlights {
+                matches: Some(&matches),
+                active_result_index: Some(0),
+            },
+            &config::Palette::default(),
+            true,
+        );
+
+        assert_eq!(
+            line.current_seqno(),
+            render_seqno,
+            "decorate_copy_line's match-highlight branch mutates cells \
+             directly via cells_mut_for_attr_changes_only(), which does not \
+             itself bump the seqno -- an explicit \
+             update_last_change_seqno(render_seqno) call is required, and \
+             tagging with SEQ_ZERO here would be a silent no-op on this \
+             already-nonzero-seqno line"
+        );
+        assert!(line.current_seqno() > delegate_seqno);
     }
 }
