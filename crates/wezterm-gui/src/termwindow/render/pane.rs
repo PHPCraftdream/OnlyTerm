@@ -705,6 +705,7 @@ impl crate::TermWindow {
                                         shape_key: Some(shape_key),
                                         password_input,
                                         is_wrap_continuation,
+                                        bidi_process_override,
                                     },
                                     &mut TripleLayerQuadAllocator::Heap(&mut buf),
                                 )
