@@ -839,6 +839,150 @@ mod tests {
     use super::*;
     use config::keyassignment::ClipboardCopyDestination;
 
+    /// Builds an `InputMap` from a config whose `keys:` list mirrors the
+    /// shape of a real user config: a mix of `phys:`-prefixed and plain
+    /// bindings, most of them CTRL chords, and *none* of them touching
+    /// CTRL+C or CTRL+J.
+    ///
+    /// The classic way for a config engine to break "everything except the
+    /// keys I explicitly bound" is for a non-empty user `keys:` list to
+    /// *replace* the built-in default table rather than extend it (or for
+    /// a `(key, mods)` normalization collision to silently evict a default
+    /// entry). This constructs the map through exactly the same path the
+    /// real GUI uses -- `Config::from_dynamic` -> `Config::key_bindings()`
+    /// -> `InputMap::new`'s merge of `CommandDef::default_key_assignments`
+    /// -- so that such a regression would show up here.
+    fn input_map_with_user_style_keys() -> InputMap {
+        use config::Config;
+        use wezterm_dynamic::{FromDynamic, FromDynamicOptions, Object};
+
+        fn s(v: &str) -> Value {
+            Value::String(v.to_string())
+        }
+
+        fn object(pairs: Vec<(&str, Value)>) -> Value {
+            Value::Object(
+                pairs
+                    .into_iter()
+                    .map(|(k, v)| (s(k), v))
+                    .collect::<Object>(),
+            )
+        }
+
+        fn binding(key: &str, mods: &str, action: Value) -> Value {
+            object(vec![("key", s(key)), ("mods", s(mods)), ("action", action)])
+        }
+
+        fn send_key(key: &str, mods: Option<&str>) -> Value {
+            let mut inner = vec![("key", s(key))];
+            if let Some(mods) = mods {
+                inner.push(("mods", s(mods)));
+            }
+            object(vec![("SendKey", object(inner))])
+        }
+
+        let mut keys = vec![
+            binding(
+                "phys:v",
+                "CTRL",
+                object(vec![("PasteFrom", s("Clipboard"))]),
+            ),
+            binding("Enter", "SHIFT", send_key("Enter", None)),
+            binding("Enter", "CTRL", send_key("Enter", None)),
+            binding(
+                "phys:t",
+                "CTRL",
+                object(vec![("SpawnTab", s("CurrentPaneDomain"))]),
+            ),
+            binding("l", "CTRL", send_key("l", Some("CTRL"))),
+            binding("L", "CTRL", send_key("l", Some("CTRL"))),
+            binding("phys:l", "CTRL", send_key("l", Some("CTRL"))),
+            binding(
+                "phys:f",
+                "CTRL",
+                object(vec![(
+                    "Search",
+                    object(vec![("CaseInSensitiveString", s(""))]),
+                )]),
+            ),
+            binding(
+                "Tab",
+                "CTRL",
+                object(vec![("ActivateTabRelative", Value::I64(1))]),
+            ),
+            binding(
+                "Tab",
+                "CTRL|SHIFT",
+                object(vec![("ActivateTabRelative", Value::I64(-1))]),
+            ),
+            binding("=", "CTRL", s("IncreaseFontSize")),
+            binding("-", "CTRL", s("DecreaseFontSize")),
+            binding("phys:0", "CTRL", s("ResetFontSize")),
+        ];
+        for n in 1..=9u8 {
+            keys.push(binding(
+                &format!("phys:{n}"),
+                "CTRL",
+                object(vec![("ActivateTab", Value::I64(i64::from(n - 1)))]),
+            ));
+        }
+
+        let config = Config::from_dynamic(
+            &object(vec![("keys", Value::Array(keys.into_iter().collect()))]),
+            FromDynamicOptions::default(),
+        )
+        .expect("user-style config must deserialize")
+        .compute_extra_defaults(None);
+
+        InputMap::new(&ConfigHandle::from_config(config))
+    }
+
+    /// Regression test: a user config that binds *some* CTRL chords must not
+    /// disturb the built-in defaults for the chords it does not mention.
+    /// CTRL+C must still be `CopySelectionOrInterrupt` (so it interrupts when
+    /// nothing is selected) and CTRL+J must still be entirely unbound (so it
+    /// falls through to the pty as a raw 0x0A).
+    #[test]
+    fn user_key_overrides_do_not_clobber_ctrl_c_and_ctrl_j_defaults() {
+        let input_map = input_map_with_user_style_keys();
+
+        for key in [KeyCode::Physical(PhysKeyCode::C), KeyCode::Char('c')] {
+            let entry = input_map
+                .lookup_key(&key, Modifiers::CTRL, None)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "CTRL+C ({:?}) must keep its default binding when the user \
+                         config defines unrelated `keys:` overrides",
+                        key
+                    )
+                });
+            assert_eq!(entry.action, KeyAssignment::CopySelectionOrInterrupt);
+        }
+
+        for key in [
+            KeyCode::Char('j'),
+            KeyCode::Char('J'),
+            KeyCode::Physical(PhysKeyCode::J),
+        ] {
+            assert!(
+                input_map.lookup_key(&key, Modifiers::CTRL, None).is_none(),
+                "CTRL+J ({:?}) must stay free of any binding so it reaches the pty as 0x0A",
+                key
+            );
+        }
+
+        // Sanity check the other direction: the user's own overrides really
+        // did make it into the same table (otherwise the assertions above
+        // would pass vacuously against a map that ignored the user config).
+        assert_eq!(
+            input_map
+                .lookup_key(&KeyCode::Physical(PhysKeyCode::V), Modifiers::CTRL, None)
+                .expect("user CTRL+V override must be present")
+                .action,
+            KeyAssignment::PasteFrom(ClipboardPasteSource::Clipboard)
+        );
+    }
+
     fn no_mods() -> MouseEventTriggerMods {
         MouseEventTriggerMods {
             mods: Modifiers::NONE,

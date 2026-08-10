@@ -503,6 +503,19 @@ impl ConfigHandle {
         }
     }
 
+    /// Wrap an already-constructed `Config` in a handle *without* touching
+    /// the process-wide configuration (unlike `use_this_configuration` +
+    /// `configuration()`, which mutate global state shared with every other
+    /// test in the same binary). Intended for tests that need to feed a
+    /// synthetic config into something that takes a `ConfigHandle`, e.g.
+    /// `InputMap::new`.
+    pub fn from_config(config: Config) -> Self {
+        Self {
+            config: Arc::new(config),
+            generation: 0,
+        }
+    }
+
     pub fn unicode_version(&self) -> UnicodeVersion {
         UnicodeVersion {
             version: self.config.unicode_version,

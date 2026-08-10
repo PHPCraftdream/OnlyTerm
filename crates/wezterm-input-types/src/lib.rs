@@ -158,6 +158,65 @@ mod test {
         assert_eq!(multi.encode_kitty(flags), String::new());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn encode_win32_input_mode_ctrl_chords_carry_the_control_code() {
+        // Regression test: `UnicodeChar` in the synthesized KEY_EVENT_RECORD
+        // must carry the actual control code (eg. 0x0a for Ctrl+J), not the
+        // bare physical letter -- conhost/OpenConsole (and anything reading
+        // console input via ReadConsoleInputW, eg. Node's libuv) use that
+        // field verbatim. A prior change that made the physical-key identity
+        // layout-independent for CTRL/ALT chords accidentally carried the
+        // bare letter into this field too.
+        fn win32_input_mode_uni_char(c: char, phys: PhysKeyCode, vkey: u32, scan: u32) -> u32 {
+            let event = KeyEvent {
+                key: KeyCode::Char(c),
+                modifiers: Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: Some(RawKeyEvent {
+                    key: KeyCode::Char(c),
+                    modifiers: Modifiers::CTRL,
+                    leds: KeyboardLedStatus::empty(),
+                    phys_code: Some(phys),
+                    raw_code: vkey,
+                    scan_code: scan,
+                    repeat_count: 1,
+                    key_is_down: true,
+                    handled: Handled::new(),
+                }),
+                win32_uni_char: None,
+            };
+            let encoded = event.encode_win32_input_mode().expect("raw is Some");
+            // Format is ESC [ vkey;scan;uni;down;ctrlstate;repeat _
+            let uni_field = encoded
+                .trim_start_matches('\u{1b}')
+                .trim_start_matches('[')
+                .trim_end_matches('_')
+                .split(';')
+                .nth(2)
+                .expect("uni field present");
+            uni_field.parse::<u32>().unwrap()
+        }
+
+        assert_eq!(
+            win32_input_mode_uni_char('c', PhysKeyCode::C, 0x43, 0x2e),
+            3,
+            "Ctrl+C must carry 0x03, not 'c' (99)"
+        );
+        assert_eq!(
+            win32_input_mode_uni_char('j', PhysKeyCode::J, 0x4a, 0x24),
+            10,
+            "Ctrl+J must carry 0x0a, not 'j' (106)"
+        );
+        assert_eq!(
+            win32_input_mode_uni_char('v', PhysKeyCode::V, 0x56, 0x2f),
+            22,
+            "Ctrl+V must carry 0x16, not 'v' (118)"
+        );
+    }
+
     #[test]
     fn encode_kitty_ctrl_c_stays_legacy_under_disambiguate() {
         // Ctrl+C has no collision with any other named key's legacy byte,

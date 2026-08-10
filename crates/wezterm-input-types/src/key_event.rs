@@ -210,10 +210,25 @@ impl KeyEvent {
                 // raw `ToUnicode` result and stays layout-translated (eg.
                 // physical "V" still reports Cyrillic 'м' under a Russian
                 // layout) even when a modifier is held.
+                //
+                // The `UnicodeChar` field of the KEY_EVENT_RECORD still has
+                // to carry the actual control code (eg. 0x0a for Ctrl+J),
+                // not the bare physical letter -- conhost/OpenConsole (and
+                // anything reading console input, eg. Node's libuv) use that
+                // field verbatim. `ctrl_mapping` derives the control code
+                // from the layout-independent physical letter, so this keeps
+                // both properties: layout independence and a correct
+                // control byte. Plain ALT-only chords carry no character in
+                // a real KEY_EVENT_RECORD either, matching what
+                // `win32_uni_char`/`ToUnicode` reports for those.
                 let prefer_physical = self.modifiers.contains(Modifiers::CTRL)
                     || self.modifiers.contains(Modifiers::ALT);
                 let uni = if prefer_physical {
-                    *c as u32
+                    if self.modifiers.contains(Modifiers::CTRL) {
+                        ctrl_mapping(*c).map(|c| c as u32).unwrap_or(0)
+                    } else {
+                        0
+                    }
                 } else {
                     self.win32_uni_char.unwrap_or(*c) as u32
                 };
