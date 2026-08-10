@@ -447,6 +447,25 @@ fn last_cell_was_wrapped_cache_invalidated_by_split_off() {
     );
 }
 
+#[test]
+fn last_cell_was_wrapped_wide_trailing_grapheme() {
+    // Regression test for a bug the 3rd @oh review pass found: for a
+    // V-storage line ending in a double-width grapheme (e.g. CJK),
+    // `set_last_cell_was_wrapped`'s old `cells.last_mut()` targeted the
+    // padding cell that follows the wide grapheme, while the reader's
+    // `visible_cells().last()` skips that padding cell and inspects the
+    // wide grapheme's lead cell instead -- so the attribute was set on a
+    // cell the reader never looks at. The setter must resolve the same
+    // cell index as the reader.
+    let mut line = Line::from_text("a你", &CellAttributes::default(), SEQ_ZERO, None);
+    line.set_last_cell_was_wrapped(true, 1);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "setter and reader must agree on which cell is 'last' for a wide trailing grapheme"
+    );
+}
+
 fn bold() -> CellAttributes {
     use wezterm_cell::Intensity;
     let mut attr = CellAttributes::default();

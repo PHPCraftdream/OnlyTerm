@@ -1246,8 +1246,14 @@ impl Line {
             return;
         }
 
+        // Target the same cell that `last_cell_was_wrapped()` reads: the
+        // last *visible* cell. `cells.last_mut()` would instead be the
+        // padding cell that follows a trailing wide (e.g. CJK) character,
+        // which the visible-cell reader skips over, so setting the
+        // attribute there would never be observed by the reader.
+        let last_visible_index = self.visible_cells().last().map(|c| c.cell_index());
         let cells = self.coerce_vec_storage();
-        if let Some(cell) = cells.last_mut() {
+        if let Some(cell) = last_visible_index.and_then(|idx| cells.get_mut(idx)) {
             cell.attrs_mut().set_wrapped(wrapped);
             // Only cache when a cell was actually mutated: an empty line
             // (no last cell to set the attribute on) means `wrapped` was
