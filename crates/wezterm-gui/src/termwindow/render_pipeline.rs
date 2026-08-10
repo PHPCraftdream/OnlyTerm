@@ -200,13 +200,13 @@ impl TermWindow {
                 |config| config.shape_cache_size,
                 &config,
             )),
-            line_state_cache: RefCell::new(render::LruCacheWithMetrics::new(
-                "line_state_cache.hit.rate",
-                "line_state_cache.miss.rate",
+            // Task #439: Shape hash cache keyed by (pane_id, stable_row)
+            shape_hash_cache: RefCell::new(LfuCache::new(
+                "shape_hash_cache.hit.rate",
+                "shape_hash_cache.miss.rate",
                 |config| config.line_state_cache_size,
                 &config,
             )),
-            next_line_state_id: 0,
             line_quad_cache: RefCell::new(LfuCache::new(
                 "line_quad_cache.hit.rate",
                 "line_quad_cache.miss.rate",
@@ -1252,6 +1252,8 @@ impl TermWindow {
             TermWindowNotif::InvalidateShapeCache => {
                 self.shape_generation += 1;
                 self.shape_cache.borrow_mut().clear();
+                // Task #439: clear shape_hash_cache on shape cache invalidation
+                self.shape_hash_cache.borrow_mut().clear();
                 self.invalidate_modal();
                 window.invalidate();
             }

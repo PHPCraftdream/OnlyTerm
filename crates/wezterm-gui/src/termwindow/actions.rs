@@ -105,7 +105,8 @@ impl TermWindow {
             shape_cache.update_config(&config);
             shape_cache.clear();
         }
-        self.line_state_cache.borrow_mut().update_config(&config);
+        // Task #439: clear shape_hash_cache on config reload
+        self.shape_hash_cache.borrow_mut().clear();
         self.line_quad_cache.borrow_mut().update_config(&config);
         self.line_to_ele_shape_cache
             .borrow_mut()
