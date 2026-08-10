@@ -950,6 +950,12 @@ As features stabilize some brief notes about them will accumulate here.
   different cell than the one the line-wrap reader actually inspects (the
   padding cell trailing a wide character, versus that character's own lead
   cell); both now agree on the same cell.
+* Fixed a related bug in the same area: once a line ending in a double-width
+  character was moved into scrollback (which switches its internal storage
+  representation for memory efficiency) and later re-marked as wrapped or
+  un-wrapped, the character's column width bookkeeping for that internal
+  representation could become corrupted, potentially splitting the wide
+  character in two on subsequent redraws, copies, or resizes.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
