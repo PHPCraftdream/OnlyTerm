@@ -396,6 +396,57 @@ fn last_cell_was_wrapped_cache_invalidated_by_resize_and_clear() {
     assert_eq!(line.last_cell_was_wrapped(), false);
 }
 
+// Regression tests for a bug an @oh review pass caught in the wrap-cache
+// fix above: `update_last_change_seqno` takes `max(self.seqno, seqno)`, so
+// a caller that computes `seqno` as the max of two already-existing seqnos
+// (as `apply_hyperlink_rules` does when joining physical lines back into a
+// logical one) can pass a seqno that is a no-op on the receiving line even
+// though its content just changed. Relying on the seqno match alone left
+// `append_line` and `split_off` able to serve a stale cached value.
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_append_line_same_seqno() {
+    // Mirrors the pattern in `apply_hyperlink_rules`: `seqno` is the max of
+    // the two lines' own seqnos, so it can equal `self`'s current seqno.
+    let mut a = Line::from_text_with_wrapped_last_col("ab", &CellAttributes::default(), 5);
+    assert_eq!(
+        a.last_cell_was_wrapped(),
+        true,
+        "populate the cache before mutating"
+    );
+
+    let b = Line::from_text("cd", &CellAttributes::default(), SEQ_ZERO, None);
+    let seqno = a.current_seqno().max(b.current_seqno()); // == 5, a no-op bump
+    a.append_line(b, seqno);
+
+    assert_eq!(
+        a.last_cell_was_wrapped(),
+        false,
+        "appended content is not wrapped; a same-seqno append must not serve the stale cached value"
+    );
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_split_off() {
+    let mut line = Line::from_text_with_wrapped_last_col("abcd", &CellAttributes::default(), 1);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "populate the cache before mutating"
+    );
+
+    // split_off truncates `line` in place; its new last cell ('b', at
+    // index 1) is not wrapped, even though split_off never bumps `line`'s
+    // own seqno via update_last_change_seqno.
+    let _remainder = line.split_off(2, 1);
+
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        false,
+        "split_off must invalidate the truncated line's own wrap cache"
+    );
+}
+
 fn bold() -> CellAttributes {
     use wezterm_cell::Intensity;
     let mut attr = CellAttributes::default();
