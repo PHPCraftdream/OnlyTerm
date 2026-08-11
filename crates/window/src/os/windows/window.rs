@@ -861,7 +861,22 @@ impl Window {
         // which is always valid and non-null on Windows.
         let h_inst = unsafe { GetModuleHandleW(null()) };
         let class = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
+            // Deliberately NOT `CS_HREDRAW | CS_VREDRAW`. Those styles force
+            // a full invalidate-with-erase of the window on every width or
+            // height change, which is what you want for a window that draws
+            // itself in `WM_PAINT`. This one draws nothing in `WM_PAINT` at
+            // all -- its pixels come from the swapchain that DXGI presents
+            // to it. The forced erase is therefore pure downside: once the
+            // startup placeholder has been retired, `WM_ERASEBKGND` here
+            // paints nothing (see `child_wnd_proc`) and the null background
+            // brush means `DefWindowProc` doesn't either, so every resize
+            // blanked this window to undefined pixels until the swapchain
+            // happened to present again -- which the compositor showed as a
+            // see-through flash of whatever was behind the window. Without
+            // these styles a resize leaves the previously presented frame on
+            // screen until the next one lands, which is both correct and
+            // what every other swapchain-backed window does.
+            style: 0,
             lpfnWndProc: Some(child_wnd_proc),
             cbClsExtra: 0,
             cbWndExtra: 0,
@@ -905,12 +920,24 @@ impl Window {
         // when `parent` is destroyed). No menu/custom instance/create-params
         // are needed since this window has no `WindowInner` of its own. A
         // null result is reported as an error below.
+        //
+        // Created WITHOUT `WS_VISIBLE` on purpose: this window has no pixels
+        // of its own until the swapchain presents its first frame, and while
+        // it is visible it covers the parent's entire client area -- so
+        // showing it before then composites undefined pixels over the
+        // parent's startup placeholder, which reads as a see-through flash
+        // of whatever is behind the window. Callers show it once there is
+        // actually something to show: `clear_placeholder_background` (the
+        // first-frame-presented signal) on the startup path, and
+        // `recreate_webgpu_child_window` immediately on the renderer-rebuild
+        // path, where a renderer was already up and the placeholder is long
+        // gone.
         let hwnd = unsafe {
             CreateWindowExW(
                 0,
                 class_name.as_ptr(),
                 name.as_ptr(),
-                WS_CHILD | WS_VISIBLE,
+                WS_CHILD,
                 rect.left,
                 rect.top,
                 rect_width(&rect),
@@ -1303,6 +1330,24 @@ impl Window {
             let new_child = Self::create_webgpu_child_window(parent)?;
             let mut inner = handle.borrow_mut();
             inner.webgpu_child_hwnd = HWindow(new_child);
+            // `create_webgpu_child_window` returns a hidden window so the
+            // startup path can defer showing it until its first frame
+            // lands. That deferral doesn't apply here: a renderer was
+            // already up (that's what is being rebuilt), so the startup
+            // placeholder is long gone and there is nothing else left to
+            // paint this area -- leaving the child hidden until the
+            // rebuilt renderer's own first frame would blank the window
+            // for the whole rebuild instead of holding the last image.
+            // Show it immediately, matching the pre-deferral behavior on
+            // this path exactly.
+            if inner.renderer_ready {
+                // SAFETY: `new_child` is the valid `WS_CHILD` handle just
+                // returned above, owned by `parent`. `SW_SHOWNA` shows it
+                // without activating.
+                unsafe {
+                    ShowWindow(new_child, SW_SHOWNA);
+                }
+            }
             // A new WebGpu child is created at the top of the parent's child
             // z-order, which would land above any active fade overlay. Rather
             // than re-assert the overlay's z-order against the newcomer,
@@ -1468,6 +1513,26 @@ impl WindowInner {
     /// paint reads them via `draw_placeholder_spinner`.
     fn clear_placeholder_background(&mut self) {
         self.renderer_ready = true;
+        // The WebGpu child is created hidden (see
+        // `create_webgpu_child_window`) precisely so it never composites
+        // undefined pixels over the placeholder. This is the moment that
+        // stops being a risk: a frame has actually been presented to its
+        // swapchain, so it now has something to show.
+        //
+        // Must happen before `start_placeholder_fade` below: the fade
+        // overlay is created directly above this child and cross-fades into
+        // whatever it covers, so the child has to be visible underneath it
+        // for the fade to reveal the real terminal content rather than an
+        // empty client area.
+        if !self.webgpu_child_hwnd.0.is_null() {
+            // SAFETY: `webgpu_child_hwnd.0` is a valid `WS_CHILD` handle
+            // owned by `self.hwnd.0`. `SW_SHOWNA` shows it without
+            // activating, leaving focus (which lives on the parent -- this
+            // child is never focused) undisturbed.
+            unsafe {
+                ShowWindow(self.webgpu_child_hwnd.0, SW_SHOWNA);
+            }
+        }
         self.start_placeholder_fade();
 
         if let Some(spinner) = self.placeholder_spinner.take() {
