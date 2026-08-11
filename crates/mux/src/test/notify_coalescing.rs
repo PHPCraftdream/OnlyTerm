@@ -1,6 +1,6 @@
 use super::*;
 use crate::pane::PaneId;
-use crate::{Mux, MuxNotification};
+use crate::{Mux, MuxNotification, PANE_OUTPUT_MAX_SYNC_ROUNDS};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Regression coverage for task #148: `Mux::notify` no longer holds
@@ -358,6 +358,100 @@ fn pane_output_arriving_during_delivery_schedules_followup() {
         SCHEDULER_QUEUE.queue.lock().len(),
         0,
         "pending state should not get stuck after follow-up completes"
+    );
+
+    Mux::shutdown();
+}
+
+/// Sustained, continuous output (not just one in-flight repeat) must not
+/// turn `Mux::notify`'s reschedule path into unbounded recursion. A
+/// subscriber re-triggers `PaneOutput` for the same pane on every single
+/// delivery, simulating a pane that never goes quiet, for many more rounds
+/// than `PANE_OUTPUT_MAX_SYNC_ROUNDS`. Every round must still be delivered
+/// (no output silently dropped), but delivery must periodically yield back
+/// to the scheduler queue -- observed here as more than one queued task
+/// running to completion -- rather than resolving in a single recursive
+/// call. Before the fix, this looped through `dispatch_notification` ->
+/// `notify` recursively without bound, which would eventually blow the
+/// stack on real sustained output (eg. `yes` piped into a pane); this test
+/// instead proves the round count is bounded by asserting more than one
+/// hop through the scheduler queue occurred.
+#[test]
+fn pane_output_sustained_output_yields_to_event_loop() {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+    install_queueing_scheduler();
+
+    let mux = Arc::new(Mux::new(None));
+    Mux::set_mux(&mux);
+
+    let pane_id: PaneId = 909;
+    // Enough rounds to force several yields back to the event loop.
+    let total_rounds = PANE_OUTPUT_MAX_SYNC_ROUNDS * 3 + 5;
+    let calls = Arc::new(AtomicUsize::new(0));
+
+    {
+        let calls = Arc::clone(&calls);
+        mux.subscribe(move |n| {
+            if matches!(n, MuxNotification::PaneOutput(id) if id == pane_id) {
+                let count = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if count < total_rounds {
+                    // Simulate more output having arrived while this
+                    // delivery was in flight.
+                    Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id));
+                }
+            }
+            true
+        });
+    }
+
+    thread::spawn(move || {
+        Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id));
+    })
+    .join()
+    .unwrap();
+
+    // Drain the scheduler queue to completion, counting how many separate
+    // tasks actually ran. Bounded by a generous safety cap so a real
+    // regression (the old unbounded-recursion behavior, or a bug that
+    // drops the pending state) fails the test instead of hanging it.
+    let mut hops = 0usize;
+    for _ in 0..(total_rounds + 16) {
+        let next = SCHEDULER_QUEUE.queue.lock().pop();
+        match next {
+            Some(runnable) => {
+                hops += 1;
+                runnable.run();
+            }
+            None => break,
+        }
+    }
+
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        total_rounds,
+        "every round of sustained output must still be delivered"
+    );
+    assert!(
+        hops > 1,
+        "sustained output spanning {} rounds (> PANE_OUTPUT_MAX_SYNC_ROUNDS = {}) must yield \
+         back to the event loop more than once, not resolve as a single unbounded recursive \
+         call; observed {} hop(s)",
+        total_rounds,
+        PANE_OUTPUT_MAX_SYNC_ROUNDS,
+        hops
+    );
+    assert!(
+        hops < total_rounds,
+        "yielding must still batch multiple rounds per hop, not fall back to one event-loop \
+         round-trip per output event; observed {} hops for {} rounds",
+        hops,
+        total_rounds
+    );
+    assert_eq!(
+        SCHEDULER_QUEUE.queue.lock().len(),
+        0,
+        "no stray pending task should remain after all rounds have been delivered"
     );
 
     Mux::shutdown();

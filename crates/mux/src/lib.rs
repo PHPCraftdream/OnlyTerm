@@ -126,6 +126,15 @@ lazy_static::lazy_static! {
     static ref MUX: Mutex<Option<Arc<Mux>>> = Mutex::new(None);
 }
 
+/// How many consecutive `PaneOutput` rounds `Mux::notify` will redeliver
+/// synchronously (in a loop, not via recursion) before yielding back to the
+/// event loop. A pane with sustained, continuous output can keep
+/// `coalesce_count` incrementing indefinitely; without a cap, delivering
+/// every round from the same call would either recurse without bound (the
+/// original bug) or spin the calling thread forever, starving every other
+/// pane/window of a chance to run. See `Mux::notify`'s reschedule loop.
+pub(crate) const PANE_OUTPUT_MAX_SYNC_ROUNDS: usize = 64;
+
 pub struct MuxWindowBuilder {
     window_id: WindowId,
     activity: Option<Activity>,
@@ -459,68 +468,80 @@ impl Mux {
     }
 
     pub fn notify(&self, notification: MuxNotification) {
-        let (pane_id, initial_coalesce_count) =
-            if let MuxNotification::PaneOutput(pane_id) = &notification {
-                // Capture the coalesce_count BEFORE we start delivering.
-                // If it increases during delivery, output arrived during the callback.
-                let coalesce_count = {
-                    let state = self.pane_output_notify_state.lock();
-                    state.get(pane_id).map(|(_, _, count)| *count).unwrap_or(0)
+        let mut notification = notification;
+        // Consecutive rounds delivered synchronously in this call, without
+        // returning to the event loop. Bounded by PANE_OUTPUT_MAX_SYNC_ROUNDS
+        // below -- see its doc comment for why this loop exists instead of
+        // the reschedule calling back into `notify` recursively.
+        let mut sync_rounds: usize = 0;
+
+        loop {
+            let (pane_id, initial_coalesce_count) =
+                if let MuxNotification::PaneOutput(pane_id) = &notification {
+                    // Capture the coalesce_count BEFORE we start delivering.
+                    // If it increases during delivery, output arrived during the callback.
+                    let coalesce_count = {
+                        let state = self.pane_output_notify_state.lock();
+                        state.get(pane_id).map(|(_, _, count)| *count).unwrap_or(0)
+                    };
+                    (Some(*pane_id), coalesce_count)
+                } else {
+                    (None, 0)
                 };
-                (Some(*pane_id), coalesce_count)
-            } else {
-                (None, 0)
+
+            // Snapshot the subscriber ids+callbacks under a short-lived read
+            // lock, then release it before invoking any callbacks. Subscriber
+            // callbacks are arbitrary code (eg. GUI code that ends up calling
+            // back into `Mux::get_window`, or even `Mux::subscribe` /
+            // `Mux::notify` again); if we held `subscribers.write()` for the
+            // duration of those calls -- as a naive `retain`-based
+            // implementation would -- any callback that (transitively) touches
+            // `self.subscribers` would deadlock against this non-reentrant
+            // `RwLock`, and every other subscriber would be blocked from
+            // observing the notification until the slowest callback returns.
+            //
+            // Note: cloning the `Arc<Fn>` payload (rather than the raw
+            // `Box<Fn>`) is what makes a cheap snapshot possible without
+            // moving the callbacks out of the map, so a second pass can later
+            // reconcile the live set using the same ids.
+            let snapshot: Vec<(usize, MuxSubscriber)> = {
+                let subscribers = self.subscribers.read();
+                subscribers
+                    .iter()
+                    .map(|(id, notify)| (*id, Arc::clone(notify)))
+                    .collect()
             };
 
-        // Snapshot the subscriber ids+callbacks under a short-lived read
-        // lock, then release it before invoking any callbacks. Subscriber
-        // callbacks are arbitrary code (eg. GUI code that ends up calling
-        // back into `Mux::get_window`, or even `Mux::subscribe` /
-        // `Mux::notify` again); if we held `subscribers.write()` for the
-        // duration of those calls -- as a naive `retain`-based
-        // implementation would -- any callback that (transitively) touches
-        // `self.subscribers` would deadlock against this non-reentrant
-        // `RwLock`, and every other subscriber would be blocked from
-        // observing the notification until the slowest callback returns.
-        //
-        // Note: cloning the `Arc<Fn>` payload (rather than the raw
-        // `Box<Fn>`) is what makes a cheap snapshot possible without
-        // moving the callbacks out of the map, so a second pass can later
-        // reconcile the live set using the same ids.
-        let snapshot: Vec<(usize, MuxSubscriber)> = {
-            let subscribers = self.subscribers.read();
-            subscribers
-                .iter()
-                .map(|(id, notify)| (*id, Arc::clone(notify)))
-                .collect()
-        };
-
-        // Invoke the callbacks with no mux lock held at all, recording
-        // which subscriber ids asked to be removed (by returning `false`).
-        let mut dead = Vec::new();
-        for (id, notify) in &snapshot {
-            if !notify(notification.clone()) {
-                dead.push(*id);
+            // Invoke the callbacks with no mux lock held at all, recording
+            // which subscriber ids asked to be removed (by returning `false`).
+            let mut dead = Vec::new();
+            for (id, notify) in &snapshot {
+                if !notify(notification.clone()) {
+                    dead.push(*id);
+                }
             }
-        }
 
-        // Reconcile: drop only the ids that asked to unsubscribe *and*
-        // are still present (a concurrent `subscribe` could have reused
-        // an id only via `LAST_SUBSCRIBER_ID`, which never repeats, so
-        // this is simply "remove if still there").
-        if !dead.is_empty() {
-            let mut subscribers = self.subscribers.write();
-            for id in dead {
-                subscribers.remove(&id);
+            // Reconcile: drop only the ids that asked to unsubscribe *and*
+            // are still present (a concurrent `subscribe` could have reused
+            // an id only via `LAST_SUBSCRIBER_ID`, which never repeats, so
+            // this is simply "remove if still there").
+            if !dead.is_empty() {
+                let mut subscribers = self.subscribers.write();
+                for id in dead {
+                    subscribers.remove(&id);
+                }
             }
-        }
 
-        // After all subscribers have been notified, clear the pending marker
-        // for PaneOutput notifications and check if we need to schedule a
-        // follow-up delivery. We schedule a follow-up only if coalesce_count
-        // increased DURING the delivery (meaning output arrived from within
-        // the callback), not if it was already set BEFORE the delivery started.
-        if let Some(pane_id) = pane_id {
+            let pane_id = match pane_id {
+                Some(pane_id) => pane_id,
+                None => return,
+            };
+
+            // After all subscribers have been notified, clear the pending marker
+            // for PaneOutput notifications and check if we need to schedule a
+            // follow-up delivery. We schedule a follow-up only if coalesce_count
+            // increased DURING the delivery (meaning output arrived from within
+            // the callback), not if it was already set BEFORE the delivery started.
             let should_reschedule = {
                 let mut state = self.pane_output_notify_state.lock();
                 if let Some((_, has_more_output, coalesce_count)) = state.get_mut(&pane_id) {
@@ -541,13 +562,37 @@ impl Mux {
                 }
             };
 
-            if should_reschedule {
-                // More output arrived while we were delivering; schedule another round.
-                // We must call dispatch_notification OUTSIDE the lock to avoid
-                // lock-ordering issues (dispatch may acquire other locks).
-                metrics::counter!("mux.pane_output.rescheduled").increment(1);
-                Self::dispatch_notification(MuxNotification::PaneOutput(pane_id));
+            if !should_reschedule {
+                return;
             }
+
+            sync_rounds += 1;
+            if sync_rounds >= PANE_OUTPUT_MAX_SYNC_ROUNDS {
+                // A pane with continuous output could otherwise keep this
+                // loop -- or, before this change, a `notify`/`dispatch_notification`
+                // recursion -- going indefinitely, growing the stack without
+                // bound and starving every other subscriber/window of a
+                // chance to run. Hand the next round to the event loop
+                // instead of continuing synchronously: `spawn_into_main_thread`
+                // runs on a fresh call stack once this call has returned, so
+                // stack depth stays O(1) regardless of how long the output
+                // keeps coming, and other pending work gets to run in between.
+                metrics::counter!("mux.pane_output.yielded").increment(1);
+                let notification = MuxNotification::PaneOutput(pane_id);
+                promise::spawn::spawn_into_main_thread(async move {
+                    if let Some(mux) = Mux::try_get() {
+                        mux.notify(notification);
+                    }
+                })
+                .detach();
+                return;
+            }
+
+            // More output arrived while we were delivering; loop back and
+            // deliver another round in this same call, rather than
+            // recursing into `dispatch_notification` -> `notify` again.
+            metrics::counter!("mux.pane_output.rescheduled").increment(1);
+            notification = MuxNotification::PaneOutput(pane_id);
         }
     }
 
