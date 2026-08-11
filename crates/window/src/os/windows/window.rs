@@ -1214,7 +1214,8 @@ impl Window {
         }
 
         apply_theme(hwnd.0);
-        enable_blur_behind(hwnd.0);
+        // NOT `enable_blur_behind(hwnd.0)` here: see the call in
+        // `clear_placeholder_background` for why it's deferred.
 
         // Make window capable of accepting drag and drop
         // SAFETY: `hwnd.0` is a valid, just-created window handle.
@@ -1540,6 +1541,27 @@ impl WindowInner {
                 ShowWindow(self.webgpu_child_hwnd.0, SW_SHOWNA);
             }
         }
+
+        // `enable_blur_behind` used to run at window-creation time, well
+        // before any of this. On hybrid-graphics laptops, GPU init (DXGI
+        // adapter enumeration + shader compile) can take several seconds,
+        // during which the window already had a DWM blur-behind region
+        // covering its entire client area (`hRgnBlur` in that function is
+        // an infinite rect) with nothing real painted into it yet -- DWM
+        // composited whatever was behind the window (other windows, video
+        // playback) through that region for the whole gap, which is what
+        // read as a multi-second startup flicker. Deferring the call to
+        // here, once a real frame is actually about to be shown, keeps
+        // whatever cosmetic effect it provides without the see-through
+        // window during startup.
+        //
+        // Guarded because the `wm_ncdestroy` backstop call into this method
+        // (window closed before a renderer ever came up) has already reset
+        // `self.hwnd` to null by the time it gets here.
+        if !self.hwnd.0.is_null() {
+            enable_blur_behind(self.hwnd.0);
+        }
+
         self.start_placeholder_fade();
 
         if let Some(spinner) = self.placeholder_spinner.take() {
