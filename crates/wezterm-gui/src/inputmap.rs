@@ -398,6 +398,75 @@ impl InputMap {
             .entry("search_mode".to_string())
             .or_insert_with(crate::overlay::copy::search_key_table);
 
+        // Synthesize physical-key fallbacks for Char-based entries with CTRL, SUPER,
+        // or bare ALT modifiers. This ensures that user-configured keybindings work
+        // correctly on non-US keyboard layouts (e.g., Alt+v on Russian ЙЦУКЕН where
+        // the physical V key produces 'м').
+        //
+        // This runs AFTER all insertions are complete (defaults + user config +
+        // named tables), so we cover the entire keybinding surface, not just the
+        // built-in defaults that `CommandDef::permute_keys` already handles.
+        //
+        // Two critical correctness invariants:
+        // 1. AltGr (CTRL|ALT together) is excluded: it's a compose state, not a
+        //    keybinding, and synthesizing a twin for it risks false matches.
+        // 2. Uppercase/SHIFT-normalized entries need the twin to carry SHIFT:
+        //    Ctrl+Shift+C is stored as (CTRL, 'C'), and its physical twin must be
+        //    (CTRL|SHIFT, Physical(C)) to distinguish it from plain Ctrl+C.
+        fn synthesize_physical_fallbacks(keys: &mut KeyTables) {
+            let all_tables: Vec<_> = std::iter::once(&mut keys.default)
+                .chain(keys.by_name.values_mut())
+                .collect();
+
+            for table in all_tables {
+                // Collect entries first, then insert, to avoid processing newly-added twins
+                let entries: Vec<_> = table.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+                for ((key, mods), entry) in entries {
+                    let KeyCode::Char(c) = key else {
+                        continue;
+                    };
+
+                    let has_ctrl = mods.contains(Modifiers::CTRL);
+                    let has_super = mods.contains(Modifiers::SUPER);
+                    let has_alt = mods.contains(Modifiers::ALT);
+
+                    // AltGr (CTRL|ALT together) must NOT get this treatment
+                    if has_ctrl && has_alt {
+                        continue;
+                    }
+
+                    if !has_ctrl && !has_super && !has_alt {
+                        continue;
+                    }
+
+                    let Some(phys) = key.to_phys() else {
+                        continue;
+                    };
+
+                    let phys_key = KeyCode::Physical(phys);
+                    if phys_key == key {
+                        continue;
+                    }
+
+                    // For uppercase chars (shift-normalized entries), include SHIFT
+                    // in the twin's mods to avoid ambiguity with plain unshifted chords.
+                    let twin_mods = if c.is_ascii_uppercase() && !mods.contains(Modifiers::SHIFT) {
+                        mods | Modifiers::SHIFT
+                    } else {
+                        mods
+                    };
+
+                    let twin_key = (phys_key, twin_mods);
+
+                    // Only insert if not already present (don't overwrite explicit entries)
+                    table.entry(twin_key).or_insert(entry);
+                }
+            }
+        }
+
+        synthesize_physical_fallbacks(&mut keys);
+
         Self {
             keys,
             leader,
@@ -1256,5 +1325,120 @@ mod tests {
                 .is_none(),
             "CTRL+J (uppercase variant) must also be free of any default KeyAssignment"
         );
+    }
+
+    /// Builds an `InputMap` from a minimal user-style config containing an
+    /// `Alt+v` binding, plus a `Ctrl|Alt+q` binding that stands in for an
+    /// AltGr-composed chord (Windows reports AltGr as CTRL|ALT together).
+    ///
+    /// This exists to test `InputMap::new`'s `synthesize_physical_fallbacks`
+    /// pass, which is what actually needed fixing: `CommandDef::permute_keys`
+    /// only ever runs over *built-in default* bindings and only ever
+    /// synthesizes a physical-key twin for CTRL/SUPER chords (never ALT), so
+    /// a *user-configured* `Alt+v` binding -- which goes straight through
+    /// `Config::key_bindings` with no fallback synthesis of any kind -- could
+    /// never resolve via the physical-key-first lookup pass on a non-Latin
+    /// layout, regardless of that separate `permute_keys` gap.
+    fn input_map_with_alt_v_user_binding() -> InputMap {
+        use config::Config;
+        use wezterm_dynamic::{FromDynamic, FromDynamicOptions, Object};
+
+        fn s(v: &str) -> Value {
+            Value::String(v.to_string())
+        }
+
+        fn object(pairs: Vec<(&str, Value)>) -> Value {
+            Value::Object(
+                pairs
+                    .into_iter()
+                    .map(|(k, v)| (s(k), v))
+                    .collect::<Object>(),
+            )
+        }
+
+        fn binding(key: &str, mods: &str, action: Value) -> Value {
+            object(vec![("key", s(key)), ("mods", s(mods)), ("action", action)])
+        }
+
+        let keys = vec![
+            binding("v", "ALT", s("ActivateCopyMode")),
+            // Stands in for an AltGr-composed chord: Windows reports AltGr
+            // as CTRL and ALT held together. Must not get a bare-ALT
+            // physical twin synthesized for it (trap #1 in the fix).
+            binding("q", "CTRL|ALT", s("ActivateCopyMode")),
+        ];
+
+        let config = Config::from_dynamic(
+            &object(vec![("keys", Value::Array(keys.into_iter().collect()))]),
+            FromDynamicOptions::default(),
+        )
+        .expect("alt-v config must deserialize")
+        .compute_extra_defaults(None);
+
+        InputMap::new(&ConfigHandle::from_config(config))
+    }
+
+    /// Regression test: a user-configured `Alt+v` binding (not a built-in
+    /// default -- see `input_map_with_alt_v_user_binding`'s doc comment for
+    /// why that distinction matters) must resolve via the physical V key,
+    /// exactly as a real WM_KEYDOWN on a Russian ЙЦУКЕН layout would deliver
+    /// it: `ToUnicode` produces 'м' for that physical position, not 'v', so
+    /// `raw_key_event_impl`'s physical-key-first lookup pass is what actually
+    /// has to find this binding in practice.
+    #[test]
+    fn alt_v_user_binding_resolves_via_physical_key_regardless_of_layout() {
+        let input_map = input_map_with_alt_v_user_binding();
+
+        let mapped = input_map
+            .lookup_key(&KeyCode::Char('v'), Modifiers::ALT, None)
+            .expect("user-configured Alt+v must resolve via the mapped character");
+        assert_eq!(mapped.action, KeyAssignment::ActivateCopyMode);
+
+        let physical = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::V), Modifiers::ALT, None)
+            .expect("Alt+v must resolve via the physical V key independent of keyboard layout");
+        assert_eq!(physical.action, mapped.action);
+    }
+
+    /// Negative case: the Alt+v physical-key fallback must not leak into
+    /// plain, unmodified typing of the physical V key (eg. Cyrillic 'м'),
+    /// which is exactly the failure mode `bare_non_latin_char_input_is_not_affected_by_physical_fallback`
+    /// already guards for CTRL/SUPER chords -- this is the same guarantee,
+    /// for the newly-covered ALT case.
+    #[test]
+    fn bare_physical_v_without_modifiers_is_unaffected_by_alt_fallback() {
+        let input_map = input_map_with_alt_v_user_binding();
+
+        assert!(
+            input_map
+                .lookup_key(&KeyCode::Physical(PhysKeyCode::V), Modifiers::NONE, None)
+                .is_none(),
+            "the Alt+v physical-key fallback must not leak into plain, \
+             unmodified typing of the physical V key"
+        );
+    }
+
+    /// Negative case for trap #1 in the physical-fallback synthesis: a
+    /// CTRL|ALT binding (standing in for an AltGr-composed chord) must not
+    /// get a bare-ALT physical twin. If it did, a real AltGr-composed
+    /// character on a European layout could misfire this keybinding instead
+    /// of inserting the composed character.
+    #[test]
+    fn ctrl_alt_altgr_like_binding_does_not_get_a_bare_alt_physical_twin() {
+        let input_map = input_map_with_alt_v_user_binding();
+
+        assert!(
+            input_map
+                .lookup_key(&KeyCode::Physical(PhysKeyCode::Q), Modifiers::ALT, None)
+                .is_none(),
+            "a CTRL|ALT (AltGr-shaped) binding must not synthesize a bare-ALT physical twin"
+        );
+
+        // The CTRL|ALT binding itself must still resolve normally via its
+        // mapped character -- this fix must not disturb that.
+        let mapped = input_map
+            .lookup_key(&KeyCode::Char('q'), Modifiers::CTRL | Modifiers::ALT, None)
+            .expect("the CTRL|ALT binding itself must still resolve via its mapped character");
+        assert_eq!(mapped.action, KeyAssignment::ActivateCopyMode);
     }
 }
