@@ -334,7 +334,12 @@ async fn spawn_startup_layout(
 
         if let Some(pane) = tab.get_active_pane() {
             let mut writer = pane.writer();
-            for command in layout.commands.iter().chain(tab_conf.commands.iter()) {
+            for (cmd_idx, command) in layout
+                .commands
+                .iter()
+                .chain(tab_conf.commands.iter())
+                .enumerate()
+            {
                 // A real Enter keystroke is CR (`\r`), not LF (`\n`) --
                 // sending a bare `\n` (what `writeln!` would send) doesn't
                 // submit a line to a Windows shell reading from a ConPTY; a
@@ -347,7 +352,20 @@ async fn spawn_startup_layout(
                 // the actual line terminator -- so a trailing `\n` on top
                 // of that would submit a second, empty line on Unix.
                 if let Err(err) = write!(writer, "{command}\r") {
-                    log::warn!("--start-conf: failed to send startup command {command:?}: {err:#}");
+                    // Deliberately not logging `command` itself: --start-conf
+                    // startup commands can contain tokens, passwords, or
+                    // credential-bearing URLs, and this warning goes into a
+                    // long-lived per-PID log file on disk that may end up in
+                    // a bug report. Tab/command index plus length is enough
+                    // to locate the failure without exposing its content.
+                    log::warn!(
+                        "--start-conf: failed to send startup command {} of tab {} \
+                         ({} bytes): {:#}",
+                        cmd_idx + 1,
+                        idx + 1,
+                        command.len(),
+                        err
+                    );
                 }
             }
         }
