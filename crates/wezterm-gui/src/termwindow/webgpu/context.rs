@@ -71,34 +71,42 @@ pub struct ProcessGpuContext {
 
 impl ProcessGpuContext {
     /// Get or create the process-wide GPU context.
-    /// Uses std::sync::OnceLock with a Mutex<Option<>> pattern for stable,
-    /// race-safe lazy initialization on all stable toolchains.
-    pub fn get_or_init<F>(init: F) -> anyhow::Result<Arc<Self>>
-    where
-        F: FnOnce() -> anyhow::Result<Self>,
-    {
+    ///
+    /// The lock is released before the async init `await`s (a `MutexGuard`
+    /// can't be held across an `.await`), so two callers can briefly race
+    /// into the slow path. The re-check after init ensures only one result is
+    /// cached; the other's `ProcessGpuContext` is cleanly dropped -- at this
+    /// point no surfaces or device-lost subscribers have been attached to it.
+    pub async fn get_or_init(config: &ConfigHandle) -> anyhow::Result<Arc<Self>> {
         use std::sync::Mutex;
         static CONTEXT_LOCK: Mutex<Option<Arc<ProcessGpuContext>>> = Mutex::new(None);
-        let mut guard = CONTEXT_LOCK.lock().unwrap();
-        if let Some(ref context) = *guard {
-            return Ok(Arc::clone(context));
+        {
+            let guard = CONTEXT_LOCK.lock().unwrap();
+            if let Some(ref context) = *guard {
+                return Ok(Arc::clone(context));
+            }
         }
-        let context = Arc::new(init()?);
+        let context = Arc::new(Self::new(config).await?);
+        let mut guard = CONTEXT_LOCK.lock().unwrap();
+        if let Some(ref existing) = *guard {
+            return Ok(Arc::clone(existing));
+        }
         *guard = Some(Arc::clone(&context));
         Ok(context)
     }
 
     /// Create a new ProcessGpuContext.
     /// This is called on the first window creation via get_or_init.
-    pub fn new(config: &ConfigHandle) -> anyhow::Result<Self> {
+    pub async fn new(config: &ConfigHandle) -> anyhow::Result<Self> {
         use super::state_impl::run_on_background_thread;
 
         let primary_backends = wgpu::Backends::DX12;
         let all_backends = wgpu::Backends::all();
 
         let config_for_thread = config.clone();
-        let (instance, _backends, adapter) = futures::executor::block_on(
-                run_on_background_thread(move || -> Result<(wgpu::Instance, wgpu::Backends, wgpu::Adapter), anyhow::Error> {
+        let (instance, _backends, adapter, device, queue) =
+            run_on_background_thread(
+                move || -> Result<(wgpu::Instance, wgpu::Backends, wgpu::Adapter, wgpu::Device, wgpu::Queue), anyhow::Error> {
                     for backends in [primary_backends, all_backends] {
                     let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                         backends,
@@ -173,7 +181,21 @@ impl ProcessGpuContext {
                     }
 
                     if let Some(adapter) = adapter {
-                        return Ok((instance, backends, adapter));
+                        let (device, queue) = futures::executor::block_on(
+                            adapter.request_device(&wgpu::DeviceDescriptor {
+                                required_features: wgpu::Features::empty(),
+                                required_limits: if cfg!(target_arch = "wasm32") {
+                                    wgpu::Limits::downlevel_webgl2_defaults()
+                                } else {
+                                    wgpu::Limits::downlevel_defaults()
+                                }
+                                .using_resolution(adapter.limits()),
+                                label: None,
+                                memory_hints: Default::default(),
+                                trace: wgpu::Trace::Off,
+                            }),
+                        )?;
+                        return Ok((instance, backends, adapter, device, queue));
                     }
 
                     log::debug!(
@@ -184,27 +206,12 @@ impl ProcessGpuContext {
 
                 Err(anyhow::anyhow!("no compatible adapter found (enumeration was empty)"))
             })
-        )??;
+            .await??;
 
         let adapter_info = adapter.get_info();
         log::trace!("Using adapter: {adapter_info:?}");
         let downlevel_caps = adapter.get_downlevel_capabilities();
         log::trace!("downlevel_caps: {downlevel_caps:?}");
-
-        let (device, queue) = futures::executor::block_on(
-            adapter.request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
-                required_limits: if cfg!(target_arch = "wasm32") {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::downlevel_defaults()
-                }
-                .using_resolution(adapter.limits()),
-                label: None,
-                memory_hints: Default::default(),
-                trace: wgpu::Trace::Off,
-            }),
-        )?;
 
         let queue = Arc::new(queue);
 

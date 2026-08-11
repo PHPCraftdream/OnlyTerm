@@ -120,9 +120,7 @@ impl WebGpuState {
         // Get or create the shared process-wide GPU context.
         // This is the expensive part (Instance, adapter, device creation)
         // that only happens once per process.
-        let config_clone = config.clone();
-        let context =
-            ProcessGpuContext::get_or_init(move || ProcessGpuContext::new(&config_clone))?;
+        let context = ProcessGpuContext::get_or_init(config).await?;
 
         // Create the per-window surface
         let surface = WindowGpuSurface::new(&context, &handle, dimensions, config).await?;
