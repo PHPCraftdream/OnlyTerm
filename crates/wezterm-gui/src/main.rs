@@ -622,28 +622,6 @@ fn notify_on_panic() {
     }));
 }
 
-/// Registers a callback with the (Windows-only) GUI-thread watchdog so that
-/// the moment it detects the message loop is stuck, the user sees a toast
-/// instead of just a silently frozen window and a log line. `window` itself
-/// has no dependency on `wezterm-toast-notification` (deliberately -- it's a
-/// low-level, cross-platform windowing crate and showing notifications is
-/// an app-level concern), so this glue lives here in `wezterm-gui`, which
-/// already depends on both. The callback runs on the watchdog's own
-/// background thread, not the GUI thread -- see `set_gui_hang_callback`'s
-/// doc comment for why that matters (if the GUI thread is truly stuck,
-/// nothing that needs the GUI thread to run, eg. `promise::spawn` work,
-/// could ever fire this in time).
-#[cfg(windows)]
-fn notify_on_gui_thread_hang() {
-    ::window::os::windows::watchdog::set_gui_hang_callback(|| {
-        persistent_toast_notification(
-            "OnlyTerm is not responding",
-            "The application's window is temporarily frozen. \
-             It should recover on its own; if it doesn't, you may need to restart it.",
-        );
-    });
-}
-
 pub(crate) fn terminate_with_error_message(err: &str) -> ! {
     log::error!("{}; terminating", err);
     fatal_toast_notification("Wezterm Error", err);
@@ -674,8 +652,6 @@ fn main() {
     // that designation is no longer needed here.
     config::assign_error_callback(mux::connui::show_configuration_error_message);
     notify_on_panic();
-    #[cfg(windows)]
-    notify_on_gui_thread_hang();
     if let Err(e) = run() {
         terminate_with_error(e);
     }

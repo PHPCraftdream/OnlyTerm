@@ -32,6 +32,13 @@ static HEARTBEAT_TICKS: AtomicU64 = AtomicU64::new(0);
 /// thread so other subsystems can make decisions based on it.
 static GUI_THREAD_HUNG: AtomicBool = AtomicBool::new(false);
 
+/// Set for the duration of `wait_message()` (Win32 `MsgWaitForMultipleObjects`
+/// with an empty queue) so the watchdog can tell "parked, nothing to do"
+/// apart from "stuck inside `DispatchMessageW`". The heartbeat only ticks
+/// once per loop iteration, right before this wait, so without this flag a
+/// long-but-legitimate idle period looks identical to a real stall.
+static GUI_IDLE_WAIT: AtomicBool = AtomicBool::new(false);
+
 /// Ensures the watchdog thread is only ever spawned once per process.
 static WATCHDOG_STARTED: std::sync::Once = std::sync::Once::new();
 
@@ -68,6 +75,16 @@ pub(crate) fn record_heartbeat() {
     HEARTBEAT_TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Marks the message loop as entering/leaving its blocking wait for the next
+/// message. Call immediately around `wait_message()` -- see `GUI_IDLE_WAIT`.
+pub(crate) fn begin_idle_wait() {
+    GUI_IDLE_WAIT.store(true, Ordering::Release);
+}
+
+pub(crate) fn end_idle_wait() {
+    GUI_IDLE_WAIT.store(false, Ordering::Release);
+}
+
 /// Returns true if the watchdog currently believes the GUI thread's message
 /// loop is stuck (hasn't advanced its heartbeat for longer than the
 /// configured threshold). Intended for other subsystems (eg. a future tab
@@ -102,6 +119,7 @@ fn watchdog_loop() {
         // Poll at a fraction of the threshold so we notice a stall promptly
         // without busy-looping.
         let poll_interval = (threshold / 4).max(Duration::from_millis(50));
+        let slept_at = std::time::Instant::now();
         std::thread::sleep(poll_interval);
 
         if !enabled {
@@ -112,6 +130,32 @@ fn watchdog_loop() {
             last_change = std::time::Instant::now();
             if GUI_THREAD_HUNG.swap(false, Ordering::Relaxed) {
                 log::info!("gui-watchdog: disabled while hung state was set; clearing");
+            }
+            continue;
+        }
+
+        // The whole process (this watchdog thread included) can be
+        // suspended wholesale by the OS -- sleep, hibernate, a paused VM.
+        // On resume, `std::thread::sleep` returns having "slept" far longer
+        // than requested even though nothing was actually stuck; read
+        // naively that gap would be misattributed to the GUI thread the
+        // instant we wake up. Re-baseline instead of accusing it.
+        if slept_at.elapsed() > poll_interval * 4 {
+            last_seen = HEARTBEAT_TICKS.load(Ordering::Relaxed);
+            last_change = std::time::Instant::now();
+            continue;
+        }
+
+        if GUI_IDLE_WAIT.load(Ordering::Acquire) {
+            // Parked in `wait_message()` with an empty queue: Windows
+            // itself considers this window fully responsive, it simply has
+            // nothing to do. Don't let the heartbeat's silence during a
+            // long-but-legitimate idle period read as a stall.
+            last_seen = HEARTBEAT_TICKS.load(Ordering::Relaxed);
+            last_change = std::time::Instant::now();
+            if GUI_THREAD_HUNG.swap(false, Ordering::Relaxed) {
+                log::warn!("gui-watchdog: GUI thread heartbeat resumed; no longer hung");
+                metrics::counter!("gui.watchdog.recovered").increment(1);
             }
             continue;
         }
@@ -186,13 +230,22 @@ mod test {
         }
 
         /// Runs one evaluation step; mirrors `watchdog_loop`'s decision
-        /// logic for a single (last_seen, last_change) pair.
+        /// logic for a single (last_seen, last_change) pair. `idle` mirrors
+        /// a `GUI_IDLE_WAIT` read: when true, a stalled heartbeat is treated
+        /// as legitimate idle time rather than a hang.
         fn evaluate(
             &self,
             last_seen: &mut u64,
             last_change: &mut std::time::Instant,
             threshold: Duration,
+            idle: bool,
         ) {
+            if idle {
+                *last_seen = self.heartbeat.load(Ordering::Relaxed);
+                *last_change = std::time::Instant::now();
+                self.hung.store(false, Ordering::Relaxed);
+                return;
+            }
             let current = self.heartbeat.load(Ordering::Relaxed);
             if current != *last_seen {
                 *last_seen = current;
@@ -220,7 +273,7 @@ mod test {
         // Heartbeat advances normally: never flagged as hung.
         for _ in 0..3 {
             watchdog.tick();
-            watchdog.evaluate(&mut last_seen, &mut last_change, threshold);
+            watchdog.evaluate(&mut last_seen, &mut last_change, threshold, false);
             assert!(!watchdog.is_hung());
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -228,7 +281,7 @@ mod test {
         // Now stop ticking (simulate the message loop getting stuck) and
         // let the short test threshold elapse.
         std::thread::sleep(threshold + Duration::from_millis(20));
-        watchdog.evaluate(&mut last_seen, &mut last_change, threshold);
+        watchdog.evaluate(&mut last_seen, &mut last_change, threshold, false);
         assert!(
             watchdog.is_hung(),
             "watchdog should detect a heartbeat that hasn't advanced past the threshold"
@@ -236,10 +289,42 @@ mod test {
 
         // Resuming the heartbeat clears the hung flag again.
         watchdog.tick();
-        watchdog.evaluate(&mut last_seen, &mut last_change, threshold);
+        watchdog.evaluate(&mut last_seen, &mut last_change, threshold, false);
         assert!(
             !watchdog.is_hung(),
             "watchdog should clear the hung flag once the heartbeat resumes"
+        );
+    }
+
+    #[test]
+    fn idle_wait_is_not_mistaken_for_a_hang() {
+        let watchdog = TestWatchdog::new();
+        let threshold = Duration::from_millis(50);
+        let mut last_seen = watchdog.heartbeat.load(Ordering::Relaxed);
+        let mut last_change = std::time::Instant::now();
+
+        watchdog.tick();
+        watchdog.evaluate(&mut last_seen, &mut last_change, threshold, false);
+        assert!(!watchdog.is_hung());
+
+        // Heartbeat stops advancing for well past the threshold, but the
+        // loop is reported as idle (parked in `wait_message()`) throughout:
+        // this must never be flagged as hung, no matter how long it lasts.
+        for _ in 0..4 {
+            std::thread::sleep(threshold);
+            watchdog.evaluate(&mut last_seen, &mut last_change, threshold, true);
+            assert!(
+                !watchdog.is_hung(),
+                "idle time must never be reported as a hang"
+            );
+        }
+
+        // Coming out of idle with a genuinely stuck loop is still caught.
+        std::thread::sleep(threshold + Duration::from_millis(20));
+        watchdog.evaluate(&mut last_seen, &mut last_change, threshold, false);
+        assert!(
+            watchdog.is_hung(),
+            "a real stall must still be detected once idle time is over"
         );
     }
 

@@ -128,7 +128,9 @@ impl ConnectionOps for Connection {
                     DispatchMessageW(&msg);
                 }
             } else {
+                watchdog::begin_idle_wait();
                 self.wait_message();
+                watchdog::end_idle_wait();
             }
         }
     }
