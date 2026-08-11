@@ -356,12 +356,21 @@ async fn spawn_startup_layout(
                     // startup commands can contain tokens, passwords, or
                     // credential-bearing URLs, and this warning goes into a
                     // long-lived per-PID log file on disk that may end up in
-                    // a bug report. Tab/command index plus length is enough
-                    // to locate the failure without exposing its content.
+                    // a bug report. Naming which list the command came from,
+                    // its position in that list, and its length is enough to
+                    // point at the offending config line without exposing
+                    // its content.
+                    let layout_command_count = layout.commands.len();
+                    let (source, source_idx) = if cmd_idx < layout_command_count {
+                        ("layout-wide", cmd_idx)
+                    } else {
+                        ("tab", cmd_idx - layout_command_count)
+                    };
                     log::warn!(
-                        "--start-conf: failed to send startup command {} of tab {} \
+                        "--start-conf: failed to send {} startup command {} of tab {} \
                          ({} bytes): {:#}",
-                        cmd_idx + 1,
+                        source,
+                        source_idx + 1,
                         idx + 1,
                         command.len(),
                         err
