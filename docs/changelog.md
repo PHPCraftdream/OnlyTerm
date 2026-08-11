@@ -1065,6 +1065,14 @@ As features stabilize some brief notes about them will accumulate here.
   fix above. Staleness is now tracked directly on the context that owns the
   lost device instead of a separate counter that couldn't distinguish "this
   context's device died" from "an earlier, already-replaced one did".
+  Two remaining gaps in that same path are closed as well: the device-lost
+  handler used to be registered a good deal later than the device itself was
+  created (after shader/buffer setup), and a loss landing in between was
+  swallowed permanently -- leaving a dead device cached as healthy for the
+  rest of the session -- since the graphics API does not replay a loss that
+  already happened; and a context whose device died before initialization
+  finished is no longer handed to the window that requested it (that window
+  would have had no way to recover), initialization is retried instead.
 * A device-lost recovery notification could still be sent to a window that
   had already closed: closing a window stopped its render thread but never
   marked its GPU state as superseded, and the render thread kept its own
@@ -1077,12 +1085,27 @@ As features stabilize some brief notes about them will accumulate here.
   grow by one entry per window ever opened and closed, unbounded, over a
   long-running process. It's now also pruned every time a new window
   registers.
+* Opening a window while another OnlyTerm window was already on screen made
+  the overlapping area flicker several times during startup, briefly showing
+  the window behind. The GPU rendering surface lives on its own child window
+  covering the whole client area, and that child was both created visible
+  before it had any pixels of its own and configured to erase itself on every
+  resize -- while erasing it painted nothing at all once the startup
+  placeholder had been retired. Each of the handful of geometry changes a
+  window makes as it starts up therefore blanked it until the next frame was
+  drawn. The GPU surface is no longer shown until it has actually presented a
+  frame (the animated startup placeholder covers that time, as intended), and
+  no longer erases itself on resize, so the previous frame stays on screen
+  until the next one is ready. This was only visible when a window was already
+  open behind the new one, because in that case the new window is created by
+  the already-running instance and its renderer is ready almost immediately,
+  retiring the placeholder while the startup resizes were still happening.
 * `--start-conf`: a startup command that failed to be written to its pane
   (a rare pty-write failure) used to fail completely silently, with layout
   startup otherwise reporting success -- now logged as a warning identifying
-  which tab/command failed and the underlying error (not the command's own
-  text, since startup commands can carry credentials that shouldn't end up
-  in a log file).
+  which tab and which command list (layout-wide or the tab's own) it came
+  from, plus the underlying error (not the command's own text, since startup
+  commands can carry credentials that shouldn't end up in a log file).
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
