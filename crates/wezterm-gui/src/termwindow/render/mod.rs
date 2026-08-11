@@ -1341,6 +1341,8 @@ mod cache_bench {
     }
 
     #[test]
+    #[ignore = "benchmark, not a correctness test -- takes ~16s; run explicitly with \
+                `cargo test -p wezterm-gui --lib -- --ignored bench_cache_comparison`"]
     fn bench_cache_comparison() {
         println!("\n=== LfuCacheU64 vs lru::LruCache Benchmark ===");
         println!(

@@ -494,6 +494,8 @@ mod hashmap_bench {
     }
 
     #[test]
+    #[ignore = "benchmark, not a correctness test -- takes ~157s; run explicitly with \
+                `cargo test -p wezterm-gui --lib -- --ignored bench_glyph_cache_hashmap_vs_ahashmap`"]
     fn bench_glyph_cache_hashmap_vs_ahashmap() {
         benchmarking::warm_up();
 
