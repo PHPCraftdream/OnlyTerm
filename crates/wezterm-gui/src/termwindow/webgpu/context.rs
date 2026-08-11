@@ -38,6 +38,68 @@ fn subscriber_is_alive(is_current: &Weak<AtomicBool>) -> bool {
         .unwrap_or(false)
 }
 
+/// Installs a `ProcessGpuContext`'s device-lost callback: marks `lost` and
+/// notifies still-current subscribers.
+///
+/// Extracted so `ProcessGpuContext::new` can call this immediately after
+/// `request_device` succeeds, inside the background-thread closure that
+/// creates the device -- installing it any later (e.g. back on the async
+/// fn's thread, after several more GPU calls building shaders/buffers/
+/// samplers) leaves a real window where a device lost in the meantime is
+/// silently swallowed forever: wgpu's `set_device_lost_callback` only fills
+/// an empty closure slot, it does not replay a loss that already consumed
+/// the slot before a callback was ever registered.
+fn install_device_lost_callback(
+    device: &wgpu::Device,
+    lost: Arc<AtomicBool>,
+    subscribers: Arc<Mutex<Vec<DeviceLostSubscriber>>>,
+) {
+    device.set_device_lost_callback(move |reason, message| {
+        log::error!(
+            "Shared GPU context device lost ({:?}): {}; notifying all active windows",
+            reason,
+            message
+        );
+        metrics::counter!("gui.render_thread.device_lost").increment(1);
+
+        // Mark this context's own device as lost. `get_or_init` checks
+        // this flag (not a global counter) so that even a device lost
+        // before this `Self::new()` call returns is still correctly
+        // seen as stale by the next caller.
+        lost.store(true, Ordering::Release);
+
+        // Iterate over subscribers, notifying each still-current window.
+        // Prune dead entries: either the owning window was dropped (weak
+        // upgrade fails) or it was abandoned (`is_current` reads false).
+        let mut guard = subscribers.lock();
+        let mut alive_subscribers = Vec::new();
+        for subscriber in guard.drain(..) {
+            if !subscriber_is_alive(&subscriber.is_current) {
+                continue;
+            }
+            log::error!(
+                "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
+                 (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
+                reason,
+                message
+            );
+            let win = subscriber.window.clone();
+            let win2 = win.clone();
+            let reason_msg = format!(
+                "this window's wgpu device was lost ({:?}): {}",
+                reason, message
+            );
+            win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                move |tw| {
+                    tw.handle_render_error_recovery(&win2, &reason_msg);
+                },
+            )));
+            alive_subscribers.push(subscriber);
+        }
+        *guard = alive_subscribers;
+    });
+}
+
 /// Process-wide GPU context shared by all windows.
 /// Created once per process on first window creation and reused thereafter.
 ///
@@ -135,7 +197,17 @@ impl ProcessGpuContext {
         let primary_backends = wgpu::Backends::DX12;
         let all_backends = wgpu::Backends::all();
 
+        // Created before the background thread that will create the device
+        // itself, and cloned into that thread's closure below, so the
+        // device-lost callback can be installed the instant `request_device`
+        // succeeds -- see `install_device_lost_callback`'s doc comment for
+        // why installing it any later leaves a real gap.
+        let subscribers = Arc::new(Mutex::new(Vec::<DeviceLostSubscriber>::new()));
+        let lost = Arc::new(AtomicBool::new(false));
+
         let config_for_thread = config.clone();
+        let subscribers_for_thread = Arc::clone(&subscribers);
+        let lost_for_thread = Arc::clone(&lost);
         let (instance, _backends, adapter, device, queue) =
             run_on_background_thread(
                 move || -> Result<(wgpu::Instance, wgpu::Backends, wgpu::Adapter, wgpu::Device, wgpu::Queue), anyhow::Error> {
@@ -227,6 +299,16 @@ impl ProcessGpuContext {
                                 trace: wgpu::Trace::Off,
                             }),
                         )?;
+                        // Install the device-lost callback immediately, on
+                        // this same background thread, before doing any
+                        // further GPU work (shaders/buffers/samplers) that
+                        // could give a loss room to happen in an
+                        // uncovered gap.
+                        install_device_lost_callback(
+                            &device,
+                            Arc::clone(&lost_for_thread),
+                            Arc::clone(&subscribers_for_thread),
+                        );
                         return Ok((instance, backends, adapter, device, queue));
                     }
 
@@ -322,60 +404,6 @@ impl ProcessGpuContext {
                 ],
                 label: Some("texture bind group layout"),
             });
-
-        // Device-lost callback for the shared context.
-        // Since the device is shared across all windows, this is a single,
-        // process-wide callback that fans out to all active windows via the
-        // subscriber registry.
-        // We need to wrap the Mutex in an Arc so the callback can access it.
-        let subscribers = Arc::new(Mutex::new(Vec::<DeviceLostSubscriber>::new()));
-        let subscribers_for_callback = Arc::clone(&subscribers);
-        let lost = Arc::new(AtomicBool::new(false));
-        let lost_for_callback = Arc::clone(&lost);
-        device.set_device_lost_callback(move |reason, message| {
-            log::error!(
-                "Shared GPU context device lost ({:?}): {}; notifying all active windows",
-                reason,
-                message
-            );
-            metrics::counter!("gui.render_thread.device_lost").increment(1);
-
-            // Mark this context's own device as lost. `get_or_init` checks
-            // this flag (not a global counter) so that even a device lost
-            // before this `Self::new()` call returns is still correctly
-            // seen as stale by the next caller.
-            lost_for_callback.store(true, Ordering::Release);
-
-            // Iterate over subscribers, notifying each still-current window.
-            // Prune dead entries: either the owning window was dropped (weak
-            // upgrade fails) or it was abandoned (`is_current` reads false).
-            let mut guard = subscribers_for_callback.lock();
-            let mut alive_subscribers = Vec::new();
-            for subscriber in guard.drain(..) {
-                if !subscriber_is_alive(&subscriber.is_current) {
-                    continue;
-                }
-                log::error!(
-                    "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
-                     (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
-                    reason,
-                    message
-                );
-                let win = subscriber.window.clone();
-                let win2 = win.clone();
-                let reason_msg = format!(
-                    "this window's wgpu device was lost ({:?}): {}",
-                    reason, message
-                );
-                win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                    move |tw| {
-                        tw.handle_render_error_recovery(&win2, &reason_msg);
-                    },
-                )));
-                alive_subscribers.push(subscriber);
-            }
-            *guard = alive_subscribers;
-        });
 
         Ok(Self {
             instance,
