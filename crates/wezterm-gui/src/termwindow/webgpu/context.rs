@@ -3,11 +3,30 @@ use super::*;
 use config::{ConfigHandle, WebGpuPowerPreference};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use window::raw_window_handle::RawWindowHandle;
 use window::{Dimensions, Window, WindowOps};
+
+/// Wrapper for the cached process-wide GPU context that tracks staleness.
+///
+/// When the device is lost, the cached context is marked as stale so that
+/// subsequent calls to `get_or_init()` will recreate it instead of reusing
+/// the lost device.
+struct ContextEntry {
+    /// The actual GPU context
+    context: Arc<ProcessGpuContext>,
+    /// Global version counter incremented on each device loss.
+    /// If the cached entry's version doesn't match the global version,
+    /// the context is stale and must be recreated.
+    version: u64,
+}
+
+/// Global version counter incremented on device loss.
+/// When this changes, any cached `ContextEntry` with a matching version
+/// is stale and `ProcessGpuContext` must be recreated.
+static CONTEXT_VERSION: AtomicU64 = AtomicU64::new(0);
 
 /// A subscriber for device-lost events.
 ///
@@ -74,24 +93,38 @@ impl ProcessGpuContext {
     ///
     /// The lock is released before the async init `await`s (a `MutexGuard`
     /// can't be held across an `.await`), so two callers can briefly race
-    /// into the slow path. The re-check after init ensures only one result is
-    /// cached; the other's `ProcessGpuContext` is cleanly dropped -- at this
-    /// point no surfaces or device-lost subscribers have been attached to it.
+    /// into the slow path. The version check after init ensures only one
+    /// result is cached if a device loss occurs during initialization.
     pub async fn get_or_init(config: &ConfigHandle) -> anyhow::Result<Arc<Self>> {
         use std::sync::Mutex;
-        static CONTEXT_LOCK: Mutex<Option<Arc<ProcessGpuContext>>> = Mutex::new(None);
+        static CONTEXT_LOCK: Mutex<Option<ContextEntry>> = Mutex::new(None);
+        let expected_version = CONTEXT_VERSION.load(Ordering::Acquire);
         {
             let guard = CONTEXT_LOCK.lock().unwrap();
-            if let Some(ref context) = *guard {
-                return Ok(Arc::clone(context));
+            if let Some(ref entry) = *guard {
+                // Return cached context only if it's still valid (version matches)
+                if entry.version == expected_version {
+                    return Ok(Arc::clone(&entry.context));
+                }
             }
         }
+        // Cache was empty or stale; create a fresh context
         let context = Arc::new(Self::new(config).await?);
+        // Re-check version after async init; if it changed, another thread
+        // already replaced the cache and we should drop our new context.
+        let current_version = CONTEXT_VERSION.load(Ordering::Acquire);
         let mut guard = CONTEXT_LOCK.lock().unwrap();
         if let Some(ref existing) = *guard {
-            return Ok(Arc::clone(existing));
+            if existing.version == current_version && current_version >= expected_version {
+                // Another thread beat us to the update; use their result
+                return Ok(Arc::clone(&existing.context));
+            }
         }
-        *guard = Some(Arc::clone(&context));
+        // Our new context is authoritative; cache it
+        *guard = Some(ContextEntry {
+            context: Arc::clone(&context),
+            version: current_version,
+        });
         Ok(context)
     }
 
@@ -305,6 +338,11 @@ impl ProcessGpuContext {
                 message
             );
             metrics::counter!("gui.render_thread.device_lost").increment(1);
+
+            // Increment version to invalidate the cached context.
+            // Any subsequent `get_or_init()` call will see the version mismatch
+            // and recreate the ProcessGpuContext with a fresh device.
+            CONTEXT_VERSION.fetch_add(1, Ordering::Release);
 
             // Iterate over subscribers, notifying each still-current window.
             // Prune dead entries (those where `is_current` upgrade fails).
