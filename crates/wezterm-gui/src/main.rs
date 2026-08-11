@@ -402,7 +402,15 @@ async fn connect_to_auto_connect_domains() -> anyhow::Result<()> {
 // beyond what already happens in their callers.
 
 fn cell_pixel_dims(config: &ConfigHandle, dpi: f64) -> anyhow::Result<(usize, usize)> {
+    // Startup-latency diagnostics: see the "startup:" checkpoints elsewhere
+    // in this file. This builds its own throwaway `FontConfiguration` (font
+    // enumeration/parsing) just to measure one cell's pixel size before the
+    // real window -- and its own separate `FontConfiguration` -- exist, so
+    // this pair of checkpoints is what showed that cost is cheap (a few
+    // tens of ms) rather than a second, redundant font-enumeration cost.
+    log::info!("startup: cell_pixel_dims font enumeration starting");
     let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi as usize)?);
+    log::info!("startup: cell_pixel_dims font enumeration done");
     let render_metrics = RenderMetrics::new(&fontconfig)?;
     Ok((
         render_metrics.cell_size.width as usize,
@@ -612,6 +620,7 @@ fn run_terminal_gui(opts: StartCommand, default_domain_name: Option<String>) -> 
         default_domain_name.as_deref(),
         opts.workspace.as_deref(),
     )?;
+    log::info!("startup: mux/domains ready");
 
     // OnlyTerm: never delegate this spawn to an already-running GUI instance
     // -- see `should_publish_gui_sock`'s doc comment. Always become our own
@@ -1065,6 +1074,15 @@ fn run() -> anyhow::Result<()> {
     };
 
     env_bootstrap::bootstrap();
+    // Startup-latency diagnostics: every `log::info!("startup: ...")` line
+    // in this crate (grep for `"startup:` to find them all) is a checkpoint,
+    // and the per-PID log file's own timestamps (see `env_bootstrap::ringlog`,
+    // `%H:%M:%S%.3f`) give millisecond deltas between them without needing a
+    // separate clock. Kept permanently (not gated behind a debug flag, since
+    // `Info` is already the default log level) so a future startup-latency
+    // regression can be diagnosed the same way this one was: by reading a
+    // single per-PID log file instead of profiling from scratch.
+    log::info!("startup: logger ready");
 
     stats::Stats::init()?;
     let _saver = umask::UmaskSaver::new();
@@ -1074,6 +1092,7 @@ fn run() -> anyhow::Result<()> {
         &opts.config_override,
         opts.skip_config,
     )?;
+    log::info!("startup: config loaded");
     let config = config::configuration();
     if let Some(value) = &config.default_ssh_auth_sock {
         std::env::set_var("SSH_AUTH_SOCK", value);

@@ -1433,6 +1433,13 @@ fn schedule_show_window(hwnd: HWindow, show: ShowWindowCommand) {
                     ShowWindowCommand::Maximize => SW_MAXIMIZE,
                 },
             );
+            // Startup-latency diagnostics: see the "startup:" checkpoints in
+            // wezterm-gui's main.rs, which this crate's own checkpoints
+            // (here and in `clear_placeholder_background`) chain onto by
+            // grep-matching prefix.
+            if show == ShowWindowCommand::Normal {
+                log::info!("startup: window shown");
+            }
             // Force a repaint of the whole client area now that the window
             // is on screen. Making a window visible does *not* invalidate
             // it: the client area keeps whatever the redirection surface
@@ -1536,6 +1543,12 @@ impl WindowInner {
         self.start_placeholder_fade();
 
         if let Some(spinner) = self.placeholder_spinner.take() {
+            // Startup-latency diagnostics: see the "startup:" checkpoints in
+            // wezterm-gui's main.rs. `placeholder_spinner` being `Some` here
+            // is this method's own idempotency marker (see its doc comment),
+            // so this only fires on the actual first-frame-presented call,
+            // not the harmless repeat calls.
+            log::info!("startup: first frame presented, placeholder cleared");
             if spinner.timer_running {
                 // SAFETY: `self.hwnd.0` is either a valid window handle
                 // that `SetTimer` was previously called on with this same

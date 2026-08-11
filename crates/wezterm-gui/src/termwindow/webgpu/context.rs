@@ -221,6 +221,15 @@ impl ProcessGpuContext {
     pub async fn new(config: &ConfigHandle) -> anyhow::Result<Self> {
         use super::state_impl::run_on_background_thread;
 
+        // See the "startup:" checkpoints in main.rs for how these are meant
+        // to be read (per-PID log timestamps, no separate clock needed).
+        // These specific two checkpoints (this one and the "GPU
+        // Instance/Adapter/Device ready" one below) are what pinpointed
+        // DXGI adapter enumeration as the single largest startup cost on
+        // hybrid-graphics laptops -- see the DXC/DXGI-adapter-selection
+        // work this same investigation led to.
+        log::info!("startup: GPU init starting (Instance/Adapter/Device)");
+
         let primary_backends = wgpu::Backends::DX12;
         let all_backends = wgpu::Backends::all();
 
@@ -348,6 +357,7 @@ impl ProcessGpuContext {
                 Err(anyhow::anyhow!("no compatible adapter found (enumeration was empty)"))
             })
             .await??;
+        log::info!("startup: GPU Instance/Adapter/Device ready");
 
         let adapter_info = adapter.get_info();
         log::trace!("Using adapter: {adapter_info:?}");
@@ -431,6 +441,8 @@ impl ProcessGpuContext {
                 ],
                 label: Some("texture bind group layout"),
             });
+
+        log::info!("startup: GPU context fully built (shaders/buffers/samplers ready)");
 
         Ok(Self {
             instance,

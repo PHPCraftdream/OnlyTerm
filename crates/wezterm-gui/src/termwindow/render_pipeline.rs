@@ -44,7 +44,15 @@ impl TermWindow {
     pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
         let config = configuration();
         let dpi = config.dpi.unwrap_or_else(::window::default_dpi) as usize;
+        // Startup-latency diagnostics: see the "startup:" checkpoints in
+        // main.rs. This is the window's own (second) `FontConfiguration`;
+        // `main.rs::cell_pixel_dims` builds a throwaway first one just to
+        // size the initial window -- these two checkpoint pairs are what
+        // showed that repeating font enumeration here is essentially free
+        // (font lookups are cached), not a second real cost.
+        log::info!("startup: new_window font enumeration starting");
         let fontconfig = Rc::new(FontConfiguration::new(Some(config.clone()), dpi)?);
+        log::info!("startup: new_window font enumeration done");
 
         let mux = Mux::get();
         let size = match mux.get_active_tab_for_window(mux_window_id) {
