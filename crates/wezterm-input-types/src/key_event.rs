@@ -245,6 +245,23 @@ impl KeyEvent {
     pub fn encode_kitty(&self, flags: KittyKeyboardFlags) -> String {
         use KeyCode::*;
 
+        // `Physical(_)` has no dedicated arm below either, for the same
+        // reason `Composed` doesn't (see next comment): it falls through to
+        // the `_` catch-all and silently produces no output unless
+        // REPORT_ALL_KEYS_AS_ESCAPE_CODES is set. The Windows key handler
+        // resolves Ctrl/Alt+<letter> chords to the layout-independent
+        // physical key for keybinding matching (so bindings resolve the
+        // same way regardless of active keyboard layout) even when no
+        // binding actually claims the chord, so an unbound eg. Alt+V never
+        // reaches here as a plain `Char('v')`. Normalize it back to the
+        // character/named key a raw hardware keypress would report, so the
+        // passthrough encoding below still fires.
+        if let Physical(phys) = &self.key {
+            let mut normalized = self.clone();
+            normalized.key = phys.to_key_code();
+            return normalized.encode_kitty(flags);
+        }
+
         // A `Composed` string containing exactly one char is functionally a
         // plain character keypress (delivered by an IME, or e.g. the Windows
         // emoji picker). It never carries a `raw` hardware key event, and
@@ -645,5 +662,103 @@ fn us_layout_unshift(c: char) -> char {
                 c
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::PhysKeyCode;
+
+    fn make_event(key: KeyCode, modifiers: Modifiers) -> KeyEvent {
+        KeyEvent {
+            key,
+            modifiers,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: None,
+            #[cfg(windows)]
+            win32_uni_char: None,
+        }
+    }
+
+    #[test]
+    fn unbound_alt_physical_letter_still_reaches_kitty_encoding() {
+        let physical = make_event(KeyCode::Physical(PhysKeyCode::V), Modifiers::ALT);
+        let encoded = physical.encode_kitty(KittyKeyboardFlags::NONE);
+        assert!(
+            !encoded.is_empty(),
+            "an Alt+<letter> chord with no matching keybinding must still be sent to the \
+             pane as a physical key event, not silently dropped"
+        );
+
+        let char_equivalent = make_event(KeyCode::Char('v'), Modifiers::ALT);
+        assert_eq!(
+            encoded,
+            char_equivalent.encode_kitty(KittyKeyboardFlags::NONE),
+            "Physical(V)+ALT must encode identically to Char('v')+ALT"
+        );
+    }
+
+    #[test]
+    fn unbound_ctrl_physical_letter_still_reaches_kitty_encoding() {
+        let physical = make_event(KeyCode::Physical(PhysKeyCode::C), Modifiers::CTRL);
+        let encoded = physical.encode_kitty(KittyKeyboardFlags::NONE);
+        assert!(
+            !encoded.is_empty(),
+            "an unbound Ctrl+<letter> chord must still reach the pane as a physical key event"
+        );
+
+        let char_equivalent = make_event(KeyCode::Char('c'), Modifiers::CTRL);
+        assert_eq!(
+            encoded,
+            char_equivalent.encode_kitty(KittyKeyboardFlags::NONE),
+        );
+    }
+
+    #[test]
+    fn unbound_ctrl_alt_physical_letter_still_reaches_kitty_encoding() {
+        // Plain (non-AltGr) Ctrl+Alt held together: the fix must not be
+        // specific to any one modifier combination.
+        let physical = make_event(
+            KeyCode::Physical(PhysKeyCode::D),
+            Modifiers::CTRL | Modifiers::ALT,
+        );
+        let encoded = physical.encode_kitty(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS);
+        assert!(!encoded.is_empty());
+
+        let char_equivalent = make_event(KeyCode::Char('d'), Modifiers::CTRL | Modifiers::ALT);
+        assert_eq!(
+            encoded,
+            char_equivalent.encode_kitty(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS),
+        );
+    }
+
+    #[test]
+    fn unbound_alt_physical_non_letter_still_reaches_kitty_encoding() {
+        // The fix must be generic across every PhysKeyCode, not just letters.
+        let physical = make_event(KeyCode::Physical(PhysKeyCode::LeftBracket), Modifiers::ALT);
+        let encoded = physical.encode_kitty(KittyKeyboardFlags::NONE);
+        assert!(!encoded.is_empty());
+
+        let char_equivalent = make_event(KeyCode::Char('['), Modifiers::ALT);
+        assert_eq!(
+            encoded,
+            char_equivalent.encode_kitty(KittyKeyboardFlags::NONE),
+        );
+    }
+
+    #[test]
+    fn physical_letter_encodes_via_csi_u_when_alternate_keys_requested() {
+        let physical = make_event(KeyCode::Physical(PhysKeyCode::V), Modifiers::ALT);
+        let encoded = physical.encode_kitty(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS);
+        assert!(!encoded.is_empty());
+
+        let char_equivalent = make_event(KeyCode::Char('v'), Modifiers::ALT);
+        assert_eq!(
+            encoded,
+            char_equivalent.encode_kitty(KittyKeyboardFlags::REPORT_ALTERNATE_KEYS),
+        );
     }
 }
