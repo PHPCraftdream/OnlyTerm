@@ -3,6 +3,7 @@ use crate::termwindow::webgpu::{GpuDraw, GpuFrame, ShaderUniform};
 use crate::termwindow::RenderFrame;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::time::Instant;
+use window::WindowOps;
 
 /// Computes a frame signature from its constituent parts.
 /// This is a pure function suitable for unit testing, extracted from
@@ -223,6 +224,19 @@ impl crate::TermWindow {
             if rt.is_in_flight() {
                 rt.set_repaint_pending();
                 metrics::counter!("gui.render_thread.frames_dropped").increment(1);
+                // The render thread can finish (and check repaint_pending)
+                // in the gap between the is_in_flight() check above and the
+                // set_repaint_pending() call just now, observing it as not
+                // yet set and skipping its own invalidate(). Check again: if
+                // it's no longer in flight, we may have lost that wakeup, so
+                // request a repaint ourselves rather than leaving this
+                // frame's content stuck on screen until an unrelated event
+                // happens to invalidate the window.
+                if !rt.is_in_flight() {
+                    if let Some(win) = self.window.as_ref() {
+                        win.invalidate();
+                    }
+                }
                 return Ok(());
             }
         }
