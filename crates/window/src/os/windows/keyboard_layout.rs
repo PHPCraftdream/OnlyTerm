@@ -28,6 +28,38 @@ pub(super) enum ResolvedDeadKey {
     InvalidCombination(char),
 }
 
+/// Modifier states probed for dead-key behavior when building `dead_keys`.
+///
+/// Deliberately excludes plain `Modifiers::ALT`. Windows keyboard layout
+/// drivers are free to answer `ToUnicode` with the dead-key sentinel (-1)
+/// for *any* (vk, modifier-state) pair, including combinations the layout
+/// author never intended as compose triggers -- and on a number of non-US
+/// layouts, some Alt+<letter> position does exactly that. If we probed
+/// (and therefore recorded) those, `is_dead_key_leader` would then treat an
+/// ordinary Alt+<letter> keybinding chord as "starting a dead key sequence"
+/// and swallow the keypress entirely before it ever reaches the keybinding/
+/// passthrough pipeline (see `window.rs`'s key handler) -- invisibly, and
+/// only on the affected layout.
+///
+/// This can't happen for `RIGHT_ALT` (AltGr) because AltGr composing
+/// alternate characters is the *entire reason AltGr exists*: every layout
+/// that defines it does so intentionally. Plain Alt, in contrast, is never
+/// used by any Windows keyboard layout to compose text -- it is universally
+/// a modifier (as every other terminal/OS treats it), so there is no
+/// legitimate dead-key behavior to probe for here. Keeping `Modifiers::ALT`
+/// out of this list is what makes Alt+<letter> keybindings layout-
+/// independent by construction, rather than by special-casing whichever
+/// layout happens to be reported broken next; see
+/// `keyboard_layout::test::alt_is_never_a_dead_key_probe_state`.
+fn dead_key_probe_modifiers() -> [Modifiers; 4] {
+    [
+        Modifiers::NONE,
+        Modifiers::SHIFT,
+        Modifiers::SHIFT | Modifiers::CTRL,
+        Modifiers::RIGHT_ALT, // AltGr
+    ]
+}
+
 impl KeyboardLayoutInfo {
     pub fn new() -> Self {
         Self {
@@ -116,15 +148,7 @@ impl KeyboardLayoutInfo {
     unsafe fn probe_dead_keys(&mut self) {
         self.dead_keys.clear();
 
-        let shift_states = [
-            Modifiers::NONE,
-            Modifiers::SHIFT,
-            Modifiers::SHIFT | Modifiers::CTRL,
-            Modifiers::ALT,
-            Modifiers::RIGHT_ALT, // AltGr
-        ];
-
-        for &mods in &shift_states {
+        for &mods in &dead_key_probe_modifiers() {
             let mut state = [0u8; 256];
             Self::apply_mods(mods, &mut state);
 
@@ -156,7 +180,7 @@ impl KeyboardLayoutInfo {
 
                 let mut map = HashMap::new();
 
-                for &smod in &shift_states {
+                for &smod in &dead_key_probe_modifiers() {
                     let mut second_state = [0u8; 256];
                     Self::apply_mods(smod, &mut second_state);
 
@@ -326,5 +350,32 @@ impl KeyboardLayoutInfo {
         } else {
             ResolvedDeadKey::InvalidDeadKey
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Locks in the design invariant documented on `dead_key_probe_modifiers`:
+    /// plain Alt must never be probed as a dead-key trigger, or an ordinary
+    /// Alt+<letter> keybinding silently stops working on whichever keyboard
+    /// layout happens to answer `ToUnicode` with the dead-key sentinel for
+    /// that combination (this is what broke Alt+V on several non-US
+    /// layouts). AltGr (RIGHT_ALT) is the one modifier state that
+    /// legitimately composes characters and must stay probed.
+    #[test]
+    fn alt_is_never_a_dead_key_probe_state() {
+        let probed = dead_key_probe_modifiers();
+        assert!(
+            !probed.contains(&Modifiers::ALT),
+            "plain Alt must never be probed for dead-key behavior: {:?}",
+            probed
+        );
+        assert!(
+            probed.contains(&Modifiers::RIGHT_ALT),
+            "AltGr must stay probed for dead-key behavior: {:?}",
+            probed
+        );
     }
 }
