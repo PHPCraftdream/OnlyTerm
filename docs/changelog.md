@@ -982,13 +982,36 @@ As features stabilize some brief notes about them will accumulate here.
   the line-shaping cache introduced above is keyed on that identity, so it
   kept serving one row's cached appearance for a different row, forever,
   since nothing ever told it the identity had moved.
+* Alt+<letter> keybindings (eg. Alt+V) stopped firing on a number of non-US
+  keyboard layouts. Root cause: the background probe that builds the dead-key
+  table queried `ToUnicode` for a plain-Alt-held state, and on some layouts
+  the driver answers with the dead-key sentinel for that combination as an
+  artifact unrelated to any real compose sequence -- once recorded, the
+  keypress was swallowed before it ever reached the keybinding pipeline.
+  Plain Alt is never used by any Windows keyboard layout to compose text (only
+  AltGr legitimately does that), so it's excluded from the probe entirely --
+  a layout-independent fix rather than a per-layout patch.
+* The GUI-thread watchdog (added to detect a genuinely stuck message loop)
+  produced false positives -- logged as multi-hour or multi-minute "hangs"
+  that recovered within a second -- because its heartbeat only ticks once
+  before the message loop parks waiting for the next message, so a long but
+  entirely normal idle period (or the whole process being suspended by OS
+  sleep/hibernate) looked identical to a real stall. The watchdog no longer
+  counts idle waiting time or a post-suspend gap as a stall, only genuine
+  stuck-message-loop time; the "OnlyTerm is not responding" toast this used
+  to trigger has been removed (the watchdog still logs and records metrics
+  on a real hang).
 * WebGpu initialization (`Instance`/`Adapter`/`Device` creation) ran on a
   background thread, but the GUI thread synchronously blocked on it
   finishing before returning -- so the message loop sat idle and
   unresponsive for the whole duration, even though the actual driver work
   never touched it. Window creation now `await`s that work asynchronously
   instead, so the message loop keeps pumping while the GPU driver
-  initializes.
+  initializes. Two windows created around the same time (eg. multi-window
+  session restore) could each still separately race into that
+  initialization and briefly stand up two live GPU devices before one was
+  discarded; the shared context is now properly serialized so only one
+  initialization ever happens.
 * Under the WebGpu render thread (`webgpu_render_thread`, on by default), a
   frame could be built and its instance data uploaded to a persistent GPU
   buffer while the previous frame was still being submitted and possibly
@@ -996,7 +1019,11 @@ As features stabilize some brief notes about them will accumulate here.
   a garbled or mixed frame. The GUI thread now checks render-thread
   backpressure *before* touching the buffer, skipping the build entirely
   (and scheduling a fresh repaint once the in-flight frame finishes) rather
-  than racing it.
+  than racing it. A narrow follow-up race in that same backpressure check
+  (the render thread could finish and check for a pending repaint in the
+  gap before the GUI thread flagged one) is also closed -- a freshly built
+  frame could otherwise sit unpainted until an unrelated event happened to
+  trigger a repaint.
 * If the shared GPU device was lost (e.g. a Windows TDR) and successfully
   recovered once, every window sharing the process-wide GPU context kept
   reusing the *same* now-dead `Device` afterward -- recovery from a real
@@ -1011,20 +1038,26 @@ As features stabilize some brief notes about them will accumulate here.
   chance to service any other pane, window, or input event. Redelivery is
   now a bounded loop that periodically yields back to the event loop
   instead of recursing indefinitely; no output is dropped either way.
-* Fixed a since-1.0-only leak where a closed window's GPU device-lost
-  subscription (kept for future device-loss recovery notifications) was
-  never actually removed from the process-wide registry, since the
-  registry itself held the only reference keeping it alive. Closed windows
-  are now correctly pruned from the registry rather than accumulating for
-  the lifetime of the process.
+* A closed window's GPU device-lost subscription (kept for future
+  device-loss recovery notifications) was never actually removed from the
+  process-wide registry: the entry held a strong reference to the window's
+  own liveness flag instead of the weak one its doc comment already
+  claimed, so the registry itself was what kept that flag reachable. In
+  practice this meant a closed window's entry could be notified as if it
+  were still live on the next device-lost event, rather than being pruned.
+  Pruning (which only runs as part of handling an actual device-lost
+  event, not on a timer) now correctly recognizes and drops entries whose
+  owning window has been closed.
 * The glyph cache's internal hash tables used a fixed, compile-time-constant
   hash seed rather than one randomized per process. Since the cache keys
   are derived from characters/styles/fonts that ultimately come from
   terminal content, a specially crafted stream of terminal output could in
   principle target hash collisions and degrade lookups toward O(n) -- a CPU
   cost driven purely by terminal content. The hash seed is now randomized
-  per process, closing that class of attack while keeping the same
-  measured 40-80% speedup over the standard library's default hasher.
+  per process, substantially raising the bar against that class of attack
+  (this is not a cryptographic hash, so it isn't an absolute guarantee)
+  while keeping the same measured 40-80% speedup over the standard
+  library's default hasher.
 * `--start-conf`: a startup command that failed to be written to its pane
   (a rare pty-write failure) used to fail completely silently, with layout
   startup otherwise reporting success -- now logged as a warning naming
