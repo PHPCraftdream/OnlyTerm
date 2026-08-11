@@ -14,7 +14,7 @@ use windows::UI::Notifications::{
 fn unwrap_arg<T>(a: &Option<T>) -> Result<&T, WinError> {
     match a {
         Some(t) => Ok(t),
-        None => Err(WinError::new(E_POINTER, HSTRING::from("option is none"))),
+        None => Err(WinError::new(E_POINTER, "option is none")),
     }
 }
 
@@ -31,7 +31,7 @@ fn show_notif_impl(toast: TN) -> Result<(), Box<dyn std::error::Error>> {
         ""
     };
 
-    xml.LoadXml(HSTRING::from(format!(
+    xml.LoadXml(&HSTRING::from(format!(
         r#"<toast duration="long">
         <visual>
             <binding template="ToastGeneric">
@@ -46,9 +46,9 @@ fn show_notif_impl(toast: TN) -> Result<(), Box<dyn std::error::Error>> {
         url_actions
     )))?;
 
-    let notif = ToastNotification::CreateToastNotification(xml)?;
+    let notif = ToastNotification::CreateToastNotification(&xml)?;
 
-    notif.Activated(TypedEventHandler::new(
+    notif.Activated(&TypedEventHandler::new(
         move |_: &Option<ToastNotification>, result: &Option<IInspectable>| {
             // let myself = unwrap_arg(myself)?;
             let result = unwrap_arg(result)?.cast::<ToastActivatedEventArgs>()?;
@@ -83,7 +83,7 @@ fn show_notif_impl(toast: TN) -> Result<(), Box<dyn std::error::Error>> {
     // Windows resolves the toast's displayed name and icon by looking up
     // this ID's registered shortcut; a mismatch falls back to whatever
     // (unrelated) app happens to own the unmatched ID.
-    let notifier = ToastNotificationManager::CreateToastNotifierWithId(HSTRING::from(
+    let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(
         "org.wezfurlong.onlyterm",
     ))?;
 
