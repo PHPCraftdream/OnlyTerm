@@ -100,6 +100,57 @@ fn install_device_lost_callback(
     });
 }
 
+/// Attempts a fast DX12-only adapter pick that skips the exhaustive
+/// enumeration `wgpu::Instance::request_adapter` always does: `wgpu-core`
+/// asks every backend's `enumerate_adapters` for the full adapter list
+/// (each one probed via a real `ID3D12Device` creation, which is what
+/// wakes a suspended GPU) and only picks based on `power_preference`
+/// *afterwards*, in Rust -- so every adapter pays that cost regardless of
+/// which one is eventually chosen. On hybrid-graphics laptops that means a
+/// suspended discrete GPU gets woken up and probed even though `LowPower`
+/// (the default) was never going to pick it. See
+/// `docs/investigations/2026-08-11-dxgi-adapter-selection-plan.md` for the
+/// root-cause writeup that led to this.
+///
+/// Instead, this asks `IDXGIFactory6::EnumAdapterByGpuPreference` (whose
+/// ordering DXGI already derives from adapter metadata, without creating a
+/// device on anything) for the single best adapter for `preference`, and
+/// probes only that one, via `fast_preferred_adapter` on the vendored
+/// wgpu-hal copy under `crates/wgpu-hal-vendored` (not present in upstream
+/// wgpu-hal).
+///
+/// Returns `None` -- never a wrong adapter -- on any failure: pre-1803
+/// Windows 10 (no `IDXGIFactory6`), no adapter matching `preference`,
+/// or anything else. The caller always still has the ordinary
+/// `request_adapter` call as a fallback for exactly that case.
+fn try_fast_dx12_adapter(
+    instance: &wgpu::Instance,
+    preference: WebGpuPowerPreference,
+) -> Option<wgpu::Adapter> {
+    use wgpu::hal::api::Dx12;
+    use windows::Win32::Graphics::Dxgi::{
+        DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, DXGI_GPU_PREFERENCE_MINIMUM_POWER,
+    };
+
+    let dxgi_preference = match preference {
+        WebGpuPowerPreference::HighPerformance => DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+        WebGpuPowerPreference::LowPower => DXGI_GPU_PREFERENCE_MINIMUM_POWER,
+    };
+
+    // SAFETY: `instance` (this function's only caller) was just created via
+    // `wgpu::Instance::new` with `backends` restricted to `wgpu::Backends::
+    // DX12` in this same call, so its DX12 wgpu-hal instance is guaranteed
+    // to exist; the raw instance handle this returns is only read from, per
+    // `as_hal`'s own safety contract.
+    let hal_instance = unsafe { instance.as_hal::<Dx12>() }?;
+    let exposed = hal_instance.fast_preferred_adapter(dxgi_preference)?;
+
+    // SAFETY: `exposed` was produced moments ago by this same `instance`'s
+    // DX12 hal instance above, satisfying `create_adapter_from_hal`'s
+    // requirement that the hal adapter come from this instance.
+    Some(unsafe { instance.create_adapter_from_hal::<Dx12>(exposed) })
+}
+
 /// Process-wide GPU context shared by all windows.
 /// Created once per process on first window creation and reused thereafter.
 ///
@@ -296,6 +347,31 @@ impl ProcessGpuContext {
                                 "Your webgpu preferred adapter '{}' was not found among the \
                                  enumerated adapters",
                                 preference,
+                            );
+                        }
+                    }
+
+                    // See `try_fast_dx12_adapter`'s doc comment: skips the
+                    // wake-every-GPU-to-probe-it cost of the ordinary
+                    // `request_adapter` path below, when it applies.
+                    // Restricted to the plain "no override, no forced
+                    // fallback" case so it can never second-guess an
+                    // explicit `webgpu_preferred_adapter`/
+                    // `webgpu_force_fallback_adapter` choice; those keep
+                    // going through the exhaustive, definitely-correct path.
+                    if adapter.is_none()
+                        && backends == primary_backends
+                        && config_for_thread.webgpu_preferred_adapter.is_none()
+                        && !config_for_thread.webgpu_force_fallback_adapter
+                    {
+                        adapter = try_fast_dx12_adapter(
+                            &instance,
+                            config_for_thread.webgpu_power_preference,
+                        );
+                        if adapter.is_some() {
+                            log::info!(
+                                "startup: fast DX12 adapter selection \
+                                 (EnumAdapterByGpuPreference) succeeded"
                             );
                         }
                     }

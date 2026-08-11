@@ -22,6 +22,13 @@ exclude = [
   "crates/wezterm-char-props/codegen",
 ]
 
+# Vendored copy of wgpu-hal 25.0.2, patched to expose a fast DX12
+# adapter-selection path (see crates/wgpu-hal-vendored/src/dx12/instance.rs)
+# that avoids waking every GPU on hybrid-graphics laptops during startup.
+# See docs/investigations/2026-08-11-dxgi-adapter-selection-plan.md.
+[patch.crates-io]
+wgpu-hal = { path = "crates/wgpu-hal-vendored" }
+
 [profile.release]
 opt-level = 3
 debug = 2

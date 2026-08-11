@@ -130,6 +130,7 @@ winapi = { workspace=true, features = [
 ]}
 windows = { workspace=true, features = [
     "Win32_UI_Shell",
+    "Win32_Graphics_Dxgi",
 ]}
 
 [dev-dependencies]
