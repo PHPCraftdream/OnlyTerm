@@ -4,7 +4,7 @@ use config::{ConfigHandle, WebGpuPowerPreference};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use wgpu::util::DeviceExt;
 use window::raw_window_handle::RawWindowHandle;
 use window::{Dimensions, Window, WindowOps};
@@ -37,9 +37,24 @@ static CONTEXT_VERSION: AtomicU64 = AtomicU64::new(0);
 struct DeviceLostSubscriber {
     /// Weak reference to the window's `is_current` flag. If upgrade fails,
     /// the window has been dropped and this entry should be pruned.
-    is_current: Arc<AtomicBool>,
+    is_current: Weak<AtomicBool>,
     /// Cloned Window handle for sending recovery notifications.
     window: Window,
+}
+
+/// Whether a `DeviceLostSubscriber` should still be notified (and kept in
+/// the registry) on the next device-lost event: its owning `Arc<AtomicBool>`
+/// must still be alive (the window wasn't dropped) and currently read
+/// `true` (the window hasn't abandoned this subscription). `is_current` is
+/// stored as `Weak` specifically so that dropping a window's owning `Arc`
+/// is what makes this return `false` -- if the registry held a strong
+/// `Arc` instead, no window could ever actually become unreachable while
+/// still registered, which was the leak this predicate exists to prevent.
+fn subscriber_is_alive(is_current: &Weak<AtomicBool>) -> bool {
+    is_current
+        .upgrade()
+        .map(|flag| flag.load(Ordering::Acquire))
+        .unwrap_or(false)
 }
 
 /// Process-wide GPU context shared by all windows.
@@ -345,37 +360,32 @@ impl ProcessGpuContext {
             CONTEXT_VERSION.fetch_add(1, Ordering::Release);
 
             // Iterate over subscribers, notifying each still-current window.
-            // Prune dead entries (those where `is_current` upgrade fails).
+            // Prune dead entries: either the owning window was dropped (weak
+            // upgrade fails) or it was abandoned (`is_current` reads false).
             let mut guard = subscribers_for_callback.lock();
             let mut alive_subscribers = Vec::new();
             for subscriber in guard.drain(..) {
-                // Check if this window is still current. If the upgrade fails,
-                // the window has been dropped and we skip it.
-                if subscriber
-                    .is_current
-                    .load(std::sync::atomic::Ordering::Acquire)
-                {
-                    log::error!(
-                        "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
-                         (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
-                        reason,
-                        message
-                    );
-                    let win = subscriber.window.clone();
-                    let win2 = win.clone();
-                    let reason_msg = format!(
-                        "this window's wgpu device was lost ({:?}): {}",
-                        reason, message
-                    );
-                    win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                        move |tw| {
-                            tw.handle_render_error_recovery(&win2, &reason_msg);
-                        },
-                    )));
-                    alive_subscribers.push(subscriber);
+                if !subscriber_is_alive(&subscriber.is_current) {
+                    continue;
                 }
-                // If `is_current` is false, this window has been abandoned;
-                // we drop the entry rather than keeping it around.
+                log::error!(
+                    "wgpu device lost ({:?}): {}; this window's GPU adapter/device was reset \
+                     (e.g. a Windows TDR) -- triggering an in-place renderer rebuild",
+                    reason,
+                    message
+                );
+                let win = subscriber.window.clone();
+                let win2 = win.clone();
+                let reason_msg = format!(
+                    "this window's wgpu device was lost ({:?}): {}",
+                    reason, message
+                );
+                win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                    move |tw| {
+                        tw.handle_render_error_recovery(&win2, &reason_msg);
+                    },
+                )));
+                alive_subscribers.push(subscriber);
             }
             *guard = alive_subscribers;
         });
@@ -404,9 +414,13 @@ impl ProcessGpuContext {
     /// When the shared device is lost, the callback will notify all still-
     /// current windows by calling `Window::notify` with a recovery action.
     /// Windows that have been abandoned (their `is_current` flag is false)
-    /// are skipped and their entries are pruned from the registry.
+    /// or dropped (weak reference upgrade fails) are skipped and their
+    /// entries are pruned from the registry.
     pub fn register_device_lost_subscriber(&self, window: Window, is_current: Arc<AtomicBool>) {
-        let subscriber = DeviceLostSubscriber { window, is_current };
+        let subscriber = DeviceLostSubscriber {
+            window,
+            is_current: Arc::downgrade(&is_current),
+        };
         self.device_lost_subscribers.lock().push(subscriber);
     }
 
@@ -621,5 +635,43 @@ impl WindowGpuSurface {
     #[cfg(windows)]
     pub fn client_hwnd(&self) -> Option<isize> {
         self.client_hwnd
+    }
+}
+
+#[cfg(test)]
+mod device_lost_subscriber_test {
+    use super::*;
+
+    #[test]
+    fn dropped_owner_is_not_alive() {
+        let is_current = Arc::new(AtomicBool::new(true));
+        let weak = Arc::downgrade(&is_current);
+        assert!(subscriber_is_alive(&weak));
+
+        drop(is_current);
+        assert!(
+            !subscriber_is_alive(&weak),
+            "a subscriber whose owning Arc<AtomicBool> was dropped (window closed) \
+             must not be reported alive, or it can never be pruned from the registry"
+        );
+    }
+
+    #[test]
+    fn abandoned_but_still_alive_owner_is_not_alive() {
+        let is_current = Arc::new(AtomicBool::new(true));
+        let weak = Arc::downgrade(&is_current);
+        assert!(subscriber_is_alive(&weak));
+
+        is_current.store(false, Ordering::Release);
+        assert!(
+            !subscriber_is_alive(&weak),
+            "a subscriber whose owner is still alive but marked itself abandoned \
+             (is_current = false) must not be reported alive"
+        );
+
+        // The Arc itself is still alive here; only its flag flipped. Keep it
+        // alive across the assertion so this test exercises the flag check,
+        // not upgrade() failing for an unrelated reason.
+        drop(is_current);
     }
 }
