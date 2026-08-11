@@ -1,12 +1,11 @@
 use super::utilsprites::RenderMetrics;
 use crate::customglyph::*;
 use ::window::bitmaps::atlas::{Atlas, Sprite};
-use ahash::AHasher;
+use ahash::RandomState;
 use config::TextStyle;
 use lfucache::LfuCache;
 use ordered_float::NotNan;
 use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -16,8 +15,8 @@ use wezterm_font::units::*;
 use wezterm_font::{FontConfiguration, LoadedFontId};
 use wezterm_term::Underline;
 
-// AHashMap: HashMap with ahash's AHasher for faster hashing on internal keys
-type AHashMap<K, V> = HashMap<K, V, BuildHasherDefault<AHasher>>;
+// AHashMap: HashMap with ahash's RandomState for process-random keys
+type AHashMap<K, V> = HashMap<K, V, RandomState>;
 
 static FRAME_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
 
@@ -185,7 +184,7 @@ struct LineKey {
 /// A number of items here are HashMaps rather than LfuCaches;
 /// eviction is managed by recreating Self when the Atlas is filled
 ///
-/// We use AHashMap (ahash::AHasher) for internal-only struct/numeric keys
+/// We use AHashMap (ahash::RandomState) for internal-only struct/numeric keys
 /// where benchmarking shows 40-80% speedups: glyph_cache (GlyphKey),
 /// line_glyphs (LineKey), block_glyphs (SizedBlockKey).
 ///
@@ -219,14 +218,13 @@ use image_decode::DecodedImageHandle;
 #[cfg(test)]
 mod hashmap_bench {
     use super::*;
-    use ahash::AHasher;
+    use ahash::RandomState;
     use std::collections::HashMap;
-    use std::hash::BuildHasherDefault;
     use std::rc::Rc;
     use std::time::Duration;
 
-    // Type alias for AHashMap using ahash's AHasher
-    type AHashMap<K, V> = HashMap<K, V, BuildHasherDefault<AHasher>>;
+    // Type alias for AHashMap using ahash's RandomState
+    type AHashMap<K, V> = HashMap<K, V, RandomState>;
 
     /// Create a realistic GlyphKey for benchmarking
     fn make_glyph_key(id: u32) -> GlyphKey {
@@ -367,7 +365,7 @@ mod hashmap_bench {
         let bench_result = benchmarking::measure_function(move |measurer| {
             measurer.measure(|| {
                 let mut cache: AHashMap<GlyphKey, Rc<CachedGlyph>> =
-                    HashMap::with_hasher(BuildHasherDefault::default());
+                    HashMap::with_hasher(RandomState::default());
                 let mut hits = 0;
                 let mut misses = 0;
 
@@ -388,7 +386,7 @@ mod hashmap_bench {
         .unwrap();
 
         let mut cache: AHashMap<GlyphKey, Rc<CachedGlyph>> =
-            HashMap::with_hasher(BuildHasherDefault::default());
+            HashMap::with_hasher(RandomState::default());
         let mut hits = 0;
         let mut misses = 0;
         for key in &keys {
@@ -435,7 +433,7 @@ mod hashmap_bench {
 
         // Pre-populate cache
         let mut cache: AHashMap<GlyphKey, Rc<CachedGlyph>> =
-            HashMap::with_hasher(BuildHasherDefault::default());
+            HashMap::with_hasher(RandomState::default());
         for key in keys {
             if !cache.contains_key(key) {
                 cache.insert(key.clone(), make_cached_glyph(key.glyph_pos));
@@ -483,7 +481,7 @@ mod hashmap_bench {
         let bench_result = benchmarking::measure_function(move |measurer| {
             measurer.measure(|| {
                 let mut cache: AHashMap<GlyphKey, Rc<CachedGlyph>> =
-                    HashMap::with_hasher(BuildHasherDefault::default());
+                    HashMap::with_hasher(RandomState::default());
                 for key in &keys_for_bench {
                     cache.insert(key.clone(), make_cached_glyph(key.glyph_pos));
                 }
@@ -773,7 +771,7 @@ mod hashmap_bench {
         let bench_result = benchmarking::measure_function(move |measurer| {
             measurer.measure(|| {
                 let mut cache: AHashMap<LineKey, Sprite> =
-                    HashMap::with_hasher(BuildHasherDefault::default());
+                    HashMap::with_hasher(RandomState::default());
                 let mut hits = 0;
                 let mut misses = 0;
 
@@ -844,7 +842,7 @@ mod hashmap_bench {
         let bench_result = benchmarking::measure_function(move |measurer| {
             measurer.measure(|| {
                 let mut cache: AHashMap<SizedBlockKey, Sprite> =
-                    HashMap::with_hasher(BuildHasherDefault::default());
+                    HashMap::with_hasher(RandomState::default());
                 let mut hits = 0;
                 let mut misses = 0;
 

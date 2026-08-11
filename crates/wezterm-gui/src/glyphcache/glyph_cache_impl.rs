@@ -7,14 +7,13 @@ use ::window::bitmaps::atlas::{Atlas, OutOfTextureSpace, Sprite};
 use ::window::bitmaps::{BitmapImage, Image, ImageTexture, Texture2d};
 use ::window::color::SrgbaPixel;
 use ::window::{Point, Rect};
-use ahash::AHasher;
+use ahash::RandomState;
 use anyhow::Context;
 use config::{AllowSquareGlyphOverflow, TextStyle};
 use euclid::num::Zero;
 use lfucache::LfuCache;
 use ordered_float::NotNan;
 use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,8 +22,8 @@ use termwiz::image::{ImageData, ImageDataType};
 use wezterm_font::{FontConfiguration, GlyphInfo, LoadedFont};
 use wezterm_term::Underline;
 
-// AHashMap: HashMap with ahash's AHasher for faster hashing on internal keys
-type AHashMap<K, V> = HashMap<K, V, BuildHasherDefault<AHasher>>;
+// AHashMap: HashMap with ahash's RandomState for process-random keys
+type AHashMap<K, V> = HashMap<K, V, RandomState>;
 
 impl GlyphCache {
     pub fn new_in_memory(fonts: &Rc<FontConfiguration>, size: usize) -> anyhow::Result<Self> {
