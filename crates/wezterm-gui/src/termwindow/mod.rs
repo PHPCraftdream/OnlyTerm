@@ -526,7 +526,13 @@ impl Drop for TermWindow {
         // Defensive, same reasoning as the Destroyed handler: mark the
         // WebGpuState stale in case Destroyed never fired, so a late
         // device-lost event doesn't try to notify this dropped window.
-        if let Some(webgpu) = self.webgpu.take() {
+        // `mark_stale` takes `&self`, not ownership -- deliberately not
+        // `.take()`n here, so `webgpu` still drops in its normal
+        // field-declaration order (after `render_state`, which is declared
+        // earlier in the struct and whose Drop impl needs the device
+        // `webgpu` owns to still be alive) instead of being dropped early,
+        // right here, ahead of it.
+        if let Some(webgpu) = self.webgpu.as_ref() {
             webgpu.mark_stale();
         }
         if let Some(window) = self.window.take() {
