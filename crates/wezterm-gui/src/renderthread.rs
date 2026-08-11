@@ -240,24 +240,14 @@ impl RenderThreadHandle {
     /// to avoid writing to persistent GPU instance buffers that the in-flight
     /// frame may still be reading.
     pub fn is_in_flight(&self) -> bool {
-        // SeqCst (not Acquire): paired with the SeqCst store in
-        // set_repaint_pending() and the SeqCst ops on the render thread's
-        // end-of-frame check (renderthread.rs, near `in_flight.store(false,
-        // ...)`), this is required for the lost-wakeup fix in
-        // call_draw_webgpu to be airtight. Release/Acquire alone allows a
-        // GUI-thread store to repaint_pending to sit in the store buffer
-        // past this load (no StoreLoad ordering), which could let both
-        // sides miss each other's update under a store-buffer reordering --
-        // SeqCst's total order rules that out.
-        self.in_flight.load(Ordering::SeqCst)
+        in_flight_is_set(&self.in_flight)
     }
 
     /// Records that a fresh repaint is needed once the currently in-flight
     /// frame finishes submitting. The render thread checks this after each
     /// frame and calls `window.invalidate()` if set.
     pub fn set_repaint_pending(&self) {
-        // SeqCst: see the comment on is_in_flight().
-        self.repaint_pending.store(true, Ordering::SeqCst);
+        mark_repaint_pending(&self.repaint_pending)
     }
 
     /// Send a resize/reconfigure request to the render thread. Unlike
@@ -363,6 +353,45 @@ fn is_hung_given(submit_started_at: &Mutex<Option<Instant>>, threshold: Duration
         Some(start) => start.elapsed() >= threshold,
         None => false,
     }
+}
+
+/// GUI-thread side of the in-flight/repaint-pending handshake: is a frame
+/// still being processed by the render thread? Backs
+/// `RenderThreadHandle::is_in_flight`; split out so the two-thread stress
+/// test below calls this exact function rather than a hand-copied stand-in
+/// that could silently drift out of sync with it.
+///
+/// SeqCst (not Acquire): paired with `mark_repaint_pending` and
+/// `finish_in_flight_frame`'s SeqCst ops, this closes a store-buffer race in
+/// the lost-wakeup check in `call_draw_webgpu` (which stores to
+/// `repaint_pending` and then re-checks `in_flight`, a store followed by a
+/// load of a *different* location). Release/Acquire alone doesn't order a
+/// store against a later load of another location on the same thread (only
+/// SeqCst's total order does), which could let both this thread and the
+/// render thread simultaneously observe stale values and each assume the
+/// other will request the repaint.
+fn in_flight_is_set(in_flight: &AtomicBool) -> bool {
+    in_flight.load(Ordering::SeqCst)
+}
+
+/// GUI-thread side: record that a fresh repaint is needed once the
+/// currently in-flight frame finishes. Backs
+/// `RenderThreadHandle::set_repaint_pending`; see `in_flight_is_set` for why
+/// SeqCst and why this is split out as a standalone, directly-testable
+/// function.
+fn mark_repaint_pending(repaint_pending: &AtomicBool) {
+    repaint_pending.store(true, Ordering::SeqCst);
+}
+
+/// Render-thread side of the same handshake, run once a frame finishes
+/// submitting: clears `in_flight`, then observes-and-clears
+/// `repaint_pending`. Returns `true` if the caller should invalidate the
+/// window (a repaint was requested while this frame was in flight). Backs
+/// `submit_one_frame`'s tail; see `in_flight_is_set` for why SeqCst and why
+/// this is split out as a standalone, directly-testable function.
+fn finish_in_flight_frame(in_flight: &AtomicBool, repaint_pending: &AtomicBool) -> bool {
+    in_flight.store(false, Ordering::SeqCst);
+    repaint_pending.swap(false, Ordering::SeqCst)
 }
 
 /// The render thread's message loop. Runs until the channel disconnects
@@ -592,17 +621,12 @@ fn submit_one_frame(
         }
     }
     metrics::histogram!("gui.render_thread.submit").record(start.elapsed());
-    // SeqCst on both ops here: paired with the SeqCst ops in
-    // RenderThreadHandle::is_in_flight()/set_repaint_pending() to close a
-    // store-buffer race in the GUI thread's lost-wakeup check -- see the
-    // comment on is_in_flight().
-    in_flight.store(false, Ordering::SeqCst);
     // Note: if the reconfigure branch above already called
     // `window.invalidate()`, and `repaint_pending` also happens to be true
     // here, this can call `invalidate()` again. That's harmless: it just
     // requests a repaint, and requesting one twice back-to-back doesn't
     // double-render anything.
-    if repaint_pending.swap(false, Ordering::SeqCst) {
+    if finish_in_flight_frame(in_flight, repaint_pending) {
         window.invalidate();
     }
 }
@@ -909,13 +933,9 @@ mod tests {
         // Still only one frame ever reached "submit".
         assert_eq!(submitted.load(Ordering::SeqCst), 1);
 
-        // Mirrors submit_one_frame's tail: clear in_flight, then swap
-        // repaint_pending out and act on it if it was set.
-        in_flight.store(false, Ordering::Release);
-        let mut invalidated = false;
-        if repaint_pending.swap(false, Ordering::AcqRel) {
-            invalidated = true;
-        }
+        // Calls the real submit_one_frame tail helper (not a copy of its
+        // ordering) so a regression there can't silently pass this test.
+        let invalidated = finish_in_flight_frame(&in_flight, &repaint_pending);
         assert!(
             invalidated,
             "finishing the in-flight frame should observe repaint_pending and invalidate"
@@ -930,6 +950,98 @@ mod tests {
         // again instead of being dropped.
         assert!(send_frame(()), "send after finishing should go through");
         assert_eq!(submitted.load(Ordering::SeqCst), 2);
+    }
+
+    /// Two-thread stress test for the in-flight/repaint-pending handshake.
+    /// Calls `in_flight_is_set`/`mark_repaint_pending`/
+    /// `finish_in_flight_frame` directly -- the exact functions
+    /// `RenderThreadHandle::is_in_flight`/`set_repaint_pending` and
+    /// `submit_one_frame`'s tail call in production -- from two real OS
+    /// threads racing against each other, instead of a single-threaded
+    /// stand-in that copies the algorithm and could silently drift out of
+    /// sync with a production ordering change (e.g. reverting SeqCst back
+    /// to Release/Acquire).
+    ///
+    /// Models the actual race window in `call_draw_webgpu`: the GUI thread
+    /// stores to `repaint_pending` and then re-checks `in_flight` (a store
+    /// followed by a load of a *different* location -- the classic
+    /// StoreLoad pattern that Release/Acquire don't order between threads,
+    /// only SeqCst's total order does). The render thread's
+    /// `finish_in_flight_frame` is the other side of that same pair: it
+    /// clears `in_flight` then observes `repaint_pending`.
+    ///
+    /// A "lost wakeup" is when neither side ends up thinking it should
+    /// invalidate: the GUI thread's re-check still reads `in_flight` as
+    /// `true` (so it defers to the render thread), and
+    /// `finish_in_flight_frame` observes `repaint_pending` as still `false`
+    /// (so the render thread sees nothing to do either) -- the frame that
+    /// was dropped under back-pressure never gets repainted. A `Barrier`
+    /// aligns each trial's start to maximize the chance of landing in that
+    /// interleaving window; run many trials and assert this never happens.
+    ///
+    /// This is a best-effort stress test, not a formal proof: x86's strong
+    /// memory model makes the underlying anomaly rare to observe even under
+    /// Release/Acquire, so a regression isn't guaranteed to flip this test
+    /// red. It's still strictly better than the single-threaded version it
+    /// replaces, which could never have caught this class of bug at all.
+    #[test]
+    fn in_flight_repaint_handshake_never_loses_a_wakeup_under_contention() {
+        use std::sync::Barrier;
+
+        const TRIALS: usize = 100_000;
+        let in_flight = AtomicBool::new(false);
+        let repaint_pending = AtomicBool::new(false);
+        let gui_would_invalidate = AtomicBool::new(false);
+        let render_would_invalidate = AtomicBool::new(false);
+        let lost_wakeups = AtomicUsize::new(0);
+        let start = Barrier::new(2);
+        let done = Barrier::new(2);
+
+        std::thread::scope(|scope| {
+            // GUI-thread side: mirrors call_draw_webgpu's guard -- ask for a
+            // repaint, then re-check in_flight in case the render thread
+            // already finished in the gap.
+            scope.spawn(|| {
+                for _ in 0..TRIALS {
+                    start.wait();
+                    mark_repaint_pending(&repaint_pending);
+                    let would_invalidate = !in_flight_is_set(&in_flight);
+                    gui_would_invalidate.store(would_invalidate, Ordering::SeqCst);
+                    done.wait();
+                }
+            });
+
+            // Render-thread side: mirrors submit_one_frame's tail. Runs on
+            // this (the test's own) thread.
+            for _ in 0..TRIALS {
+                // Reset both flags to the "frame in flight, no repaint
+                // requested yet" state before this trial's racing segment
+                // starts. This happens strictly before `start.wait()`, so
+                // the Barrier's own synchronization (not the SeqCst under
+                // test) is what makes it visible to the GUI thread --
+                // exactly the setup/measurement split a litmus test needs.
+                in_flight.store(true, Ordering::SeqCst);
+                repaint_pending.store(false, Ordering::SeqCst);
+
+                start.wait();
+                let would_invalidate = finish_in_flight_frame(&in_flight, &repaint_pending);
+                render_would_invalidate.store(would_invalidate, Ordering::SeqCst);
+                done.wait();
+
+                if !gui_would_invalidate.load(Ordering::SeqCst)
+                    && !render_would_invalidate.load(Ordering::SeqCst)
+                {
+                    lost_wakeups.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        assert_eq!(
+            lost_wakeups.load(Ordering::SeqCst),
+            0,
+            "at least one side must always observe the need to invalidate -- losing this race \
+             means a dropped frame's content stays stuck on screen with nothing left to repaint it"
+        );
     }
 
     /// Sending fails (the render thread is gone) *after* `in_flight` was
