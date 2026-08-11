@@ -213,6 +213,20 @@ impl crate::TermWindow {
     }
 
     fn call_draw_webgpu(&mut self) -> anyhow::Result<()> {
+        // Check render-thread back-pressure BEFORE building the frame.
+        // build_webgpu_frame writes instance data to persistent GPU buffers
+        // via Queue::write_buffer; if a previous frame is still being
+        // submitted on the render thread, those writes can interleave with
+        // the in-flight frame's reads on the same buffer. Bailing out here
+        // (before any buffer write) eliminates the race entirely.
+        if let Some(rt) = self.render_thread.as_ref() {
+            if rt.is_in_flight() {
+                rt.set_repaint_pending();
+                metrics::counter!("gui.render_thread.frames_dropped").increment(1);
+                return Ok(());
+            }
+        }
+
         // Borrow (not clone) each sub-layer's QuadInstance data to feed the
         // signature hasher. `build_webgpu_frame` only *reads* `vb.instances`
         // (via `write_instances_to_gpu`, itself just `instances.borrow()`)
@@ -313,7 +327,6 @@ impl crate::TermWindow {
         use crate::termwindow::webgpu::WebGpuTexture;
 
         let render_state = self.render_state.as_ref().unwrap();
-        let webgpu_state = self.webgpu.as_ref().unwrap();
 
         let tex = render_state.glyph_cache.borrow().atlas.texture();
         let tex = tex.downcast_ref::<WebGpuTexture>().unwrap();
@@ -369,12 +382,8 @@ impl crate::TermWindow {
                         * std::mem::size_of::<crate::quad::QuadInstance>())
                         as u64;
 
-                    // Use shared index buffer from the WebGpu context
-                    let index_buffer = wgpu::Buffer::clone(&webgpu_state.context.index_buffer);
                     draws.push(GpuDraw {
                         vertex_buffer: instance_buffer,
-                        index_buffer,
-                        index_count: actual_count * 6, // 6 indices per quad
                         instance_count: actual_count,
                     });
                 }

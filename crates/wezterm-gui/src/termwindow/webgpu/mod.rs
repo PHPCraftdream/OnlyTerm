@@ -27,8 +27,6 @@ pub struct ShaderUniform {
 /// hand off to a dedicated render thread in a later task).
 pub struct GpuDraw {
     pub vertex_buffer: wgpu::Buffer,
-    pub index_buffer: wgpu::Buffer,
-    pub index_count: u32,
     /// Number of instances to draw (0 for vertex-mode, >0 for instance-mode)
     pub instance_count: u32,
 }

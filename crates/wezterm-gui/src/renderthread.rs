@@ -235,6 +235,21 @@ impl RenderThreadHandle {
         self.tx.send(msg)
     }
 
+    /// Whether a frame sent via `send_frame` is still being processed by the
+    /// render thread. The GUI thread checks this before building a `GpuFrame`
+    /// to avoid writing to persistent GPU instance buffers that the in-flight
+    /// frame may still be reading.
+    pub fn is_in_flight(&self) -> bool {
+        self.in_flight.load(Ordering::Acquire)
+    }
+
+    /// Records that a fresh repaint is needed once the currently in-flight
+    /// frame finishes submitting. The render thread checks this after each
+    /// frame and calls `window.invalidate()` if set.
+    pub fn set_repaint_pending(&self) {
+        self.repaint_pending.store(true, Ordering::Release);
+    }
+
     /// Send a resize/reconfigure request to the render thread. Unlike
     /// `send_frame`, this is not back-pressured -- resize messages are cheap
     /// (just a `Dimensions` value, no GPU resources attached) and must never
