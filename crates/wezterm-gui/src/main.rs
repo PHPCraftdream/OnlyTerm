@@ -347,9 +347,7 @@ async fn spawn_startup_layout(
                 // the actual line terminator -- so a trailing `\n` on top
                 // of that would submit a second, empty line on Unix.
                 if let Err(err) = write!(writer, "{command}\r") {
-                    log::warn!(
-                        "--start-conf: failed to send startup command {command:?}: {err:#}"
-                    );
+                    log::warn!("--start-conf: failed to send startup command {command:?}: {err:#}");
                 }
             }
         }
