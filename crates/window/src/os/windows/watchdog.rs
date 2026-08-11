@@ -19,7 +19,6 @@
 //! a counter it doesn't own the pacing of and increments state elsewhere.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::OnceLock;
 use std::time::Duration;
 
 /// Bumped once per message-loop iteration in `run_message_loop()`.
@@ -41,32 +40,6 @@ static GUI_IDLE_WAIT: AtomicBool = AtomicBool::new(false);
 
 /// Ensures the watchdog thread is only ever spawned once per process.
 static WATCHDOG_STARTED: std::sync::Once = std::sync::Once::new();
-
-/// Optional callback invoked (from the watchdog's own background thread,
-/// never the GUI thread) the moment a hang is first detected. `window` has
-/// no dependency on any notification/UI crate, so it can't show a toast
-/// itself; instead it exposes this hook and leaves the decision of *how* to
-/// surface the hang to whichever higher-level crate wires it up (see
-/// `set_gui_hang_callback`).
-static GUI_HANG_CALLBACK: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
-
-/// Registers a callback to be run on the watchdog thread the instant a GUI
-/// thread hang is first detected (edge-triggered: fires once per
-/// hang-then-recovery cycle, not once per poll while still hung). Intended
-/// to be called once, early during process startup (eg. alongside
-/// `notify_on_panic()` in `wezterm-gui`'s `main()`), by a crate that can
-/// actually show the user something (`wezterm-gui` already depends on
-/// `wezterm-toast-notification`; `window` deliberately does not, to keep
-/// this low-level crate decoupled from notification-backend concerns).
-///
-/// Only the first registration wins; later calls are silently ignored (the
-/// process only has one GUI thread to watch, so only one callback should
-/// ever need to be registered).
-pub fn set_gui_hang_callback(cb: impl Fn() + Send + Sync + 'static) {
-    if GUI_HANG_CALLBACK.set(Box::new(cb)).is_err() {
-        log::warn!("gui-watchdog: set_gui_hang_callback called more than once; ignoring");
-    }
-}
 
 /// Call once per iteration of the message loop, ideally right before
 /// blocking/waiting so a slow-but-alive loop still advances the counter
@@ -181,22 +154,6 @@ fn watchdog_loop() {
                     threshold
                 );
                 metrics::counter!("gui.watchdog.hang_detected").increment(1);
-                // Take user-visible action right here, on this background
-                // thread. This is deliberate: if the GUI thread's message
-                // loop is genuinely stuck, nothing that needs the GUI
-                // thread to run (eg. anything scheduled via
-                // `promise::spawn`, which is GUI-thread-only) can ever fire
-                // until the loop frees up again -- so this watchdog thread
-                // is the only place that can react *while* the hang is
-                // still happening. No "recovered" toast is fired
-                // symmetrically below: by the time recovery is detected the
-                // freeze is already over and the user has already noticed
-                // (the window was frozen), so a second toast would just be
-                // noise on top of the log line + metric that already cover
-                // it.
-                if let Some(cb) = GUI_HANG_CALLBACK.get() {
-                    cb();
-                }
             }
             metrics::histogram!("gui.watchdog.stall_duration").record(stalled_for);
         }
