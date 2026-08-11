@@ -240,14 +240,24 @@ impl RenderThreadHandle {
     /// to avoid writing to persistent GPU instance buffers that the in-flight
     /// frame may still be reading.
     pub fn is_in_flight(&self) -> bool {
-        self.in_flight.load(Ordering::Acquire)
+        // SeqCst (not Acquire): paired with the SeqCst store in
+        // set_repaint_pending() and the SeqCst ops on the render thread's
+        // end-of-frame check (renderthread.rs, near `in_flight.store(false,
+        // ...)`), this is required for the lost-wakeup fix in
+        // call_draw_webgpu to be airtight. Release/Acquire alone allows a
+        // GUI-thread store to repaint_pending to sit in the store buffer
+        // past this load (no StoreLoad ordering), which could let both
+        // sides miss each other's update under a store-buffer reordering --
+        // SeqCst's total order rules that out.
+        self.in_flight.load(Ordering::SeqCst)
     }
 
     /// Records that a fresh repaint is needed once the currently in-flight
     /// frame finishes submitting. The render thread checks this after each
     /// frame and calls `window.invalidate()` if set.
     pub fn set_repaint_pending(&self) {
-        self.repaint_pending.store(true, Ordering::Release);
+        // SeqCst: see the comment on is_in_flight().
+        self.repaint_pending.store(true, Ordering::SeqCst);
     }
 
     /// Send a resize/reconfigure request to the render thread. Unlike
@@ -582,13 +592,17 @@ fn submit_one_frame(
         }
     }
     metrics::histogram!("gui.render_thread.submit").record(start.elapsed());
-    in_flight.store(false, Ordering::Release);
+    // SeqCst on both ops here: paired with the SeqCst ops in
+    // RenderThreadHandle::is_in_flight()/set_repaint_pending() to close a
+    // store-buffer race in the GUI thread's lost-wakeup check -- see the
+    // comment on is_in_flight().
+    in_flight.store(false, Ordering::SeqCst);
     // Note: if the reconfigure branch above already called
     // `window.invalidate()`, and `repaint_pending` also happens to be true
     // here, this can call `invalidate()` again. That's harmless: it just
     // requests a repaint, and requesting one twice back-to-back doesn't
     // double-render anything.
-    if repaint_pending.swap(false, Ordering::AcqRel) {
+    if repaint_pending.swap(false, Ordering::SeqCst) {
         window.invalidate();
     }
 }
