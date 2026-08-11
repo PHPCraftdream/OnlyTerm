@@ -1058,10 +1058,31 @@ As features stabilize some brief notes about them will accumulate here.
   (this is not a cryptographic hash, so it isn't an absolute guarantee)
   while keeping the same measured 40-80% speedup over the standard
   library's default hasher.
+* The shared GPU context could still be cached and reused as "healthy" even
+  when its own `Device` was lost during initialization itself (a narrow
+  window between the device-lost callback firing and the context finishing
+  setup) -- closing a residual race left over after the device-lost recovery
+  fix above. Staleness is now tracked directly on the context that owns the
+  lost device instead of a separate counter that couldn't distinguish "this
+  context's device died" from "an earlier, already-replaced one did".
+* A device-lost recovery notification could still be sent to a window that
+  had already closed: closing a window stopped its render thread but never
+  marked its GPU state as superseded, and the render thread kept its own
+  separate reference to that state that could outlive window close (e.g.
+  while stuck in a hung driver call). Window close now marks the GPU state
+  stale immediately, before tearing down the render thread.
+* The device-lost subscriber registry (see the pruning fix above) only
+  pruned closed windows' entries when an actual device-lost event fired,
+  which may never happen during a normal session -- so the registry could
+  grow by one entry per window ever opened and closed, unbounded, over a
+  long-running process. It's now also pruned every time a new window
+  registers.
 * `--start-conf`: a startup command that failed to be written to its pane
   (a rare pty-write failure) used to fail completely silently, with layout
-  startup otherwise reporting success -- now logged as a warning naming
-  the command and the underlying error.
+  startup otherwise reporting success -- now logged as a warning identifying
+  which tab/command failed and the underlying error (not the command's own
+  text, since startup commands can carry credentials that shouldn't end up
+  in a log file).
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
