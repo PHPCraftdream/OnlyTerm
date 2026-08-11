@@ -106,36 +106,33 @@ pub struct ProcessGpuContext {
 impl ProcessGpuContext {
     /// Get or create the process-wide GPU context.
     ///
-    /// The lock is released before the async init `await`s (a `MutexGuard`
-    /// can't be held across an `.await`), so two callers can briefly race
-    /// into the slow path. The version check after init ensures only one
-    /// result is cached if a device loss occurs during initialization.
+    /// The lock is an async-aware `smol::lock::Mutex` (unlike a
+    /// `std`/`parking_lot` `MutexGuard`, its guard can be held across an
+    /// `.await`), so it's held for the *entire* check-init-cache sequence,
+    /// including the `Self::new(config).await` call. A second caller
+    /// arriving while initialization is already in progress waits for it to
+    /// finish and then observes the freshly cached result, rather than
+    /// racing into its own duplicate `Instance`/`Adapter`/`Device`
+    /// enumeration.
     pub async fn get_or_init(config: &ConfigHandle) -> anyhow::Result<Arc<Self>> {
-        use std::sync::Mutex;
-        static CONTEXT_LOCK: Mutex<Option<ContextEntry>> = Mutex::new(None);
+        static CONTEXT_LOCK: smol::lock::Mutex<Option<ContextEntry>> = smol::lock::Mutex::new(None);
+        let mut guard = CONTEXT_LOCK.lock().await;
         let expected_version = CONTEXT_VERSION.load(Ordering::Acquire);
-        {
-            let guard = CONTEXT_LOCK.lock().unwrap();
-            if let Some(ref entry) = *guard {
-                // Return cached context only if it's still valid (version matches)
-                if entry.version == expected_version {
-                    return Ok(Arc::clone(&entry.context));
-                }
+        if let Some(ref entry) = *guard {
+            // Return cached context only if it's still valid (version matches)
+            if entry.version == expected_version {
+                return Ok(Arc::clone(&entry.context));
             }
         }
-        // Cache was empty or stale; create a fresh context
+        // Cache was empty or stale; create a fresh context. The lock stays
+        // held across this await, so no other caller can observe (or
+        // itself trigger) a second concurrent initialization.
         let context = Arc::new(Self::new(config).await?);
-        // Re-check version after async init; if it changed, another thread
-        // already replaced the cache and we should drop our new context.
+        // A device-lost event bumping CONTEXT_VERSION while we were inside
+        // Self::new() above is still possible (it doesn't need this lock);
+        // stamp the entry with whatever the counter reads now so the next
+        // caller sees it as fresh only if nothing changed since we finished.
         let current_version = CONTEXT_VERSION.load(Ordering::Acquire);
-        let mut guard = CONTEXT_LOCK.lock().unwrap();
-        if let Some(ref existing) = *guard {
-            if existing.version == current_version && current_version >= expected_version {
-                // Another thread beat us to the update; use their result
-                return Ok(Arc::clone(&existing.context));
-            }
-        }
-        // Our new context is authoritative; cache it
         *guard = Some(ContextEntry {
             context: Arc::clone(&context),
             version: current_version,
