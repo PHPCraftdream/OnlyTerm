@@ -1041,6 +1041,18 @@ impl TermWindow {
                 // built from, so it must go before the render thread (which
                 // owns the device/surface) is torn down.
                 self.render_state.take();
+                // Mark the outgoing WebGpuState stale before dropping our
+                // reference to it, exactly as the in-place rebuild path
+                // above does (see its "Mark the outgoing device stale"
+                // comment): the render thread's `RenderThreadSeed` holds its
+                // own separate `Arc<WebGpuState>` and can keep it alive past
+                // this point (e.g. while stuck in a hung driver call), so
+                // without this, `is_current` would stay `true` and a late
+                // device-lost event could try to notify this now-destroyed
+                // window.
+                if let Some(webgpu) = self.webgpu.take() {
+                    webgpu.mark_stale();
+                }
                 // Detach, don't join: the whole point of the render
                 // thread is that a stuck GPU driver call can't freeze the
                 // GUI thread, so blocking window-close on that same thread

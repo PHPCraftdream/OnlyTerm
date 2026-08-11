@@ -523,6 +523,12 @@ impl Drop for TermWindow {
         if let Some(rt) = self.render_thread.take() {
             rt.shutdown();
         }
+        // Defensive, same reasoning as the Destroyed handler: mark the
+        // WebGpuState stale in case Destroyed never fired, so a late
+        // device-lost event doesn't try to notify this dropped window.
+        if let Some(webgpu) = self.webgpu.take() {
+            webgpu.mark_stale();
+        }
         if let Some(window) = self.window.take() {
             if let Some(fe) = try_front_end() {
                 fe.forget_known_window(&window);
