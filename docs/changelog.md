@@ -982,6 +982,53 @@ As features stabilize some brief notes about them will accumulate here.
   the line-shaping cache introduced above is keyed on that identity, so it
   kept serving one row's cached appearance for a different row, forever,
   since nothing ever told it the identity had moved.
+* WebGpu initialization (`Instance`/`Adapter`/`Device` creation) ran on a
+  background thread, but the GUI thread synchronously blocked on it
+  finishing before returning -- so the message loop sat idle and
+  unresponsive for the whole duration, even though the actual driver work
+  never touched it. Window creation now `await`s that work asynchronously
+  instead, so the message loop keeps pumping while the GPU driver
+  initializes.
+* Under the WebGpu render thread (`webgpu_render_thread`, on by default), a
+  frame could be built and its instance data uploaded to a persistent GPU
+  buffer while the previous frame was still being submitted and possibly
+  still reading that same buffer -- a genuine data race that could produce
+  a garbled or mixed frame. The GUI thread now checks render-thread
+  backpressure *before* touching the buffer, skipping the build entirely
+  (and scheduling a fresh repaint once the in-flight frame finishes) rather
+  than racing it.
+* If the shared GPU device was lost (e.g. a Windows TDR) and successfully
+  recovered once, every window sharing the process-wide GPU context kept
+  reusing the *same* now-dead `Device` afterward -- recovery from a real
+  device loss could never actually succeed, since nothing ever rebuilt the
+  underlying `Instance`/`Adapter`/`Device`/`Queue` chain. The cached context
+  is now invalidated and rebuilt from scratch the next time it's requested
+  after a device-lost event.
+* A pane with sustained, continuous output (e.g. `yes`, or any command that
+  never goes quiet) could drive the internal notification-delivery path
+  into unbounded recursion, one stack frame per redelivery round, with no
+  upper bound -- and while it kept recursing, the GUI thread never got a
+  chance to service any other pane, window, or input event. Redelivery is
+  now a bounded loop that periodically yields back to the event loop
+  instead of recursing indefinitely; no output is dropped either way.
+* Fixed a since-1.0-only leak where a closed window's GPU device-lost
+  subscription (kept for future device-loss recovery notifications) was
+  never actually removed from the process-wide registry, since the
+  registry itself held the only reference keeping it alive. Closed windows
+  are now correctly pruned from the registry rather than accumulating for
+  the lifetime of the process.
+* The glyph cache's internal hash tables used a fixed, compile-time-constant
+  hash seed rather than one randomized per process. Since the cache keys
+  are derived from characters/styles/fonts that ultimately come from
+  terminal content, a specially crafted stream of terminal output could in
+  principle target hash collisions and degrade lookups toward O(n) -- a CPU
+  cost driven purely by terminal content. The hash seed is now randomized
+  per process, closing that class of attack while keeping the same
+  measured 40-80% speedup over the standard library's default hasher.
+* `--start-conf`: a startup command that failed to be written to its pane
+  (a rare pty-write failure) used to fail completely silently, with layout
+  startup otherwise reporting success -- now logged as a warning naming
+  the command and the underlying error.
 
 #### Updated
 * Bundled conpty.dll and OpenConsole.exe to build 1.22.250204002.nupkg
