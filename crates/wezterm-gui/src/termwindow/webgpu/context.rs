@@ -166,6 +166,12 @@ impl ProcessGpuContext {
     /// racing into its own duplicate `Instance`/`Adapter`/`Device`
     /// enumeration.
     pub async fn get_or_init(config: &ConfigHandle) -> anyhow::Result<Arc<Self>> {
+        // Bounds the retry loop below for the rare case where the freshly
+        // created device is lost before `Self::new()` even returns: a real
+        // limit, not an infinite retry, so a persistently broken adapter
+        // fails window creation instead of looping forever.
+        const MAX_INIT_ATTEMPTS: u32 = 3;
+
         static CONTEXT_LOCK: smol::lock::Mutex<Option<Arc<ProcessGpuContext>>> =
             smol::lock::Mutex::new(None);
         let mut guard = CONTEXT_LOCK.lock().await;
@@ -184,9 +190,30 @@ impl ProcessGpuContext {
         // Cache was empty or its device was lost; create a fresh context.
         // The lock stays held across this await, so no other caller can
         // observe (or itself trigger) a second concurrent initialization.
-        let context = Arc::new(Self::new(config).await?);
-        *guard = Some(Arc::clone(&context));
-        Ok(context)
+        for attempt in 1..=MAX_INIT_ATTEMPTS {
+            let context = Arc::new(Self::new(config).await?);
+            // The device can still be lost in the narrow gap between
+            // `install_device_lost_callback` running (on the background
+            // thread, right after `request_device`) and this point --
+            // `lost` is the source of truth for whether that happened. A
+            // context observed lost here must never be cached: caching it
+            // would resurrect the exact bug this flag exists to prevent,
+            // and since wgpu already consumed the one-shot device-lost
+            // closure slot for it, no window using it would ever get a
+            // recovery notification either.
+            if context.lost.load(Ordering::Acquire) {
+                log::warn!(
+                    "WebGpu device was lost during initialization \
+                     (attempt {attempt}/{MAX_INIT_ATTEMPTS}); retrying"
+                );
+                continue;
+            }
+            *guard = Some(Arc::clone(&context));
+            return Ok(context);
+        }
+        anyhow::bail!(
+            "WebGpu device was lost during initialization {MAX_INIT_ATTEMPTS} times in a row"
+        )
     }
 
     /// Create a new ProcessGpuContext.
