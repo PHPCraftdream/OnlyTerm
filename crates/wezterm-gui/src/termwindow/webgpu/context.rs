@@ -409,7 +409,13 @@ impl ProcessGpuContext {
             window,
             is_current: Arc::downgrade(&is_current),
         };
-        self.device_lost_subscribers.lock().push(subscriber);
+        let mut subscribers = self.device_lost_subscribers.lock();
+        // Prune dead entries here too, not just in the device-lost callback:
+        // a device-lost event may never fire during the process lifetime,
+        // in which case the registry would otherwise grow by one entry per
+        // window ever opened and closed, for as long as the process runs.
+        subscribers.retain(|s| subscriber_is_alive(&s.is_current));
+        subscribers.push(subscriber);
     }
 
     /// Get or create a render pipeline for the given surface format.
