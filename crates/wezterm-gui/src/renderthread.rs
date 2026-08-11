@@ -274,7 +274,11 @@ impl RenderThreadHandle {
             // released here) instead of queueing, and remember to ask for
             // a fresh repaint once the in-flight frame finishes.
             drop(frame);
-            self.repaint_pending.store(true, Ordering::Release);
+            // Via the shared helper rather than an inline store, so this
+            // side of the handshake can't drift out of sync with the
+            // ordering the rest of it (and the test that covers it) relies
+            // on -- see `in_flight_is_set`.
+            mark_repaint_pending(&self.repaint_pending);
             metrics::counter!("gui.render_thread.frames_dropped").increment(1);
             return;
         }
