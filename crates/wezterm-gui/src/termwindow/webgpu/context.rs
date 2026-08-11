@@ -3,30 +3,11 @@ use super::*;
 use config::{ConfigHandle, WebGpuPowerPreference};
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use wgpu::util::DeviceExt;
 use window::raw_window_handle::RawWindowHandle;
 use window::{Dimensions, Window, WindowOps};
-
-/// Wrapper for the cached process-wide GPU context that tracks staleness.
-///
-/// When the device is lost, the cached context is marked as stale so that
-/// subsequent calls to `get_or_init()` will recreate it instead of reusing
-/// the lost device.
-struct ContextEntry {
-    /// The actual GPU context
-    context: Arc<ProcessGpuContext>,
-    /// Global version counter incremented on each device loss.
-    /// If the cached entry's version doesn't match the global version,
-    /// the context is stale and must be recreated.
-    version: u64,
-}
-
-/// Global version counter incremented on device loss.
-/// When this changes, any cached `ContextEntry` with a matching version
-/// is stale and `ProcessGpuContext` must be recreated.
-static CONTEXT_VERSION: AtomicU64 = AtomicU64::new(0);
 
 /// A subscriber for device-lost events.
 ///
@@ -96,6 +77,14 @@ pub struct ProcessGpuContext {
     /// current windows (skipping dead entries where `is_current` upgrade fails).
     /// Wrapped in Arc so the device-lost callback can access it.
     device_lost_subscribers: Arc<Mutex<Vec<DeviceLostSubscriber>>>,
+    /// Set to `true` by this context's own device-lost callback when its
+    /// `device` is lost. Scoped to this specific context (not a global
+    /// counter) so that a device lost during `Self::new()` -- before this
+    /// `ProcessGpuContext` is even returned and cached -- still correctly
+    /// marks itself stale for `get_or_init`'s next caller, with no window
+    /// where the loss can be mistaken for having happened to some other,
+    /// already-superseded context.
+    lost: Arc<AtomicBool>,
     /// Static corner buffer for instanced rendering (4 corners).
     /// Used with VertexStepMode::Vertex.
     pub corner_buffer: wgpu::Buffer,
@@ -115,28 +104,26 @@ impl ProcessGpuContext {
     /// racing into its own duplicate `Instance`/`Adapter`/`Device`
     /// enumeration.
     pub async fn get_or_init(config: &ConfigHandle) -> anyhow::Result<Arc<Self>> {
-        static CONTEXT_LOCK: smol::lock::Mutex<Option<ContextEntry>> = smol::lock::Mutex::new(None);
+        static CONTEXT_LOCK: smol::lock::Mutex<Option<Arc<ProcessGpuContext>>> =
+            smol::lock::Mutex::new(None);
         let mut guard = CONTEXT_LOCK.lock().await;
-        let expected_version = CONTEXT_VERSION.load(Ordering::Acquire);
-        if let Some(ref entry) = *guard {
-            // Return cached context only if it's still valid (version matches)
-            if entry.version == expected_version {
-                return Ok(Arc::clone(&entry.context));
+        if let Some(ref context) = *guard {
+            // Return the cached context only if its own device hasn't been
+            // lost. Checking the context's own flag (rather than a global
+            // version counter) means this is correct even if the device was
+            // lost while this very context was still being built inside
+            // `Self::new()` below -- the flag it carries out is already the
+            // truth, so there's no window where a freshly-lost context can
+            // be stamped "fresh" by a caller that raced its own callback.
+            if !context.lost.load(Ordering::Acquire) {
+                return Ok(Arc::clone(context));
             }
         }
-        // Cache was empty or stale; create a fresh context. The lock stays
-        // held across this await, so no other caller can observe (or
-        // itself trigger) a second concurrent initialization.
+        // Cache was empty or its device was lost; create a fresh context.
+        // The lock stays held across this await, so no other caller can
+        // observe (or itself trigger) a second concurrent initialization.
         let context = Arc::new(Self::new(config).await?);
-        // A device-lost event bumping CONTEXT_VERSION while we were inside
-        // Self::new() above is still possible (it doesn't need this lock);
-        // stamp the entry with whatever the counter reads now so the next
-        // caller sees it as fresh only if nothing changed since we finished.
-        let current_version = CONTEXT_VERSION.load(Ordering::Acquire);
-        *guard = Some(ContextEntry {
-            context: Arc::clone(&context),
-            version: current_version,
-        });
+        *guard = Some(Arc::clone(&context));
         Ok(context)
     }
 
@@ -343,6 +330,8 @@ impl ProcessGpuContext {
         // We need to wrap the Mutex in an Arc so the callback can access it.
         let subscribers = Arc::new(Mutex::new(Vec::<DeviceLostSubscriber>::new()));
         let subscribers_for_callback = Arc::clone(&subscribers);
+        let lost = Arc::new(AtomicBool::new(false));
+        let lost_for_callback = Arc::clone(&lost);
         device.set_device_lost_callback(move |reason, message| {
             log::error!(
                 "Shared GPU context device lost ({:?}): {}; notifying all active windows",
@@ -351,10 +340,11 @@ impl ProcessGpuContext {
             );
             metrics::counter!("gui.render_thread.device_lost").increment(1);
 
-            // Increment version to invalidate the cached context.
-            // Any subsequent `get_or_init()` call will see the version mismatch
-            // and recreate the ProcessGpuContext with a fresh device.
-            CONTEXT_VERSION.fetch_add(1, Ordering::Release);
+            // Mark this context's own device as lost. `get_or_init` checks
+            // this flag (not a global counter) so that even a device lost
+            // before this `Self::new()` call returns is still correctly
+            // seen as stale by the next caller.
+            lost_for_callback.store(true, Ordering::Release);
 
             // Iterate over subscribers, notifying each still-current window.
             // Prune dead entries: either the owning window was dropped (weak
@@ -401,6 +391,7 @@ impl ProcessGpuContext {
             texture_linear_sampler,
             pipeline_cache: Mutex::new(HashMap::new()),
             device_lost_subscribers: subscribers,
+            lost,
             corner_buffer,
             index_buffer,
         })
