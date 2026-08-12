@@ -127,6 +127,7 @@ winapi = { workspace=true, features = [
     "synchapi",
     "winsock2",
     "libloaderapi",
+    "shellapi",
 ]}
 windows = { workspace=true, features = [
     "Win32_UI_Shell",

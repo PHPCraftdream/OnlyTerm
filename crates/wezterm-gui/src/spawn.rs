@@ -86,6 +86,10 @@ pub async fn spawn_command_internal(
             if let Some(cwd) = &spawn.cwd {
                 builder.cwd(cwd);
             }
+            #[cfg(windows)]
+            if let Some(priority) = spawn.priority {
+                builder.set_priority_class(priority.to_win32_flag());
+            }
             Some(builder)
         }
     };

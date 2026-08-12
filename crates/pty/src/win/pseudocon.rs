@@ -235,7 +235,7 @@ impl PseudoCon {
                 // it silently breaks the far more common case of the user
                 // pressing Ctrl+C to interrupt/exit whatever is running in the
                 // pane, which must always keep working.
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | cmd.priority_class(),
                 cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
                 cwd.as_ref()
                     .map(|c| c.as_slice().as_ptr())

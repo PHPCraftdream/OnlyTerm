@@ -49,6 +49,7 @@ pub(crate) use dynamic_convert::*;
 pub use exec_domain::*;
 pub use font::*;
 pub use frontend::*;
+pub use keyassignment::ProcessPriority;
 pub use keys::*;
 pub use serial::*;
 pub use start_conf::*;
