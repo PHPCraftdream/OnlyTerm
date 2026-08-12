@@ -61,11 +61,6 @@ bench-scale-tool.workspace = true
 env_logger.workspace = true
 k9.workspace = true
 
-[target."cfg(unix)".dependencies]
-signal-hook.workspace = true
-termios.workspace = true
-nix = {workspace=true, features=["mman", "fs"]}
-
 [target."cfg(windows)".dependencies.winapi]
 features = [
     "winbase",

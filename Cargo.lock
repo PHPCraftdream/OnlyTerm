@@ -4383,16 +4383,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "signal-hook"
-version = "0.3.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d881a16cf4426aa584979d30bd82cb33429027e42122b169753d6ef1085ed6e2"
-dependencies = [
- "libc",
- "signal-hook-registry",
-]
-
-[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4732,15 +4722,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "termios"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "411c5bf740737c7918b8b1fe232dca4dc9f8e754b8ad5e20966814001ed0ac6b"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "termwiz"
 version = "0.24.0"
 dependencies = [
@@ -4759,7 +4740,6 @@ dependencies = [
  "libc",
  "log",
  "memmem",
- "nix",
  "num-derive",
  "num-traits",
  "ordered-float",
@@ -4768,10 +4748,8 @@ dependencies = [
  "phf",
  "serde",
  "sha2",
- "signal-hook",
  "siphasher",
  "terminfo",
- "termios",
  "thiserror 1.0.69",
  "ucd-trie",
  "unicode-segmentation",
@@ -5528,7 +5506,6 @@ dependencies = [
  "smol",
  "tabout",
  "tempfile",
- "termios",
  "termwiz",
  "termwiz-funcs",
  "textwrap",
