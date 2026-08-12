@@ -10,9 +10,12 @@
 //! running a specific shell command, with the result indicating success,
 //! user cancellation, or failure.
 //!
-//! Not yet called from anywhere: the "New Tab Options" dialog that will
-//! invoke this on its "admin" path is built and wired up separately.
-#![allow(dead_code)]
+//! Called from the "New Tab Options" dialog's admin path
+//! (`crates/wezterm-gui/src/termwindow/newtab_options.rs`), off the GUI
+//! thread via `promise::spawn::spawn_into_new_thread` -- this function's
+//! own blocking `ShellExecuteExW` call cannot run on the GUI thread's
+//! cooperative executor without freezing the whole application for as
+//! long as the UAC prompt is up.
 
 use config::ProcessPriority;
 use std::ffi::OsStr;
@@ -27,18 +30,6 @@ pub enum ElevateResult {
     UserCancelled,
     /// Failed to spawn elevated window with an error message.
     Failed(String),
-}
-
-impl ElevateResult {
-    /// Returns true if the user explicitly cancelled the UAC prompt.
-    pub fn is_cancelled(&self) -> bool {
-        matches!(self, ElevateResult::UserCancelled)
-    }
-
-    /// Returns true if the elevated window was successfully spawned.
-    pub fn is_success(&self) -> bool {
-        matches!(self, ElevateResult::Success)
-    }
 }
 
 /// Convert a rust string to a NUL-terminated UTF-16 wide string.
@@ -96,8 +87,10 @@ fn construct_start_command_line(shell_args: &[String]) -> String {
 ///
 /// # Important Notes
 ///
-/// - This function MUST be called off the GUI thread (e.g., via
-///   `promise::spawn::spawn`) because `ShellExecuteExW("runas")` blocks
+/// - This function MUST be called off the GUI thread on a real OS
+///   thread (e.g., via `promise::spawn::spawn_into_new_thread`, NOT
+///   `promise::spawn::spawn`, which runs on the GUI thread's own
+///   cooperative executor) because `ShellExecuteExW("runas")` blocks
 ///   until the user responds to the UAC prompt.
 /// - The spawned elevated window is completely independent of the current
 ///   process/window and cannot share the PTY.
@@ -226,15 +219,5 @@ mod tests {
     fn test_construct_start_command_line_with_quotes() {
         let result = construct_start_command_line(&["path\"with\"quotes".to_string()]);
         assert_eq!(result, "start -- \"path\\\"with\\\"quotes\"");
-    }
-
-    #[test]
-    fn test_elevate_result_helpers() {
-        assert!(ElevateResult::Success.is_success());
-        assert!(!ElevateResult::Success.is_cancelled());
-        assert!(!ElevateResult::Failed("error".to_string()).is_success());
-        assert!(!ElevateResult::Failed("error".to_string()).is_cancelled());
-        assert!(!ElevateResult::UserCancelled.is_success());
-        assert!(ElevateResult::UserCancelled.is_cancelled());
     }
 }

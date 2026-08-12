@@ -1,3 +1,5 @@
+use crate::elevate::{spawn_elevated_window, ElevateResult};
+use crate::spawn::SpawnWhere;
 use crate::termwindow::box_model::*;
 use crate::termwindow::modal::Modal;
 use crate::termwindow::render::corners::{
@@ -6,8 +8,8 @@ use crate::termwindow::render::corners::{
 };
 use crate::termwindow::{DimensionContext, NewTabOptionGroup, TermWindow, UIItemType};
 use crate::utilsprites::RenderMetrics;
-use config::keyassignment::KeyAssignment;
-use config::Dimension;
+use config::keyassignment::{KeyAssignment, SpawnCommand, SpawnTabDomain};
+use config::{Dimension, ProcessPriority};
 use std::cell::{Ref, RefCell};
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 
@@ -46,6 +48,19 @@ impl Shell {
             Shell::Wsl => "wsl",
         }
     }
+
+    /// Argv for launching this shell, resolved via PATH -- the same
+    /// convention `windows_default_prog()` and the old (now removed)
+    /// WSL launcher entries used, since this codebase has no separate
+    /// shell-path resolution helper to defer to instead.
+    fn argv(&self) -> Vec<String> {
+        match self {
+            Shell::Cmd => vec!["cmd.exe".to_string()],
+            Shell::Bash => vec!["bash.exe".to_string()],
+            Shell::Powershell => vec!["powershell.exe".to_string()],
+            Shell::Wsl => vec!["wsl.exe".to_string()],
+        }
+    }
 }
 
 impl Elevation {
@@ -77,6 +92,17 @@ impl Priority {
             Priority::AboveNormal => "Above Normal",
             Priority::High => "High",
             Priority::Realtime => "Realtime",
+        }
+    }
+
+    fn to_process_priority(self) -> ProcessPriority {
+        match self {
+            Priority::Idle => ProcessPriority::Idle,
+            Priority::BelowNormal => ProcessPriority::BelowNormal,
+            Priority::Normal => ProcessPriority::Normal,
+            Priority::AboveNormal => ProcessPriority::AboveNormal,
+            Priority::High => ProcessPriority::High,
+            Priority::Realtime => ProcessPriority::Realtime,
         }
     }
 }
@@ -151,36 +177,27 @@ impl NewTabOptions {
     /// Selects whatever is currently focused. Only correct for the
     /// keyboard path (Space/Enter), where "currently focused" and "the
     /// thing the user means to activate" are the same thing by
-    /// construction. The mouse path must NOT use this for the Run
-    /// button: a click on Run says nothing about what was last
-    /// Tab-focused, so it needs `run_impl` directly (see `run`) rather
-    /// than going through the current focus.
-    fn select_focused_impl(&self) {
+    /// construction. Returns a run request when the focused item was
+    /// Run; the mouse path must NOT use this for the Run button (a
+    /// click on Run says nothing about what was last Tab-focused), so
+    /// it calls `run()` directly instead.
+    fn select_focused_impl(&self) -> Option<NewTabRunRequest> {
         let current = *self.focus.borrow();
         match current {
             FocusItem::Shell(idx) => {
                 *self.selected_shell.borrow_mut() = Shell::ALL[idx];
+                None
             }
             FocusItem::Elevation(idx) => {
                 *self.selected_elevation.borrow_mut() = Elevation::ALL[idx];
+                None
             }
             FocusItem::Priority(idx) => {
                 *self.selected_priority.borrow_mut() = Priority::ALL[idx];
+                None
             }
-            FocusItem::Run => self.run_impl(),
+            FocusItem::Run => Some(self.run()),
         }
-    }
-
-    fn run_impl(&self) {
-        let shell = *self.selected_shell.borrow();
-        let elevation = *self.selected_elevation.borrow();
-        let priority = *self.selected_priority.borrow();
-        log::info!(
-            "New Tab Options: Shell={:?}, Elevation={:?}, Priority={:?}",
-            shell,
-            elevation,
-            priority
-        );
     }
 
     fn compute(
@@ -557,14 +574,85 @@ impl NewTabOptions {
         }
     }
 
-    /// Runs with whatever is currently selected, independent of keyboard
-    /// focus -- this is what a mouse click on the Run button must call,
-    /// since a click carries no information about where Tab focus last
-    /// was (the keyboard path calls `select_focused_impl` directly
-    /// instead, since there "focused" and "the thing to run" coincide).
-    pub fn run(&self) {
-        self.run_impl();
+    /// Builds a run request from whatever is currently selected,
+    /// independent of keyboard focus -- this is what a mouse click on
+    /// the Run button must call, since a click carries no information
+    /// about where Tab focus last was (the keyboard path goes through
+    /// `select_focused_impl` instead, since there "focused" and "the
+    /// thing to run" coincide). Returning an owned request rather than
+    /// acting immediately lets both call sites finish with `self`
+    /// (dropping any `RefCell`/`Rc` borrow on the modal) before the
+    /// actual spawn -- which needs `&mut TermWindow` -- happens.
+    pub fn run(&self) -> NewTabRunRequest {
+        NewTabRunRequest {
+            argv: self.selected_shell.borrow().argv(),
+            elevated: matches!(*self.selected_elevation.borrow(), Elevation::Admin),
+            priority: self.selected_priority.borrow().to_process_priority(),
+        }
     }
+}
+
+/// The three dialog selections, captured as plain owned data so they can
+/// outlive the `NewTabOptions` modal's `RefCell` borrows -- see `run`.
+pub struct NewTabRunRequest {
+    argv: Vec<String>,
+    elevated: bool,
+    priority: ProcessPriority,
+}
+
+/// Acts on a `NewTabRunRequest`: spawns a normal tab directly, or -- for
+/// the elevated case -- hands off to `spawn_elevated_window` on a
+/// background task (it blocks on the UAC prompt) and reports back via a
+/// toast notification if the user declines or it fails outright. A
+/// declined/failed elevation intentionally does not open a placeholder
+/// tab: doing so safely would mean either shell-escaping the failure
+/// message before handing it to `cmd.exe /c`, or inventing a new
+/// non-PTY pane type that nothing else in this codebase has -- the toast
+/// convention already used for `OpenConfigFile` failures avoids both.
+pub fn execute_new_tab_run_request(term_window: &mut TermWindow, request: NewTabRunRequest) {
+    let NewTabRunRequest {
+        argv,
+        elevated,
+        priority,
+    } = request;
+
+    if !elevated {
+        term_window.spawn_command(
+            &SpawnCommand {
+                args: Some(argv),
+                priority: Some(priority),
+                domain: SpawnTabDomain::CurrentPaneDomain,
+                ..Default::default()
+            },
+            SpawnWhere::NewTab,
+        );
+        return;
+    }
+
+    // `spawn_elevated_window` blocks the calling thread until the UAC
+    // prompt is resolved (`ShellExecuteExW` with `lpVerb = "runas"` is
+    // synchronous). `promise::spawn::spawn` alone would run this on the
+    // *main* thread's cooperative executor (see `promise::spawn::spawn`
+    // -> `spawn_local`), freezing the whole GUI for as long as the UAC
+    // prompt is up. `spawn_into_new_thread` is the primitive that
+    // actually runs the closure on a real `std::thread`, marshalling
+    // its result back onto the main thread as a plain awaitable `Task`.
+    let task =
+        promise::spawn::spawn_into_new_thread(move || Ok(spawn_elevated_window(&argv, priority)));
+    promise::spawn::spawn(async move {
+        let message = match task.await {
+            Ok(ElevateResult::Success) => return,
+            Ok(ElevateResult::UserCancelled) => {
+                "New Tab Options: elevation was cancelled.".to_string()
+            }
+            Ok(ElevateResult::Failed(err)) => {
+                format!("New Tab Options: failed to start an elevated window: {err}")
+            }
+            Err(err) => format!("New Tab Options: failed to start an elevated window: {err:#}"),
+        };
+        wezterm_toast_notification::persistent_toast_notification("OnlyTerm", &message);
+    })
+    .detach();
 }
 
 impl Modal for NewTabOptions {
@@ -599,11 +687,12 @@ impl Modal for NewTabOptions {
                 term_window.invalidate_modal();
             }
             (KeyCode::Char(' '), KeyModifiers::NONE) | (KeyCode::Enter, KeyModifiers::NONE) => {
-                self.select_focused_impl();
-                if matches!(*self.focus.borrow(), FocusItem::Run) {
-                    term_window.cancel_modal();
-                } else {
-                    term_window.invalidate_modal();
+                match self.select_focused_impl() {
+                    Some(request) => {
+                        term_window.cancel_modal();
+                        execute_new_tab_run_request(term_window, request);
+                    }
+                    None => term_window.invalidate_modal(),
                 }
             }
             _ => return Ok(false),

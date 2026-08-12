@@ -516,22 +516,21 @@ impl super::TermWindow {
         context: &dyn WindowOps,
     ) {
         if let WMEK::Press(MousePress::Left) = event.kind {
-            use crate::termwindow::newtab_options::NewTabOptions;
-            let handled = {
+            use crate::termwindow::newtab_options::{execute_new_tab_run_request, NewTabOptions};
+            // Scoped the same way as the radio handler above: `run()`
+            // only reads the current selections into an owned request,
+            // so the `Ref` from `self.modal.borrow()` can drop before
+            // `execute_new_tab_run_request` needs `&mut self`.
+            let request = {
                 let modal = self.modal.borrow();
-                match modal
+                modal
                     .as_ref()
                     .and_then(|m| m.downcast_ref::<NewTabOptions>())
-                {
-                    Some(newtab) => {
-                        newtab.run();
-                        true
-                    }
-                    None => false,
-                }
+                    .map(|newtab| newtab.run())
             };
-            if handled {
+            if let Some(request) = request {
                 self.cancel_modal();
+                execute_new_tab_run_request(self, request);
             }
         }
         context.set_cursor(Some(MouseCursor::Hand));
