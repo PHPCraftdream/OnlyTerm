@@ -1201,8 +1201,11 @@ impl crate::Device for super::Device {
                 },
                 ShaderVisibility: Direct3D12::D3D12_SHADER_VISIBILITY_ALL, // really needed for VS and CS only,
             });
+            // Not `bind_cbv.register += 1` here: unlike the earlier bindings
+            // loop, `bind_cbv` isn't read again after this point in the
+            // function, so incrementing it was dead code (upstream
+            // wgpu-hal 25.0.2 clippy warning, fixed in this vendored copy).
             let binding = bind_cbv;
-            bind_cbv.register += 1;
             (Some(parameter_index as u32), Some(binding))
         } else {
             (None, None)
