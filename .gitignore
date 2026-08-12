@@ -51,6 +51,7 @@ dhat-heap.json
 /docs/mermaid.min.js
 **/*.rs.bk
 .*.sw*
+*.log
 /esctest.log
 /AppDir
 /WezTerm*.AppImage
