@@ -47,10 +47,10 @@ fn center_block(lines: &[String], width: usize) -> Vec<String> {
 ///
 /// Does *not* copy anything to the clipboard on its own -- clobbering
 /// whatever the user already had copied just because they glanced at the
-/// version would be surprising. Pressing `c` copies on demand instead
-/// (via `gui_win.window`, since this closure runs on its own spawned
-/// thread with no direct access to the `TermWindow` that owns the real
-/// clipboard-setting code).
+/// version would be surprising. Pressing Ctrl+Shift+C copies on demand
+/// instead (via `gui_win.window`, since this closure runs on its own
+/// spawned thread with no direct access to the `TermWindow` that owns
+/// the real clipboard-setting code).
 pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyhow::Result<()> {
     term.no_grab_mouse_in_raw_mode();
     term.set_raw_mode()?;
@@ -127,7 +127,7 @@ pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyho
         let hint_line = if copied {
             "Copied to clipboard  ·  Press Esc to close"
         } else {
-            "Press C to copy  ·  Press Esc to close"
+            "Press Ctrl+Shift+C to copy  ·  Press Esc to close"
         };
         let hint_text = format!("{}\r\n", center(hint_line, screen_cols));
 
@@ -151,20 +151,31 @@ pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyho
                 key: KeyCode::Escape,
                 ..
             })) => return Ok(()),
-            Some(InputEvent::Key(KeyEvent {
-                key: KeyCode::Char('c') | KeyCode::Char('d'),
-                modifiers,
-                ..
-            })) if modifiers.contains(Modifiers::CTRL) => return Ok(()),
+            // Ctrl+Shift+C for copy, not bare `c`: a bare unmodified key is
+            // layout-dependent by design (it's meant to be literal text
+            // input), so on a non-US layout the physical C key wouldn't
+            // even produce the char 'c'. Chords that include CTRL (or ALT)
+            // instead resolve through this fork's physical-key-preference
+            // normalization (crates/window/src/os/windows/window.rs), so
+            // this works the same regardless of the active layout -- same
+            // fix class as the Alt+V passthrough fix earlier this session.
+            // Checked before the bare Ctrl+C/Ctrl+D close arm below so the
+            // Shift-qualified chord doesn't fall through to it.
             Some(InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('c') | KeyCode::Char('C'),
+                modifiers,
                 ..
-            })) => {
+            })) if modifiers.contains(Modifiers::CTRL) && modifiers.contains(Modifiers::SHIFT) => {
                 gui_win
                     .window
                     .set_clipboard(::window::Clipboard::Clipboard, clipboard_text.clone());
                 render(&mut term, true)?;
             }
+            Some(InputEvent::Key(KeyEvent {
+                key: KeyCode::Char('c') | KeyCode::Char('d'),
+                modifiers,
+                ..
+            })) if modifiers.contains(Modifiers::CTRL) => return Ok(()),
             None => return Ok(()),
             _ => {}
         }

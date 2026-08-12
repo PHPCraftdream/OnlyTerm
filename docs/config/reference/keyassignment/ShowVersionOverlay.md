@@ -1,8 +1,9 @@
 # `ShowVersionOverlay`
 
 Overlays the current tab with a centered box showing the running OnlyTerm
-version, commit number/hash, and build time. Press `c` inside the overlay
-to copy that information to the clipboard, or `Esc` to close it.
+version, commit number/hash, and build time. Press `Ctrl+Shift+C` inside
+the overlay to copy that information to the clipboard, or `Esc` to close
+it.
 
 ```
 keys: [
