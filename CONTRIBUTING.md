@@ -38,7 +38,7 @@ If you are new to the Rust language check out <https://doc.rust-lang.org/rust-by
 ### Building from source
 
 To build OnlyTerm from source, you will need a local Rust toolchain, and a few Windows-specific dependencies.
-Follow the [Install from Source](../install/source.md) guide to get started!
+Follow the [Install from Source](docs/install/source.md) guide to get started!
 
 Some platforms like Windows have a few specific steps, make sure to check the dedicated sections in the guide.
 

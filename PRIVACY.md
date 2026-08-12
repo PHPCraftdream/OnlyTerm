@@ -28,7 +28,7 @@ contributors to OnlyTerm cannot see inside that request and therefore cannot
 infer any information from it.
 
 If you wish, you can disable update checking. See
-[check_for_updates](config/reference/config/check_for_updates.md) for
+[check_for_updates](docs/config/reference/config/check_for_updates.md) for
 more information on that.
 
 ## Third-Party Builds
