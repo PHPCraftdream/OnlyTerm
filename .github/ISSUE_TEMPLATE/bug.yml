@@ -68,7 +68,7 @@ body:
         and paste the log lines in here.
         You can also find log files in `%USERPROFILE%\.local\share\onlyterm\` (one file per PID).
       placeholder: |
-        09:27:26.703 INFO wezterm_gui::termwindow > OpenGL initialized! NVIDIA GeForce GT 1030/PCIe/SSE2 4.6.0 NVIDIA 470.57.02 is_context_loss_possible=false onlyterm version: 20240812-120000-abcd1234
+        09:27:26.703 INFO onlyterm_gui::termwindow::webgpu::context > startup: GPU context fully built (shaders/buffers/samplers ready)
   - type: textarea
     id: other
     attributes:
