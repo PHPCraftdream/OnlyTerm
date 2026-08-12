@@ -118,12 +118,9 @@ set_environment_variables: {
 
 # The Launcher Menu
 
-The launcher menu is accessed from the new tab button in the tab bar UI; the
-`+` button to the right of the tabs.  Left clicking on the button will spawn a
-new tab, but right clicking on it will open the launcher menu.  You may also
-bind a key to the [ShowLauncher](reference/keyassignment/ShowLauncher.md) or
-[ShowLauncherArgs](reference/keyassignment/ShowLauncherArgs.md) action to trigger the
-menu.
+Bind a key to the
+[ShowLauncherArgs](reference/keyassignment/ShowLauncherArgs.md) action to
+trigger the menu.
 
 The launcher menu by default lists the various multiplexer domains and offers
 the option of connecting and spawning tabs/windows in those domains.

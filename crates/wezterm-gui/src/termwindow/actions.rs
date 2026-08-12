@@ -658,6 +658,28 @@ impl TermWindow {
         promise::spawn::spawn(future).detach();
     }
 
+    fn show_version_overlay(&mut self) {
+        let mux = Mux::get();
+        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
+            Some(tab) => tab,
+            None => return,
+        };
+
+        let gui_win = GuiWin::new(self);
+
+        let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
+            crate::overlay::show_version_overlay(term, gui_win)
+        }) {
+            Ok(res) => res,
+            Err(err) => {
+                log::error!("Failed to show version overlay: {err:#}");
+                return;
+            }
+        };
+        self.assign_overlay(tab.tab_id(), overlay);
+        promise::spawn::spawn(future).detach();
+    }
+
     fn show_debug_overlay(&mut self) {
         let mux = Mux::get();
         let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
@@ -702,22 +724,6 @@ impl TermWindow {
             alphabet: None,
         };
         self.show_launcher_impl(args, active_tab_idx);
-    }
-
-    fn show_launcher(&mut self) {
-        let title = "Launcher".to_string();
-        let args = LauncherActionArgs {
-            title: Some(title),
-            flags: LauncherFlags::LAUNCH_MENU_ITEMS
-                | LauncherFlags::WORKSPACES
-                | LauncherFlags::DOMAINS
-                | LauncherFlags::KEY_ASSIGNMENTS
-                | LauncherFlags::COMMANDS,
-            help_text: None,
-            fuzzy_help_text: None,
-            alphabet: None,
-        };
-        self.show_launcher_impl(args, 0);
     }
 
     fn show_launcher_impl(&mut self, args: LauncherActionArgs, initial_choice_idx: usize) {
@@ -1188,7 +1194,7 @@ impl TermWindow {
             ScrollToBottom => self.scroll_to_bottom(pane),
             ShowTabNavigator => self.show_tab_navigator(),
             ShowDebugOverlay => self.show_debug_overlay(),
-            ShowLauncher => self.show_launcher(),
+            ShowVersionOverlay => self.show_version_overlay(),
             ShowLauncherArgs(args) => {
                 let title = args.title.clone().unwrap_or("Launcher".to_string());
                 let args = LauncherActionArgs {

@@ -348,6 +348,10 @@ pub enum KeyAssignment {
     ScrollToBottom,
     ShowTabNavigator,
     ShowDebugOverlay,
+    /// Shows a centered overlay with the running OnlyTerm version and
+    /// commit hash, and copies that same text to the clipboard. See
+    /// `TermWindow::show_version_overlay` and `overlay::show_version_overlay`.
+    ShowVersionOverlay,
     /// Open the `.ktav` config file in whatever the OS has associated with
     /// it, creating it from a commented starter template first if the user
     /// doesn't have one yet.
@@ -358,7 +362,6 @@ pub enum KeyAssignment {
     SpawnCommandInNewWindow(SpawnCommand),
     SplitHorizontal(SpawnCommand),
     SplitVertical(SpawnCommand),
-    ShowLauncher,
     ShowLauncherArgs(LauncherActionArgs),
     ClearScrollback(ScrollbackEraseMode),
     Search(Pattern),

@@ -13,11 +13,13 @@ pub mod launcher;
 pub mod prompt;
 pub mod quickselect;
 pub mod selector;
+pub mod version;
 
 pub use copy::{CopyModeParams, CopyOverlay};
 pub use debug::show_debug_overlay;
 pub use launcher::{launcher, LauncherArgs, LauncherFlags};
 pub use quickselect::QuickSelectOverlay;
+pub use version::show_version_overlay;
 
 // Async-over-sync bridge return type used in exactly one place; a type alias
 // would add indirection without any reuse benefit.

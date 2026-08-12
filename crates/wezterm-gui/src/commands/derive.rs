@@ -240,6 +240,16 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Help"],
             icon: Some("cod_debug"),
         },
+        ShowVersionOverlay => CommandDef {
+            brief: "Show version overlay".into(),
+            doc: "Shows a centered overlay with the OnlyTerm version and commit hash, \
+                  and copies that text to the clipboard"
+                .into(),
+            keys: vec![(Modifiers::CTRL, "i".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Help"],
+            icon: Some("cod_info"),
+        },
         OpenConfigFile => CommandDef {
             brief: "Open configuration file".into(),
             doc: "Opens your onlyterm.ktav configuration file, creating a \
@@ -1097,7 +1107,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Shell"],
             icon: None,
         },
-        ShowLauncherArgs(_) | ShowLauncher => CommandDef {
+        ShowLauncherArgs(_) => CommandDef {
             brief: "Show the launcher".into(),
             doc: "Shows the launcher menu".into(),
             keys: vec![],

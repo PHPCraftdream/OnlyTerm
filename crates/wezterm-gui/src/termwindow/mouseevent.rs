@@ -462,10 +462,15 @@ impl super::TermWindow {
     /// The `new-tab-button-click` event used to be dispatched to a rhai
     /// handler registered via `wezterm.on("new-tab-button-click", ...)`,
     /// which could return `false` to suppress `action` (the built-in
-    /// default: spawn a new tab in the same domain on left-click, show the
-    /// launcher on right-click, nothing on middle-click). With the
-    /// scripting layer removed there is no handler left to suppress it, so
-    /// the default action now always runs.
+    /// default: spawn a new tab in the same domain on left-click, nothing
+    /// on middle- or right-click). With the scripting layer removed there
+    /// is no handler left to suppress it, so the default action now
+    /// always runs. Right-click used to show the full command launcher
+    /// here, but that overlay's actual "new tab" content (the current
+    /// domain, since SSH/WSL domains were removed from this fork) is a
+    /// single duplicate of what left-click already does, buried under
+    /// ~70 unrelated app-wide commands -- removed as pure noise rather
+    /// than kept as a worse path to the same action.
     fn do_new_tab_button_click(&mut self, button: MousePress) {
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
@@ -473,8 +478,7 @@ impl super::TermWindow {
         };
         let action = match button {
             MousePress::Left => Some(KeyAssignment::SpawnTab(SpawnTabDomain::CurrentPaneDomain)),
-            MousePress::Right => Some(KeyAssignment::ShowLauncher),
-            MousePress::Middle => None,
+            MousePress::Right | MousePress::Middle => None,
         };
 
         if let Some(assignment) = action {

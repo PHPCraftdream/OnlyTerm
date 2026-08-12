@@ -1,7 +1,6 @@
 use super::*;
 
 use crate::inputmap::InputMap;
-use config::window::WindowLevel;
 use config::{ConfigHandle, DeferredKeyCode};
 use mux::domain::DomainState;
 use mux::Mux;
@@ -391,14 +390,6 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         // ----------------- Shell
         SpawnTab(SpawnTabDomain::CurrentPaneDomain),
         SpawnWindow,
-        SplitVertical(SpawnCommand {
-            domain: SpawnTabDomain::CurrentPaneDomain,
-            ..Default::default()
-        }),
-        SplitHorizontal(SpawnCommand {
-            domain: SpawnTabDomain::CurrentPaneDomain,
-            ..Default::default()
-        }),
         CloseCurrentTab { confirm: true },
         CloseCurrentTab { confirm: false },
         CloseCurrentPane { confirm: true },
@@ -429,12 +420,6 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ScrollToTop,
         ScrollToBottom,
         // ----------------- Window
-        ToggleFullScreen,
-        ToggleAlwaysOnTop,
-        ToggleAlwaysOnBottom,
-        SetWindowLevel(WindowLevel::AlwaysOnBottom),
-        SetWindowLevel(WindowLevel::Normal),
-        SetWindowLevel(WindowLevel::AlwaysOnTop),
         Hide,
         Search(Pattern::CurrentSelectionOrEmptyString),
         PaneSelect(PaneSelectArguments {
@@ -502,13 +487,10 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ActivatePaneDirection(PaneDirection::Down),
         TogglePaneZoomState,
         ActivateLastTab,
-        ShowLauncher,
         ShowTabNavigator,
         // ----------------- Help
-        OpenUri("https://wezterm.org/".to_string()),
-        OpenUri("https://github.com/wezterm/wezterm/discussions/".to_string()),
-        OpenUri("https://github.com/wezterm/wezterm/issues/".to_string()),
         ShowDebugOverlay,
+        ShowVersionOverlay,
         OpenConfigFile,
         // ----------------- Misc
         OpenLinkAtMouseCursor,

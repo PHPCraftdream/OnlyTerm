@@ -20,6 +20,49 @@ fn find_dot_git(start: &Path) -> Option<PathBuf> {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
+    // Short commit hash, captured independently of `ci_tag` below: `git
+    // describe` only appends a `-g<hash>` suffix when HEAD is *past* the
+    // nearest tag, so a checkout sitting exactly on a release tag would
+    // otherwise report a version string with no commit hash in it at all.
+    // Callers that want the hash unconditionally (e.g. the Ctrl+I version
+    // overlay) use this instead of parsing it back out of `ci_tag`.
+    let commit_hash = find_dot_git(Path::new("."))
+        .and_then(|_| {
+            std::process::Command::new("git")
+                .args(["rev-parse", "--short=8", "HEAD"])
+                .output()
+                .ok()
+        })
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=ONLYTERM_CI_COMMIT_HASH={}", commit_hash);
+
+    // Ordinal commit number (total commits reachable from HEAD) -- a
+    // stable, always-increasing counter that's easier to eyeball/compare
+    // than a hash, for the same "which build am I looking at" purpose.
+    let commit_count = find_dot_git(Path::new("."))
+        .and_then(|_| {
+            std::process::Command::new("git")
+                .args(["rev-list", "--count", "HEAD"])
+                .output()
+                .ok()
+        })
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=ONLYTERM_CI_COMMIT_COUNT={}", commit_count);
+
+    // Wall-clock time this build.rs last actually ran, i.e. the time of
+    // the build that produced the current binary -- not the current
+    // build invocation's time, since cargo skips rerunning this script
+    // (and its cached rustc-env output stays as-is) when nothing tracked
+    // by the `cargo:rerun-if-changed` lines above has changed.
+    let build_time = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
+    println!("cargo:rustc-env=ONLYTERM_CI_BUILD_TIME={}", build_time);
+
     // If a file named `.tag` is present, we'll take its contents for the
     // version number that we report in wezterm -h.
     let mut ci_tag = String::new();

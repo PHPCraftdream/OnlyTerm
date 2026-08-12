@@ -24,9 +24,9 @@ The following key assignments are helpful when working with workspaces:
 * [SwitchWorkspaceRelative](../config/reference/keyassignment/SwitchWorkspaceRelative.md)
 * Various key assignments or functions that spawn windows also allow specifying
   the workspace name to be used
-* [ShowLauncher](../config/reference/keyassignment/ShowLauncher.md) and
-  [ShowLauncherArgs](../config/reference/keyassignment/ShowLauncherArgs.md) will list
-  the current set of workspaces and allow switching between them
+* [ShowLauncherArgs](../config/reference/keyassignment/ShowLauncherArgs.md) (with
+  `LauncherFlags::WORKSPACES`) will list the current set of workspaces and allow
+  switching between them
 
 You can pre-define a layout of windows/tabs/panes in specific workspaces by
 using these events:

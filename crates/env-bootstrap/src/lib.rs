@@ -37,6 +37,9 @@ pub fn bootstrap() {
     config::assign_version_info(
         wezterm_version::wezterm_version(),
         wezterm_version::wezterm_target_triple(),
+        wezterm_version::wezterm_commit_hash(),
+        wezterm_version::wezterm_commit_count(),
+        wezterm_version::wezterm_build_time(),
     );
     setup_logger();
     register_panic_hook();
