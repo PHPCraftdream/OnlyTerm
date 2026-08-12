@@ -29,8 +29,6 @@ jobs:
     steps:
       - name: "checkout repo"
         uses: actions/checkout@v5
-        with:
-          submodules: "recursive"
       - name: "Install Rust"
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -51,24 +49,16 @@ jobs:
         run: "cargo vendor --locked --versioned-dirs >> .cargo/config"
       - name: "Build wezterm (Release mode)"
         shell: cmd
-        run: |
-          PATH C:\Strawberry\perl\bin;%PATH%
-          cargo build -p wezterm --release
+        run: "cargo build -p wezterm --release"
       - name: "Build wezterm-gui (Release mode)"
         shell: cmd
-        run: |
-          PATH C:\Strawberry\perl\bin;%PATH%
-          cargo build -p wezterm-gui --release
+        run: "cargo build -p wezterm-gui --release"
       - name: "Build wezterm-mux-server (Release mode)"
         shell: cmd
-        run: |
-          PATH C:\Strawberry\perl\bin;%PATH%
-          cargo build -p wezterm-mux-server --release
+        run: "cargo build -p wezterm-mux-server --release"
       - name: "Build strip-ansi-escapes (Release mode)"
         shell: cmd
-        run: |
-          PATH C:\Strawberry\perl\bin;%PATH%
-          cargo build -p strip-ansi-escapes --release
+        run: "cargo build -p strip-ansi-escapes --release"
       - name: "Install cargo-nextest from Cargo"
         uses: baptiste0928/cargo-install@v3
         with:
@@ -76,9 +66,7 @@ jobs:
           cache-key: "windows"
       - name: "Test"
         shell: cmd
-        run: |
-          PATH C:\Strawberry\perl\bin;%PATH%
-          cargo nextest run --all --no-fail-fast
+        run: "cargo nextest run --all --no-fail-fast"
       - name: "Package"
         shell: bash
         run: "bash ci/deploy.sh"

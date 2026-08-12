@@ -334,7 +334,6 @@ TOC = [
             Page("Hyperlinks", "hyperlinks.md"),
             Page("Shell Integration", "shell-integration.md"),
             Page("iTerm Image Protocol", "imgcat.md"),
-            Page("SSH", "ssh.md"),
             Page("Serial Ports & Arduino", "serial.md"),
             Page("Multiplexing", "multiplexing.md"),
         ],
@@ -344,10 +343,6 @@ TOC = [
         "installation.md",
         children=[
             Page("Windows", "install/windows.md"),
-            Page("macOS", "install/macos.md"),
-            Page("Linux", "install/linux.md"),
-            Page("FreeBSD", "install/freebsd.md"),
-            Page("NetBSD", "install/netbsd.md"),
             Page("Build from source", "install/source.md"),
         ],
     ),
@@ -430,11 +425,8 @@ TOC = [
             Gen("object: MuxTab", "config/reference/MuxTab"),
             Page("object: PaneInformation", "config/reference/PaneInformation.md"),
             Page("object: TabInformation", "config/reference/TabInformation.md"),
-            Page("object: SshDomain", "config/reference/SshDomain.md"),
             Page("object: SpawnCommand", "config/reference/SpawnCommand.md"),
             Gen("object: Time", "config/reference/wezterm.time/Time"),
-            Page("object: TlsDomainClient", "config/reference/TlsDomainClient.md"),
-            Page("object: TlsDomainServer", "config/reference/TlsDomainServer.md"),
             Gen(
                 "object: Pane",
                 "config/reference/pane",
@@ -443,7 +435,6 @@ TOC = [
                 "object: Window",
                 "config/reference/window",
             ),
-            Page("object: WslDomain", "config/reference/WslDomain.md"),
             Gen(
                 "events: Gui",
                 "config/reference/gui-events",
