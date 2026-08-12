@@ -534,9 +534,17 @@ impl InputMap {
             None => &self.keys.default,
         };
 
-        table
-            .get(&key.normalize_shift(mods.remove_positional_mods()))
-            .cloned()
+        let normalized = key.normalize_shift(mods.remove_positional_mods());
+        let result = table.get(&normalized).cloned();
+        log::trace!(
+            "diag: lookup_key raw_key={:?} raw_mods={:?} normalized={:?} table={:?} -> {:?}",
+            key,
+            mods,
+            normalized,
+            table_name,
+            result.as_ref().map(|e| &e.action)
+        );
+        result
     }
 
     pub fn lookup_mouse(

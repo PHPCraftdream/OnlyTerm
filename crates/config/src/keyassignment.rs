@@ -447,6 +447,7 @@ pub enum KeyAssignment {
     PromptInputLine(PromptInputLine),
     InputSelector(InputSelector),
     Confirmation(Confirmation),
+    ActivateNewTabOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

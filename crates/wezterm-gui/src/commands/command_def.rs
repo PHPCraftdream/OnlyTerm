@@ -410,6 +410,8 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         ActivateCopyMode,
         ClearKeyTableStack,
         ActivateCommandPalette,
+        // ----------------- File
+        ActivateNewTabOptions,
         // ----------------- View
         DecreaseFontSize,
         IncreaseFontSize,

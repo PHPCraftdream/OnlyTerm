@@ -39,7 +39,9 @@ impl super::TermWindow {
             | UIItemType::AboveScrollThumb
             | UIItemType::BelowScrollThumb
             | UIItemType::ScrollThumb
-            | UIItemType::Split(_) => {}
+            | UIItemType::Split(_)
+            | UIItemType::NewTabOptionRadio { .. }
+            | UIItemType::NewTabOptionRun => {}
         }
     }
 
@@ -50,7 +52,9 @@ impl super::TermWindow {
             | UIItemType::AboveScrollThumb
             | UIItemType::BelowScrollThumb
             | UIItemType::ScrollThumb
-            | UIItemType::Split(_) => {}
+            | UIItemType::Split(_)
+            | UIItemType::NewTabOptionRadio { .. }
+            | UIItemType::NewTabOptionRun => {}
         }
     }
 
@@ -219,6 +223,14 @@ impl super::TermWindow {
 
         let ui_item = if matches!(self.current_mouse_capture, None | Some(MouseCapture::UI)) {
             let ui_item = self.resolve_ui_item(&event);
+            if matches!(event.kind, WMEK::Press(_)) {
+                log::trace!(
+                    "diag: mouse press at {:?} resolve_ui_item -> {:?} (modal_active={})",
+                    event.coords,
+                    ui_item.as_ref().map(|i| &i.item_type),
+                    self.modal.borrow().is_some(),
+                );
+            }
 
             match (self.last_ui_item.take(), &ui_item) {
                 (Some(prior), Some(item)) => {
@@ -443,7 +455,86 @@ impl super::TermWindow {
             UIItemType::CloseTab(idx) => {
                 self.mouse_event_close_tab(idx, event, context);
             }
+            UIItemType::NewTabOptionRadio { group, choice } => {
+                self.mouse_event_newtab_options_radio(item, group, choice, event, context);
+            }
+            UIItemType::NewTabOptionRun => {
+                self.mouse_event_newtab_options_run(item, event, context);
+            }
         }
+    }
+
+    fn mouse_event_newtab_options_radio(
+        &mut self,
+        _item: UIItem,
+        group: crate::termwindow::NewTabOptionGroup,
+        choice: usize,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        log::trace!(
+            "diag: mouse_event_newtab_options_radio group={:?} choice={} kind={:?}",
+            group,
+            choice,
+            event.kind
+        );
+        if let WMEK::Press(MousePress::Left) = event.kind {
+            use crate::termwindow::newtab_options::NewTabOptions;
+            // Scope the RefCell borrow tightly: `invalidate_modal` below
+            // needs `&mut self`, which can't be called while a `Ref`
+            // derived from `self.modal.borrow()` is still alive.
+            let handled = {
+                let modal = self.modal.borrow();
+                match modal
+                    .as_ref()
+                    .and_then(|m| m.downcast_ref::<NewTabOptions>())
+                {
+                    Some(newtab) => {
+                        newtab.handle_selection(group, choice);
+                        true
+                    }
+                    None => false,
+                }
+            };
+            if handled {
+                // `context.invalidate()` alone repaints with the *cached*
+                // computed_element and would silently not show the new
+                // selection; `invalidate_modal` is what actually clears
+                // that cache (via `Modal::reconfigure`) before repainting.
+                self.invalidate_modal();
+            } else {
+                log::trace!("diag: no active NewTabOptions modal to handle radio click");
+            }
+        }
+        context.set_cursor(Some(MouseCursor::Hand));
+    }
+
+    fn mouse_event_newtab_options_run(
+        &mut self,
+        _item: UIItem,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        if let WMEK::Press(MousePress::Left) = event.kind {
+            use crate::termwindow::newtab_options::NewTabOptions;
+            let handled = {
+                let modal = self.modal.borrow();
+                match modal
+                    .as_ref()
+                    .and_then(|m| m.downcast_ref::<NewTabOptions>())
+                {
+                    Some(newtab) => {
+                        newtab.run();
+                        true
+                    }
+                    None => false,
+                }
+            };
+            if handled {
+                self.cancel_modal();
+            }
+        }
+        context.set_cursor(Some(MouseCursor::Hand));
     }
 
     pub fn mouse_event_close_tab(
@@ -463,14 +554,16 @@ impl super::TermWindow {
     /// handler registered via `wezterm.on("new-tab-button-click", ...)`,
     /// which could return `false` to suppress `action` (the built-in
     /// default: spawn a new tab in the same domain on left-click, nothing
-    /// on middle- or right-click). With the scripting layer removed there
-    /// is no handler left to suppress it, so the default action now
-    /// always runs. Right-click used to show the full command launcher
-    /// here, but that overlay's actual "new tab" content (the current
-    /// domain, since SSH/WSL domains were removed from this fork) is a
-    /// single duplicate of what left-click already does, buried under
-    /// ~70 unrelated app-wide commands -- removed as pure noise rather
-    /// than kept as a worse path to the same action.
+    /// on middle-click). With the scripting layer removed there is no
+    /// handler left to suppress it, so the default action now always
+    /// runs. Right-click used to show the full command launcher here,
+    /// but that overlay's actual "new tab" content (the current domain,
+    /// since SSH/WSL domains were removed from this fork) was a single
+    /// duplicate of what left-click already does, buried under ~70
+    /// unrelated app-wide commands -- removed as pure noise earlier this
+    /// session. Right-click now opens the purpose-built "New Tab
+    /// Options" dialog (shell/elevation/priority) instead, reusing the
+    /// gesture for something that's actually about starting a new tab.
     fn do_new_tab_button_click(&mut self, button: MousePress) {
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
@@ -478,7 +571,8 @@ impl super::TermWindow {
         };
         let action = match button {
             MousePress::Left => Some(KeyAssignment::SpawnTab(SpawnTabDomain::CurrentPaneDomain)),
-            MousePress::Right | MousePress::Middle => None,
+            MousePress::Right => Some(KeyAssignment::ActivateNewTabOptions),
+            MousePress::Middle => None,
         };
 
         if let Some(assignment) = action {

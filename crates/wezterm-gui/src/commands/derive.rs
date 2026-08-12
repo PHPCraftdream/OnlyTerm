@@ -260,6 +260,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &["Help"],
             icon: Some("cod_settings_gear"),
         },
+        ActivateNewTabOptions => CommandDef {
+            brief: "Show New Tab Options dialog".into(),
+            doc: "Shows a modal dialog to select shell, elevation, and priority options for a new tab".into(),
+            keys: vec![(Modifiers::CTRL.union(Modifiers::SHIFT), "n".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["File"],
+            icon: Some("md_plus_circle_outline"),
+        },
         InputSelector(_) => CommandDef {
             brief: "Prompt the user to choose from a list".into(),
             doc: "Activates the selector overlay and wait for input".into(),

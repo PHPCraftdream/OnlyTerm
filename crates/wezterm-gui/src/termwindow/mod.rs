@@ -51,6 +51,7 @@ pub mod clipboard;
 pub mod keyevent;
 pub mod modal;
 mod mouseevent;
+pub mod newtab_options;
 pub mod palette;
 pub mod paneselect;
 mod prevcursor;
@@ -175,6 +176,18 @@ pub enum UIItemType {
     ScrollThumb,
     BelowScrollThumb,
     Split(PositionedSplit),
+    NewTabOptionRadio {
+        group: NewTabOptionGroup,
+        choice: usize,
+    },
+    NewTabOptionRun,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NewTabOptionGroup {
+    Shell,
+    Elevation,
+    Priority,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
