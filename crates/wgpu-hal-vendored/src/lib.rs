@@ -251,9 +251,6 @@ pub mod dx12;
 /// GLES API internals.
 #[cfg(gles)]
 pub mod gles;
-/// Metal API internals.
-#[cfg(metal)]
-pub mod metal;
 /// A dummy API implementation.
 // TODO(https://github.com/gfx-rs/wgpu/issues/7120): this should have a cfg
 pub mod noop;
@@ -267,8 +264,6 @@ pub mod api {
     pub use super::dx12::Api as Dx12;
     #[cfg(gles)]
     pub use super::gles::Api as Gles;
-    #[cfg(metal)]
-    pub use super::metal::Api as Metal;
     pub use super::noop::Api as Noop;
     #[cfg(vulkan)]
     pub use super::vulkan::Api as Vulkan;

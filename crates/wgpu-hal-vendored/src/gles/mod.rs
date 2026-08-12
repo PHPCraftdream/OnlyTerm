@@ -82,12 +82,6 @@ we don't bother with that combination.
 */
 
 ///cbindgen:ignore
-#[cfg(not(any(windows, webgl)))]
-mod egl;
-#[cfg(Emscripten)]
-mod emscripten;
-#[cfg(webgl)]
-mod web;
 #[cfg(windows)]
 mod wgl;
 
@@ -99,16 +93,6 @@ mod fence;
 mod queue;
 
 pub use fence::Fence;
-
-#[cfg(not(any(windows, webgl)))]
-pub use self::egl::{AdapterContext, AdapterContextLock};
-#[cfg(not(any(windows, webgl)))]
-use self::egl::{Instance, Surface};
-
-#[cfg(webgl)]
-pub use self::web::AdapterContext;
-#[cfg(webgl)]
-use self::web::{Instance, Surface};
 
 #[cfg(windows)]
 use self::wgl::AdapterContext;
