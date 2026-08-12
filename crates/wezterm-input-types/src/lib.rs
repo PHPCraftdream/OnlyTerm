@@ -217,6 +217,58 @@ mod test {
         );
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn encode_win32_input_mode_alt_only_chords_carry_the_normalized_char() {
+        // Regression test: ConPTY/OpenConsole re-derives UnicodeChar from
+        // vkey+dwControlKeyState using the system's *current* keyboard
+        // layout whenever it receives uni=0 -- a plain ALT-only chord does
+        // NOT skip character synthesis the way CTRL does. Sending 0 here
+        // (as this code used to, on the wrong assumption that ALT-only
+        // never carries a character) let that re-derivation reintroduce
+        // layout-dependence for passthrough shortcuts with no matching
+        // keybinding, eg. Alt+V for "paste image" in Claude Code: under a
+        // Russian layout the re-derived char came out as Cyrillic 'м'
+        // (not matching), while under a US-like layout it happened to
+        // re-derive as 'v' (matching) -- purely by layout coincidence, not
+        // because OnlyTerm sent anything layout-dependent itself. Sending
+        // the already-normalized `*c` (which key.rs's Windows handler set
+        // to the physical key's US-layout character) removes ConPTY's own
+        // re-derivation step from the picture entirely.
+        let event = KeyEvent {
+            key: KeyCode::Char('v'),
+            modifiers: Modifiers::ALT,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: Some(RawKeyEvent {
+                key: KeyCode::Char('v'),
+                modifiers: Modifiers::ALT,
+                leds: KeyboardLedStatus::empty(),
+                phys_code: Some(PhysKeyCode::V),
+                raw_code: 0x56,
+                scan_code: 0x2f,
+                repeat_count: 1,
+                key_is_down: true,
+                handled: Handled::new(),
+            }),
+            win32_uni_char: None,
+        };
+        let encoded = event.encode_win32_input_mode().expect("raw is Some");
+        let uni_field = encoded
+            .trim_start_matches('\u{1b}')
+            .trim_start_matches('[')
+            .trim_end_matches('_')
+            .split(';')
+            .nth(2)
+            .expect("uni field present");
+        assert_eq!(
+            uni_field.parse::<u32>().unwrap(),
+            'v' as u32,
+            "Alt+V must carry 'v' (118), not 0, regardless of active keyboard layout"
+        );
+    }
+
     #[test]
     fn encode_kitty_ctrl_c_stays_legacy_under_disambiguate() {
         // Ctrl+C has no collision with any other named key's legacy byte,

@@ -4153,6 +4153,14 @@ unsafe fn key(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<L
             return None;
         }
 
+        log::trace!(
+            "diag: win32 key() dispatching msg={} key={:?} modifiers={:?} key_is_down={}",
+            label,
+            key.key,
+            key.modifiers,
+            key.key_is_down,
+        );
+
         inner.events.dispatch(WindowEvent::KeyEvent(key));
         return Some(0);
     }

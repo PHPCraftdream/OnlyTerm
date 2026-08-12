@@ -213,16 +213,32 @@ impl KeyEvent {
                 // field verbatim. `ctrl_mapping` derives the control code
                 // from the layout-independent physical letter, so this keeps
                 // both properties: layout independence and a correct
-                // control byte. Plain ALT-only chords carry no character in
-                // a real KEY_EVENT_RECORD either, matching what
-                // `win32_uni_char`/`ToUnicode` reports for those.
+                // control byte.
+                //
+                // Plain ALT-only chords used to send `uni=0` here on the
+                // (empirically wrong) assumption that a real KEY_EVENT_RECORD
+                // never carries a character for those. Measured behavior
+                // says otherwise: with `uni=0`, ConPTY/OpenConsole re-derives
+                // `UnicodeChar` itself from `vkey`+`dwControlKeyState` using
+                // the system's *current* keyboard layout -- so eg. Alt+V's
+                // passthrough to a child process (a shortcut with no
+                // matching keybinding, eg. Claude Code's paste-image chord)
+                // came out layout-dependent again despite `vkey` itself
+                // being correct in both cases: under a Russian layout the
+                // re-derived character was Cyrillic 'м', so an app matching
+                // on the character (not just the VK code) never recognized
+                // it as Alt+V, while under a US-like layout it happened to
+                // re-derive as 'v' and work. Sending the already
+                // layout-normalized `*c` here (instead of 0) tells ConPTY
+                // the character directly, so it has nothing left to
+                // re-derive from the live layout.
                 let prefer_physical = self.modifiers.contains(Modifiers::CTRL)
                     || self.modifiers.contains(Modifiers::ALT);
                 let uni = if prefer_physical {
                     if self.modifiers.contains(Modifiers::CTRL) {
                         ctrl_mapping(*c).map(|c| c as u32).unwrap_or(0)
                     } else {
-                        0
+                        *c as u32
                     }
                 } else {
                     self.win32_uni_char.unwrap_or(*c) as u32

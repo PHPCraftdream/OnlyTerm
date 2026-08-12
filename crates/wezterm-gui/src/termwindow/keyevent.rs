@@ -692,7 +692,17 @@ impl super::TermWindow {
                     return;
                 }
 
+                log::trace!(
+                    "diag: key_event_impl key={:?} mods={:?} enable_kitty_keyboard={} \
+                     pane_keyboard_encoding={:?}",
+                    key,
+                    modifiers,
+                    self.config.enable_kitty_keyboard,
+                    pane.get_keyboard_encoding(),
+                );
+
                 let res = if let Some(encoded) = self.encode_win32_input(&pane, &window_key) {
+                    log::trace!("diag: chose win32-input-mode path, encoded={:?}", encoded);
                     if self.config.debug_key_events {
                         log::info!("win32: Encoded input as {:?}", encoded);
                     }
@@ -700,6 +710,7 @@ impl super::TermWindow {
                         .write_all(encoded.as_bytes())
                         .context("sending win32-input-mode encoded data")
                 } else if let Some(encoded) = self.encode_kitty_input(&pane, &window_key) {
+                    log::trace!("diag: chose kitty path, encoded={:?}", encoded);
                     if self.config.debug_key_events {
                         log::info!("kitty: Encoded input as {:?}", encoded);
                     }
@@ -707,6 +718,7 @@ impl super::TermWindow {
                         .write_all(encoded.as_bytes())
                         .context("sending kitty encoded data")
                 } else {
+                    log::trace!("diag: chose legacy pane.key_down/key_up path");
                     if self.config.debug_key_events {
                         log::info!(
                             "send to pane {} key={:?} mods={:?}",
