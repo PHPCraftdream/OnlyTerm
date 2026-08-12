@@ -9,14 +9,11 @@ dhat-heap.json
 
 /WezTerm*.zip
 /WezTerm*.exe
-
-
-
 /target/
-
-
-
-
+/crates/termwiz/codegen/target
+/crates/termwiz/codegen/Cargo.lock
+/crates/wezterm-char-props/codegen/target
+/crates/wezterm-char-props/codegen/Cargo.lock
 /gh_pages/
 /.cache/
 /docs/releases.json
@@ -53,20 +50,9 @@ dhat-heap.json
 .*.sw*
 *.log
 /esctest.log
-
-
-
-
-
-
-
-
 .idea/
 /winget-pkgs
-
 /__pycache__/
-
-
 
 # bench-scale-tool generated artifacts (bench-iters.txt IS committed)
 /bench-run.log
