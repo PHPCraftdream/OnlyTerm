@@ -6,17 +6,14 @@ dhat-heap.json
 /docs/favicon.svg
 /docs/fonts/*
 /mkdocs.yml
-/PKGBUILD
+
 /WezTerm*.zip
 /WezTerm*.exe
-/wezterm*.deb
-/wezterm*.tar.xz
-/pkg
 /target/
-/wezterm-char-props/codegen/target
-/wezterm-char-props/codegen/Cargo.lock
-/termwiz/codegen/target
-/termwiz/codegen/Cargo.lock
+/crates/termwiz/codegen/target
+/crates/termwiz/codegen/Cargo.lock
+/crates/wezterm-char-props/codegen/target
+/crates/wezterm-char-props/codegen/Cargo.lock
 /gh_pages/
 /.cache/
 /docs/releases.json
@@ -53,20 +50,9 @@ dhat-heap.json
 .*.sw*
 *.log
 /esctest.log
-/AppDir
-/WezTerm*.AppImage
-/WezTerm*.AppImage.zsync
-/WezTerm-macos-*
-/wezterm*-src.tar.gz
-/wezterm-linuxbrew.rb
-/wezterm.rb
-/perf.data*
 .idea/
 /winget-pkgs
-/assets/flatpak/generated-sources.json
 /__pycache__/
-/nix/result
-*.qcow2
 
 # bench-scale-tool generated artifacts (bench-iters.txt IS committed)
 /bench-run.log
