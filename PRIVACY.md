@@ -17,22 +17,6 @@ In the future, if OnlyTerm expands to offload scrollback information to
 your local disk, it will do so in such a way that other users on the
 same system will not be able to inspect it.
 
-## macOS and Data permissions
-
-On macOS, when a GUI application that has a "bundle" launches child processes
-(eg: OnlyTerm, running your shell, and your shell running the programs which you
-direct it to run), any permissioned resource access that may be attempted by
-those child processes will be reported as though OnlyTerm is attempting to
-access those resources.
-
-The result is that from time to time you may see a dialog about OnlyTerm
-accessing your Contacts if run a `find` command that happens to step through
-the portion of your filesystem where the contacts are stored.  Or perhaps you
-are running a utility that accesses your camera; it will appear as though
-OnlyTerm is accessing those resources, but it is not: there is no logic within
-OnlyTerm to attempt to access your contacts, camera or any other sensitive
-information.
-
 ## Update Checking
 
 By default, once every 24 hours, OnlyTerm makes an HTTP request to GitHub's
@@ -44,7 +28,7 @@ contributors to OnlyTerm cannot see inside that request and therefore cannot
 infer any information from it.
 
 If you wish, you can disable update checking. See
-https://wezterm.org/config/lua/config/check_for_updates.html for
+[check_for_updates](config/reference/config/check_for_updates.md) for
 more information on that.
 
 ## Third-Party Builds

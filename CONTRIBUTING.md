@@ -25,12 +25,9 @@ Any arguments passed to `build-docs.sh` are passed down to the underlying `mkdoc
 
 Look at [mkdocs serve](https://www.mkdocs.org/user-guide/cli/#mkdocs-serve) for more information on additional parameters.
 
-### Operating system specific installation instructions?
+### Platform-specific installation instructions?
 
-There are a lot of targets out there.  Today we have docs that are Ubuntu biased
-and I know that there are a lot of flavors of Linux. Rather than expand the README
-with instructions for those, please translate the instructions into steps that
-can be run in a platform-specific manner for your distribution.
+OnlyTerm is a Windows-only fork. Installation instructions should be tailored to Windows development environments.
 
 ## Contributing code
 
@@ -40,8 +37,8 @@ If you are new to the Rust language check out <https://doc.rust-lang.org/rust-by
 
 ### Building from source
 
-To build OnlyTerm from source, you will need a local Rust toolchain, and a few platform-specific dependencies.
-Follow the upstream [Install from Source](https://wezfurlong.org/wezterm/install/source.html) guide to get started!
+To build OnlyTerm from source, you will need a local Rust toolchain, and a few Windows-specific dependencies.
+Follow the [Install from Source](../install/source.md) guide to get started!
 
 Some platforms like Windows have a few specific steps, make sure to check the dedicated sections in the guide.
 
@@ -78,18 +75,8 @@ $ cargo run
 This will produce a debug-instrumented binary with poor optimization. This will
 give you more detail in the backtrace produced if you run `RUST_BACKTRACE=1 cargo run`.
 
-If you get a panic and want to examine local variables, you'll need to use gdb:
-
-```console
-$ cargo build
-$ gdb ./target/debug/onlyterm
-$ break rust_panic               # hit tab to complete the name of the panic symbol!
-$ run
-$ bt
-```
-
 Starting OnlyTerm with `onlyterm-gui start --always-new-process` is useful to ensure Mux logs are not
-hidden in an background process started in an earlier test.
+hidden in a background process started in an earlier test.
 
 Start OnlyTerm with `onlyterm-gui --config-file ./test-conf.rhai ……` to test a custom config file.
 
@@ -152,9 +139,7 @@ real code path.
 - **Dumping stats:** once telemetry is enabled and the instrumented code has run, call
   `captrack::dump_capacity_stats("path.json")` to write out what was recorded.
 
-`crates/mux/Cargo.toml` proxies the feature with `telemetry = ["captrack/telemetry"]`,
-following the same pattern as other optional-feature crates in this workspace (e.g.
-`wayland` in `crates/window/Cargo.toml`).
+`crates/mux/Cargo.toml` proxies the feature with `telemetry = ["captrack/telemetry"]`.
 
 ### Please include tests to cover your changes!
 
@@ -172,48 +157,6 @@ match expectations](https://github.com/wezterm/wezterm/blob/fd532a8c2fb3b5659359
 
 Please also make a point of adding comments to your tests to help
 clarify the intent of the test!
-
-### Testing in a NixOS VM
-
-If you need to test OnlyTerm in a clean desktop environment (e.g. to reproduce a
-display server bug or verify a desktop integration), you can use the provided
-NixOS VM configurations.
-
-Two desktop variants are available:
-- GNOME (`testing-on-gnome`)
-- KDE Plasma (`testing-on-plasma`).
-
-**Prerequisites:** Nix is installed, with flakes enabled (`experimental-features = nix-command flakes`).
-
-**Workflow:**
-
-```console
-$ cargo build                                            # build OnlyTerm locally
-$ nixos-rebuild build-vm --flake ./nix#testing-on-plasma # build the Plasma VM image
-$ REPO=$PWD ./result/bin/run-nixos-vm                    # start the VM
-```
-
-> [!NOTE]
-> You might need to tweak desktop settings (e.g. the keyboard layout) on first VM start.
->
-> The VM state is stored in `nixos.qcow2` in the current working directory on the host.
-
-Inside the VM, open a terminal (e.g. _Console_ on GNOME, _Konsole_ on Plasma), then:
-
-```console
-$ cd repo                      # go into ~/repo
-$ ./target/debug/onlyterm-gui   # run OnlyTerm for your tests
-```
-
-The host repository is mounted into the VM at `/home/dev/repo` via a 9p shared directory,
-so changes on the host (rebuilds, test config file, ..) are immediately visible inside the VM.
-
-Keep the VM running and make your changes locally, re-build OnlyTerm on your host and kill/start
-OnlyTerm again in the VM for your tests.
-
-> [!WARNING]
-> The host repo is supposed to be mounted in read-write but I (@bew) don't know why changes in the
-> repo are not actually propagated to the host. (PR welcome!)
 
 ### Please also include documentation if you are adding or changing behavior
 
