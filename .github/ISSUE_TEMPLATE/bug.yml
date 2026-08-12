@@ -6,46 +6,27 @@ body:
   - type: dropdown
     id: os
     attributes:
-      label: What Operating System(s) are you seeing this problem on?
-      multiple: true
+      label: What Windows version are you seeing this problem on?
       options:
-        - Windows
-        - Linux X11
-        - Linux Wayland
-        - macOS
-        - FreeBSD X11
-        - FreeBSD Wayland
+        - Windows 10
+        - Windows 11
     validations:
       required: true
-  - type: textarea
-    id: window_manager
+  - type: input
+    id: os_details
     attributes:
-      label: Which Wayland compositor or X11 Window manager(s) are you using?
-      description: |
-        If running on a unix system, please include the name and version of the compositor/WM.
-        Windows and macOS typically can leave this blank, but if you are using additional window
-        management software on top of the standard for those systems, please indicate that here.
-      placeholder: "ex: Sway, Mutter, wayfire, i3."
+      label: Windows build details
+      description: Please include the output from `systeminfo | findstr /B /C:"OS Name" /C:"OS Version"`
+      placeholder: "ex: OS Name: Microsoft Windows 10 Pro  OS Version: 10.0.19045 N/A Build 19045"
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
-      label: WezTerm version
+      label: OnlyTerm version
       description: |
-        Please run `wezterm -V` and include its output here.
-        If you installed the flatpak version of wezterm, please consider trying
-        the native package format for your system and comparing the behavior,
-        as flatpak runs in an isolated sandbox that can prevent some functionality
-        from working fully.
-      placeholder: "ex: 20210816-085256-935c1f48"
-    validations:
-      required: true
-  - type: dropdown
-    id: triednightly
-    attributes:
-      label: Did you try the latest nightly build to see if the issue is better (or worse!) than your current version?
-      options:
-        - Yes, and I updated the version box above to show the version of the nightly that I tried
-        - No, and I'll explain why below
+        Please run `onlyterm -V` and include its output here.
+      placeholder: "ex: 20240812-120000-abcd1234"
     validations:
       required: true
   - type: textarea
@@ -69,8 +50,8 @@ body:
     attributes:
       label: Configuration
       description: |
-        Please include the relevant section(s) of your `wezterm.rhai` configuration file.
-        You can enter "no config" if the issue happens without you having made a config file.    
+        Please include the relevant section(s) of your `onlyterm.ktav` configuration file.
+        You can enter "no config" if the issue happens without you having made a config file.
     validations:
       required: true
   - type: textarea
@@ -84,17 +65,15 @@ body:
       label: Logs
       description: |
         If possible, activate the Debug Overlay by pressing CTRL-SHIFT-L and then copy
-        and paste the log lines in here.  If you launched wezterm from
-        the command line, copy and paste that output here.
-        You can also find log files in `$XDG_RUNTIME_DIR/wezterm` on unix systems,
-        or `$HOME/.local/share/wezterm` on macOS and Windows systems.
+        and paste the log lines in here.
+        You can also find log files in `%USERPROFILE%\.local\share\onlyterm\` (one file per PID).
       placeholder: |
-        09:27:26.703 INFO wezterm_gui::termwindow > OpenGL initialized! NVIDIA GeForce GT 1030/PCIe/SSE2 4.6.0 NVIDIA 470.57.02 is_context_loss_possible=false wezterm version: 20210816-085256-935c1f48
+        09:27:26.703 INFO onlyterm_gui::termwindow::webgpu::context > startup: GPU context fully built (shaders/buffers/samplers ready)
   - type: textarea
     id: other
     attributes:
       label: Anything else?
       description: |
-        Add any other context about the problem here.  You can attach screenshots by clicking
+        Add any other context about the problem here. You can attach screenshots by clicking
         this area to highlight it and then drag the files in, or just paste the image from
         the clipboard to upload it.

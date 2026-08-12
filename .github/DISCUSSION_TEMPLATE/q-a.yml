@@ -10,37 +10,19 @@ body:
   - type: dropdown
     id: os
     attributes:
-      label: What Operating System(s) are you running on?
-      multiple: true
+      label: What Windows version are you running on?
       options:
-        - Windows
-        - Linux X11
-        - Linux Wayland
-        - macOS
-        - FreeBSD X11
-        - FreeBSD Wayland
+        - Windows 10
+        - Windows 11
     validations:
       required: true
-  - type: textarea
-    id: window_manager
-    attributes:
-      label: Which Wayland compositor or X11 Window manager(s) are you using?
-      description: |
-        If running on a unix system, please include the name and version of the compositor/WM.
-        Windows and macOS typically can leave this blank, but if you are using additional window
-        management software on top of the standard for those systems, please indicate that here.
-      placeholder: "ex: Sway, Mutter, wayfire, i3."
   - type: input
     id: version
     attributes:
-      label: WezTerm version
+      label: OnlyTerm version
       description: |
-        Please run `wezterm -V` and include its output here.
-        If you installed the flatpak version of wezterm, please consider trying
-        the native package format for your system and comparing the behavior,
-        as flatpak runs in an isolated sandbox that can prevent some functionality
-        from working fully.
-      placeholder: "ex: 20210816-085256-935c1f48"
+        Please run `onlyterm -V` and include its output here.
+      placeholder: "ex: 20240812-120000-abcd1234"
     validations:
       required: true
   - type: textarea
