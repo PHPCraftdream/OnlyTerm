@@ -18,7 +18,7 @@
 
 ## 2. Что остаётся в корне
 
-`Cargo.toml` (workspace), `Cargo.lock`, `README.md`, `LICENSE.md`, `CONTRIBUTING.md`, `PRIVACY.md`, `Makefile`, `.cirrus.yml`, `.dockerignore`, `.gitignore`, `.rustfmt.toml`, `cooldown.toml`, `deny.toml`, `get-deps`, `mkdocs_macros.py`, `.github/`, `.cargo/`, `.copr/`, `assets/`, `ci/`, `docs/`, `licenses/`, `nix/`, `test-data/`, `target/`.
+`Cargo.toml` (workspace), `Cargo.lock`, `README.md`, `LICENSE.md`, `CONTRIBUTING.md`, `PRIVACY.md`, `Makefile`, `.dockerignore`, `.gitignore`, `.rustfmt.toml`, `cooldown.toml`, `deny.toml`, `mkdocs_macros.py`, `.github/`, `.cargo/`, `assets/`, `ci/`, `docs/`, `licenses/`, `nix/`, `test-data/`, `target/`.
 
 ## 3. Места, требующие правок путей
 
@@ -29,10 +29,10 @@
   - `lua-api-crates/termwiz-funcs/src/lib.rs:155` — `include_bytes!("../../../termwiz/data/xterm-256color")`.
   - Безопасно ТОЛЬКО если весь перенос делается одним атомарным шагом (все участвующие крейты становятся siblings под `crates/` одновременно).
 - **`.github/workflows/*.yml`** — сгенерированы из `ci/generate-workflows.py`; используют `cargo build -p <crate>` (имя пакета, не путь) — правок не требуют.
-- **`.cirrus.yml`, `Makefile`** — только `-p <crate>` — правок не требуют.
+- **`Makefile`** — только `-p <crate>` — правок не требуют.
 - **`nix/flake.nix:235`** — `${finalAttrs.src}/termwiz/data/wezterm.terminfo` → `.../crates/termwiz/data/wezterm.terminfo`.
 - **`ci/deploy.sh` (строки 39, 412)** и **`ci/generate-workflows.py` (строка 37, `EXTRA_INPUT_PATHS`)** — `termwiz/data/wezterm.terminfo` → `crates/termwiz/data/wezterm.terminfo`.
-- **`get-deps`, `ci/generate-docs.py`, `.gitignore`, `rust-toolchain.toml`, `.cargo/config.toml`** — проверены, правок не требуют.
+- **`ci/generate-docs.py`, `.gitignore`, `rust-toolchain.toml`, `.cargo/config.toml`** — проверены, правок не требуют.
 
 ## 4. Стратегия миграции
 

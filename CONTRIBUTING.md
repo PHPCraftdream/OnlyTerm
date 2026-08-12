@@ -30,8 +30,7 @@ Look at [mkdocs serve](https://www.mkdocs.org/user-guide/cli/#mkdocs-serve) for 
 There are a lot of targets out there.  Today we have docs that are Ubuntu biased
 and I know that there are a lot of flavors of Linux. Rather than expand the README
 with instructions for those, please translate the instructions into steps that
-can be run in the [`get-deps`](https://github.com/wezterm/wezterm/blob/master/get-deps)
-script.
+can be run in a platform-specific manner for your distribution.
 
 ## Contributing code
 

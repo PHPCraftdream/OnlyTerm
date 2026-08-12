@@ -4,10 +4,8 @@ import sys
 import glob
 from copy import deepcopy
 
-# The build from this target will be pushed to the gemfury APT repo
-GEMFURY_TARGET = "ubuntu:22.04"
-# The build from this target will be baked into the AppImage
-APPIMAGE_TARGET = "ubuntu:24.04"
+# OnlyTerm only ships Windows builds -- GEMFURY_TARGET and APPIMAGE_TARGET
+# were used for non-Windows targets that no longer exist.
 
 TRIGGER_PATHS = [
     "**/*.rs",
@@ -17,31 +15,6 @@ TRIGGER_PATHS = [
     "assets/fonts/**/*",
     "assets/icon/*",
     "ci/deploy.sh",
-]
-
-TRIGGER_PATHS_APPIMAGE = [
-    "ci/appimage.sh",
-    "ci/appstreamcli",
-    "ci/source-archive.sh",
-]
-
-TRIGGER_PATHS_UNIX = [
-    "assets/open-wezterm-here",
-    "assets/shell-completion/**/*",
-    "assets/shell-integration/**/*",
-    "assets/wezterm-nautilus.py",
-    "assets/wezterm.appdata.xml",
-    "assets/wezterm.desktop",
-    "get-deps",
-    "ci/tag-name.sh",
-    "crates/termwiz/data/wezterm.terminfo",
-]
-
-TRIGGER_PATHS_MAC = [
-    "assets/macos/**/*",
-    "ci/macos-entitlement.plist",
-    "get-deps",
-    "ci/tag-name.sh",
 ]
 
 TRIGGER_PATHS_WIN = [
@@ -200,7 +173,6 @@ class Target(object):
         self.bootstrap_git = bootstrap_git
         self.rust_target = rust_target
         self.continuous_only = continuous_only
-        self.app_image = container == APPIMAGE_TARGET
         self.env = {}
         self.is_tag = is_tag
 
@@ -380,17 +352,6 @@ rustup default {toolchain}
 """,
                 ),
             ]
-        elif "macos" in self.name:
-            steps += [
-                RunStep(
-                    name="Install Rust (ARM)",
-                    run="rustup target add aarch64-apple-darwin",
-                ),
-                RunStep(
-                    name="Install Rust (Intel)",
-                    run="rustup target add x86_64-apple-darwin",
-                )
-            ]
         else:
             steps += [
                 ActionStep(
@@ -419,15 +380,7 @@ rustup default {toolchain}
         return steps
 
     def install_system_deps(self):
-        if "win" in self.name:
-            return []
-        sudo = "sudo -n " if self.needs_sudo() else ""
-        return [
-            RunStep(
-                name="Install System Deps",
-                run=f"{sudo}env CI=yes PATH=$PATH ./get-deps",
-            )
-        ]
+        return []
 
     def fixup_windows_path(self, cmd):
         if "win" in self.name:
@@ -443,114 +396,34 @@ rustup default {toolchain}
         ]
         steps = []
         for bin in bin_crates:
-            if "win" in self.name:
-                steps += [
-                    RunStep(
-                        name=f"Build {bin} (Release mode)",
-                        shell="cmd",
-                        run=self.fixup_windows_path(f"cargo build -p {bin} --release"),
-                    )
-                ]
-            elif "macos" in self.name:
-                steps += [
-                    RunStep(
-                        name=f"Build {bin} (Release mode Intel)",
-                        run=f"cargo build --target x86_64-apple-darwin -p {bin} --release",
-                    ),
-                    RunStep(
-                        name=f"Build {bin} (Release mode ARM)",
-                        run=f"cargo build --target aarch64-apple-darwin -p {bin} --release",
-                    ),
-                ]
-            else:
-                if self.name == "centos7":
-                    enable = "source /opt/rh/devtoolset-9/enable && "
-                else:
-                    enable = ""
-                steps += [
-                    RunStep(
-                        name=f"Build {bin} (Release mode)",
-                        run=enable + f"cargo build -p {bin} --release",
-                    )
-                ]
+            steps += [
+                RunStep(
+                    name=f"Build {bin} (Release mode)",
+                    shell="cmd",
+                    run=self.fixup_windows_path(f"cargo build -p {bin} --release"),
+                )
+            ]
         return steps
 
     def test_all(self):
         run = "cargo nextest run --all --no-fail-fast"
-        if "macos" in self.name:
-            run += " --target=x86_64-apple-darwin"
-        if self.name == "centos7":
-            run = "source /opt/rh/devtoolset-9/enable\n" + run
         return [
             # Install cargo-nextest
             InstallCrateStep("cargo-nextest", key=self.name),
             # Run tests
             RunStep(name="Test", run=self.fixup_windows_path(run), shell="cmd")
-            if "win" in self.name
-            else RunStep(name="Test", run=run),
         ]
 
     def package(self, trusted=False):
-        steps = []
-        deploy_env = None
-        if trusted and ("mac" in self.name):
-            deploy_env = {
-                "MACOS_CERT": "${{ secrets.MACOS_CERT }}",
-                "MACOS_CERT_PW": "${{ secrets.MACOS_CERT_PW }}",
-                "MACOS_TEAM_ID": "${{ secrets.MACOS_TEAM_ID }}",
-                "MACOS_APPLEID": "${{ secrets.MACOS_APPLEID }}",
-                "MACOS_APP_PW": "${{ secrets.MACOS_APP_PW }}",
-            }
-        steps = [RunStep("Package", "bash ci/deploy.sh", env=deploy_env)]
-        if self.app_image:
-            # AppImage needs fuse and the file command
-            steps += self.install_system_package("libfuse2")
-            steps += self.install_system_package("file")
-            steps.append(RunStep("Source Tarball", "bash ci/source-archive.sh"))
-            steps.append(RunStep("Build AppImage", "bash ci/appimage.sh"))
+        steps = [RunStep("Package", "bash ci/deploy.sh")]
         return steps
 
     def upload_artifact(self):
-        steps = []
-
-        if self.uses_yum():
-            steps.append(
-                RunStep(
-                    "Move RPM",
-                    f"mv ~/rpmbuild/RPMS/*/*.rpm .",
-                )
-            )
-        elif self.uses_apk():
-            steps += [
-                # Add the distro name/version into the filename
-                RunStep(
-                    "Rename APKs",
-                    f"mv ~/packages/wezterm/x86_64/*.apk $(echo ~/packages/wezterm/x86_64/*.apk | sed -e 's/wezterm-/wezterm-{self.name}-/')",
-                ),
-                # Move it to the repo dir
-                RunStep(
-                    "Move APKs",
-                    f"mv ~/packages/wezterm/x86_64/*.apk .",
-                ),
-                # Move and rename the keys
-                RunStep(
-                    "Move APK keys",
-                    f"mv ~/.abuild/*.pub wezterm-{self.name}.pub",
-                ),
-            ]
-        elif self.uses_zypper():
-            steps.append(
-                RunStep(
-                    "Move RPM",
-                    f"mv /usr/src/packages/RPMS/*/*.rpm .",
-                )
-            )
-
         patterns = self.asset_patterns()
         glob = " ".join(patterns)
         paths = "\n".join(patterns)
 
-        return steps + [
+        return [
             ActionStep(
                 "Upload artifact",
                 action="actions/upload-artifact@v7",
@@ -560,23 +433,8 @@ rustup default {toolchain}
 
     def asset_patterns(self):
         patterns = []
-        if self.uses_yum() or self.uses_zypper():
-            patterns += ["wezterm-*.rpm"]
-        elif "win" in self.name:
+        if "win" in self.name:
             patterns += ["OnlyTerm-*.zip", "OnlyTerm-*.exe"]
-        elif "mac" in self.name:
-            patterns += ["WezTerm-*.zip"]
-        elif ("ubuntu" in self.name) or ("debian" in self.name):
-            patterns += ["wezterm-*.deb", "wezterm-*.xz"]
-        elif "alpine" in self.name:
-            patterns += ["wezterm-*.apk"]
-            if self.is_tag:
-                patterns.append("*.pub")
-
-        if self.app_image:
-            patterns.append("*src.tar.gz")
-            patterns.append("*.AppImage")
-            #patterns.append("*.zsync") broken upstream: <https://github.com/linuxdeploy/linuxdeploy/issues/309>
         return patterns
 
     def upload_artifact_nightly(self):
@@ -632,15 +490,6 @@ rustup default {toolchain}
         patterns.append("*.sha256")
         glob = " ".join(patterns)
 
-        if self.container == GEMFURY_TARGET:
-            steps += [
-                RunStep(
-                    "Upload to gemfury",
-                    f"for f in wezterm*.deb ; do curl -i -F package=@$f https://$FURY_TOKEN@push.fury.io/wez/ ; done",
-                    env={"FURY_TOKEN": "${{ secrets.FURY_TOKEN }}"},
-                ),
-            ]
-
         return [
             ActionStep(
                 "Download artifact",
@@ -653,7 +502,7 @@ rustup default {toolchain}
                 f"bash ci/retry.sh gh release upload --clobber nightly {glob}",
                 env={"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"},
             ),
-        ] + steps
+        ]
 
     def upload_asset_tag(self):
         steps = []
@@ -666,15 +515,6 @@ rustup default {toolchain}
 
         patterns.append("*.sha256")
         glob = " ".join(patterns)
-
-        if self.container == GEMFURY_TARGET:
-            steps += [
-                RunStep(
-                    "Upload to gemfury",
-                    f"for f in wezterm*.deb ; do curl -i -F package=@$f https://$FURY_TOKEN@push.fury.io/wez/ ; done",
-                    env={"FURY_TOKEN": "${{ secrets.FURY_TOKEN }}"},
-                ),
-            ]
 
         return steps + [
             ActionStep(
@@ -695,32 +535,6 @@ rustup default {toolchain}
                 f"bash ci/retry.sh gh release upload --clobber $(ci/tag-name.sh) {glob}",
                 env={
                     "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
-                },
-            ),
-        ]
-
-    def create_flathub_pr(self):
-        if not self.app_image:
-            return []
-        return [
-            ActionStep(
-                "Checkout flathub/org.wezfurlong.wezterm",
-                action="actions/checkout@v5",
-                params={
-                    "repository": "flathub/org.wezfurlong.wezterm",
-                    "path": "flathub",
-                    "token": "${{ secrets.GH_PAT }}",
-                },
-            ),
-            RunStep(
-                "Create flathub commit and push",
-                "bash ci/make-flathub-pr.sh",
-            ),
-            RunStep(
-                "Submit PR",
-                'cd flathub && gh pr create --fill --body "PR automatically created by release automation in the wezterm repo"',
-                env={
-                    "GITHUB_TOKEN": "${{ secrets.GH_PAT }}",
                 },
             ),
         ]
@@ -762,66 +576,12 @@ rustup default {toolchain}
         return steps
 
     def update_homebrew_tap(self):
-        steps = []
-        if "macos" in self.name:
-            steps += [
-                ActionStep(
-                    "Checkout homebrew tap",
-                    action="actions/checkout@v5",
-                    params={
-                        "repository": "wez/homebrew-wezterm",
-                        "path": "homebrew-wezterm",
-                        "token": "${{ secrets.GH_PAT }}",
-                    },
-                ),
-                RunStep(
-                    "Update homebrew tap formula",
-                    "cp wezterm.rb homebrew-wezterm/Casks/wezterm.rb",
-                ),
-                ActionStep(
-                    "Commit homebrew tap changes",
-                    action="stefanzweifel/git-auto-commit-action@v5",
-                    params={
-                        "commit_message": "Automated update to match latest tag",
-                        "repository": "homebrew-wezterm",
-                    },
-                ),
-            ]
-        elif self.app_image:
-            steps += [
-                ActionStep(
-                    "Checkout linuxbrew tap",
-                    action="actions/checkout@v5",
-                    params={
-                        "repository": "wez/homebrew-wezterm-linuxbrew",
-                        "path": "linuxbrew-wezterm",
-                        "token": "${{ secrets.GH_PAT }}",
-                    },
-                ),
-                RunStep(
-                    "Update linuxbrew tap formula",
-                    "cp wezterm-linuxbrew.rb linuxbrew-wezterm/Formula/wezterm.rb",
-                ),
-                ActionStep(
-                    "Commit linuxbrew tap changes",
-                    action="stefanzweifel/git-auto-commit-action@v5",
-                    params={
-                        "commit_message": "Automated update to match latest tag",
-                        "repository": "linuxbrew-wezterm",
-                    },
-                ),
-            ]
-
-        return steps
+        return []
 
     def global_env(self):
         self.env["CARGO_INCREMENTAL"] = "0"
         self.env["SCCACHE_GHA_ENABLED"] = "true"
         self.env["RUSTC_WRAPPER"] = "sccache"
-        if "macos" in self.name:
-            self.env["MACOSX_DEPLOYMENT_TARGET"] = "10.12"
-        if "alpine" in self.name:
-            self.env["RUSTFLAGS"] = "-C target-feature=-crt-static"
         if "win" in self.name:
             self.env["RUSTUP_WINDOWS_PATH_ADD_BIN"] = "1"
         return
@@ -986,8 +746,7 @@ rustup default {toolchain}
             steps=self.checkout(submodules=False)
             + self.update_homebrew_tap()
             + self.upload_asset_tag()
-            + self.create_winget_pr()
-            + self.create_flathub_pr(),
+            + self.create_winget_pr(),
         )
 
         return (
@@ -1029,11 +788,7 @@ def generate_actions(namer, jobber, trigger, is_continuous, is_tag=False):
 
         file_name = f".github/workflows/gen_{name}.yml"
         if job.container:
-            if t.app_image:
-                container = f"container:\n      image: {yv(job.container)}\n      options: --privileged"
-            else:
-                container = f"container: {yv(job.container)}"
-
+            container = f"container: {yv(job.container)}"
         else:
             container = ""
 
@@ -1041,12 +796,6 @@ def generate_actions(namer, jobber, trigger, is_continuous, is_tag=False):
         trigger_paths += TRIGGER_PATHS
         if "win" in name:
             trigger_paths += TRIGGER_PATHS_WIN
-        elif "macos" in name:
-            trigger_paths += TRIGGER_PATHS_MAC
-        else:
-            trigger_paths += TRIGGER_PATHS_UNIX
-        if t.app_image:
-            trigger_paths += TRIGGER_PATHS_APPIMAGE
 
         trigger_paths = "- " + "\n      - ".join(yv(p) for p in sorted(trigger_paths))
         trigger_with_paths = trigger.replace("@PATHS@", trigger_paths)
