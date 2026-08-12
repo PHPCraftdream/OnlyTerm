@@ -66,8 +66,6 @@ window_background_gradient: {
 }
 ```
 
-![Vertical Gradient](../../../screenshots/vertical-gradient.png)
-
 Gradients are implemented using the `colorgrad` crate.
 Take a look at <https://github.com/mazznoer/colorgrad-rs#using-web-color-format>
 for some usage examples and additional information about gradients.
@@ -95,8 +93,6 @@ window_background_gradient: {
   orientation: { Linear: { angle: -45.0 } }
 }
 ```
-
-![Linear Gradient](../../../screenshots/linear-gradient.png)
 
 ## Radial gradient:
 
@@ -129,8 +125,6 @@ window_background_gradient: {
   }
 }
 ```
-
-![Radial Gradient](../../../screenshots/radial-gradient.png)
 
 ## Presets
 

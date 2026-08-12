@@ -57,8 +57,6 @@ The available elements are:
     in as literal UTF-8 text with no coloring, is the closest static
     approximation.
 
-![Demonstrating setting the styling of the left and right tab edges](../../../screenshots/wezterm-tab-edge-styled.png)
-
 #### Retro Tab Bar with Integrated Window Management Buttons
 
 {{since('20230408-112425-69ae8472')}}

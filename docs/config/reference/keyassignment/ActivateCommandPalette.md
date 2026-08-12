@@ -20,8 +20,6 @@ The command palette shows a list of possible actions ranked by
 [frecency](https://en.wikipedia.org/wiki/Frecency) of use from the command
 palette.
 
-![Command Palette](../../../screenshots/command-palette.png)
-
 ### Key Assignments
 
 | Action | Key Assignment |

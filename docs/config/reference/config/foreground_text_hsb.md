@@ -34,8 +34,3 @@ foreground_text_hsb: {
   brightness: 1.0
 }
 ```
-
-![demonstrating the appearance of the default value](../../../screenshots/foreground-text-hsb-1-1-1.png)
-![demonstrating setting saturating to 1.5](../../../screenshots/foreground-text-hsb-1-1.5-1.png)
-![demonstrating setting brightness to 1.5](../../../screenshots/foreground-text-hsb-1-1-1.5.png)
-![demonstrating setting hue to 1.5](../../../screenshots/foreground-text-hsb-1.5-1-1.png)

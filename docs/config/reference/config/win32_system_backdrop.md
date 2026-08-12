@@ -42,8 +42,6 @@ window_background_opacity: 0
 win32_system_backdrop: Acrylic
 ```
 
-![Acrylic Effect](../../../screenshots/wezterm-acrylic.png)
-
 ## Mica
 
 ```
@@ -51,15 +49,11 @@ window_background_opacity: 0
 win32_system_backdrop: Mica
 ```
 
-![Mica Effect](../../../screenshots/wezterm-mica.png)
-
 ## Tabbed
 
 ```
 window_background_opacity: 0
 win32_system_backdrop: Tabbed
 ```
-
-![Tabbed Effect](../../../screenshots/wezterm-tabbed.png)
 
 

@@ -164,8 +164,6 @@ launch_menu: [
 ]
 ```
 
-![Launch Menu](../screenshots/launch-menu.png)
-
 !!! danger "No longer possible: building the launcher menu programmatically"
 
     Earlier versions of this page showed a "fancy" example that used

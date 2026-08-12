@@ -262,8 +262,6 @@ $ for scheme in *.sh ; do ; echo $scheme ; \
    bash "$scheme" ; ../tools/screenshotTable.sh; sleep 0.5; done
 ```
 
-  <video width="80%" controls src="../screenshots/wezterm-dynamic-colors.mp4" loop></video>
-
 ### Tab Bar Appearance & Colors
 
 The tab bar has two modes; the default is a native looking style, but
@@ -445,8 +443,6 @@ reduce it by half, and 2.0 will double the value.
 
 ## Window Background Image
 
-![Screenshot](../screenshots/wezterm-vday-screenshot.png)
-
 {{since('20201031-154415-9614e117')}}
 
 You can attach an image to the background of the wezterm window:
@@ -495,8 +491,6 @@ behavior and more, take a look at the more powerful
 ## Window Background Gradient
 
 {{since('20210814-124438-54e29167')}}
-
-![Gradient](../screenshots/radial-gradient.png)
 
 See [window_background_gradient](reference/config/window_background_gradient.md)
 for configuration information on gradients.

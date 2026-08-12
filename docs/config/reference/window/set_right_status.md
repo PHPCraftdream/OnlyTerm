@@ -27,8 +27,6 @@ the string.
 
 Here's a basic example that displays the time in the status area:
 
-![Demonstrating setting the right status area to the current date and time](../../../screenshots/wezterm-status-date.png)
-
 ```lua
 local wezterm = require 'wezterm'
 
@@ -51,8 +49,6 @@ to show a visually appealing status area.  It also extracts the current
 working directory and hostname from the current pane. That way
 it can potentially pick up the remote hostname if your remote shell session is using
 [OSC 7 shell integration](../../../shell-integration.md#osc-7-escape-sequence-to-set-the-working-directory).
-
-![Demonstrating setting the right status area with powerline styling](../../../screenshots/wezterm-status-powerline.png)
 
 ```lua
 wezterm.on('update-right-status', function(window, pane)
