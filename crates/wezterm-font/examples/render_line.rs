@@ -164,12 +164,8 @@ fn main() -> anyhow::Result<()> {
 
         for info in &infos {
             let rasterizer = rasterizers.entry(info.font_idx).or_insert_with(|| {
-                new_rasterizer(
-                    config.font_rasterizer,
-                    &handles[info.font_idx],
-                    config.display_pixel_geometry,
-                )
-                .expect("new_rasterizer")
+                new_rasterizer(config.font_rasterizer, &handles[info.font_idx])
+                    .expect("new_rasterizer")
             });
 
             if info.glyph_pos != 0 {
