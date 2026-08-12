@@ -16,9 +16,7 @@ assignees: ''
 
 ## Dependencies
 
-On Windows, the only other dependency besides Rust is
-[Strawberry Perl](https://strawberryperl.com) for building openssl.
-Make sure your `PATH` is set up to find that particular `perl.exe` ahead of any other perl.
+No additional dependencies are required beyond Rust and a recent MSVC compiler.
 
 If building from the git repo, did you update the submodules? Not doing this
 is a common source of problems; see the information at

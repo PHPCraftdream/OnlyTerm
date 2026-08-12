@@ -119,11 +119,8 @@ class SccacheStep(ActionStep):
 
 
 class CheckoutStep(ActionStep):
-    def __init__(self, name="checkout repo", submodules=True, container=None):
-        params = {}
-        if submodules:
-            params["submodules"] = "recursive"
-        super().__init__(name, action=f"actions/checkout@v5", params=params)
+    def __init__(self, name="checkout repo", container=None):
+        super().__init__(name, action=f"actions/checkout@v5")
 
 
 class InstallCrateStep(ActionStep):
@@ -382,11 +379,6 @@ rustup default {toolchain}
     def install_system_deps(self):
         return []
 
-    def fixup_windows_path(self, cmd):
-        if "win" in self.name:
-            return "PATH C:\\Strawberry\\perl\\bin;%PATH%\n" + cmd
-        return cmd
-
     def build_all_release(self):
         bin_crates = [
             "wezterm",
@@ -400,7 +392,7 @@ rustup default {toolchain}
                 RunStep(
                     name=f"Build {bin} (Release mode)",
                     shell="cmd",
-                    run=self.fixup_windows_path(f"cargo build -p {bin} --release"),
+                    run=f"cargo build -p {bin} --release",
                 )
             ]
         return steps
@@ -411,7 +403,7 @@ rustup default {toolchain}
             # Install cargo-nextest
             InstallCrateStep("cargo-nextest", key=self.name),
             # Run tests
-            RunStep(name="Test", run=self.fixup_windows_path(run), shell="cmd")
+            RunStep(name="Test", run=run, shell="cmd")
         ]
 
     def package(self, trusted=False):
@@ -575,9 +567,6 @@ rustup default {toolchain}
 
         return steps
 
-    def update_homebrew_tap(self):
-        return []
-
     def global_env(self):
         self.env["CARGO_INCREMENTAL"] = "0"
         self.env["SCCACHE_GHA_ENABLED"] = "true"
@@ -698,7 +687,7 @@ rustup default {toolchain}
             None,
         )
 
-    def checkout(self, submodules=True):
+    def checkout(self):
         steps = []
         if self.container:
             steps += [
@@ -707,7 +696,7 @@ rustup default {toolchain}
                     "git config --global --add safe.directory /__w/wezterm/wezterm",
                 )
             ]
-        steps += [CheckoutStep(submodules=submodules, container=self.container)]
+        steps += [CheckoutStep(container=self.container)]
         return steps
 
     def continuous(self):
@@ -721,7 +710,7 @@ rustup default {toolchain}
 
         uploader = Job(
             runs_on="ubuntu-latest",
-            steps=self.checkout(submodules=False) + self.upload_asset_nightly(),
+            steps=self.checkout() + self.upload_asset_nightly(),
         )
 
         return (
@@ -743,10 +732,7 @@ rustup default {toolchain}
 
         uploader = Job(
             runs_on="ubuntu-latest",
-            steps=self.checkout(submodules=False)
-            + self.update_homebrew_tap()
-            + self.upload_asset_tag()
-            + self.create_winget_pr(),
+            steps=self.checkout() + self.upload_asset_tag() + self.create_winget_pr(),
         )
 
         return (

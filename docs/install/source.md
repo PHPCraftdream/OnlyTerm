@@ -14,13 +14,5 @@ for yourself.  OnlyTerm runs on Windows 10 and later.
 When installing Rust, you must use select the MSVC version of Rust. It is the
 only supported way to build OnlyTerm.
 
-The only other dependency that you need is
-[Strawberry Perl](https://strawberryperl.com). You must ensure that you have
-your `PATH` environment set up to find that particular `perl.exe` ahead of any
-other perl that you may have installed on your system. This particular version
-of perl is required to build openssl on Windows.
-
-```console
-set PATH=c:\Strawberry\perl\bin;%PATH%
-```
+No additional dependencies are required beyond Rust itself.
 
