@@ -196,7 +196,7 @@ fn dump_one(
     out_png: &PathBuf,
     out_json: &PathBuf,
 ) -> anyhow::Result<()> {
-    let rasterizer = new_rasterizer(selection, parsed, config::DisplayPixelGeometry::RGB)?;
+    let rasterizer = new_rasterizer(selection, parsed)?;
     let glyph: RasterizedGlyph = rasterizer.rasterize_glyph(glyph_id, opt.size, opt.dpi)?;
 
     log::info!(

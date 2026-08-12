@@ -49,17 +49,15 @@ pub trait FontRasterizer {
 pub fn new_rasterizer(
     rasterizer: FontRasterizerSelection,
     handle: &ParsedFont,
-    pixel_geometry: config::DisplayPixelGeometry,
 ) -> anyhow::Result<Box<dyn FontRasterizer>> {
     match rasterizer {
         // `SwashRasterizer` doesn't support LCD/subpixel targets yet (see
         // its module doc comment); it always renders grayscale alpha
-        // masks, so `pixel_geometry` isn't needed here.
+        // masks.
         FontRasterizerSelection::Swash => {
             Ok(Box::new(swash::SwashRasterizer::from_locator(handle)?))
         }
         FontRasterizerSelection::FreeType => {
-            let _ = pixel_geometry;
             anyhow::bail!(
                 "The FreeType rasterizer (and the vendored freetype C library backing it) has \
                  been removed; use the default Swash rasterizer instead"

@@ -7,8 +7,8 @@ mod config_impl;
 use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
 use crate::font::{
-    AllowSquareGlyphOverflow, DisplayPixelGeometry, FontLocatorSelection, FontRasterizerSelection,
-    FontShaperSelection, FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
+    AllowSquareGlyphOverflow, FontLocatorSelection, FontRasterizerSelection, FontShaperSelection,
+    FreeTypeLoadFlags, FreeTypeLoadTarget, StyleRule, TextStyle,
 };
 use crate::frontend::FrontEndSelection;
 #[cfg(test)]
@@ -293,79 +293,15 @@ pub struct Config {
     pub font_locator: FontLocatorSelection,
     #[dynamic(default)]
     pub font_rasterizer: FontRasterizerSelection,
-    /// Was meant to let the COLR (color glyph) rasterizer be selected
-    /// independently of `font_rasterizer`, but no code path ever read this
-    /// field: `wezterm_font::rasterizer::new_rasterizer` (the sole call
-    /// site, driven only by `font_rasterizer`) always renders COLR/COLRv1
-    /// color glyphs by delegating internally to
-    /// `rasterizer::colr_paint::ColrRasterizer` from within
-    /// `SwashRasterizer`, with no way to pick a different backend for them.
-    #[dynamic(
-        default = "default_colr_rasterizer",
-        deprecated = "this option currently has no effect: COLR/COLRv1 color glyph rendering is \
-                      always handled internally by the Swash rasterizer and does not consult \
-                      this setting"
-    )]
-    pub font_colr_rasterizer: FontRasterizerSelection,
     #[dynamic(default)]
     pub font_shaper: FontShaperSelection,
 
-    /// NOTE: this option currently has no effect. It told the FreeType
-    /// rasterizer (`wezterm-font/src/rasterizer/freetype.rs`, added in
-    /// `8582165ff`) which subpixel channel order to assume when unpacking
-    /// `FT_PIXEL_MODE_LCD`/`FT_PIXEL_MODE_LCD_V` bitmaps. That rasterizer
-    /// was removed in the freetype+harfbuzz -> rustybuzz+swash migration
-    /// (phase H4); the Swash-based rasterizer that replaced it always
-    /// renders grayscale alpha masks and has no LCD/subpixel mode to steer,
-    /// so `new_rasterizer` (`wezterm-font/src/rasterizer/mod.rs`) receives
-    /// this value and explicitly discards it.
-    #[dynamic(
-        default,
-        deprecated = "this option no longer does anything: it selected the LCD subpixel channel \
-                      order for the FreeType rasterizer's bitmap output, and that rasterizer \
-                      backend was removed in the rustybuzz/swash migration -- the Swash \
-                      rasterizer that replaced it only ever produces grayscale alpha masks"
-    )]
-    pub display_pixel_geometry: DisplayPixelGeometry,
     #[dynamic(default)]
     pub freetype_load_target: FreeTypeLoadTarget,
     #[dynamic(default)]
     pub freetype_render_target: Option<FreeTypeLoadTarget>,
     #[dynamic(default)]
     pub freetype_load_flags: Option<FreeTypeLoadFlags>,
-
-    /// Selects the freetype interpret version to use.
-    /// Likely values are 35, 38 and 40 which have different
-    /// characteristics with respective to subpixel hinting.
-    /// See https://freetype.org/freetype2/docs/subpixel-hinting.html
-    ///
-    /// NOTE: this option currently has no effect. It configured the
-    /// FreeType `truetype`/`interpreter-version` property in
-    /// `wezterm-font/src/ftwrap.rs::Library::new`, but that file (and the
-    /// vendored FreeType backend it wrapped) was removed in the
-    /// freetype+harfbuzz -> rustybuzz+swash migration (phase H4); the
-    /// Swash-based rasterizer that replaced it has no equivalent knob.
-    #[dynamic(
-        default,
-        deprecated = "this option no longer does anything: it configured the FreeType TrueType \
-                      interpreter version, and the FreeType rasterizer backend it applied to was \
-                      removed in the rustybuzz/swash migration"
-    )]
-    pub freetype_interpreter_version: Option<u32>,
-
-    /// NOTE: this option currently has no effect. It configured the
-    /// FreeType `pcf`/`no-long-family-names` property in
-    /// `wezterm-font/src/ftwrap.rs::Library::new`, but that file (and the
-    /// vendored FreeType backend it wrapped) was removed in the
-    /// freetype+harfbuzz -> rustybuzz+swash migration (phase H4); the
-    /// Swash-based rasterizer that replaced it has no equivalent knob.
-    #[dynamic(
-        default,
-        deprecated = "this option no longer does anything: it configured a FreeType PCF font \
-                      driver property, and the FreeType rasterizer backend it applied to was \
-                      removed in the rustybuzz/swash migration"
-    )]
-    pub freetype_pcf_long_family_names: bool,
 
     /// Specify the features to enable when using harfbuzz for font shaping.
     /// There is some light documentation here:
@@ -528,9 +464,6 @@ pub struct Config {
     #[dynamic(default = "default_true")]
     pub send_composed_key_when_right_alt_is_pressed: bool,
 
-    #[dynamic(default = "default_macos_forward_mods")]
-    pub macos_forward_to_ime_modifier_mask: Modifiers,
-
     #[dynamic(default)]
     pub treat_left_ctrlalt_as_altgr: bool,
 
@@ -611,16 +544,6 @@ pub struct Config {
     )]
     pub min_scroll_bar_height: Dimension,
 
-    /// If false, do not try to use a Wayland protocol connection
-    /// when starting the gui frontend, and instead use X11.
-    /// This option is only considered on X11/Wayland systems and
-    /// has no effect on macOS or Windows.
-    /// The default is true.
-    #[dynamic(default = "default_true")]
-    pub enable_wayland: bool,
-    #[dynamic(default)]
-    pub enable_zwlr_output_manager: bool,
-
     #[dynamic(default = "default_true")]
     pub custom_block_glyphs: bool,
     #[dynamic(default = "default_true")]
@@ -651,21 +574,6 @@ pub struct Config {
 
     #[dynamic(default)]
     pub background: Vec<BackgroundLayer>,
-
-    /// Only works on MacOS
-    #[dynamic(default)]
-    pub macos_window_background_blur: i64,
-
-    /// Only works on KDE Wayland
-    #[dynamic(
-        default,
-        deprecated = "this option has been replaced with `wayland_window_background_blur` and will be removed in a future release"
-    )]
-    pub kde_window_background_blur: bool,
-
-    /// Only works on Wayland compositors that support ext-background-effect-v1 protocol
-    #[dynamic(default)]
-    pub wayland_window_background_blur: bool,
 
     /// Only works on Windows
     #[dynamic(default)]
@@ -804,8 +712,6 @@ pub struct Config {
     #[dynamic(default = "default_true")]
     pub use_ime: bool,
     #[dynamic(default)]
-    pub xim_im_name: Option<String>,
-    #[dynamic(default)]
     pub ime_preedit_rendering: ImePreeditRendering,
 
     #[dynamic(default)]
@@ -827,13 +733,6 @@ pub struct Config {
 
     #[dynamic(default = "default_check_for_updates")]
     pub check_for_updates: bool,
-    #[dynamic(
-        default,
-        deprecated = "this option no longer does anything: the update-notification window it \
-                      controlled was removed upstream in 39d2b6ca8, and it will be removed in a \
-                      future release"
-    )]
-    pub show_update_window: bool,
 
     #[dynamic(default = "default_update_interval")]
     pub check_for_updates_interval_seconds: u64,
@@ -847,12 +746,6 @@ pub struct Config {
 
     #[dynamic(default)]
     pub window_close_confirmation: WindowCloseConfirmation,
-
-    #[dynamic(default)]
-    pub native_macos_fullscreen_mode: bool,
-
-    #[dynamic(default)]
-    pub macos_fullscreen_extend_behind_notch: bool,
 
     #[dynamic(default = "default_word_boundary")]
     pub selection_word_boundary: String,
@@ -1061,12 +954,6 @@ pub struct Config {
 
     #[dynamic(default)]
     pub default_workspace: Option<String>,
-
-    #[dynamic(default)]
-    pub xcursor_theme: Option<String>,
-
-    #[dynamic(default)]
-    pub xcursor_size: Option<u32>,
 
     #[dynamic(default)]
     pub key_map_preference: KeyMapPreference,
@@ -1536,17 +1423,6 @@ pub(crate) fn validate_domain_name(name: &str) -> Result<(), String> {
     } else {
         Ok(())
     }
-}
-
-/// <https://github.com/wezterm/wezterm/pull/2435>
-/// <https://github.com/wezterm/wezterm/issues/2771>
-/// <https://github.com/wezterm/wezterm/issues/2630>
-fn default_macos_forward_mods() -> Modifiers {
-    Modifiers::SHIFT
-}
-
-fn default_colr_rasterizer() -> FontRasterizerSelection {
-    FontRasterizerSelection::Harfbuzz
 }
 
 #[cfg(test)]
