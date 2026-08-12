@@ -9,9 +9,7 @@ use std::time::Duration;
 use wezterm_dynamic::{FromDynamic, FromDynamicOptions, UnknownFieldAction, Value};
 use wezterm_term::UnicodeVersion;
 
-use crate::CellWidth;
-use crate::Config;
-use crate::FontLocatorSelection;
+use crate::{CellWidth, Config, FontLocatorSelection};
 
 pub(crate) type ErrorCallback = fn(&str);
 

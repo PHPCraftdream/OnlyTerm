@@ -5,12 +5,7 @@ use core::fmt::Write;
 
 use crate::ctrl_mapping::ctrl_mapping;
 use crate::key_code::normalize_shift;
-use crate::KeyCode;
-use crate::KeyboardLedStatus;
-use crate::KittyKeyboardFlags;
-use crate::Modifiers;
-use crate::PhysKeyCode;
-use crate::RawKeyEvent;
+use crate::{KeyCode, KeyboardLedStatus, KittyKeyboardFlags, Modifiers, PhysKeyCode, RawKeyEvent};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {

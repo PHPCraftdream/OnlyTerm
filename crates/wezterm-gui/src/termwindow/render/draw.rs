@@ -92,8 +92,7 @@ fn applied_layer0_instances(
     capacity: usize,
 ) -> Vec<QuadInstance> {
     use crate::quad::TripleLayerQuadAllocator;
-    use crate::renderstate::BorrowedLayers;
-    use crate::renderstate::TripleVertexBuffer;
+    use crate::renderstate::{BorrowedLayers, TripleVertexBuffer};
 
     let vb = TripleVertexBuffer::new(vec![], capacity);
     let borrowed_layers = BorrowedLayers {

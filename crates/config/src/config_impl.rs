@@ -3,11 +3,9 @@ use crate::background::BackgroundLayer;
 use crate::color::{ColorSchemeFile, Palette, TabBarColor, TabBarColors};
 use crate::font::StyleRule;
 use crate::keyassignment::{KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger};
-use crate::MouseEventTriggerMods;
-use crate::RgbaColor;
 use crate::{
-    default_config_with_overrides_applied, LoadedConfig, CONFIG_DIRS, CONFIG_FILE_OVERRIDE,
-    CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
+    default_config_with_overrides_applied, LoadedConfig, MouseEventTriggerMods, RgbaColor,
+    CONFIG_DIRS, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
 };
 use anyhow::Context;
 use ktav::value::Value as KtavValue;

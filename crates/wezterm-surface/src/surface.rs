@@ -4,8 +4,7 @@ use crate::change::{Change, LineAttribute};
 #[cfg(feature = "use_image")]
 use crate::change::{Image, TextureCoordinate};
 use crate::cursor::{CursorShape, CursorVisibility};
-use crate::line::CellRef;
-use crate::line::Line;
+use crate::line::{CellRef, Line};
 use crate::position::{compute_position_change, Position};
 use crate::SequenceNo;
 use alloc::borrow::Cow;

@@ -73,9 +73,24 @@ fn test_environment_block_skips_empty_name() {
     let block = cmd.environment_block();
     let block_str = String::from_utf16_lossy(&block[..block.len().saturating_sub(1)]);
 
+    // Windows itself injects legitimate `=X:=<cwd on drive X>\0` entries
+    // (one per drive letter that has ever had a current directory set in
+    // this session) into the base process environment; those are
+    // inherited via `self.envs` and are *not* the empty-name bug this
+    // test guards against. Distinguish them by their well-known
+    // `=<letter>:=` shape rather than rejecting every `=`-prefixed entry.
+    let is_windows_drive_cwd_entry = |entry: &str| {
+        let bytes = entry.as_bytes();
+        bytes.len() > 3
+            && bytes[0] == b'='
+            && bytes[1].is_ascii_alphabetic()
+            && bytes[2] == b':'
+            && bytes[3] == b'='
+    };
+
     for entry in block_str.split('\0').filter(|s| !s.is_empty()) {
         assert!(
-            !entry.starts_with('='),
+            !entry.starts_with('=') || is_windows_drive_cwd_entry(entry),
             "environment block must not contain an entry with an empty \
              name (found {:?}); this produces ERROR_INVALID_PARAMETER \
              from CreateProcessW",

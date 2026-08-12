@@ -1,7 +1,6 @@
 //! The connection to the GUI subsystem
-use super::watchdog;
 use super::window::get_primary_monitor_dpi;
-use super::{HWindow, WindowInner};
+use super::{watchdog, HWindow, WindowInner};
 use crate::connection::ConnectionOps;
 use crate::screen::{ScreenInfo, Screens};
 use crate::spawn::*;

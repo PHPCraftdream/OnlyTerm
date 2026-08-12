@@ -1,10 +1,10 @@
 use crate::quad::{HeapQuadAllocator, HeapQuadAllocatorExt, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
+use crate::termwindow::render::budget::{RowAction, RowSweep};
 use crate::termwindow::render::{
-    bidi_disabled_by_foreground_process, budget::RowAction, budget::RowSweep, same_hyperlink,
-    CursorProperties, LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey,
-    RenderScreenLineParams,
+    bidi_disabled_by_foreground_process, same_hyperlink, CursorProperties, LineQuadCacheKey,
+    LineQuadCacheValue, LineToEleShapeCacheKey, RenderScreenLineParams,
 };
 use crate::termwindow::{ScrollHit, UIItem, UIItemType};
 use ::window::bitmaps::TextureRect;

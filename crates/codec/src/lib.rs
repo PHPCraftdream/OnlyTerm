@@ -36,8 +36,7 @@ mod test {
     use std::io::Cursor;
     use std::ops::Range;
     use termwiz::surface::{Line, SequenceNo};
-    use wezterm_term::StableRowIndex;
-    use wezterm_term::TerminalSize;
+    use wezterm_term::{StableRowIndex, TerminalSize};
 
     #[test]
     fn test_frame() {

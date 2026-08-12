@@ -618,8 +618,7 @@ fn test_apply_to_copies_everything_when_under_capacity() {
 #[test]
 fn test_rc_heap_quad_allocator_apply_to() {
     use crate::quad::TripleLayerQuadAllocator;
-    use crate::renderstate::BorrowedLayers;
-    use crate::renderstate::TripleVertexBuffer;
+    use crate::renderstate::{BorrowedLayers, TripleVertexBuffer};
     use std::rc::Rc;
 
     // Build a HeapQuadAllocator and wrap it in Rc.

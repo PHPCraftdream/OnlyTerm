@@ -1,8 +1,4 @@
-use crate::Handled;
-use crate::KeyCode;
-use crate::KeyboardLedStatus;
-use crate::Modifiers;
-use crate::PhysKeyCode;
+use crate::{Handled, KeyCode, KeyboardLedStatus, Modifiers, PhysKeyCode};
 
 /// A key event prior to any dead key or IME composition
 #[derive(Debug, Clone, Eq, PartialEq)]

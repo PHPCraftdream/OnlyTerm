@@ -44,6 +44,5 @@ jobs:
           crate: "cargo-nextest"
       - name: Build
         run: |
-          source $HOME/.cargo/env
           cargo build -p termwiz --all-features
           cargo nextest run --no-fail-fast --package termwiz --all-features

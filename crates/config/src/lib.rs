@@ -57,8 +57,9 @@ pub use units::*;
 pub use unix::*;
 pub use version::*;
 
-pub(crate) use configuration::default_config_with_overrides_applied;
-pub(crate) use configuration::{CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP};
+pub(crate) use configuration::{
+    default_config_with_overrides_applied, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP,
+};
 
 lazy_static! {
     pub static ref HOME_DIR: PathBuf = dirs_next::home_dir().expect("can't find HOME dir");

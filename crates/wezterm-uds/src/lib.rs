@@ -4,9 +4,7 @@ use std::os::windows::io::{
     AsRawSocket, AsSocket, BorrowedSocket, FromRawSocket, IntoRawSocket, RawSocket,
 };
 use std::path::Path;
-use uds_windows::SocketAddr;
-use uds_windows::UnixListener as ListenerImpl;
-use uds_windows::UnixStream as StreamImpl;
+use uds_windows::{SocketAddr, UnixListener as ListenerImpl, UnixStream as StreamImpl};
 
 /// This wrapper makes UnixStream IoSafe on Windows, where the
 /// uds_windows crate doesn't have an impl (async-io includes an impl

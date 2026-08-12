@@ -6,8 +6,7 @@ use alloc::vec::Vec;
 use core::convert::TryFrom;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
-use crate::Modifiers;
-use crate::PhysKeyCode;
+use crate::{Modifiers, PhysKeyCode};
 
 /// Which key is pressed.  Not all of these are probable to appear
 /// on most systems.  A lot of this list is @wez trawling docs and
