@@ -293,7 +293,7 @@ impl GuiFrontEnd {
                     crate::spawn::spawn_command_impl(spawn, spawn_where, size, None, term_config)
                 }
 
-                match action {
+                match *action {
                     KeyAssignment::QuitApplication => {
                         // If we get here, there are no windows that could have received
                         // the QuitApplication command, therefore it must be ok to quit

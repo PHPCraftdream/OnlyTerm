@@ -4,6 +4,62 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
+/// Windows process priority classes for spawned processes.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, FromDynamic, ToDynamic,
+)]
+pub enum ProcessPriority {
+    /// Idle priority class (0x00000040)
+    Idle,
+    /// Below normal priority class (0x00004000)
+    BelowNormal,
+    /// Normal priority class (0x00000020) - default
+    #[default]
+    Normal,
+    /// Above normal priority class (0x00008000)
+    AboveNormal,
+    /// High priority class (0x00000080)
+    High,
+    /// Realtime priority class (0x00000100)
+    Realtime,
+}
+
+#[cfg(windows)]
+impl ProcessPriority {
+    /// Convert the enum to the corresponding Win32 priority class constant.
+    pub fn to_win32_flag(self) -> u32 {
+        match self {
+            ProcessPriority::Idle => 0x00000040,
+            ProcessPriority::BelowNormal => 0x00004000,
+            ProcessPriority::Normal => 0x00000020,
+            ProcessPriority::AboveNormal => 0x00008000,
+            ProcessPriority::High => 0x00000080,
+            ProcessPriority::Realtime => 0x00000100,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn test_priority_to_win32_flag() {
+        assert_eq!(ProcessPriority::Idle.to_win32_flag(), 0x00000040);
+        assert_eq!(ProcessPriority::BelowNormal.to_win32_flag(), 0x00004000);
+        assert_eq!(ProcessPriority::Normal.to_win32_flag(), 0x00000020);
+        assert_eq!(ProcessPriority::AboveNormal.to_win32_flag(), 0x00008000);
+        assert_eq!(ProcessPriority::High.to_win32_flag(), 0x00000080);
+        assert_eq!(ProcessPriority::Realtime.to_win32_flag(), 0x00000100);
+    }
+
+    #[test]
+    fn test_priority_default() {
+        assert_eq!(ProcessPriority::default(), ProcessPriority::Normal);
+    }
+}
+
 /// When spawning a tab, specify which domain should be used to
 /// host/spawn that tab.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, FromDynamic, ToDynamic, Default)]
@@ -47,6 +103,11 @@ pub struct SpawnCommand {
     pub domain: SpawnTabDomain,
 
     pub position: Option<crate::GuiPosition>,
+
+    /// Process priority class for the spawned process (Windows only).
+    /// If omitted, defaults to Normal priority.
+    #[dynamic(default)]
+    pub priority: Option<ProcessPriority>,
 }
 
 impl std::fmt::Debug for SpawnCommand {
@@ -67,6 +128,9 @@ impl std::fmt::Display for SpawnCommand {
         }
         if let Some(cwd) = &self.cwd {
             write!(fmt, " cwd={}", cwd.display())?;
+        }
+        if let Some(priority) = &self.priority {
+            write!(fmt, " priority={:?}", priority)?;
         }
         for (k, v) in &self.set_environment_variables {
             write!(fmt, " {}={}", k, v)?;
@@ -107,6 +171,7 @@ impl SpawnCommand {
             set_environment_variables,
             cwd,
             position: None,
+            priority: None,
         })
     }
 }

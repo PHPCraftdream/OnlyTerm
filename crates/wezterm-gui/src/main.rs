@@ -38,6 +38,7 @@ mod colorease;
 mod commands;
 mod customglyph;
 mod download;
+mod elevate;
 mod frontend;
 mod glyphcache;
 mod gui_api;

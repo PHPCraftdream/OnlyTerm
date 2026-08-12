@@ -20,6 +20,8 @@ pub struct CommandBuilder {
     envs: BTreeMap<OsString, EnvEntry>,
     cwd: Option<OsString>,
     controlling_tty: bool,
+    #[cfg(windows)]
+    priority_class: u32,
 }
 
 impl CommandBuilder {
@@ -31,6 +33,8 @@ impl CommandBuilder {
             envs: get_base_env(),
             cwd: None,
             controlling_tty: true,
+            #[cfg(windows)]
+            priority_class: winapi::um::winbase::NORMAL_PRIORITY_CLASS,
         }
     }
 
@@ -41,6 +45,8 @@ impl CommandBuilder {
             envs: get_base_env(),
             cwd: None,
             controlling_tty: true,
+            #[cfg(windows)]
+            priority_class: winapi::um::winbase::NORMAL_PRIORITY_CLASS,
         }
     }
 
@@ -66,6 +72,8 @@ impl CommandBuilder {
             envs: get_base_env(),
             cwd: None,
             controlling_tty: true,
+            #[cfg(windows)]
+            priority_class: winapi::um::winbase::NORMAL_PRIORITY_CLASS,
         }
     }
 
@@ -223,5 +231,19 @@ impl CommandBuilder {
             strs.push(s);
         }
         Ok(shell_words::join(strs))
+    }
+}
+
+/// Windows-specific extensions to CommandBuilder
+#[cfg(windows)]
+impl CommandBuilder {
+    /// Set the Windows process priority class for the spawned process.
+    pub fn set_priority_class(&mut self, class: u32) {
+        self.priority_class = class;
+    }
+
+    /// Get the Windows process priority class for the spawned process.
+    pub fn priority_class(&self) -> u32 {
+        self.priority_class
     }
 }
