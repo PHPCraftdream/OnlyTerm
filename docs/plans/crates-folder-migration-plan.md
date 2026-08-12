@@ -18,7 +18,7 @@
 
 ## 2. Что остаётся в корне
 
-`Cargo.toml` (workspace), `Cargo.lock`, `README.md`, `LICENSE.md`, `README-DISTRO-MAINTAINER.md`, `CONTRIBUTING.md`, `PRIVACY.md`, `Makefile`, `.cirrus.yml`, `.dockerignore`, `.gitignore`, `.mailmap`, `.rustfmt.toml`, `cooldown.toml`, `deny.toml`, `get-deps`, `mkdocs_macros.py`, `.github/`, `.cargo/`, `.copr/`, `assets/`, `ci/`, `docs/`, `licenses/`, `nix/`, `test-data/`, `target/`.
+`Cargo.toml` (workspace), `Cargo.lock`, `README.md`, `LICENSE.md`, `CONTRIBUTING.md`, `PRIVACY.md`, `Makefile`, `.cirrus.yml`, `.dockerignore`, `.gitignore`, `.rustfmt.toml`, `cooldown.toml`, `deny.toml`, `get-deps`, `mkdocs_macros.py`, `.github/`, `.cargo/`, `.copr/`, `assets/`, `ci/`, `docs/`, `licenses/`, `nix/`, `test-data/`, `target/`.
 
 ## 3. Места, требующие правок путей
 

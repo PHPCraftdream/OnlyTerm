@@ -494,7 +494,6 @@ TOC = [
         ],
     ),
     Page("Change Log", "changelog.md"),
-    Page("Sponsor", "sponsor.md"),
 ]
 
 os.chdir("docs")
