@@ -52,18 +52,7 @@ targets = [
 name = "wgpu_hal"
 path = "src/lib.rs"
 
-[[example]]
-name = "halmark"
-path = "examples/halmark/main.rs"
 
-[[example]]
-name = "raw-gles"
-path = "examples/raw-gles.rs"
-required-features = ["gles"]
-
-[[example]]
-name = "ray-traced-triangle"
-path = "examples/ray-traced-triangle/main.rs"
 
 [dependencies.arrayvec]
 version = "0.7.6"
@@ -143,19 +132,7 @@ version = "25.0.0"
 [dev-dependencies.cfg-if]
 version = "1"
 
-[dev-dependencies.env_logger]
-version = "0.11"
 
-[dev-dependencies.glam]
-version = "0.29"
-
-[dev-dependencies.naga]
-version = "25.0.0"
-features = ["wgsl-in"]
-
-[dev-dependencies.winit]
-version = "0.29"
-features = ["android-native-activity"]
 
 [build-dependencies.cfg_aliases]
 version = "0.2.1"
@@ -213,18 +190,7 @@ gles = [
     "windows/Win32_UI_WindowsAndMessaging",
 ]
 internal_error_panic = []
-metal = [
-    "naga/msl-out",
-    "dep:arrayvec",
-    "dep:block",
-    "dep:core-graphics-types",
-    "dep:hashbrown",
-    "dep:libc",
-    "dep:log",
-    "dep:metal",
-    "dep:objc",
-    "dep:profiling",
-]
+
 oom_panic = []
 portable-atomic = ["dep:portable-atomic"]
 renderdoc = [
@@ -279,36 +245,7 @@ version = "0.1.4"
 optional = true
 default-features = false
 
-[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dev-dependencies.glutin]
-version = "0.31"
-features = [
-    "egl",
-    "wgl",
-    "wayland",
-    "x11",
-]
-default-features = false
 
-[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dev-dependencies.glutin-winit]
-version = "0.4"
-features = [
-    "egl",
-    "wgl",
-    "wayland",
-    "x11",
-]
-default-features = false
-
-[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dev-dependencies.rwh_05]
-version = "0.5"
-package = "raw-window-handle"
-
-[target.'cfg(not(any(target_arch = "wasm32", target_os = "ios", target_os = "visionos")))'.dev-dependencies.winit]
-version = "0.29"
-features = [
-    "android-native-activity",
-    "rwh_05",
-]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.ash]
 version = "0.38.0"

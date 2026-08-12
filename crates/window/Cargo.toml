@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Wez Furlong"]
 edition = "2018"
 repository = "https://github.com/wezterm/wezterm"
-description = "Cross platform window setup and render"
+description = "Windows window setup and render"
 license = "MIT"
 build = "build.rs"
 
