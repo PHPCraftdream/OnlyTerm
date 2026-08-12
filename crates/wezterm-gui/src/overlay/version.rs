@@ -161,11 +161,24 @@ pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyho
             // fix class as the Alt+V passthrough fix earlier this session.
             // Checked before the bare Ctrl+C/Ctrl+D close arm below so the
             // Shift-qualified chord doesn't fall through to it.
+            //
+            // Deliberately NOT checking `modifiers.contains(Modifiers::SHIFT)`
+            // here: `window.rs`'s `normalize_shift()` always folds a
+            // Shift+letter chord into the uppercase letter with the
+            // *general* SHIFT bit removed (only positional LEFT_SHIFT/
+            // RIGHT_SHIFT survive that step), and `TermWizTerminalPane::
+            // key_down` (crates/mux/src/termwiztermtab.rs) strips those
+            // positional bits too before this overlay ever sees the event.
+            // So a real Ctrl+Shift+C physically never arrives here with the
+            // general SHIFT bit set -- requiring it made this arm
+            // unreachable. `InputMap::lookup_key` already accounts for the
+            // same fold when matching ordinary keybindings; matching on the
+            // uppercased char alone is the same convention applied here.
             Some(InputEvent::Key(KeyEvent {
-                key: KeyCode::Char('c') | KeyCode::Char('C'),
+                key: KeyCode::Char('C'),
                 modifiers,
                 ..
-            })) if modifiers.contains(Modifiers::CTRL) && modifiers.contains(Modifiers::SHIFT) => {
+            })) if modifiers.contains(Modifiers::CTRL) => {
                 gui_win
                     .window
                     .set_clipboard(::window::Clipboard::Clipboard, clipboard_text.clone());
