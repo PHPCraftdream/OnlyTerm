@@ -80,6 +80,15 @@ impl PduPolicy {
                 // - GetLines: read-only scrollback/history fetch.
                 // - WriteToPane: direct user input (keystrokes) to the existing pane.
                 // - SendPaste: paste operation into the existing pane.
+                // - SendKeyDown/SendMouseEvent: THE actual client->server input path a
+                //   ClientPane uses for ordinary keyboard/mouse input (see
+                //   ClientPane::key_down/mouse_event) -- this is direct user input to
+                //   the existing pane, exactly like WriteToPane/SendPaste, not a
+                //   server->client notification. An earlier version of this allow-list
+                //   rejected these on the mistaken assumption that they only ever flow
+                //   the other way; confirmed live that rejecting SendKeyDown breaks ALL
+                //   keyboard typing in an elevated tab (SendPaste still worked, which is
+                //   what made this reachable at all -- paste uses a different PDU).
                 // - Resize: terminal geometry change, no privilege escalation.
                 // - KillPane: terminate the single pane (normal exit path).
                 //
@@ -97,8 +106,6 @@ impl PduPolicy {
                 // - SetPaneZoomed/GetPaneDirection/ActivatePaneDirection/
                 //   SwapActivePaneWithIndex/RotatePanes/AdjustPaneSize: pane
                 //   layout manipulation.
-                // - SendKeyDown/SendMouseEvent: lower-level input; these are
-                //   normally client->mux server requests, not the other way.
                 // - GetPaneRenderableDimensions/GetImageCell: rendering internals.
                 // - WindowTitleChanged/TabTitleChanged: metadata manipulation.
                 // - SetPalette: terminal state mutation.
@@ -109,6 +116,8 @@ impl PduPolicy {
                         | codec::Pdu::SetClientId(_)
                         | codec::Pdu::Ping(_)
                         | codec::Pdu::ListPanes(_)
+                        | codec::Pdu::SendKeyDown(_)
+                        | codec::Pdu::SendMouseEvent(_)
                         | codec::Pdu::GetPaneRenderChanges(_)
                         | codec::Pdu::GetLines(_)
                         | codec::Pdu::WriteToPane(_)
