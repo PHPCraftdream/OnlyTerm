@@ -1267,6 +1267,13 @@ mod tests {
     /// negotiated (so eg. Codex CLI, which negotiates kitty keyboard
     /// protocol, gets the disambiguated CSI-u form it expects), falling
     /// back to a raw '\n' only for apps that haven't negotiated one.
+    /// CTRL+Enter is deliberately bound to the *CTRL+J* chord rather than to
+    /// `SendEnterOrNewline(CTRL)`: a faithful modified-Enter is what the
+    /// chord literally is, but hardly any application acts on one (Codex CLI
+    /// ignores it, and so does Windows Terminal), whereas CTRL+J is the
+    /// universally understood "insert a line feed" chord. Both chords
+    /// therefore insert a newline, which is what a user pressing either of
+    /// them is asking for.
     #[test]
     fn ctrl_enter_sends_newline() {
         let input_map = InputMap::default_input_map();
@@ -1274,10 +1281,7 @@ mod tests {
         let entry = input_map
             .lookup_key(&KeyCode::Char('\r'), Modifiers::CTRL, None)
             .expect("CTRL+Enter must have a default binding");
-        assert_eq!(
-            entry.action,
-            KeyAssignment::SendEnterOrNewline(Modifiers::CTRL)
-        );
+        assert_eq!(entry.action, KeyAssignment::SendChar(Modifiers::CTRL, 'j'));
     }
 
     #[test]
@@ -1353,61 +1357,72 @@ mod tests {
         );
     }
 
-    /// Unit test: verify that a Ctrl+j `KeyEvent` -- the same shape the
-    /// `SendChar(Modifiers::CTRL, 'j')` action constructs internally, since
-    /// it carries the modifiers through unchanged (see `SendChar`'s handler
-    /// in `termwindow/actions.rs`) -- encodes correctly via
-    /// win32-input-mode. This tests the encoding path WITHOUT requiring a
-    /// live pane or Codex CLI session.
+    /// Regression test for the bug that made CTRL+J do *nothing at all* in
+    /// Codex CLI: `SendChar`'s handler used to build its synthetic key event
+    /// with `raw_code: 0, scan_code: 0`, and those two zeros go straight into
+    /// the `Vk`/`Sc` fields of the win32-input-mode sequence. ConPTY and
+    /// crossterm recover the character by calling `ToUnicode(vk, sc, ..)`,
+    /// which fails outright for `vk == 0`, so the keypress was dropped before
+    /// the application ever saw it. CTRL+C worked throughout only because its
+    /// handler hardcoded the real VK_C/scan pair.
+    ///
+    /// This drives the *production* constructor rather than a hand-built
+    /// look-alike event: the previous version of this test hardcoded the
+    /// correct VK/scan values itself, so it passed against the very bug it
+    /// was meant to catch.
     #[cfg(windows)]
     #[test]
     fn send_char_j_encodes_correctly_via_win32_input_mode() {
-        use window::{KeyEvent, KeyboardLedStatus, Modifiers, RawKeyEvent};
+        let encoded =
+            crate::termwindow::actions::synthetic_key_down(KeyCode::Char('j'), Modifiers::CTRL)
+                .encode_win32_input_mode()
+                .expect("Ctrl+j should encode via win32-input-mode");
 
-        // `SendChar(mods, c)`'s handler builds exactly this shape of
-        // `KeyEvent` (`key: KeyCode::Char(c), modifiers: mods`) before
-        // calling `encode_via_negotiated_protocol` -- constructing it here
-        // directly verifies the encoding a real CTRL+J keypress produces.
-        let ctrl_j_event = KeyEvent {
-            key: KeyCode::Char('j'),
-            modifiers: Modifiers::CTRL,
-            leds: KeyboardLedStatus::empty(),
-            repeat_count: 1,
-            key_is_down: true,
-            raw: Some(RawKeyEvent {
-                key: KeyCode::Char('j'),
-                modifiers: Modifiers::CTRL,
-                leds: KeyboardLedStatus::empty(),
-                phys_code: Some(window::PhysKeyCode::J),
-                raw_code: 0x4a, // VK_J
-                #[cfg(windows)]
-                scan_code: 0x24,
-                repeat_count: 1,
-                key_is_down: true,
-                handled: window::Handled::new(),
-            }),
-            #[cfg(windows)]
-            win32_uni_char: None,
+        // ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _ -- VK_J (0x4a = 74), the J key's
+        // scan code (0x24 = 36), the Ctrl+J control code (0x0a = 10), key
+        // down, LEFT_CTRL_PRESSED (0x08), repeat count 1. This is byte for
+        // byte what Windows Terminal sends for a real CTRL+J keypress.
+        assert_eq!(encoded, "\u{1b}[74;36;10;1;8;1_");
+    }
+
+    /// CTRL+Enter is bound to the CTRL+J chord (see `ctrl_enter_sends_newline`),
+    /// so it must put the exact same bytes on the wire.
+    #[cfg(windows)]
+    #[test]
+    fn ctrl_enter_encodes_as_the_ctrl_j_chord() {
+        let input_map = InputMap::default_input_map();
+        let entry = input_map
+            .lookup_key(&KeyCode::Char('\r'), Modifiers::CTRL, None)
+            .expect("CTRL+Enter must have a default binding");
+
+        let KeyAssignment::SendChar(mods, c) = entry.action else {
+            panic!(
+                "CTRL+Enter must be bound to SendChar, got {:?}",
+                entry.action
+            );
         };
 
-        // The encode_win32_input_mode() function exists on KeyEvent
-        let encoded = ctrl_j_event
+        let encoded = crate::termwindow::actions::synthetic_key_down(KeyCode::Char(c), mods)
             .encode_win32_input_mode()
-            .expect("Ctrl+j should encode via win32-input-mode");
+            .expect("CTRL+Enter's bound chord should encode via win32-input-mode");
+        assert_eq!(encoded, "\u{1b}[74;36;10;1;8;1_");
+    }
 
-        // Format is ESC [ vkey;scan;uni;down;ctrlstate;repeat _
-        // Ctrl+J should carry 0x0a (10) in the uni field (control code),
-        // not 'j' (106). This is verified by the existing test
-        // encode_win32_input_mode_ctrl_chords_carry_the_control_code
-        // in wezterm-input-types/src/lib.rs.
-        assert!(
-            encoded.starts_with('\u{1b}'),
-            "win32-input-mode encoding must start with ESC"
-        );
-        assert!(
-            encoded.contains(';'),
-            "must have semicolon-separated fields"
-        );
+    /// SHIFT+Enter has no equivalent problem to CTRL+Enter's -- applications
+    /// (Codex CLI included) do act on a faithful modified-Enter here -- so it
+    /// keeps its `SendEnterOrNewline` binding, and must encode as a real
+    /// Enter keypress with SHIFT held.
+    #[cfg(windows)]
+    #[test]
+    fn shift_enter_encodes_as_a_real_modified_enter() {
+        let encoded =
+            crate::termwindow::actions::synthetic_key_down(KeyCode::Char('\r'), Modifiers::SHIFT)
+                .encode_win32_input_mode()
+                .expect("Shift+Enter should encode via win32-input-mode");
+
+        // VK_RETURN (0x0d = 13), Enter's scan code (0x1c = 28), CR (0x0d = 13),
+        // key down, SHIFT_PRESSED (0x10 = 16), repeat count 1.
+        assert_eq!(encoded, "\u{1b}[13;28;13;1;16;1_");
     }
 
     /// Builds an `InputMap` from a minimal user-style config containing an

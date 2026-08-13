@@ -43,7 +43,7 @@ use wezterm_term::color::ColorPalette;
 use wezterm_term::input::LastMouseClick;
 use wezterm_term::{Progress, StableRowIndex, TerminalSize};
 
-mod actions;
+pub(crate) mod actions;
 pub mod background;
 pub mod box_model;
 pub mod charselect;

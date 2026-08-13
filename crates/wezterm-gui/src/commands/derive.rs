@@ -1207,7 +1207,14 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                   0x0A) instead, so a newline can still be inserted \
                   reliably (eg: in a multi-line prompt)."
                 .into(),
-            keys: vec![(Modifiers::CTRL, "Enter".into())],
+            // Deliberately unbound by default: CTRL+Enter is bound to
+            // `SendChar(CTRL, 'j')` below instead. A faithful modified-Enter
+            // is what this action sends, but very few applications act on
+            // one -- Codex CLI ignores it, and so does Windows Terminal's
+            // equivalent -- whereas CTRL+J is the universally understood
+            // "insert a line feed" chord. This action stays available for
+            // anyone who does want the faithful form via their own config.
+            keys: vec![],
             args: &[ArgType::ActivePane],
             menubar: &[],
             icon: Some("md_keyboard_return"),
@@ -1249,9 +1256,16 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                      falling back to a literal LF (0x0A) byte if no protocol was \
                      negotiated. This gives Ctrl+J protocol awareness, so apps like \
                      Codex CLI that expect win32-input-mode-encoded keystrokes get the \
-                     correct form instead of a mixed raw-byte/CSI-u stream."
+                     correct form instead of a mixed raw-byte/CSI-u stream.\n\n\
+                     CTRL+Enter is bound here too, rather than to the faithful \
+                     `SendEnterOrNewline(CTRL)`: a modified-Enter is what that chord \
+                     literally is, but hardly anything acts on one (Codex CLI ignores \
+                     it, as does Windows Terminal), while CTRL+J is the universally \
+                     understood \"insert a line feed\" chord. Both chords therefore \
+                     insert a newline, which is what a user pressing either of them \
+                     is asking for."
                     .into(),
-                    vec![(Modifiers::CTRL, "j".into())],
+                    vec![(Modifiers::CTRL, "j".into()), (Modifiers::CTRL, "Enter".into())],
                 )
             } else {
                 (

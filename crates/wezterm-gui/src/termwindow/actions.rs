@@ -36,6 +36,50 @@ use std::time::{Duration, Instant};
 use wezterm_term::color::ColorPalette;
 use wezterm_term::{StableRowIndex, TerminalConfiguration, TerminalSize};
 
+/// Builds a key-down event that looks like a real hardware press of `key`
+/// with `mods` held, for the key *assignments* that need to feed a keypress
+/// to the pane's application (`CopySelectionOrInterrupt`,
+/// `SendEnterOrNewline`, `SendChar`) rather than write a fixed byte.
+///
+/// Filling in the physical identity of the key -- `phys_code`, and the
+/// Windows virtual-key and scan codes -- is load-bearing, not cosmetic:
+/// `KeyEvent::encode_win32_input_mode` copies the latter two straight into
+/// the `Vk`/`Sc` fields of the sequence it emits, and a record carrying
+/// `Vk = 0` cannot be resolved back to a key by the receiver. ConPTY and
+/// crossterm both recover the character by calling `ToUnicode(vk, sc, ..)`,
+/// which fails outright for `vk == 0`, so such a keypress is dropped
+/// silently and the application never sees it at all. That is precisely why
+/// Ctrl+C (which hardcoded the real VK_C/scan pair) worked while Ctrl+J
+/// (which passed zeros) did nothing whatsoever.
+pub(crate) fn synthetic_key_down(key: KeyCode, mods: Modifiers) -> KeyEvent {
+    let phys_code = key.to_phys();
+    let (raw_code, _scan_code) = phys_code
+        .and_then(|phys| phys.to_win32_key_codes())
+        .unwrap_or((0, 0));
+
+    KeyEvent {
+        key: key.clone(),
+        modifiers: mods,
+        leds: KeyboardLedStatus::empty(),
+        repeat_count: 1,
+        key_is_down: true,
+        raw: Some(RawKeyEvent {
+            key,
+            modifiers: mods,
+            leds: KeyboardLedStatus::empty(),
+            phys_code,
+            raw_code,
+            #[cfg(windows)]
+            scan_code: _scan_code,
+            repeat_count: 1,
+            key_is_down: true,
+            handled: Handled::new(),
+        }),
+        #[cfg(windows)]
+        win32_uni_char: None,
+    }
+}
+
 impl TermWindow {
     pub(super) fn palette(&mut self) -> &ColorPalette {
         if self.palette.is_none() {
@@ -1053,27 +1097,7 @@ impl TermWindow {
                     // negotiates) expects Ctrl+C in that app's requested
                     // form and may not treat a bare `\x03` as an interrupt
                     // while that mode is active.
-                    let event = KeyEvent {
-                        key: KeyCode::Char('c'),
-                        modifiers: Modifiers::CTRL,
-                        leds: KeyboardLedStatus::empty(),
-                        repeat_count: 1,
-                        key_is_down: true,
-                        raw: Some(RawKeyEvent {
-                            key: KeyCode::Char('c'),
-                            modifiers: Modifiers::CTRL,
-                            leds: KeyboardLedStatus::empty(),
-                            phys_code: Some(PhysKeyCode::C),
-                            raw_code: 0x43, // VK_C
-                            #[cfg(windows)]
-                            scan_code: 0x2e,
-                            repeat_count: 1,
-                            key_is_down: true,
-                            handled: Handled::new(),
-                        }),
-                        #[cfg(windows)]
-                        win32_uni_char: None,
-                    };
+                    let event = synthetic_key_down(KeyCode::Char('c'), Modifiers::CTRL);
                     match self.encode_via_negotiated_protocol(pane, &event) {
                         Some(encoded) => {
                             pane.writer().write_all(encoded.as_bytes()).ok();
@@ -1096,27 +1120,7 @@ impl TermWindow {
                 // negotiated such a protocol get the '\n' fallback, since
                 // that's the best a plain/legacy app can do with this
                 // chord.
-                let event = KeyEvent {
-                    key: KeyCode::Char('\r'),
-                    modifiers: *mods,
-                    leds: KeyboardLedStatus::empty(),
-                    repeat_count: 1,
-                    key_is_down: true,
-                    raw: Some(RawKeyEvent {
-                        key: KeyCode::Char('\r'),
-                        modifiers: *mods,
-                        leds: KeyboardLedStatus::empty(),
-                        phys_code: Some(PhysKeyCode::Return),
-                        raw_code: 0x0d, // VK_RETURN
-                        #[cfg(windows)]
-                        scan_code: 0x1c,
-                        repeat_count: 1,
-                        key_is_down: true,
-                        handled: Handled::new(),
-                    }),
-                    #[cfg(windows)]
-                    win32_uni_char: None,
-                };
+                let event = synthetic_key_down(KeyCode::Char('\r'), *mods);
                 let encoded = self.encode_via_negotiated_protocol(pane, &event);
                 // Logged at info (not trace) deliberately: this chord is rare
                 // and user-initiated, and which of the two branches below
@@ -1160,27 +1164,7 @@ impl TermWindow {
                 // CTRL+j into a plain 'j' keypress for any app that HAS
                 // negotiated a protocol, which defeats the point of this
                 // action.
-                let event = KeyEvent {
-                    key: KeyCode::Char(*c),
-                    modifiers: *mods,
-                    leds: KeyboardLedStatus::empty(),
-                    repeat_count: 1,
-                    key_is_down: true,
-                    raw: Some(RawKeyEvent {
-                        key: KeyCode::Char(*c),
-                        modifiers: *mods,
-                        leds: KeyboardLedStatus::empty(),
-                        phys_code: None,
-                        raw_code: 0,
-                        #[cfg(windows)]
-                        scan_code: 0,
-                        repeat_count: 1,
-                        key_is_down: true,
-                        handled: Handled::new(),
-                    }),
-                    #[cfg(windows)]
-                    win32_uni_char: None,
-                };
+                let event = synthetic_key_down(KeyCode::Char(*c), *mods);
                 let encoded = self.encode_via_negotiated_protocol(pane, &event);
                 // See `SendEnterOrNewline` above for why this is logged at
                 // info: same rationale, same "which branch fired" question.

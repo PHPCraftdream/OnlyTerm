@@ -154,6 +154,91 @@ impl PhysKeyCode {
         )
     }
 
+    /// Returns the Windows virtual-key code and the IBM PC "set 1" scan code
+    /// that a real hardware press of this key reports in a
+    /// `KEY_EVENT_RECORD`, or `None` for keys this table doesn't cover.
+    ///
+    /// Both values are properties of the *physical* keyboard rather than of
+    /// the active layout, which is exactly what `PhysKeyCode` denotes, so
+    /// this is a fixed table rather than a `VkKeyScanW`/`MapVirtualKeyW`
+    /// round-trip: under eg. a Russian layout `VkKeyScanW('j')` fails
+    /// outright, yet the J *key* is still physically there and still what a
+    /// Ctrl+J chord means.
+    ///
+    /// This exists because synthetic key events (the ones raised by key
+    /// *assignments* such as `SendChar`, rather than by a real keypress)
+    /// have no hardware event to copy these from, and
+    /// `KeyEvent::encode_win32_input_mode` puts them straight into the
+    /// `Vk`/`Sc` fields of the sequence it emits. Sending zeros there
+    /// produces a record that consumers cannot resolve back to a key --
+    /// ConPTY/crossterm run `ToUnicode(vk, sc, ..)` to recover the
+    /// character, which fails for `vk == 0` and drops the keypress entirely.
+    ///
+    /// Coverage is deliberately limited to the keys `KeyCode::to_phys` can
+    /// produce from a `KeyCode::Char`, since those are the ones synthetic
+    /// events are built from; function keys, arrows, the keypad and the
+    /// modifiers themselves return `None`.
+    pub fn to_win32_key_codes(self) -> Option<(u32, u32)> {
+        // Virtual-key codes: <https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes>
+        let (vkey, scan_code): (u32, u32) = match self {
+            Self::A => (0x41, 0x1e),
+            Self::B => (0x42, 0x30),
+            Self::C => (0x43, 0x2e),
+            Self::D => (0x44, 0x20),
+            Self::E => (0x45, 0x12),
+            Self::F => (0x46, 0x21),
+            Self::G => (0x47, 0x22),
+            Self::H => (0x48, 0x23),
+            Self::I => (0x49, 0x17),
+            Self::J => (0x4a, 0x24),
+            Self::K => (0x4b, 0x25),
+            Self::L => (0x4c, 0x26),
+            Self::M => (0x4d, 0x32),
+            Self::N => (0x4e, 0x31),
+            Self::O => (0x4f, 0x18),
+            Self::P => (0x50, 0x19),
+            Self::Q => (0x51, 0x10),
+            Self::R => (0x52, 0x13),
+            Self::S => (0x53, 0x1f),
+            Self::T => (0x54, 0x14),
+            Self::U => (0x55, 0x16),
+            Self::V => (0x56, 0x2f),
+            Self::W => (0x57, 0x11),
+            Self::X => (0x58, 0x2d),
+            Self::Y => (0x59, 0x15),
+            Self::Z => (0x5a, 0x2c),
+            Self::K0 => (0x30, 0x0b),
+            Self::K1 => (0x31, 0x02),
+            Self::K2 => (0x32, 0x03),
+            Self::K3 => (0x33, 0x04),
+            Self::K4 => (0x34, 0x05),
+            Self::K5 => (0x35, 0x06),
+            Self::K6 => (0x36, 0x07),
+            Self::K7 => (0x37, 0x08),
+            Self::K8 => (0x38, 0x09),
+            Self::K9 => (0x39, 0x0a),
+            Self::Return => (0x0d, 0x1c),       // VK_RETURN
+            Self::Space => (0x20, 0x39),        // VK_SPACE
+            Self::Tab => (0x09, 0x0f),          // VK_TAB
+            Self::Escape => (0x1b, 0x01),       // VK_ESCAPE
+            Self::Backspace => (0x08, 0x0e),    // VK_BACK
+            Self::Delete => (0x2e, 0x53),       // VK_DELETE
+            Self::Minus => (0xbd, 0x0c),        // VK_OEM_MINUS
+            Self::Equal => (0xbb, 0x0d),        // VK_OEM_PLUS
+            Self::LeftBracket => (0xdb, 0x1a),  // VK_OEM_4
+            Self::RightBracket => (0xdd, 0x1b), // VK_OEM_6
+            Self::Backslash => (0xdc, 0x2b),    // VK_OEM_5
+            Self::Semicolon => (0xba, 0x27),    // VK_OEM_1
+            Self::Quote => (0xde, 0x28),        // VK_OEM_7
+            Self::Grave => (0xc0, 0x29),        // VK_OEM_3
+            Self::Comma => (0xbc, 0x33),        // VK_OEM_COMMA
+            Self::Period => (0xbe, 0x34),       // VK_OEM_PERIOD
+            Self::Slash => (0xbf, 0x35),        // VK_OEM_2
+            _ => return None,
+        };
+        Some((vkey, scan_code))
+    }
+
     pub fn to_key_code(self) -> KeyCode {
         match self {
             Self::LeftShift => KeyCode::LeftShift,
