@@ -35,6 +35,8 @@ mod test {
     use std::collections::HashMap;
     use std::io::Cursor;
     use std::ops::Range;
+    use termwiz::escape::csi::KittyKeyboardFlags;
+    use termwiz::input::KeyboardEncoding;
     use termwiz::surface::{Line, SequenceNo};
     use wezterm_term::{StableRowIndex, TerminalSize};
 
@@ -215,10 +217,17 @@ mod test {
     }
 
     fn sample_render_changes_response() -> GetPaneRenderChangesResponse {
+        sample_render_changes_response_with_encoding(KeyboardEncoding::Xterm)
+    }
+
+    fn sample_render_changes_response_with_encoding(
+        keyboard_encoding: KeyboardEncoding,
+    ) -> GetPaneRenderChangesResponse {
         let mut user_vars = HashMap::new();
         user_vars.insert("foo".to_string(), "bar".to_string());
         user_vars.insert("baz".to_string(), "qux".to_string());
         GetPaneRenderChangesResponse {
+            keyboard_encoding,
             pane_id: 42,
             mouse_grabbed: false,
             cursor_position: StableCursorPosition::default(),
@@ -260,6 +269,81 @@ mod test {
                 other.pdu_name()
             ),
         }
+    }
+
+    #[test]
+    fn test_render_changes_keyboard_encoding_round_trip() {
+        // The keyboard encoding the remote application negotiated must
+        // survive a PDU encode/decode round-trip through the real mux wire
+        // format (varbincode). Without it, `ClientPane::get_keyboard_encoding`
+        // has no source of truth and falls back to the `Pane` trait default
+        // of `Xterm` forever, so the GUI encodes synthetic key events
+        // (Ctrl+Enter/Shift+Enter/Ctrl+J via `SendEnterOrNewline`) as legacy
+        // raw bytes even for an application that explicitly negotiated
+        // win32-input-mode or the kitty keyboard protocol.
+        let kitty_flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES
+            | KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES;
+        for encoding in [
+            KeyboardEncoding::Xterm,
+            KeyboardEncoding::CsiU,
+            KeyboardEncoding::Win32,
+            KeyboardEncoding::Kitty(KittyKeyboardFlags::NONE),
+            KeyboardEncoding::Kitty(kitty_flags),
+        ] {
+            let mut encoded = Vec::new();
+            Pdu::GetPaneRenderChangesResponse(sample_render_changes_response_with_encoding(
+                encoding,
+            ))
+            .encode(&mut encoded, 0x10)
+            .unwrap();
+            let decoded = Pdu::decode(encoded.as_slice()).unwrap();
+            match decoded.pdu {
+                Pdu::GetPaneRenderChangesResponse(resp) => {
+                    assert_eq!(
+                        resp.keyboard_encoding, encoding,
+                        "keyboard_encoding did not survive round-trip"
+                    );
+                }
+                other => panic!(
+                    "expected GetPaneRenderChangesResponse, got {}",
+                    other.pdu_name()
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn test_render_changes_keyboard_encoding_is_wire_visible() {
+        // Each distinct encoding must produce a distinct payload, so that a
+        // peer cannot mistake one protocol for another. In particular the
+        // kitty flags bitset has to be carried, not just the fact that
+        // "kitty" was negotiated: the flags decide how keys are encoded.
+        let payload_for = |encoding| {
+            let mut buf = Vec::new();
+            Pdu::GetPaneRenderChangesResponse(sample_render_changes_response_with_encoding(
+                encoding,
+            ))
+            .encode(&mut buf, 0x10)
+            .unwrap();
+            buf
+        };
+
+        let xterm = payload_for(KeyboardEncoding::Xterm);
+        let win32 = payload_for(KeyboardEncoding::Win32);
+        let kitty_none = payload_for(KeyboardEncoding::Kitty(KittyKeyboardFlags::NONE));
+        let kitty_some = payload_for(KeyboardEncoding::Kitty(
+            KittyKeyboardFlags::REPORT_EVENT_TYPES,
+        ));
+
+        assert_ne!(xterm, win32, "Win32 must not encode identically to Xterm");
+        assert_ne!(
+            xterm, kitty_none,
+            "Kitty must not encode identically to Xterm"
+        );
+        assert_ne!(
+            kitty_none, kitty_some,
+            "the kitty progressive-enhancement flags must influence the wire encoding"
+        );
     }
 
     /// Mirrors the on-wire shape of `GetPaneRenderChangesResponse` as it was

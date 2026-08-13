@@ -430,9 +430,12 @@ fn keyboard_encoding_change_alone_produces_a_push() {
             .keyboard_encoding
             .lock() = encoding;
 
-        let resp = per_pane
-            .compute_changes(&pane, None)
-            .unwrap_or_else(|| panic!("changing the encoding to {:?} must produce a push", encoding));
+        let resp = per_pane.compute_changes(&pane, None).unwrap_or_else(|| {
+            panic!(
+                "changing the encoding to {:?} must produce a push",
+                encoding
+            )
+        });
         assert_eq!(
             resp.keyboard_encoding, encoding,
             "the pushed response must carry the new encoding"

@@ -113,6 +113,16 @@ fn to_input_types_key_code(key: KeyCode) -> Option<wezterm_input_types::KeyCode>
     })
 }
 
+/// Which keyboard encoding protocol the application running in a terminal
+/// has negotiated.
+///
+/// This is serializable (behind the `use_serde` feature) because the mux
+/// protocol has to be able to tell a remote client which encoding the
+/// application in a remotely-hosted pane negotiated: the client-side GUI
+/// needs it in order to encode synthetic key events (eg. those raised by
+/// `SendEnterOrNewline`) through the same protocol the application asked
+/// for. See `codec::GetPaneRenderChangesResponse::keyboard_encoding`.
+#[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyboardEncoding {
     Xterm,

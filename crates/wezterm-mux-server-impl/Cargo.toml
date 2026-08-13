@@ -25,5 +25,10 @@ wezterm-client.workspace = true
 wezterm-term = { workspace=true, features=["use_serde"] }
 wezterm-uds.workspace = true
 
+[dev-dependencies]
+# Only needed so that test doubles can spell the `Pane::writer` return type
+# (`parking_lot::MappedMutexGuard`).
+parking_lot.workspace = true
+
 [target."cfg(windows)".dependencies]
 winapi = { workspace=true, features = [ "winuser" ]}

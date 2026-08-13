@@ -141,7 +141,13 @@ macro_rules! pdu {
 /// The overall version of the codec.
 /// This must be bumped when backwards incompatible changes
 /// are made to the types and protocol.
-pub const CODEC_VERSION: usize = 46;
+/// 47: `GetPaneRenderChangesResponse` gained a trailing `keyboard_encoding`
+/// field so that a `ClientPane` can report the keyboard protocol the remote
+/// application negotiated. varbincode is a sequential format, so an old
+/// client decoding a new payload (or vice versa) would misread the stream;
+/// `Client::verify_version_compat` compares this constant for exact equality
+/// and refuses to attach on a mismatch, which is what makes that safe.
+pub const CODEC_VERSION: usize = 47;
 
 // Defines the Pdu enum.
 // Each struct has an explicit identifying number.

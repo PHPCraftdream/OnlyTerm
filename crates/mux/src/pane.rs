@@ -254,6 +254,17 @@ pub trait Pane: Downcast + Send + Sync {
     fn palette(&self) -> ColorPalette;
     fn domain_id(&self) -> DomainId;
 
+    /// The keyboard encoding protocol (win32-input-mode, kitty, CSI-u) that
+    /// the application running in this pane has negotiated, if any. The GUI
+    /// uses this to decide how to encode key events, so an implementation
+    /// that reports the default `Xterm` when a protocol *was* in fact
+    /// negotiated will silently downgrade every keystroke to legacy bytes.
+    ///
+    /// `LocalPane` answers from its own `TerminalState`; `ClientPane`
+    /// answers from the value mirrored out of
+    /// `GetPaneRenderChangesResponse::keyboard_encoding`. The default here is
+    /// only correct for panes that have no terminal of their own at all
+    /// (overlays and the like).
     fn get_keyboard_encoding(&self) -> KeyboardEncoding {
         KeyboardEncoding::Xterm
     }

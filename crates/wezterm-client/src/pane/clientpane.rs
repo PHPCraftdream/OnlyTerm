@@ -21,7 +21,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::sync::Arc;
-use termwiz::input::KeyEvent;
+use termwiz::input::{KeyEvent, KeyboardEncoding};
 use termwiz::surface::SequenceNo;
 use url::Url;
 use wezterm_dynamic::Value;
@@ -44,6 +44,14 @@ pub struct ClientPane {
     mouse: Arc<Mutex<MouseState>>,
     clipboard: Mutex<Option<Arc<dyn Clipboard>>>,
     mouse_grabbed: Mutex<bool>,
+    /// The keyboard encoding protocol negotiated by the application running
+    /// in the *remote* pane, mirrored here from every
+    /// `GetPaneRenderChangesResponse`. There is no terminal on this side of
+    /// the connection to ask, so without this mirror `get_keyboard_encoding`
+    /// would fall back to the `Pane` trait default of `Xterm` forever and the
+    /// GUI would send legacy bytes to applications that negotiated
+    /// win32-input-mode or the kitty protocol.
+    keyboard_encoding: Mutex<KeyboardEncoding>,
     ignore_next_kill: Mutex<bool>,
     user_vars: Mutex<HashMap<String, String>>,
     config: Mutex<Option<Arc<dyn TerminalConfiguration>>>,
@@ -126,6 +134,7 @@ impl ClientPane {
             palette: Mutex::new(palette),
             clipboard: Mutex::new(None),
             mouse_grabbed: Mutex::new(false),
+            keyboard_encoding: Mutex::new(KeyboardEncoding::Xterm),
             ignore_next_kill: Mutex::new(false),
             unseen_output: Mutex::new(false),
             user_vars: Mutex::new(HashMap::new()),
@@ -138,6 +147,7 @@ impl ClientPane {
         match pdu {
             Pdu::GetPaneRenderChangesResponse(mut delta) => {
                 *self.mouse_grabbed.lock() = delta.mouse_grabbed;
+                *self.keyboard_encoding.lock() = delta.keyboard_encoding;
                 *self.user_vars.lock() = std::mem::take(&mut delta.user_vars);
 
                 let bonus_lines = std::mem::take(&mut delta.bonus_lines);
@@ -553,6 +563,10 @@ impl Pane for ClientPane {
 
     fn is_mouse_grabbed(&self) -> bool {
         *self.mouse_grabbed.lock()
+    }
+
+    fn get_keyboard_encoding(&self) -> KeyboardEncoding {
+        *self.keyboard_encoding.lock()
     }
 
     fn is_alt_screen_active(&self) -> bool {

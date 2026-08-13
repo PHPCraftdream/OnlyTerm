@@ -2,6 +2,7 @@ use codec::*;
 use mux::pane::{CachePolicy, Pane};
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use std::sync::{Arc, Mutex};
+use termwiz::input::KeyboardEncoding;
 use termwiz::surface::SequenceNo;
 use url::Url;
 use wezterm_term::terminal::Alert;
@@ -16,6 +17,11 @@ pub(crate) struct PerPane {
     working_dir: Option<Url>,
     dimensions: RenderableDimensions,
     mouse_grabbed: bool,
+    /// Last keyboard encoding we told this client about. `None` until the
+    /// first response is computed, so the very first push always carries the
+    /// current value (which matters when the application negotiated its
+    /// protocol before this client attached).
+    keyboard_encoding: Option<KeyboardEncoding>,
     sent_initial_palette: bool,
     seqno: SequenceNo,
     config_generation: usize,
@@ -31,6 +37,17 @@ impl PerPane {
         let mut changed = false;
         let mouse_grabbed = pane.is_mouse_grabbed();
         if mouse_grabbed != self.mouse_grabbed {
+            changed = true;
+        }
+
+        // An application negotiating (or dropping) win32-input-mode / the
+        // kitty keyboard protocol may not touch the screen at all, so this
+        // has to participate in the change detection in its own right --
+        // otherwise the client would keep encoding synthetic key events for
+        // the wrong protocol until some unrelated output happened to force a
+        // push.
+        let keyboard_encoding = pane.get_keyboard_encoding();
+        if Some(keyboard_encoding) != self.keyboard_encoding {
             changed = true;
         }
 
@@ -100,6 +117,7 @@ impl PerPane {
         self.working_dir = working_dir.clone();
         self.dimensions = dims;
         self.mouse_grabbed = mouse_grabbed;
+        self.keyboard_encoding = Some(keyboard_encoding);
 
         let bonus_lines = bonus_lines.into();
         Some(GetPaneRenderChangesResponse {
@@ -114,6 +132,7 @@ impl PerPane {
             input_serial: force_with_input_serial,
             seqno: self.seqno,
             user_vars: pane.copy_user_vars(),
+            keyboard_encoding,
         })
     }
 }
