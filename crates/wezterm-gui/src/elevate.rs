@@ -487,7 +487,7 @@ mod tests {
         );
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123 --cwd \"C:\\Users\\Test\""
+            "--single-pane --connect-ws-port 12345 --token test-token-abc123 --cwd C:\\Users\\Test"
         );
     }
 
