@@ -61,11 +61,47 @@ impl Shell {
         match self {
             Shell::Cmd => vec!["cmd.exe".to_string()],
             Shell::Bash => vec![find_git_bash()],
-            Shell::Powershell => vec!["powershell.exe".to_string()],
+            Shell::Powershell => vec![
+                "powershell.exe".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                POWERSHELL_UTF8_PREAMBLE.to_string(),
+            ],
             Shell::Wsl => vec!["wsl.exe".to_string()],
         }
     }
 }
+
+/// Run at startup by the `Powershell` option to put the session on UTF-8.
+///
+/// Windows PowerShell 5.1 inherits the console's code page, which on a
+/// default install is the system OEM one (437 here) -- and neither it nor
+/// the ANSI code page (1252) can represent Cyrillic at all, so any such
+/// character that has to pass through a code page becomes a literal `?`.
+/// Terminal-side output happens to escape this, because a console app
+/// writing to a real console goes through `WriteConsoleW` in UTF-16 with no
+/// code page involved; what does not escape it is everything that *is*
+/// byte-oriented: console input (so pasted text), and pipes to and from
+/// native commands.
+///
+/// Assigning `[Console]::OutputEncoding`/`InputEncoding` is what does the
+/// work rather than a plain `chcp 65001`: those setters call
+/// `SetConsoleOutputCP`/`SetConsoleCP` *and* rebuild the cached reader and
+/// writer, whereas `chcp` alone would leave PowerShell still encoding its
+/// own output with the code page it captured at startup -- the console and
+/// the shell would then disagree, which is worse than either alone.
+/// `$OutputEncoding` is separate again, and governs what PowerShell writes
+/// into a native command's stdin.
+///
+/// Deliberately free of quote characters so it survives being quoted into a
+/// single argument by both spawn paths, the ordinary one and
+/// `elevate.rs`'s `construct_start_command_line`.
+///
+/// Verified in a real ConPTY (`onlyterm record`): all three report `utf-8`
+/// afterwards and `chcp` reports 65001, with no exception from the
+/// `InputEncoding` setter.
+const POWERSHELL_UTF8_PREAMBLE: &str = "[Console]::OutputEncoding = [Console]::InputEncoding = \
+     [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding";
 
 /// Locates Git for Windows' `bash.exe` by checking well-known install
 /// locations directly, rather than resolving a bare `"bash.exe"` via PATH:
@@ -757,5 +793,54 @@ impl Modal for NewTabOptions {
 
     fn reconfigure(&self, _term_window: &mut TermWindow) {
         self.element.borrow_mut().take();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The UTF-8 preamble is passed as a single `-Command` argument, and both
+    /// spawn paths re-quote it -- the elevated one by wrapping anything
+    /// containing a space in double quotes (`elevate.rs`'s `quote_arg`). A
+    /// quote character anywhere in the preamble would terminate that wrapping
+    /// early and hand PowerShell a truncated command, so keep it quote-free.
+    #[test]
+    fn powershell_utf8_preamble_needs_no_quote_escaping() {
+        assert!(
+            !POWERSHELL_UTF8_PREAMBLE.contains('"') && !POWERSHELL_UTF8_PREAMBLE.contains('\''),
+            "preamble must stay free of quote characters, got: {}",
+            POWERSHELL_UTF8_PREAMBLE
+        );
+    }
+
+    /// `-Command` without `-NoExit` would run the preamble and immediately
+    /// exit, closing the tab the user just asked for.
+    #[test]
+    fn powershell_argv_keeps_the_session_open_and_sets_utf8() {
+        let argv = Shell::Powershell.argv();
+        assert_eq!(
+            argv,
+            vec![
+                "powershell.exe".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                POWERSHELL_UTF8_PREAMBLE.to_string(),
+            ]
+        );
+        // Setting the two `[Console]` encodings is what actually calls
+        // SetConsoleOutputCP/SetConsoleCP; `$OutputEncoding` covers what gets
+        // written into a native command's stdin. All three are load-bearing.
+        assert!(POWERSHELL_UTF8_PREAMBLE.contains("[Console]::OutputEncoding"));
+        assert!(POWERSHELL_UTF8_PREAMBLE.contains("[Console]::InputEncoding"));
+        assert!(POWERSHELL_UTF8_PREAMBLE.contains("$OutputEncoding"));
+        assert!(POWERSHELL_UTF8_PREAMBLE.contains("UTF8Encoding"));
+    }
+
+    /// The other shells must not accidentally pick up PowerShell-only flags.
+    #[test]
+    fn other_shells_are_launched_bare() {
+        assert_eq!(Shell::Cmd.argv(), vec!["cmd.exe".to_string()]);
+        assert_eq!(Shell::Wsl.argv(), vec!["wsl.exe".to_string()]);
     }
 }
