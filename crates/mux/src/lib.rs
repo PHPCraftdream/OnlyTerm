@@ -1104,8 +1104,21 @@ impl Mux {
                     let (pane_domain_id, _window_id, _tab_id) = self
                         .resolve_pane_id(pane_id)
                         .ok_or_else(|| anyhow!("pane_id {} invalid", pane_id))?;
-                    self.get_domain(pane_domain_id)
-                        .expect("resolve_pane_id to give valid domain_id")
+                    let pane_domain = self
+                        .get_domain(pane_domain_id)
+                        .expect("resolve_pane_id to give valid domain_id");
+                    // See `Domain::spawnable`'s doc comment: a single-pane
+                    // hosting-process domain cannot host a second pane, so
+                    // "follow the current pane's domain" (what a plain new-
+                    // tab click/keybinding asks for) falls back to the
+                    // default domain instead of resolving to a domain that
+                    // would just fail (or, for the elevated case, be
+                    // correctly rejected by that channel's PDU allow-list).
+                    if pane_domain.spawnable() {
+                        pane_domain
+                    } else {
+                        self.default_domain()
+                    }
                 }
                 None => self.default_domain(),
             },

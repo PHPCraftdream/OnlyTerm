@@ -189,6 +189,23 @@ pub trait Domain: Downcast + Send + Sync {
     /// There are some internal placeholder domains that are
     /// pre-created with local UI that we do not want to allow
     /// to show in the launcher/menu as launchable items.
+    ///
+    /// Also used for a "single-pane hosting process" domain (one dedicated
+    /// OS process per tab, used for regular and elevated/UAC tabs alike --
+    /// see `wezterm-gui`'s `spawn_single_pane_tab`/
+    /// `spawn_elevated_single_pane_tab`), which is built to host exactly
+    /// the one pane it was created for and overrides this to `false`.
+    /// `Mux::resolve_spawn_tab_domain` consults this for
+    /// `SpawnTabDomain::CurrentPaneDomain` (what a plain "new tab" click/
+    /// keybinding uses) and falls back to the default domain instead of
+    /// resolving to a domain that cannot actually be spawned into.
+    /// Confirmed live: without this, clicking the tab bar's "+" while a
+    /// single-pane-hosted tab is active tried to spawn a second pane into
+    /// that domain -- for an elevated tab this was cleanly rejected by the
+    /// security-critical PDU allow-list (`SpawnV2 not permitted over the
+    /// elevated single-pane rendezvous channel`), which is correct
+    /// behavior for that allow-list, but the "+" button silently did
+    /// nothing instead of opening a tab anywhere at all.
     fn spawnable(&self) -> bool {
         true
     }

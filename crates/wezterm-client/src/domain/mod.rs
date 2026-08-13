@@ -27,6 +27,11 @@ pub struct ClientDomain {
     label: String,
     inner: Mutex<Option<Arc<ClientInner>>>,
     local_domain_id: DomainId,
+    /// See `Domain::spawnable`'s doc comment. `true` for every ordinary
+    /// remote/proxy domain (SSH, a general mux connection, ...), which can
+    /// host any number of panes; `false` only for the single-pane hosting-
+    /// process domains constructed via `new_single_pane`.
+    spawnable: bool,
 }
 
 async fn update_remote_workspace(
@@ -169,6 +174,17 @@ fn mux_notify_client_domain(local_domain_id: DomainId, notif: MuxNotification) -
 
 impl ClientDomain {
     pub fn new(config: ClientDomainConfig) -> Self {
+        Self::new_impl(config, true)
+    }
+
+    /// Same as `new`, but for a domain that hosts exactly one dedicated
+    /// single-pane hosting process (regular or elevated) and can never be
+    /// spawned into again. See `Domain::spawnable`'s doc comment.
+    pub fn new_single_pane(config: ClientDomainConfig) -> Self {
+        Self::new_impl(config, false)
+    }
+
+    fn new_impl(config: ClientDomainConfig, spawnable: bool) -> Self {
         let local_domain_id = alloc_domain_id();
         let label = config.label();
         Mux::get().subscribe(move |notif| mux_notify_client_domain(local_domain_id, notif));
@@ -177,6 +193,7 @@ impl ClientDomain {
             label,
             inner: Mutex::new(None),
             local_domain_id,
+            spawnable,
         }
     }
 
@@ -1028,5 +1045,9 @@ impl Domain for ClientDomain {
         } else {
             DomainState::Detached
         }
+    }
+
+    fn spawnable(&self) -> bool {
+        self.spawnable
     }
 }
