@@ -9,6 +9,7 @@ members = [
   "crates/wezterm-cell",
   "crates/wezterm-escape-parser",
   "crates/wezterm-dynamic",
+  "crates/wezterm-elevated-transport",
   "crates/wezterm-gui",
   "crates/wezterm-mux-server",
   "crates/wezterm-open-url",
@@ -110,6 +111,7 @@ heapless = "0.8"
 hdrhistogram = "7.1"
 hex = {version="0.4", default-features=false}
 hostname = "0.4"
+http = "1"
 http_req = "0.11"
 human-sort = "0.2"
 humansize = "2.1"
@@ -196,6 +198,7 @@ thiserror = "1.0"
 tiny-skia = "0.11"
 tokio = "1.43"
 toml = "0.8"
+tungstenite = "0.30"
 ucd-trie = {version="0.1", default-features=false}
 uds_windows = "1.1"
 umask = { path = "crates/umask" }
@@ -217,6 +220,7 @@ wezterm-color-types = { version="0.3", path = "crates/color-types", default-feat
 wezterm-config-derive = { version="0.1", path="crates/config/derive" }
 wezterm-dynamic = { version = "0.2.1", path = "crates/wezterm-dynamic", default-features=false }
 wezterm-dynamic-derive = { version="0.1.1", path="crates/wezterm-dynamic/derive" }
+wezterm-elevated-transport = { path = "crates/wezterm-elevated-transport" }
 wezterm-escape-parser = { version="0.1.0", path="crates/wezterm-escape-parser" }
 wezterm-font = { path = "crates/wezterm-font" }
 wezterm-gui-subcommands = { path = "crates/wezterm-gui-subcommands" }
