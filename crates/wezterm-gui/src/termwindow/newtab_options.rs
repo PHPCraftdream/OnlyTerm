@@ -11,6 +11,7 @@ use crate::utilsprites::RenderMetrics;
 use config::keyassignment::{KeyAssignment, SpawnCommand, SpawnTabDomain};
 use config::{Dimension, ProcessPriority};
 use std::cell::{Ref, RefCell};
+use std::path::PathBuf;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,18 +50,53 @@ impl Shell {
         }
     }
 
-    /// Argv for launching this shell, resolved via PATH -- the same
-    /// convention `windows_default_prog()` and the old (now removed)
-    /// WSL launcher entries used, since this codebase has no separate
-    /// shell-path resolution helper to defer to instead.
+    /// Argv for launching this shell. `Cmd`/`Powershell`/`Wsl` are resolved
+    /// via PATH -- the same convention `windows_default_prog()` and the old
+    /// (now removed) WSL launcher entries used, since this codebase has no
+    /// separate shell-path resolution helper to defer to instead. `Bash`
+    /// instead resolves to an explicit path via `find_git_bash()`: see that
+    /// function's doc comment for why a bare `"bash.exe"` is unsafe on a
+    /// machine with WSL installed.
     fn argv(&self) -> Vec<String> {
         match self {
             Shell::Cmd => vec!["cmd.exe".to_string()],
-            Shell::Bash => vec!["bash.exe".to_string()],
+            Shell::Bash => vec![find_git_bash()],
             Shell::Powershell => vec!["powershell.exe".to_string()],
             Shell::Wsl => vec!["wsl.exe".to_string()],
         }
     }
+}
+
+/// Locates Git for Windows' `bash.exe` by checking well-known install
+/// locations directly, rather than resolving a bare `"bash.exe"` via PATH:
+/// Windows process-launch handle resolution consults the system directory
+/// (`%SystemRoot%\System32`) *before* PATH-listed directories, and on a
+/// machine with WSL installed, `System32\bash.exe` is WSL's own legacy
+/// launcher shim -- so a plain `"bash.exe"` argv silently launched WSL
+/// instead of Git Bash, even though `where.exe` (which does not replicate
+/// that same-directory-first search order) reported Git Bash's `bash.exe`
+/// first. Confirmed live: this dialog's "bash" and "wsl" options were
+/// producing identical `/mnt/c/...` WSL prompts.
+///
+/// Falls back to the bare `"bash.exe"` (letting ordinary process-launch
+/// resolution, System32-shim gotcha included, apply) only if none of the
+/// well-known install locations exist, so a Git-for-Windows install in a
+/// nonstandard location still gets *something* rather than a hard error.
+fn find_git_bash() -> String {
+    let candidates = [
+        std::env::var_os("ProgramFiles").map(|p| PathBuf::from(p).join("Git\\bin\\bash.exe")),
+        std::env::var_os("ProgramFiles(x86)").map(|p| PathBuf::from(p).join("Git\\bin\\bash.exe")),
+        std::env::var_os("LOCALAPPDATA")
+            .map(|p| PathBuf::from(p).join("Programs\\Git\\bin\\bash.exe")),
+    ];
+    for candidate in candidates.iter().flatten() {
+        if candidate.is_file() {
+            if let Some(s) = candidate.to_str() {
+                return s.to_string();
+            }
+        }
+    }
+    "bash.exe".to_string()
 }
 
 impl Elevation {
