@@ -61,6 +61,12 @@ struct Opt {
     #[arg(long = "cwd", value_parser, value_hint=ValueHint::DirPath)]
     cwd: Option<OsString>,
 
+    /// Windows process priority class for the initially spawned program.
+    /// One of: Idle, BelowNormal, Normal, AboveNormal, High, Realtime
+    /// (matches config::keyassignment::ProcessPriority's variant names).
+    #[arg(long = "priority", value_parser)]
+    priority: Option<String>,
+
     /// Instead of executing your shell, run PROG.
     /// For example: `wezterm start -- bash -l` will spawn bash
     /// as if it were a login shell.
@@ -302,6 +308,19 @@ fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
     let mut cmd_builder = cmd_builder;
     if let Some(cwd) = opts.cwd {
         cmd_builder.cwd(cwd);
+    }
+    #[cfg(windows)]
+    if let Some(priority) = &opts.priority {
+        let flag = match priority.as_str() {
+            "Idle" => 0x00000040,
+            "BelowNormal" => 0x00004000,
+            "Normal" => 0x00000020,
+            "AboveNormal" => 0x00008000,
+            "High" => 0x00000080,
+            "Realtime" => 0x00000100,
+            other => anyhow::bail!("unknown --priority value: {other}"),
+        };
+        cmd_builder.set_priority_class(flag);
     }
     let cmd = Some(cmd_builder);
 

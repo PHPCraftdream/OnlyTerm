@@ -37,6 +37,22 @@ pub fn unix_connect_with_retry(
                 let mut cmd = std::process::Command::new(&argv[0]);
                 cmd.args(&argv[1..]);
 
+                // Without this, Windows allocates a brand new visible
+                // console window for the child, because it's a
+                // console-subsystem binary (onlyterm-mux-server.exe) being
+                // spawned from a console-less GUI parent -- confirmed by
+                // live testing (a real cmd-style window flashed up on
+                // screen every time a proxy_command child was spawned).
+                // The proxy_command child only ever talks over the
+                // stdin/stdout socketpair below; it has no legitimate use
+                // for a visible console.
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+                    cmd.creation_flags(CREATE_NO_WINDOW);
+                }
+
                 let (a, b) = filedescriptor::socketpair()?;
 
                 cmd.stdin(b.as_stdio()?);

@@ -507,6 +507,129 @@ impl ClientDomain {
 
         Ok(())
     }
+
+    async fn attach_impl(
+        &self,
+        window_id: Option<WindowId>,
+        ui: ConnectionUI,
+        verbose: bool,
+    ) -> anyhow::Result<()> {
+        if self.state() == DomainState::Attached {
+            // Already attached
+            return Ok(());
+        }
+
+        let domain_id = self.local_domain_id;
+        let config = self.config.clone();
+
+        let activity = mux::activity::Activity::new();
+
+        ui.async_run_and_log_error({
+            let ui = ui.clone();
+            async move {
+                let mut cloned_ui = ui.clone();
+                let client = spawn_into_new_thread(move || match &config {
+                    ClientDomainConfig::Unix(unix) => {
+                        let initial = true;
+                        let no_auto_start = false;
+                        Client::new_unix_domain(
+                            Some(domain_id),
+                            unix,
+                            initial,
+                            &mut cloned_ui,
+                            no_auto_start,
+                        )
+                    }
+                })
+                .await?;
+
+                if verbose {
+                    ui.output_str("Checking server version\n");
+                }
+                client.verify_version_compat(&ui).await?;
+
+                if verbose {
+                    ui.output_str("Version check OK!  Requesting pane list...\n");
+                }
+                let panes = client.list_panes().await?;
+                if verbose {
+                    ui.output_str(&format!(
+                        "Server has {} tabs.  Attaching to local UI...\n",
+                        panes.tabs.len()
+                    ));
+                }
+                ClientDomain::finish_attach(domain_id, client, panes, window_id)
+            }
+        })
+        .await
+        .map_err(|e| {
+            // Always report errors, even in non-verbose mode -- silence
+            // should only ever hide routine progress noise, never a real
+            // failure.
+            ui.output_str(&format!("Error during attach: {:#}\n", e));
+            e
+        })?;
+
+        if verbose {
+            ui.output_str("Attached!\n");
+        }
+        drop(activity);
+        ui.close();
+        Ok(())
+    }
+
+    /// Same as `Domain::attach`, but shows a plain animated spinner in the
+    /// placeholder tab instead of `Domain::attach`'s raw connection-progress
+    /// text log. Used by the automatic per-tab-process-isolation spawn path
+    /// (see wezterm-gui's spawn_single_pane_tab): the technical log reads as
+    /// broken rather than as progress for that automatic flow, and its
+    /// multi-second round-trip latency invites impatient repeat clicks that
+    /// each spawn their own redundant hosting process -- see spawn.rs's
+    /// per-window spawn debounce, which this pairs with. Reuses the same
+    /// termwiztermtab-backed placeholder tab `Domain::attach` uses (so the
+    /// tab appears immediately and becomes the window's active tab, same as
+    /// any other pane), just with quieter, animated content.
+    pub async fn attach_with_spinner(&self, window_id: Option<WindowId>) -> anyhow::Result<()> {
+        let ui = ConnectionUI::with_params(ConnectionUIParams {
+            window_id,
+            ..Default::default()
+        });
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let ui = ui.clone();
+            let stop = Arc::clone(&stop);
+            promise::spawn::spawn(async move {
+                // Plain ASCII spinner -- Braille Patterns glyphs (the more
+                // common choice for spinners) rendered as tofu/missing-glyph
+                // boxes in the default font here (confirmed live), so this
+                // sticks to characters every monospace font is guaranteed
+                // to have.
+                const FRAMES: &[char] = &['|', '/', '-', '\\'];
+                let mut i = 0usize;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    ui.output(vec![
+                        termwiz::surface::Change::ClearScreen(Default::default()),
+                        termwiz::surface::Change::CursorPosition {
+                            x: termwiz::surface::Position::Absolute(0),
+                            y: termwiz::surface::Position::Absolute(0),
+                        },
+                        termwiz::surface::Change::Text(format!(
+                            "{} Opening tab...",
+                            FRAMES[i % FRAMES.len()]
+                        )),
+                    ]);
+                    i += 1;
+                    smol::Timer::after(std::time::Duration::from_millis(90)).await;
+                }
+            })
+            .detach();
+        }
+
+        let result = self.attach_impl(window_id, ui, false).await;
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        result
+    }
 }
 
 #[async_trait(?Send)]
@@ -760,62 +883,12 @@ impl Domain for ClientDomain {
     }
 
     async fn attach(&self, window_id: Option<WindowId>) -> anyhow::Result<()> {
-        if self.state() == DomainState::Attached {
-            // Already attached
-            return Ok(());
-        }
-
-        let domain_id = self.local_domain_id;
-        let config = self.config.clone();
-
-        let activity = mux::activity::Activity::new();
         let ui = ConnectionUI::with_params(ConnectionUIParams {
             window_id,
             ..Default::default()
         });
         ui.title("wezterm: Connecting...");
-
-        ui.async_run_and_log_error({
-            let ui = ui.clone();
-            async move {
-                let mut cloned_ui = ui.clone();
-                let client = spawn_into_new_thread(move || match &config {
-                    ClientDomainConfig::Unix(unix) => {
-                        let initial = true;
-                        let no_auto_start = false;
-                        Client::new_unix_domain(
-                            Some(domain_id),
-                            unix,
-                            initial,
-                            &mut cloned_ui,
-                            no_auto_start,
-                        )
-                    }
-                })
-                .await?;
-
-                ui.output_str("Checking server version\n");
-                client.verify_version_compat(&ui).await?;
-
-                ui.output_str("Version check OK!  Requesting pane list...\n");
-                let panes = client.list_panes().await?;
-                ui.output_str(&format!(
-                    "Server has {} tabs.  Attaching to local UI...\n",
-                    panes.tabs.len()
-                ));
-                ClientDomain::finish_attach(domain_id, client, panes, window_id)
-            }
-        })
-        .await
-        .map_err(|e| {
-            ui.output_str(&format!("Error during attach: {:#}\n", e));
-            e
-        })?;
-
-        ui.output_str("Attached!\n");
-        drop(activity);
-        ui.close();
-        Ok(())
+        self.attach_impl(window_id, ui, true).await
     }
 
     fn detachable(&self) -> bool {
