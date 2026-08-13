@@ -62,6 +62,18 @@ impl PduPolicy {
                 // Allow-list: only these PDUs are permitted over the elevated
                 // rendezvous channel. The reasoning for each:
                 //
+                // - GetCodecVersion: read-only protocol version handshake --
+                //   sent unconditionally by every client (elevated or not) as
+                //   the very first step of `Client::verify_version_compat`,
+                //   before anything else can happen. Confirmed live: without
+                //   this, EVERY elevated attach fails immediately with
+                //   "unexpected response Ok(ErrorResponse(...))", since the
+                //   client has no fallback for a rejected version check.
+                // - SetClientId: client identity bookkeeping (hostname/pid,
+                //   for `wezterm cli list-clients`-style display) -- also
+                //   sent unconditionally right after a successful version
+                //   check, by `verify_version_compat` itself. No privileged
+                //   effect, purely descriptive metadata.
                 // - Ping: protocol health check, no side effects.
                 // - ListPanes: read-only observation of pane tree.
                 // - GetPaneRenderChanges: read-only pane state fetch for rendering.
@@ -78,7 +90,8 @@ impl PduPolicy {
                 //   "single-pane" contract.
                 // - MovePaneToNewTab: would create additional tabs/windows.
                 // - SetWindowWorkspace/RenameWorkspace: workspace management.
-                // - SetClientId/GetClientList: client identity management.
+                // - GetClientList: enumerates all connected clients (info
+                //   disclosure beyond this single elevated session's scope).
                 // - EraseScrollbackRequest/SearchScrollbackRequest: scrollback
                 //   manipulation (data loss/exfiltration).
                 // - SetPaneZoomed/GetPaneDirection/ActivatePaneDirection/
@@ -89,10 +102,12 @@ impl PduPolicy {
                 // - GetPaneRenderableDimensions/GetImageCell: rendering internals.
                 // - WindowTitleChanged/TabTitleChanged: metadata manipulation.
                 // - SetPalette: terminal state mutation.
-                // - GetCodecVersion/GetTlsCreds: version/credential queries.
+                // - GetTlsCreds: credential query.
                 matches!(
                     pdu,
-                    codec::Pdu::Ping(_)
+                    codec::Pdu::GetCodecVersion(_)
+                        | codec::Pdu::SetClientId(_)
+                        | codec::Pdu::Ping(_)
                         | codec::Pdu::ListPanes(_)
                         | codec::Pdu::GetPaneRenderChanges(_)
                         | codec::Pdu::GetLines(_)
