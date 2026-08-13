@@ -5830,11 +5830,13 @@ dependencies = [
  "portable-pty",
  "promise",
  "sefer-alloc",
+ "smol",
  "umask",
  "wezterm-blob-leases",
  "wezterm-gui-subcommands",
  "wezterm-mux-server-impl",
  "wezterm-term",
+ "wezterm-uds",
  "winapi",
 ]
 
