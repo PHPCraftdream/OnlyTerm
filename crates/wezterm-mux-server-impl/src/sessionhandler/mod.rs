@@ -1,6 +1,9 @@
 mod per_pane;
 mod spawn;
 
+#[cfg(test)]
+mod tests;
+
 use anyhow::{anyhow, Context};
 use codec::*;
 use config::keyassignment::RotationDirection;
@@ -18,6 +21,90 @@ use wezterm_term::StableRowIndex;
 
 use per_pane::{maybe_push_pane_changes, PerPane};
 use spawn::{schedule_domain_spawn_v2, schedule_move_pane, schedule_split_pane};
+
+/// Policy restricting which PDU types a SessionHandler will process.
+///
+/// This is a security boundary: the elevated single-pane WebSocket rendezvous
+/// transport (`wezterm-elevated-transport`) uses `ElevatedSinglePaneAllowList`
+/// to ensure that any process able to reach the rendezvous channel cannot
+/// spawn arbitrary elevated processes or otherwise escape the single-pane
+/// sandbox. Windows Terminal's maintainers explicitly declined to ship this
+/// feature without such a restriction ("any other unelevated application could
+/// send input to the Terminal's HWND" / reach the IPC channel). See the
+/// `wezterm-elevated-transport` module doc for full design context.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PduPolicy {
+    /// Unrestricted: all PDUs are processed (default for daemon-mode Unix-domain
+    /// sockets, where the only clients are those who successfully connected to a
+    /// user-owned socket path).
+    Unrestricted,
+
+    /// Elevated single-pane mode: only a minimal allow-list of PDUs is processed.
+    /// Rejects any PDU that could spawn processes, modify window/tab structure,
+    /// or otherwise escape the single-pane sandbox. Used exclusively for the
+    /// WebSocket rendezvous channel where the elevated child connects back to
+    /// the (non-elevated) GUI.
+    ElevatedSinglePaneAllowList,
+}
+
+impl PduPolicy {
+    /// Returns true if the given PDU type is allowed under this policy.
+    ///
+    /// For `ElevatedSinglePaneAllowList`, this is a very conservative allow-list:
+    /// only read-only observation PDUs, direct user input to the existing pane,
+    /// and pane lifecycle termination are permitted. Anything that could spawn
+    /// a process, create/modify windows/tabs, or otherwise escape the single-pane
+    /// sandbox is rejected.
+    pub fn is_allowed(&self, pdu: &codec::Pdu) -> bool {
+        match self {
+            PduPolicy::Unrestricted => true,
+            PduPolicy::ElevatedSinglePaneAllowList => {
+                // Allow-list: only these PDUs are permitted over the elevated
+                // rendezvous channel. The reasoning for each:
+                //
+                // - Ping: protocol health check, no side effects.
+                // - ListPanes: read-only observation of pane tree.
+                // - GetPaneRenderChanges: read-only pane state fetch for rendering.
+                // - GetLines: read-only scrollback/history fetch.
+                // - WriteToPane: direct user input (keystrokes) to the existing pane.
+                // - SendPaste: paste operation into the existing pane.
+                // - Resize: terminal geometry change, no privilege escalation.
+                // - KillPane: terminate the single pane (normal exit path).
+                //
+                // Explicitly rejected (not exhaustive, but the most dangerous):
+                // - SpawnV2: arbitrary process spawn with elevated privileges (the
+                //   exact attack surface this allow-list defends against).
+                // - SplitPane: would create additional panes, breaking the
+                //   "single-pane" contract.
+                // - MovePaneToNewTab: would create additional tabs/windows.
+                // - SetWindowWorkspace/RenameWorkspace: workspace management.
+                // - SetClientId/GetClientList: client identity management.
+                // - EraseScrollbackRequest/SearchScrollbackRequest: scrollback
+                //   manipulation (data loss/exfiltration).
+                // - SetPaneZoomed/GetPaneDirection/ActivatePaneDirection/
+                //   SwapActivePaneWithIndex/RotatePanes/AdjustPaneSize: pane
+                //   layout manipulation.
+                // - SendKeyDown/SendMouseEvent: lower-level input; these are
+                //   normally client->mux server requests, not the other way.
+                // - GetPaneRenderableDimensions/GetImageCell: rendering internals.
+                // - WindowTitleChanged/TabTitleChanged: metadata manipulation.
+                // - SetPalette: terminal state mutation.
+                // - GetCodecVersion/GetTlsCreds: version/credential queries.
+                matches!(
+                    pdu,
+                    codec::Pdu::Ping(_)
+                        | codec::Pdu::ListPanes(_)
+                        | codec::Pdu::GetPaneRenderChanges(_)
+                        | codec::Pdu::GetLines(_)
+                        | codec::Pdu::WriteToPane(_)
+                        | codec::Pdu::SendPaste(_)
+                        | codec::Pdu::Resize(_)
+                        | codec::Pdu::KillPane(_)
+                )
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct PduSender {
@@ -42,6 +129,7 @@ pub struct SessionHandler {
     per_pane: HashMap<TabId, Arc<Mutex<PerPane>>>,
     client_id: Option<Arc<ClientId>>,
     proxy_client_id: Option<ClientId>,
+    policy: PduPolicy,
 }
 
 impl Drop for SessionHandler {
@@ -54,12 +142,13 @@ impl Drop for SessionHandler {
 }
 
 impl SessionHandler {
-    pub fn new(to_write_tx: PduSender) -> Self {
+    pub fn new(to_write_tx: PduSender, policy: PduPolicy) -> Self {
         Self {
             to_write_tx,
             per_pane: HashMap::new(),
             client_id: None,
             proxy_client_id: None,
+            policy,
         }
     }
 
@@ -94,6 +183,32 @@ impl SessionHandler {
             if decoded.pdu.is_user_input() {
                 Mux::get().client_had_input(client_id);
             }
+        }
+
+        // Policy check: reject disallowed PDUs for ElevatedSinglePaneAllowList.
+        // This is a security boundary: any process able to reach the elevated
+        // rendezvous channel must not be able to spawn arbitrary elevated
+        // processes or otherwise escape the single-pane sandbox.
+        if !self.policy.is_allowed(&decoded.pdu) {
+            let pdu_name = decoded.pdu.pdu_name();
+            log::warn!(
+                "PDU {} (serial {}) rejected by policy {:?}",
+                pdu_name,
+                serial,
+                self.policy
+            );
+            sender
+                .send(DecodedPdu {
+                    pdu: codec::Pdu::ErrorResponse(codec::ErrorResponse {
+                        reason: format!(
+                            "PDU {} not permitted over the elevated single-pane rendezvous channel",
+                            pdu_name
+                        ),
+                    }),
+                    serial,
+                })
+                .ok();
+            return;
         }
 
         let send_response = move |result: anyhow::Result<Pdu>| {
