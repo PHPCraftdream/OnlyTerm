@@ -364,6 +364,21 @@ pub struct Config {
     #[dynamic(default = "UnixDomain::default_unix_domains")]
     pub unix_domains: Vec<UnixDomain>,
 
+    /// When true, each new tab runs in its own single-pane hosting process
+    /// via onlyterm-mux-server --single-pane. A crash in one tab's process
+    /// does not affect other tabs or the window. Default: false, until
+    /// Phase D (see docs/plans/2026-08-13-per-tab-process-elevated-admin-tab.md)
+    /// closes the known gaps this Phase B rollout flag exists to cover --
+    /// most importantly, the per-tab ClientDomain this spawns is never
+    /// unregistered when the tab closes (a real, deliberately-deferred-to-
+    /// Phase-D leak, not yet a problem for a short test session but not
+    /// something to turn on by default for every user's every tab yet).
+    /// The end state (per the plan's user-confirmed decision) is for this
+    /// to always be on; this field is the rollout/rollback lever to get
+    /// there safely, not the final resting state.
+    #[dynamic(default)]
+    pub per_tab_process_isolation: bool,
+
     /// Constrains the rate at which the multiplexer client will
     /// speculatively fetch line data.
     /// This helps to avoid saturating the link between the client
