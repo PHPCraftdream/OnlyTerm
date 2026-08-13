@@ -106,6 +106,7 @@ wezterm-bidi.workspace = true
 wezterm-blob-leases = { workspace=true, features=["simple_tempdir"] }
 wezterm-client.workspace = true
 wezterm-dynamic.workspace = true
+wezterm-elevated-transport.workspace = true
 wezterm-font.workspace = true
 wezterm-gui-subcommands.workspace = true
 wezterm-mux-server-impl.workspace = true
@@ -113,6 +114,7 @@ wezterm-open-url.workspace = true
 wezterm-surface.workspace = true
 wezterm-term.workspace = true
 wezterm-toast-notification.workspace = true
+wezterm-uds.workspace = true
 wgpu.workspace = true
 window.workspace = true
 
