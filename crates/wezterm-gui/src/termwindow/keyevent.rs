@@ -1,6 +1,7 @@
 use crate::termwindow::InputMap;
 use ::window::{
-    DeadKeyStatus, KeyCode, KeyEvent, KeyboardLedStatus, Modifiers, RawKeyEvent, WindowOps,
+    DeadKeyStatus, KeyCode, KeyEvent, KeyboardLedStatus, Modifiers, PhysKeyCode, RawKeyEvent,
+    WindowOps,
 };
 use anyhow::Context;
 use config::keyassignment::{KeyAssignment, KeyTableEntry};
@@ -187,6 +188,20 @@ enum OnlyKeyBindings {
     No,
 }
 
+/// True for the three chords task "[0123]" requires to always insert a
+/// newline (CTRL+Enter, SHIFT+Enter, CTRL+J), regardless of whether they
+/// actually resolve to a key-table entry. Used only to scope an
+/// unconditional diagnostic log to these keys instead of every keypress.
+fn is_newline_chord(keycode: &KeyCode, mods: Modifiers) -> bool {
+    match keycode {
+        KeyCode::Char('\r') | KeyCode::Physical(PhysKeyCode::Return) => {
+            mods.contains(Modifiers::CTRL) || mods.contains(Modifiers::SHIFT)
+        }
+        KeyCode::Char('j') | KeyCode::Char('J') => mods.contains(Modifiers::CTRL),
+        _ => false,
+    }
+}
+
 impl super::TermWindow {
     pub(crate) fn encode_win32_input(
         &self,
@@ -309,9 +324,33 @@ impl super::TermWindow {
                 }
             }
 
-            if let Some((entry, table_name)) =
-                self.lookup_key(pane, keycode, raw_modifiers | leader_mod, only_key_bindings)
-            {
+            let effective_mods = raw_modifiers | leader_mod;
+            let looked_up = self.lookup_key(pane, keycode, effective_mods, only_key_bindings);
+
+            // Unconditional (not gated on debug_key_events) diagnostic for
+            // the three newline-insertion chords specifically: whether this
+            // keypress resolves to a key-table entry at all is exactly the
+            // fact needed to tell "the binding matched but the app didn't
+            // react" apart from "the binding never matched, so the
+            // SendEnterOrNewline/SendChar handler never even ran" -- the
+            // latter would otherwise look identical to the user as "nothing
+            // happened", but has a completely different fix. Reuses the
+            // lookup result computed above rather than calling lookup_key
+            // again, since it mutates key-table stack state and calling it
+            // twice per keypress would double-apply that.
+            if is_newline_chord(keycode, effective_mods) {
+                log::info!(
+                    "diag: newline chord {:?} {:?} -> key table lookup {}",
+                    keycode,
+                    effective_mods,
+                    match &looked_up {
+                        Some((entry, _)) => format!("matched, action={:?}", entry.action),
+                        None => "found NO entry (falls through to raw typing)".to_string(),
+                    }
+                );
+            }
+
+            if let Some((entry, table_name)) = looked_up {
                 if self.config.debug_key_events {
                     log::info!(
                         "{}{:?} {:?} -> perform {:?}",
