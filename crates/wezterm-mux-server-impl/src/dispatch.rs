@@ -1,4 +1,4 @@
-use crate::sessionhandler::{PduSender, SessionHandler};
+use crate::sessionhandler::{PduPolicy, PduSender, SessionHandler};
 use anyhow::Context;
 use codec::{DecodedPdu, Pdu};
 use mux::{Mux, MuxNotification};
@@ -21,10 +21,21 @@ where
     T: async_io::IoSafe,
 {
     let stream = smol::Async::new(stream)?;
-    process_async(stream).await
+    process_async_with_policy(stream, PduPolicy::Unrestricted).await
 }
 
 pub async fn process_async<T>(stream: Async<T>) -> anyhow::Result<()>
+where
+    T: 'static,
+    T: std::io::Read,
+    T: std::io::Write,
+    T: std::fmt::Debug,
+    T: async_io::IoSafe,
+{
+    process_async_with_policy(stream, PduPolicy::Unrestricted).await
+}
+
+pub async fn process_async_with_policy<T>(stream: Async<T>, policy: PduPolicy) -> anyhow::Result<()>
 where
     T: 'static,
     T: std::io::Read,
@@ -51,7 +62,7 @@ where
                 .map_err(|e| anyhow::anyhow!("{:?}", e))
         }
     });
-    let handler = Arc::new(Mutex::new(SessionHandler::new(pdu_sender)));
+    let handler = Arc::new(Mutex::new(SessionHandler::new(pdu_sender, policy)));
 
     {
         let mux = Mux::get();

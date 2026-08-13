@@ -14,6 +14,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::thread;
 use wezterm_gui_subcommands::*;
+use wezterm_mux_server_impl::sessionhandler::PduPolicy;
 use wezterm_mux_server_impl::update_mux_domains_for_server;
 use wezterm_uds::UnixStream;
 
@@ -353,23 +354,31 @@ fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
 
     // Obtain the mux protocol stream: either via WebSocket rendezvous
     // (elevated mode) or via inherited stdin (non-elevated mode)
-    let stream = if let Some((port, token)) = ws_rendezvous {
+    let (stream, policy) = if let Some((port, token)) = ws_rendezvous {
         // WebSocket rendezvous path: connect back to the GUI
+        // IMPORTANT: Use ElevatedSinglePaneAllowList to restrict PDU types.
+        // This is a security boundary: any process able to reach the rendezvous
+        // channel must not be able to spawn arbitrary elevated processes or
+        // otherwise escape the single-pane sandbox. See the `wezterm-elevated-transport`
+        // module doc for full design context.
         log::info!("connecting to WebSocket rendezvous at 127.0.0.1:{}", port);
         let stream = wezterm_elevated_transport::connect_and_bridge(port, &token)
             .context("failed to connect via WebSocket rendezvous")?;
         log::info!("WebSocket rendezvous connected successfully");
-        stream
+        (stream, PduPolicy::ElevatedSinglePaneAllowList)
     } else {
-        // Non-elevated stdio path: wrap inherited stdin as a socket
+        // Non-elevated stdio path: wrap inherited stdin as a socket.
         // Must happen before wrapping the inherited handle as a UnixStream --
         // see init_winsock's doc comment.
+        // Use Unrestricted policy because the stream can only be reached by a
+        // process that inherited the exact socket handle from its parent GUI.
         init_winsock();
-        wrap_stdin_as_stream()
+        let stream = wrap_stdin_as_stream();
+        (stream, PduPolicy::Unrestricted)
     };
 
     // Dispatch the mux protocol on the stream (schedules the async future)
-    dispatch_stream(stream);
+    dispatch_stream(stream, policy);
 
     let activity = Activity::new();
 
@@ -438,7 +447,7 @@ fn wrap_stdin_as_stream() -> UnixStream {
 
 /// Schedules the mux protocol dispatcher for the given stream.
 ///
-/// `dispatch::process` is an `async fn`: calling it only constructs a
+/// `dispatch::process_async_with_policy` is an `async fn`: calling it only constructs a
 /// `Future` and runs none of its body until something actually polls it.
 /// The original version of this function did `let _ =
 /// dispatch::process(stream);` inside a bare `thread::spawn`, which builds
@@ -448,11 +457,16 @@ fn wrap_stdin_as_stream() -> UnixStream {
 /// every accepted daemon-mode connection) is what actually drives it, by
 /// scheduling it onto the `SimpleExecutor` that `run_single_pane_mode`'s
 /// `executor.tick()` loop is already polling.
-fn dispatch_stream(stream: UnixStream) {
+fn dispatch_stream(stream: UnixStream, policy: wezterm_mux_server_impl::sessionhandler::PduPolicy) {
     promise::spawn::spawn_into_main_thread(async move {
-        if let Err(err) = wezterm_mux_server_impl::dispatch::process(stream).await {
+        let stream = smol::Async::new(stream)
+            .map_err(|e| anyhow::anyhow!("failed to wrap stream: {:#}", e))?;
+        if let Err(err) =
+            wezterm_mux_server_impl::dispatch::process_async_with_policy(stream, policy).await
+        {
             log::error!("{:#}", err);
         }
+        Ok::<(), anyhow::Error>(())
     })
     .detach();
 }
