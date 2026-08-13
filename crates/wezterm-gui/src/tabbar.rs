@@ -29,7 +29,11 @@ pub enum TabBarItem {
     None,
     LeftStatus,
     RightStatus,
-    Tab { tab_idx: usize, active: bool },
+    Tab {
+        tab_idx: usize,
+        active: bool,
+        is_elevated: bool,
+    },
     NewTabButton,
     WindowButton(IntegratedTitleButton),
 }
@@ -521,6 +525,10 @@ impl TabBarState {
         for (tab_idx, tab_title) in tab_titles.iter().enumerate() {
             let tab_title_len = tab_title.len.min(tab_width_max);
             let active = tab_idx == active_tab_no;
+            let is_elevated = tab_info
+                .get(tab_idx)
+                .map(|t| t.is_elevated)
+                .unwrap_or(false);
             let hover = !active && is_tab_hover(mouse_x, x, tab_title_len);
 
             let cell_attrs = if active {
@@ -553,7 +561,11 @@ impl TabBarState {
             let width = tab_line.len();
 
             items.push(TabEntry {
-                item: TabBarItem::Tab { tab_idx, active },
+                item: TabBarItem::Tab {
+                    tab_idx,
+                    active,
+                    is_elevated,
+                },
                 title,
                 x: tab_start_idx,
                 width,
