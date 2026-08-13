@@ -2,6 +2,7 @@
 #[global_allocator]
 static GLOBAL_ALLOC: sefer_alloc::SeferAlloc = sefer_alloc::SeferAlloc::new();
 
+use anyhow::Context;
 use clap::*;
 use config::configuration;
 use mux::activity::Activity;
@@ -66,6 +67,17 @@ struct Opt {
     /// (matches config::keyassignment::ProcessPriority's variant names).
     #[arg(long = "priority", value_parser)]
     priority: Option<String>,
+
+    /// WebSocket rendezvous port for elevated single-pane mode.
+    /// Must be used together with --token. Connects to 127.0.0.1:PORT
+    /// instead of using stdin/stdout for mux protocol.
+    #[arg(long = "connect-ws-port", value_parser)]
+    connect_ws_port: Option<u16>,
+
+    /// Authentication token for WebSocket rendezvous.
+    /// Must be used together with --connect-ws-port.
+    #[arg(long = "token", value_parser)]
+    token: Option<String>,
 
     /// Instead of executing your shell, run PROG.
     /// For example: `wezterm start -- bash -l` will spawn bash
@@ -276,8 +288,17 @@ pub fn spawn_listener() -> anyhow::Result<()> {
 }
 
 /// Run in single-pane mode: one process = one pane, exit when pane exits.
-/// Uses stdin/stdout for mux protocol communication.
+/// Uses stdin/stdout for mux protocol communication, or WebSocket rendezvous
+/// when --connect-ws-port/--token are provided.
 fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
+    // Validate that WebSocket flags are used together
+    let ws_rendezvous = match (&opts.connect_ws_port, &opts.token) {
+        (Some(_), None) => anyhow::bail!("--connect-ws-port requires --token to be specified"),
+        (None, Some(_)) => anyhow::bail!("--token requires --connect-ws-port to be specified"),
+        (Some(port), Some(token)) => Some((*port, token.clone())),
+        (None, None) => None,
+    };
+
     let _config = config::configuration();
 
     // Remove environment variables that aren't helpful
@@ -330,14 +351,25 @@ fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
 
     let executor = promise::spawn::SimpleExecutor::new();
 
-    // Must happen before spawn_stdio_listener() wraps the inherited handle
-    // as a UnixStream -- see init_winsock's doc comment.
-    init_winsock();
+    // Obtain the mux protocol stream: either via WebSocket rendezvous
+    // (elevated mode) or via inherited stdin (non-elevated mode)
+    let stream = if let Some((port, token)) = ws_rendezvous {
+        // WebSocket rendezvous path: connect back to the GUI
+        log::info!("connecting to WebSocket rendezvous at 127.0.0.1:{}", port);
+        let stream = wezterm_elevated_transport::connect_and_bridge(port, &token)
+            .context("failed to connect via WebSocket rendezvous")?;
+        log::info!("WebSocket rendezvous connected successfully");
+        stream
+    } else {
+        // Non-elevated stdio path: wrap inherited stdin as a socket
+        // Must happen before wrapping the inherited handle as a UnixStream --
+        // see init_winsock's doc comment.
+        init_winsock();
+        wrap_stdin_as_stream()
+    };
 
-    // Spawn a listener that processes mux protocol on stdin/stdout
-    // This is similar to how LocalListener works, but uses stdin/stdout
-    // instead of Unix sockets
-    spawn_stdio_listener();
+    // Dispatch the mux protocol on the stream (schedules the async future)
+    dispatch_stream(stream);
 
     let activity = Activity::new();
 
@@ -381,8 +413,30 @@ fn init_winsock() {
     });
 }
 
-/// Schedules the mux protocol dispatcher for the socketpair handle this
-/// process inherited as stdin when spawned via `proxy_command`.
+/// Wraps the inherited stdin handle (a Winsock SOCKET from the parent's
+/// socketpair) as a `UnixStream`. Used for the non-elevated single-pane
+/// transport.
+///
+/// When the parent calls `filedescriptor::socketpair()`, it gets two
+/// Winsock SOCKET handles: one it keeps (wrapped as a UnixStream), the
+/// other it hands to this child process as stdin/stdout via
+/// `cmd.stdin(b.as_stdio()?)`. On Windows, a Winsock SOCKET and a
+/// Windows HANDLE are the same underlying value, so the raw handle
+/// this process inherited as stdin IS that socket.
+fn wrap_stdin_as_stream() -> UnixStream {
+    use std::os::windows::io::{AsRawHandle, FromRawSocket};
+
+    let stdin_handle = std::io::stdin().as_raw_handle() as std::os::windows::io::RawSocket;
+
+    // SAFETY: stdin_handle is the Winsock SOCKET inherited from the parent
+    // via socketpair() + Stdio (see above); this process took sole
+    // ownership of it at spawn time and never uses stdin for anything
+    // else, so wrapping it as a UnixStream here does not alias any other
+    // owner of the handle.
+    unsafe { UnixStream::from_raw_socket(stdin_handle) }
+}
+
+/// Schedules the mux protocol dispatcher for the given stream.
 ///
 /// `dispatch::process` is an `async fn`: calling it only constructs a
 /// `Future` and runs none of its body until something actually polls it.
@@ -394,24 +448,7 @@ fn init_winsock() {
 /// every accepted daemon-mode connection) is what actually drives it, by
 /// scheduling it onto the `SimpleExecutor` that `run_single_pane_mode`'s
 /// `executor.tick()` loop is already polling.
-fn spawn_stdio_listener() {
-    use std::os::windows::io::{AsRawHandle, FromRawSocket};
-
-    // When the parent calls `filedescriptor::socketpair()`, it gets two
-    // Winsock SOCKET handles: one it keeps (wrapped as a UnixStream), the
-    // other it hands to this child process as stdin/stdout via
-    // `cmd.stdin(b.as_stdio()?)`. On Windows, a Winsock SOCKET and a
-    // Windows HANDLE are the same underlying value, so the raw handle
-    // this process inherited as stdin IS that socket.
-    let stdin_handle = std::io::stdin().as_raw_handle() as std::os::windows::io::RawSocket;
-
-    // SAFETY: stdin_handle is the Winsock SOCKET inherited from the parent
-    // via socketpair() + Stdio (see above); this process took sole
-    // ownership of it at spawn time and never uses stdin for anything
-    // else, so wrapping it as a UnixStream here does not alias any other
-    // owner of the handle.
-    let stream = unsafe { UnixStream::from_raw_socket(stdin_handle) };
-
+fn dispatch_stream(stream: UnixStream) {
     promise::spawn::spawn_into_main_thread(async move {
         if let Err(err) = wezterm_mux_server_impl::dispatch::process(stream).await {
             log::error!("{:#}", err);
