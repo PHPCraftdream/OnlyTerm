@@ -121,7 +121,7 @@ enum SubCommand {
     #[command(name = "serial", about = "Open a serial port")]
     Serial(SerialCommand),
 
-    #[command(name = "connect", about = "Connect to wezterm multiplexer")]
+    #[command(name = "connect", about = "Connect to OnlyTerm multiplexer")]
     Connect(ConnectCommand),
 
     #[command(name = "ls-fonts", about = "Display information about fonts")]
@@ -655,7 +655,7 @@ fn notify_on_panic() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if let Some(s) = info.payload().downcast_ref::<&str>() {
-            fatal_toast_notification("Wezterm panic", s);
+            fatal_toast_notification("OnlyTerm panic", s);
         }
         default_hook(info);
     }));
@@ -663,7 +663,7 @@ fn notify_on_panic() {
 
 pub(crate) fn terminate_with_error_message(err: &str) -> ! {
     log::error!("{}; terminating", err);
-    fatal_toast_notification("Wezterm Error", err);
+    fatal_toast_notification("OnlyTerm Error", err);
     std::process::exit(1);
 }
 
@@ -1113,7 +1113,7 @@ fn run() -> anyhow::Result<()> {
         Some(sub) => sub,
         None => {
             // Need to fake an argv0
-            let mut argv = vec!["wezterm-gui".to_string()];
+            let mut argv = vec!["onlyterm-gui".to_string()];
             for a in &config.default_gui_startup_args {
                 argv.push(a.clone());
             }

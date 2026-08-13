@@ -209,7 +209,7 @@ pub fn run_cli(opts: &crate::Opt, cli: CliCommand) -> anyhow::Result<()> {
     // generated future ends up being, in both debug and release builds.
     let result = std::thread::scope(|scope| {
         std::thread::Builder::new()
-            .name("wezterm-cli".to_string())
+            .name("onlyterm-cli".to_string())
             .stack_size(8 * 1024 * 1024)
             .spawn_scoped(scope, || {
                 let executor = promise::spawn::ScopedExecutor::new();
@@ -217,9 +217,9 @@ pub fn run_cli(opts: &crate::Opt, cli: CliCommand) -> anyhow::Result<()> {
                     executor.run(async move { run_cli_async(opts, cli).await }),
                 )
             })
-            .expect("failed to spawn wezterm-cli thread")
+            .expect("failed to spawn onlyterm-cli thread")
             .join()
-            .expect("wezterm-cli thread panicked")
+            .expect("onlyterm-cli thread panicked")
     });
     match result {
         Ok(_) => Ok(()),

@@ -49,7 +49,7 @@ pub struct Client {
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 #[error(
-    "Please install the same version of wezterm on both the client and server!\n\
+    "Please install the same version of OnlyTerm on both the client and server!\n\
      The server version is {} (codec version {}),\n\
      which is not compatible with our version \n\
      {} (codec version {}).",
@@ -417,7 +417,7 @@ impl Client {
                         .to_string()
                 } else {
                     format!(
-                        "Please install the same version of wezterm on both \
+                        "Please install the same version of OnlyTerm on both \
                      the client and server! \
                      The server reported error '{err}' while being asked for its \
                      version.  This likely means that the server is older \
