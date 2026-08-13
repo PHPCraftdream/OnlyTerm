@@ -348,6 +348,25 @@ impl RenderThreadHandle {
     }
 }
 
+/// Clears `submit_started_at` back to `None` when dropped -- including via
+/// unwind, if the call this guards panics. A plain `*submit_started_at.lock()
+/// = None;` placed after that call only runs on the non-panicking path, so a
+/// panic left it stuck at `Some(..)` forever: the render thread that
+/// panicked is dead (`std::thread` catches the unwind so the process
+/// survives, but nothing is left to process a `Frame` message again), yet
+/// `is_hung_given` kept reading it as merely running-too-long, so the hang
+/// supervisor treated a dead thread as "stuck" and kept rebuilding a
+/// replacement it could never actually hand new frames to (confirmed live:
+/// this happened during a real wgpu-error-turned-panic crash, before that
+/// panic was itself fixed to no longer happen -- see
+/// `install_uncaptured_error_callback` in `termwindow::webgpu::context`).
+struct ClearSubmitStartedAtOnExit<'a>(&'a Mutex<Option<Instant>>);
+impl Drop for ClearSubmitStartedAtOnExit<'_> {
+    fn drop(&mut self) {
+        *self.0.lock() = None;
+    }
+}
+
 /// The actual "is a call that's been running since `submit_started_at` older
 /// than `threshold`" predicate, split out from `render_thread_is_hung` so it
 /// can be unit tested with a synthetic threshold instead of depending on
@@ -539,8 +558,12 @@ fn submit_one_frame(
     if stall_ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(stall_ms));
     }
-    let result = webgpu.submit_frame(frame);
-    *submit_started_at.lock() = None;
+    // See `ClearSubmitStartedAtOnExit`'s doc comment: this clears
+    // `submit_started_at` even if `webgpu.submit_frame` panics.
+    let result = {
+        let _clear_on_exit = ClearSubmitStartedAtOnExit(submit_started_at);
+        webgpu.submit_frame(frame)
+    };
     if result.is_ok() && !*placeholder_cleared {
         // Task #407: this is the first frame this render thread has ever
         // actually presented (see this function's doc comment) -- now, and
@@ -1107,6 +1130,48 @@ mod tests {
         assert!(
             !is_hung_given(&submit_started_at, threshold),
             "clearing submit_started_at back to None should report not-hung again"
+        );
+    }
+
+    /// Regression test for the bug fixed by `ClearSubmitStartedAtOnExit`:
+    /// before it existed, a panic inside the guarded call left
+    /// `submit_started_at` stuck at `Some(..)` forever, since the plain
+    /// `*submit_started_at.lock() = None;` written after the call (mirrored
+    /// here as `submit_frame` returning normally, in the first half of this
+    /// test) never runs when that call unwinds instead. This drives a
+    /// panicking closure through the exact guard/scope pattern
+    /// `submit_one_frame` uses and asserts `is_hung_given` reports not-hung
+    /// afterward either way -- proving the guard's `Drop` impl, not the
+    /// call's own return, is what clears the flag.
+    #[test]
+    fn clear_submit_started_at_on_exit_clears_on_panic() {
+        let submit_started_at: Mutex<Option<Instant>> = Mutex::new(None);
+        let threshold = Duration::from_millis(0);
+
+        // Non-panicking call: still hung while the guard is alive, clear
+        // once it drops at the end of the scope.
+        *submit_started_at.lock() = Some(Instant::now());
+        {
+            let _clear_on_exit = ClearSubmitStartedAtOnExit(&submit_started_at);
+            assert!(is_hung_given(&submit_started_at, threshold));
+        }
+        assert!(
+            !is_hung_given(&submit_started_at, threshold),
+            "the guard must clear submit_started_at on ordinary scope exit"
+        );
+
+        // Panicking call: the guard's Drop must still run during unwind.
+        *submit_started_at.lock() = Some(Instant::now());
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _clear_on_exit = ClearSubmitStartedAtOnExit(&submit_started_at);
+            panic!("simulated submit_frame panic");
+        }))
+        .is_err();
+        assert!(panicked, "the closure was supposed to panic");
+        assert!(
+            !is_hung_given(&submit_started_at, threshold),
+            "the guard must clear submit_started_at even when the guarded call panics, \
+             or the hang supervisor misreads a dead render thread as merely stuck"
         );
     }
 }

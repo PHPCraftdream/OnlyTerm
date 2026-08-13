@@ -100,6 +100,66 @@ fn install_device_lost_callback(
     });
 }
 
+/// Installs a `ProcessGpuContext`'s uncaptured-error callback: wgpu's own
+/// default behavior for any error not caught by an active error scope is to
+/// panic (`default_error_handler`, "Handling wgpu errors as fatal by
+/// default") -- since that panic happens on whichever thread called into
+/// wgpu (in practice, always the render thread, from `submit_frame`), it
+/// kills that thread outright. Confirmed live: this crashed a real window
+/// repeatedly (`create_render_pipeline`/`queue_write_buffer` failing after
+/// long uptime), and every one of the hang-supervisor's "successfully
+/// rebuilt" attempts that followed was a no-op, because `ProcessGpuContext::
+/// get_or_init` only builds a fresh context when this context's `lost` flag
+/// is set -- and nothing before this callback existed ever set it for an
+/// uncaptured error (only `install_device_lost_callback` did, for actual
+/// device loss, which never occurred). Installing this handler turns a
+/// same-thread-killing panic into the same non-fatal, already-correct
+/// recovery path device loss already gets: mark `lost`, notify subscribers,
+/// let the hang supervisor's circuit breaker do its job for real next time.
+///
+/// Installed on the same background thread immediately after
+/// `install_device_lost_callback`, for the identical reason given in that
+/// function's doc comment: installing it any later leaves a window where an
+/// error in the gap is silently swallowed by wgpu's default (fatal) handler
+/// before this callback ever gets a chance to run.
+fn install_uncaptured_error_callback(
+    device: &wgpu::Device,
+    lost: Arc<AtomicBool>,
+    subscribers: Arc<Mutex<Vec<DeviceLostSubscriber>>>,
+) {
+    device.on_uncaptured_error(Box::new(move |err| {
+        log::error!(
+            "Shared GPU context uncaptured error (recovering instead of the wgpu \
+             default of panicking): {err}"
+        );
+        metrics::counter!("gui.render_thread.uncaptured_gpu_error").increment(1);
+
+        // Same flag `install_device_lost_callback` sets for a real device
+        // loss: `get_or_init`'s next caller must build a fresh context
+        // rather than reuse this one, since wgpu itself judged this error
+        // severe enough to report outside of any error scope.
+        lost.store(true, Ordering::Release);
+
+        let mut guard = subscribers.lock();
+        let mut alive_subscribers = Vec::new();
+        for subscriber in guard.drain(..) {
+            if !subscriber_is_alive(&subscriber.is_current) {
+                continue;
+            }
+            let win = subscriber.window.clone();
+            let win2 = win.clone();
+            let reason_msg = format!("this window's wgpu context reported an error: {err}");
+            win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                move |tw| {
+                    tw.handle_render_error_recovery(&win2, &reason_msg);
+                },
+            )));
+            alive_subscribers.push(subscriber);
+        }
+        *guard = alive_subscribers;
+    }));
+}
+
 /// Attempts a fast DX12-only adapter pick that skips the exhaustive
 /// enumeration `wgpu::Instance::request_adapter` always does: `wgpu-core`
 /// asks every backend's `enumerate_adapters` for the full adapter list
@@ -417,6 +477,11 @@ impl ProcessGpuContext {
                         // could give a loss room to happen in an
                         // uncovered gap.
                         install_device_lost_callback(
+                            &device,
+                            Arc::clone(&lost_for_thread),
+                            Arc::clone(&subscribers_for_thread),
+                        );
+                        install_uncaptured_error_callback(
                             &device,
                             Arc::clone(&lost_for_thread),
                             Arc::clone(&subscribers_for_thread),

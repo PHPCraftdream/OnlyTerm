@@ -15,7 +15,22 @@ fn register_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let payload = info.payload();
-        let payload = payload.downcast_ref::<&str>().unwrap_or(&"!?");
+        // `panic!("literal")` produces a `&'static str` payload, but
+        // `panic!("{}", x)` / any `format!`-built message (the common case
+        // for panics from dependencies, e.g. wgpu's `default_error_handler`)
+        // produces a `String` payload instead -- downcasting only to `&str`
+        // silently discarded the real message for every such panic and
+        // logged a useless "!?" placeholder instead (confirmed: this is
+        // exactly what happened for a real wgpu-error-turned-panic crash,
+        // losing the one piece of information -- which wgpu error kind --
+        // that would have explained it).
+        let message: &str = if let Some(s) = payload.downcast_ref::<&str>() {
+            s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "<non-string panic payload>"
+        };
         let bt = backtrace::Backtrace::new();
         if let Some(loc) = info.location() {
             log::error!(
@@ -23,11 +38,11 @@ fn register_panic_hook() {
                 loc.file(),
                 loc.line(),
                 loc.column(),
-                payload,
+                message,
                 bt
             );
         } else {
-            log::error!("panic - {}\n{:?}", payload, bt);
+            log::error!("panic - {}\n{:?}", message, bt);
         }
         default_hook(info);
     }));
