@@ -243,6 +243,7 @@ pub struct TabInformation {
     pub is_active: bool,
     pub active_pane: Option<PaneInformation>,
     pub tab_title: String,
+    pub is_elevated: bool,
 }
 
 /// Data used when synchronously formatting pane and window titles

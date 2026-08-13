@@ -56,6 +56,7 @@ struct TabInner {
     zoomed: Option<Arc<dyn Pane>>,
     title: String,
     recency: Recency,
+    is_elevated: bool,
 }
 
 /// A Tab is a container of Panes
@@ -636,6 +637,14 @@ impl Tab {
         self.tab_id
     }
 
+    pub fn set_elevated(&self, elevated: bool) {
+        self.inner.lock().is_elevated = elevated;
+    }
+
+    pub fn is_elevated(&self) -> bool {
+        self.inner.lock().is_elevated
+    }
+
     pub fn get_size(&self) -> TerminalSize {
         self.inner.lock().get_size()
     }
@@ -812,6 +821,7 @@ impl TabInner {
             zoomed: None,
             title: String::new(),
             recency: Recency::default(),
+            is_elevated: false,
         }
     }
 

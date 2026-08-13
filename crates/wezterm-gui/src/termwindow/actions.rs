@@ -1856,6 +1856,7 @@ impl TermWindow {
                     tab_id: tab.tab_id(),
                     is_active: tab_index == idx,
                     tab_title: tab.get_title(),
+                    is_elevated: tab.is_elevated(),
                     active_pane: panes
                         .iter()
                         .find(|p| p.is_active)
