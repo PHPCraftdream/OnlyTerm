@@ -3,32 +3,32 @@ use crate::pane::PaneId;
 use crate::{Mux, MuxNotification, PANE_OUTPUT_MAX_SYNC_ROUNDS};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// Regression coverage for task #148: `Mux::notify` no longer holds
-/// `subscribers.write()` while invoking callbacks, and repeated
-/// `MuxNotification::PaneOutput` notifications for the same pane are
-/// coalesced while one is already queued for delivery.
-///
-/// Context (see the module docs on `Mux::notify`/`Mux::notify_from_any_thread`
-/// in `mux/src/lib.rs`): `parse_buffered_data` calls
-/// `Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id))` once
-/// per parser flush (default coalesce delay
-/// `mux_output_parser_coalesce_delay_ms` = 3ms), which, prior to this
-/// change, unconditionally scheduled a `spawn_into_main_thread` task for
-/// *every* flush. Each of those hops fans out through
-/// `subscribe_to_pane_updates`'s own `spawn_into_main_thread` callback and
-/// then `window.notify()` / `Connection::with_window_inner`, i.e. three
-/// main-thread message-pump iterations of pure scheduling overhead for
-/// what ultimately amounts to a single `InvalidateRect`. This module pins:
-///
-///  1. `Mux::notify` invokes every subscriber and does not hold
-///     `subscribers.write()` while doing so (a subscriber that tries to
-///     take the same lock from inside its callback -- eg. via
-///     `Mux::subscribe` or a recursive `Mux::notify` -- must not
-///     deadlock).
-///  2. Repeated `PaneOutput` notifications for one pane collapse to a
-///     single queued delivery while that delivery is in flight, but a
-///     fresh notification is accepted again once the queued one has been
-///     delivered.
+// Regression coverage for task #148: `Mux::notify` no longer holds
+// `subscribers.write()` while invoking callbacks, and repeated
+// `MuxNotification::PaneOutput` notifications for the same pane are
+// coalesced while one is already queued for delivery.
+//
+// Context (see the module docs on `Mux::notify`/`Mux::notify_from_any_thread`
+// in `mux/src/lib.rs`): `parse_buffered_data` calls
+// `Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane_id))` once
+// per parser flush (default coalesce delay
+// `mux_output_parser_coalesce_delay_ms` = 3ms), which, prior to this
+// change, unconditionally scheduled a `spawn_into_main_thread` task for
+// *every* flush. Each of those hops fans out through
+// `subscribe_to_pane_updates`'s own `spawn_into_main_thread` callback and
+// then `window.notify()` / `Connection::with_window_inner`, i.e. three
+// main-thread message-pump iterations of pure scheduling overhead for
+// what ultimately amounts to a single `InvalidateRect`. This module pins:
+//
+//  1. `Mux::notify` invokes every subscriber and does not hold
+//     `subscribers.write()` while doing so (a subscriber that tries to
+//     take the same lock from inside its callback -- eg. via
+//     `Mux::subscribe` or a recursive `Mux::notify` -- must not
+//     deadlock).
+//  2. Repeated `PaneOutput` notifications for one pane collapse to a
+//     single queued delivery while that delivery is in flight, but a
+//     fresh notification is accepted again once the queued one has been
+//     delivered.
 
 /// Routes `spawn_into_main_thread`/`spawn_into_main_thread_with_low_priority`
 /// through a queue that the test drains explicitly, mirroring the
