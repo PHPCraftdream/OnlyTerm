@@ -147,7 +147,18 @@ impl ClientPane {
         match pdu {
             Pdu::GetPaneRenderChangesResponse(mut delta) => {
                 *self.mouse_grabbed.lock() = delta.mouse_grabbed;
-                *self.keyboard_encoding.lock() = delta.keyboard_encoding;
+                {
+                    let mut encoding = self.keyboard_encoding.lock();
+                    if *encoding != delta.keyboard_encoding {
+                        log::info!(
+                            "diag: ClientPane {} keyboard encoding {:?} -> {:?} (from server)",
+                            delta.pane_id,
+                            *encoding,
+                            delta.keyboard_encoding
+                        );
+                    }
+                    *encoding = delta.keyboard_encoding;
+                }
                 *self.user_vars.lock() = std::mem::take(&mut delta.user_vars);
 
                 let bonus_lines = std::mem::take(&mut delta.bonus_lines);

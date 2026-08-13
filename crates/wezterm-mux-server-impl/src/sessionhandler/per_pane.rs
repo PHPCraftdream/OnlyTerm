@@ -48,6 +48,12 @@ impl PerPane {
         // push.
         let keyboard_encoding = pane.get_keyboard_encoding();
         if Some(keyboard_encoding) != self.keyboard_encoding {
+            log::info!(
+                "diag: pane {} keyboard encoding {:?} -> {:?}, pushing to client",
+                pane.pane_id(),
+                self.keyboard_encoding,
+                keyboard_encoding
+            );
             changed = true;
         }
 

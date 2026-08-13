@@ -1128,9 +1128,13 @@ impl TermWindow {
                 // encoding is now sourced from the *remote* terminal for
                 // hosted tabs, so it cannot be inferred from local state.
                 log::info!(
-                    "SendEnterOrNewline({:?}): pane keyboard encoding is {:?}, sending {}",
+                    "SendEnterOrNewline({:?}) on pane {}: keyboard encoding is {:?}, \
+                     allow_win32_input_mode={}, enable_kitty_keyboard={}, sending {}",
                     mods,
+                    pane.pane_id(),
                     pane.get_keyboard_encoding(),
+                    self.config.allow_win32_input_mode,
+                    self.config.enable_kitty_keyboard,
                     match &encoded {
                         Some(seq) => format!("encoded {:?}", seq),
                         None => "a literal LF (no protocol negotiated)".to_string(),
@@ -1177,7 +1181,25 @@ impl TermWindow {
                     #[cfg(windows)]
                     win32_uni_char: None,
                 };
-                match self.encode_via_negotiated_protocol(pane, &event) {
+                let encoded = self.encode_via_negotiated_protocol(pane, &event);
+                // See `SendEnterOrNewline` above for why this is logged at
+                // info: same rationale, same "which branch fired" question.
+                log::info!(
+                    "SendChar({:?}, {:?}) on pane {}: keyboard encoding is {:?}, \
+                     allow_win32_input_mode={}, enable_kitty_keyboard={}, sending {}",
+                    mods,
+                    c,
+                    pane.pane_id(),
+                    pane.get_keyboard_encoding(),
+                    self.config.allow_win32_input_mode,
+                    self.config.enable_kitty_keyboard,
+                    match &encoded {
+                        Some(seq) => format!("encoded {:?}", seq),
+                        None => "the raw/control-code fallback byte (no protocol negotiated)"
+                            .to_string(),
+                    }
+                );
+                match encoded {
                     Some(encoded) => {
                         pane.writer().write_all(encoded.as_bytes()).ok();
                     }

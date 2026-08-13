@@ -278,10 +278,12 @@ impl TerminalState {
             }
 
             Mode::SetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::Win32InputMode)) => {
+                log::info!("diag: app negotiated win32-input-mode (DECSET 9001)");
                 self.keyboard_encoding = KeyboardEncoding::Win32;
             }
 
             Mode::ResetDecPrivateMode(DecPrivateMode::Code(DecPrivateModeCode::Win32InputMode)) => {
+                log::info!("diag: app dropped win32-input-mode (DECRST 9001)");
                 self.keyboard_encoding = KeyboardEncoding::Xterm;
             }
 
