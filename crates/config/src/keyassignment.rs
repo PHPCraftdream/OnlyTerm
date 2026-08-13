@@ -390,6 +390,10 @@ pub enum KeyAssignment {
     /// a plain/legacy app can do with this chord. This is the default
     /// binding for CTRL+Enter and SHIFT+Enter.
     SendEnterOrNewline(Modifiers),
+    /// Sends the given character through whatever keyboard protocol the
+    /// pane's app has negotiated (win32-input-mode or kitty), falling back
+    /// to the raw character byte if no protocol was negotiated.
+    SendChar(char),
     CompleteSelection(ClipboardCopyDestination),
     CompleteSelectionOrOpenLinkAtMouseCursor(ClipboardCopyDestination),
     StartWindowDrag,

@@ -1126,6 +1126,37 @@ impl TermWindow {
                     }
                 }
             }
+            SendChar(c) => {
+                let event = KeyEvent {
+                    key: KeyCode::Char(*c),
+                    modifiers: Modifiers::NONE,
+                    leds: KeyboardLedStatus::empty(),
+                    repeat_count: 1,
+                    key_is_down: true,
+                    raw: Some(RawKeyEvent {
+                        key: KeyCode::Char(*c),
+                        modifiers: Modifiers::NONE,
+                        leds: KeyboardLedStatus::empty(),
+                        phys_code: None,
+                        raw_code: 0,
+                        #[cfg(windows)]
+                        scan_code: 0,
+                        repeat_count: 1,
+                        key_is_down: true,
+                        handled: Handled::new(),
+                    }),
+                    #[cfg(windows)]
+                    win32_uni_char: None,
+                };
+                match self.encode_via_negotiated_protocol(pane, &event) {
+                    Some(encoded) => {
+                        pane.writer().write_all(encoded.as_bytes()).ok();
+                    }
+                    None => {
+                        pane.writer().write_all(&[*c as u8]).ok();
+                    }
+                }
+            }
             CopyTextTo { text, destination } => {
                 self.copy_to_clipboard(*destination, text.clone());
             }
