@@ -7,11 +7,13 @@ use clap::*;
 use config::configuration;
 use mux::activity::Activity;
 use mux::domain::{Domain, LocalDomain};
+use mux::pane::PaneId;
 use mux::{Mux, MuxNotification};
 use portable_pty::cmdbuilder::CommandBuilder;
 use std::ffi::OsString;
+use std::future::Future;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use wezterm_gui_subcommands::*;
 use wezterm_mux_server_impl::sessionhandler::PduPolicy;
@@ -51,7 +53,8 @@ struct Opt {
     #[arg(long = "daemonize")]
     daemonize: bool,
 
-    /// Single-pane hosting mode: process exits when pane exits.
+    /// Single-pane hosting mode: process exits when the pane exits, or
+    /// when its one client disconnects (whichever happens first).
     /// In this mode, the process does NOT daemonize and does NOT
     /// spawn a Unix socket listener. Instead, it uses stdin/stdout
     /// for mux protocol communication.
@@ -288,9 +291,23 @@ pub fn spawn_listener() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Run in single-pane mode: one process = one pane, exit when pane exits.
+/// Run in single-pane mode: one process = one pane.
 /// Uses stdin/stdout for mux protocol communication, or WebSocket rendezvous
 /// when --connect-ws-port/--token are provided.
+///
+/// The process exits as soon as it has nothing left to host, which means
+/// *either* of two conditions -- not just the first one:
+///
+/// 1. the pane exits (the shell terminated, or the client killed it), or
+/// 2. the mux protocol client goes away (clean disconnect, or a protocol
+///    error such as a failed attach).
+///
+/// Condition 2 matters because there is no listener here: the single
+/// client that connected can never be replaced, so a pane that outlives it
+/// is unreachable forever. Before this process exits on that path it kills
+/// the pane, so the hosted shell cannot survive as an orphan -- which for
+/// an elevated tab would mean a live elevated shell the user's own
+/// non-elevated tools cannot terminate.
 fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
     // Validate that WebSocket flags are used together
     let ws_rendezvous = match (&opts.connect_ws_port, &opts.token) {
@@ -377,21 +394,43 @@ fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
         (stream, PduPolicy::Unrestricted)
     };
 
-    // Dispatch the mux protocol on the stream (schedules the async future)
-    dispatch_stream(stream, policy);
+    // Dispatch the mux protocol on the stream (schedules the async future).
+    // The returned task doubles as this process's "the client is still
+    // here" signal: there is no listener in single-pane mode, so the one
+    // client that connected (elevated path) or inherited the socket
+    // (non-elevated path) can never be replaced. When that task finishes,
+    // this process has nobody left to serve.
+    let dispatch_task = dispatch_stream(stream, policy);
 
-    let activity = Activity::new();
+    // Filled in by the lifecycle task below and consumed by the tick loop:
+    // that is how the executor loop learns that it is time to stop.
+    //
+    // Reporting the outcome back out through `run()`/`main()` rather than
+    // calling `std::process::exit` from inside the task is deliberate: it
+    // lets `main` run `wezterm_blob_leases::clear_storage()`, which removes
+    // the temp dir registered under `CACHE_DIR` at the top of this
+    // function. One leaked temp dir per tab process would otherwise pile
+    // up for as long as the user's session lives.
+    let outcome: Arc<Mutex<Option<anyhow::Result<()>>>> = Arc::new(Mutex::new(None));
 
-    promise::spawn::spawn(async move {
-        if let Err(err) = async_run_single_pane(cmd).await {
-            terminate_with_error(err);
+    promise::spawn::spawn({
+        let outcome = Arc::clone(&outcome);
+        async move {
+            let result = async_run_single_pane(cmd, dispatch_task).await;
+            outcome.lock().unwrap().replace(result);
         }
-        drop(activity);
     })
     .detach();
 
     loop {
         executor.tick()?;
+        // The tick above may have been the one that completed the
+        // lifecycle task; check before parking in `recv()` again, which
+        // would otherwise block forever (the `SimpleExecutor`'s sender
+        // lives in a global, so its queue never disconnects).
+        if let Some(result) = outcome.lock().unwrap().take() {
+            return result;
+        }
     }
 }
 
@@ -445,7 +484,8 @@ fn wrap_stdin_as_stream() -> UnixStream {
     unsafe { UnixStream::from_raw_socket(stdin_handle) }
 }
 
-/// Schedules the mux protocol dispatcher for the given stream.
+/// Schedules the mux protocol dispatcher for the given stream, returning
+/// the task that drives it.
 ///
 /// `dispatch::process_async_with_policy` is an `async fn`: calling it only constructs a
 /// `Future` and runs none of its body until something actually polls it.
@@ -457,45 +497,178 @@ fn wrap_stdin_as_stream() -> UnixStream {
 /// every accepted daemon-mode connection) is what actually drives it, by
 /// scheduling it onto the `SimpleExecutor` that `run_single_pane_mode`'s
 /// `executor.tick()` loop is already polling.
-fn dispatch_stream(stream: UnixStream, policy: wezterm_mux_server_impl::sessionhandler::PduPolicy) {
+///
+/// The task is returned rather than detached, and the dispatcher's error
+/// is propagated rather than logged and swallowed, because in single-pane
+/// mode "the dispatcher finished" *is* the shutdown trigger for the whole
+/// process (see `async_run_single_pane`), and whether it finished cleanly
+/// (client closed the connection) or with an error (eg: a failed attach)
+/// is what decides this process's exit status.
+///
+/// Note that `Task` cancels on drop: dropping the returned task tears the
+/// dispatcher down and closes the stream, which surfaces to the GUI as an
+/// ordinary connection close.
+fn dispatch_stream(
+    stream: UnixStream,
+    policy: wezterm_mux_server_impl::sessionhandler::PduPolicy,
+) -> promise::spawn::Task<anyhow::Result<()>> {
     promise::spawn::spawn_into_main_thread(async move {
         let stream = smol::Async::new(stream)
             .map_err(|e| anyhow::anyhow!("failed to wrap stream: {:#}", e))?;
-        if let Err(err) =
-            wezterm_mux_server_impl::dispatch::process_async_with_policy(stream, policy).await
-        {
-            log::error!("{:#}", err);
-        }
-        Ok::<(), anyhow::Error>(())
+        wezterm_mux_server_impl::dispatch::process_async_with_policy(stream, policy).await
     })
-    .detach();
 }
 
-/// Async portion of single-pane mode.
-async fn async_run_single_pane(cmd: Option<CommandBuilder>) -> anyhow::Result<()> {
+/// Which of the two "there is nothing left to host" conditions fired
+/// first, and how it turned out.
+#[derive(Debug)]
+enum SinglePaneExit {
+    /// `MuxNotification::PaneRemoved` fired for the hosted pane: the shell
+    /// exited, or the client asked for the pane to be killed.
+    PaneExited(anyhow::Result<()>),
+    /// The mux protocol dispatcher finished: the one and only client this
+    /// process will ever have is gone, either cleanly (EOF) or with an
+    /// error (protocol/IO failure, eg: a rejected attach handshake).
+    ClientGone(anyhow::Result<()>),
+}
+
+/// Waits for whichever single-pane shutdown trigger fires first.
+///
+/// Split out from `async_run_single_pane` so that the ordering logic is
+/// testable without a live pty: the interesting property is that *either*
+/// input winning ends the wait, including the case where one of them was
+/// already complete before the wait even started.
+async fn wait_for_single_pane_shutdown<P, C>(pane_exited: P, client_gone: C) -> SinglePaneExit
+where
+    P: Future<Output = anyhow::Result<()>>,
+    C: Future<Output = anyhow::Result<()>>,
+{
+    smol::future::race(
+        async move { SinglePaneExit::PaneExited(pane_exited.await) },
+        async move { SinglePaneExit::ClientGone(client_gone.await) },
+    )
+    .await
+}
+
+/// Kills this process's one pane and removes it from the mux, mirroring
+/// the `Pdu::KillPane` handler in `wezterm-mux-server-impl`'s
+/// `SessionHandler` (which is the only other place that ends a pane's life
+/// from inside a mux server).
+///
+/// `Mux::remove_pane` already calls `Pane::kill` on the pane it removes;
+/// calling `kill()` explicitly first mirrors that handler and is harmless
+/// (`LocalPane::kill` no-ops once its `killed` flag is set).
+///
+/// On Windows this is belt-and-braces in the common case rather than the
+/// primary reaping mechanism: `pty::win::pseudocon::spawn_command` puts
+/// every pty child into a Job Object with
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and this process holds the only
+/// handle to that job (the job is created after `CreateProcessW`, is not
+/// inheritable, and the child is merely *assigned* to it, so no other
+/// process holds a handle). Process exit therefore closes the last handle
+/// and takes the shell -- and any grandchildren it spawned -- down with
+/// us. But that setup is explicitly allowed to fail (it logs a warning and
+/// continues without a job), and in *that* case nothing else would reap
+/// the shell, so killing the pane before exiting is what keeps the "no
+/// orphaned elevated shells" guarantee unconditional.
+fn kill_hosted_pane(pane_id: PaneId) {
+    let mux = Mux::get();
+    match mux.get_pane(pane_id) {
+        Some(pane) => {
+            pane.kill();
+            mux.remove_pane(pane_id);
+        }
+        None => {
+            log::debug!("pane {} is already gone; nothing to kill", pane_id);
+        }
+    }
+}
+
+/// Whether a dispatcher that ended with an error merely lost its client,
+/// as opposed to actually failing.
+///
+/// `dispatch::process_async_with_policy` already maps a graceful EOF to
+/// `Ok(())`, but a peer that goes away by *exiting* -- which is the normal
+/// way a tab closes, and what happens whenever the GUI itself goes down --
+/// usually surfaces on Windows as `ConnectionReset`/`ConnectionAborted` on
+/// the next read or write rather than as a graceful EOF. Treating those as
+/// failures would log an ERROR and give a non-zero exit status on every
+/// ordinary tab close, drowning out the disconnects that genuinely are
+/// failures (eg: a rejected attach handshake, which is exactly the case
+/// that left an orphaned elevated shell behind).
+fn is_ordinary_disconnect(err: &anyhow::Error) -> bool {
+    match err.root_cause().downcast_ref::<std::io::Error>() {
+        Some(err) => matches!(
+            err.kind(),
+            std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+        ),
+        None => false,
+    }
+}
+
+/// Async portion of single-pane mode: spawn the one pane this process
+/// exists to host, then shut the process down as soon as either the pane
+/// or the client goes away.
+///
+/// The pane spawn deliberately runs to completion *before* the two
+/// shutdown triggers are raced against each other. Racing `client_gone`
+/// against the spawn itself would drop a half-finished spawn future
+/// mid-`await`, potentially leaving a freshly created pty child that
+/// nothing tracks. Deferring the race costs nothing, because "the client
+/// is gone" is a sticky condition rather than an edge: `client_gone` is
+/// the dispatcher's `Task`, which holds its output until it is awaited. A
+/// client that disconnected while the pane was still being created is
+/// therefore observed the instant the race starts -- no polling, no
+/// sleeping, and no window in which the event can be missed. (That
+/// ordering is not hypothetical: the bug this exists to fix was a client
+/// whose attach failed immediately after the transport handshake, ie.
+/// while the pane was still being spawned.)
+async fn async_run_single_pane(
+    cmd: Option<CommandBuilder>,
+    client_gone: impl Future<Output = anyhow::Result<()>>,
+) -> anyhow::Result<()> {
     let mux = Mux::get();
     let config = config::configuration();
 
     let domain = mux.default_domain();
 
-    // Spawn exactly ONE pane
-    let workspace = None;
-    let position = None;
-    let window_id = mux.new_empty_window(workspace, position);
-    domain.attach(Some(*window_id)).await?;
+    // Spawn exactly ONE pane.
+    //
+    // The `Activity` guard is scoped to just the spawn: it suppresses
+    // `Mux::prune_dead_windows` so that the window created here cannot be
+    // pruned as "empty" in the instant before its tab exists. Holding it
+    // for the whole life of the process (as this used to, by keeping it
+    // alive until this function returned) suppresses pruning *forever* --
+    // which silently disables the `exit_behavior = Hold / CloseOnCleanExit`
+    // paths in `mux::pty_reader::read_from_pane_pty`, since those report a
+    // dead child by calling `prune_dead_windows()` rather than
+    // `remove_pane()`. The `PaneRemoved` notification awaited below would
+    // then never fire for a shell that exited on its own.
+    let pane_id = {
+        let _activity = Activity::new();
 
-    let _tab = mux
-        .default_domain()
-        .spawn(config.initial_size(0, None), cmd, None, *window_id)
-        .await?;
+        let workspace = None;
+        let position = None;
+        let window_id = mux.new_empty_window(workspace, position);
+        domain.attach(Some(*window_id)).await?;
 
-    let pane_id = mux
-        .iter_panes()
-        .first()
-        .map(|p| p.pane_id())
-        .ok_or_else(|| anyhow::anyhow!("No pane created"))?;
+        let _tab = domain
+            .spawn(config.initial_size(0, None), cmd, None, *window_id)
+            .await?;
 
-    // Subscribe to pane removal notification to know when the pane exits
+        mux.iter_panes()
+            .first()
+            .map(|p| p.pane_id())
+            .ok_or_else(|| anyhow::anyhow!("No pane created"))?
+    };
+
+    // Subscribe to pane removal notification to know when the pane exits.
+    // There is no `.await` between reading `pane_id` above and subscribing
+    // here, and every path that removes a pane does so from a task on this
+    // same single-threaded executor, so the notification cannot be missed.
     let (pane_exited_tx, pane_exited_rx) = smol::channel::bounded::<()>(1);
     let pane_id_copy = pane_id;
     mux.subscribe(move |notification| {
@@ -507,9 +680,162 @@ async fn async_run_single_pane(cmd: Option<CommandBuilder>) -> anyhow::Result<()
         true // Return true to keep the subscription active
     });
 
-    // Wait for the pane to exit
-    pane_exited_rx
-        .recv()
-        .await
-        .map_err(|e| anyhow::anyhow!("Pane exit channel error: {:?}", e))
+    let pane_exited = async move {
+        pane_exited_rx
+            .recv()
+            .await
+            .map_err(|e| anyhow::anyhow!("Pane exit channel error: {:?}", e))
+    };
+
+    match wait_for_single_pane_shutdown(pane_exited, client_gone).await {
+        SinglePaneExit::PaneExited(result) => {
+            log::info!("hosted pane {} exited; shutting down", pane_id);
+            result
+        }
+        SinglePaneExit::ClientGone(result) => {
+            // Nobody can ever attach to this process again, so the pane it
+            // hosts is now unreachable. Left running it would be an
+            // invisible orphan holding a live shell -- and for an elevated
+            // tab, a live *elevated* shell that the user's own
+            // (non-elevated) tools cannot even terminate.
+            log::info!(
+                "mux protocol client is gone; killing hosted pane {} and shutting down",
+                pane_id
+            );
+            kill_hosted_pane(pane_id);
+            // A client that merely went away is an ordinary shutdown
+            // (exit 0); a dispatcher failure is not, and `main` turns it
+            // into a non-zero exit after logging it.
+            match result {
+                Ok(()) => Ok(()),
+                Err(err) if is_ordinary_disconnect(&err) => {
+                    log::debug!("client disconnected: {:#}", err);
+                    Ok(())
+                }
+                Err(err) => Err(err).context("mux protocol dispatch failed"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use promise::spawn::block_on;
+    use std::future::{pending, ready};
+
+    /// The ordering that the orphaned-elevated-process bug actually hit:
+    /// the dispatcher finished (a failed attach) while the pane was still
+    /// being created, so by the time anything waits for a shutdown trigger
+    /// the "client is gone" condition has *already* happened. It must
+    /// still be observed -- an edge-triggered signal would have been lost
+    /// here, and the process would then wait forever for a perfectly
+    /// healthy pane to die.
+    #[test]
+    fn an_already_disconnected_client_is_not_missed() {
+        let outcome = block_on(wait_for_single_pane_shutdown(
+            pending(),
+            ready(Err(anyhow::anyhow!("attach failed"))),
+        ));
+        match outcome {
+            SinglePaneExit::ClientGone(Err(err)) => {
+                assert!(
+                    err.to_string().contains("attach failed"),
+                    "the dispatcher's error must be propagated, got: {:#}",
+                    err
+                );
+            }
+            other => panic!("expected ClientGone(Err(..)), got {:?}", other),
+        }
+    }
+
+    /// A client that disconnects cleanly while the pane is still alive is
+    /// still a shutdown trigger, but not an error: the process exits 0.
+    #[test]
+    fn a_clean_client_disconnect_ends_the_wait_without_an_error() {
+        let outcome = block_on(wait_for_single_pane_shutdown(pending(), ready(Ok(()))));
+        match outcome {
+            SinglePaneExit::ClientGone(Ok(())) => {}
+            other => panic!("expected ClientGone(Ok(())), got {:?}", other),
+        }
+    }
+
+    /// The original, pre-existing exit condition must keep working: the
+    /// pane going away ends the wait even though the client is still
+    /// connected (its future never completes).
+    #[test]
+    fn a_pane_exit_ends_the_wait_while_the_client_is_still_connected() {
+        let outcome = block_on(wait_for_single_pane_shutdown(ready(Ok(())), pending()));
+        match outcome {
+            SinglePaneExit::PaneExited(Ok(())) => {}
+            other => panic!("expected PaneExited(Ok(())), got {:?}", other),
+        }
+    }
+
+    /// A peer that vanished (its process exited, taking the socket with
+    /// it) must not be reported as a failure: that is what an ordinary tab
+    /// close looks like from here. A protocol-level failure -- the case
+    /// that actually left an orphaned elevated shell behind -- must still
+    /// be reported as one.
+    #[test]
+    fn only_transport_level_disconnects_count_as_ordinary() {
+        for kind in [
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::BrokenPipe,
+        ] {
+            // Wrapped in context the same way `dispatch` wraps it, so
+            // this exercises the `root_cause()` unwrapping too.
+            let err = anyhow::Error::new(std::io::Error::new(kind, "peer went away"))
+                .context("reading Pdu from client");
+            assert!(
+                is_ordinary_disconnect(&err),
+                "{:?} should be treated as an ordinary disconnect",
+                kind
+            );
+        }
+
+        let err = anyhow::anyhow!("PDU Spawn is not permitted on this channel");
+        assert!(
+            !is_ordinary_disconnect(&err),
+            "a protocol-level rejection is a real failure, not a disconnect"
+        );
+
+        let err = anyhow::Error::new(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "corrupt PDU",
+        ));
+        assert!(
+            !is_ordinary_disconnect(&err),
+            "a decode failure is a real failure, not a disconnect"
+        );
+    }
+
+    /// The pane-side channel breaking (its sender dropped without ever
+    /// signalling) must surface as an error rather than hanging: the
+    /// process can no longer observe its own pane, so continuing to run
+    /// would be exactly the orphan state this whole path exists to
+    /// prevent.
+    #[test]
+    fn a_broken_pane_channel_surfaces_as_an_error() {
+        let (tx, rx) = smol::channel::bounded::<()>(1);
+        drop(tx);
+        let pane_exited = async move {
+            rx.recv()
+                .await
+                .map_err(|e| anyhow::anyhow!("Pane exit channel error: {:?}", e))
+        };
+        let outcome = block_on(wait_for_single_pane_shutdown(pane_exited, pending()));
+        match outcome {
+            SinglePaneExit::PaneExited(Err(err)) => {
+                assert!(
+                    err.to_string().contains("Pane exit channel error"),
+                    "unexpected error: {:#}",
+                    err
+                );
+            }
+            other => panic!("expected PaneExited(Err(..)), got {:?}", other),
+        }
+    }
 }
