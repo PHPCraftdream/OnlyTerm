@@ -391,3 +391,68 @@ performed:
 **Conclusion:** Phase A's core mechanism is now genuinely proven end to
 end, not just compiled and linted. Phase B (generalizing ordinary
 `SpawnTab` to this path) can proceed on this foundation.
+
+## 9. Phase B: implementation, review findings, and an honest verification gap (2026-08-13)
+
+Adds `spawn_single_pane_tab` (`crates/wezterm-gui/src/spawn.rs`): builds a
+`UnixDomain` with `proxy_command` pointed at
+`onlyterm-mux-server.exe --single-pane` (resolved next to the running
+GUI's own exe path), registers it as a `ClientDomain` via `mux.add_domain`,
+attaches, and spawns the requested command there via
+`SpawnTabDomain::DomainName(...)`. `spawn_command_impl` now branches on a
+new `per_tab_process_isolation` config flag to choose this path over the
+existing direct `LocalDomain` one. `SplitPane` is explicitly excluded
+(bails with an error) -- splitting into a single-pane-hosted tab is not
+supported yet.
+
+Two things the orchestrating session changed after independent review,
+not present in the version crush reported "complete":
+
+1. **Config flag default changed from `true` to `false`.** Crush's own
+   reasoning (isolation is the user's requested end state, so default it
+   on) is philosophically defensible, but practically this flag gates the
+   code path every single new tab goes through for every user, and it
+   shipped with zero live interactive verification that opening a tab
+   still works at all end-to-end (see point 2). Flipping the default on
+   before that gap closes would risk turning "every tab you open" into
+   the untested path for anyone who updates. Left as an opt-in rollout
+   lever; flipping it to `true` by default is appropriate once Phase D
+   lands (see point 3) and/or a live QA pass (ideally by the user, since
+   this session could not complete one -- see below) confirms the golden
+   path.
+2. **A real resource leak, not yet fixed:** `mux.add_domain(&domain)` runs
+   once per spawned tab, with no matching removal when the tab/pane
+   closes. Over a real working session (many tabs opened and closed
+   across a day) this accumulates dead domain registrations in the Mux
+   for the lifetime of the GUI process. This is squarely a Phase D
+   ("crash/lifecycle handling") concern and is deliberately NOT patched
+   here under time pressure -- flagging it explicitly rather than leaving
+   it silently undocumented, and Phase D's task description should
+   treat this as part of its scope, not just process-crash handling.
+3. **Verification gap, disclosed honestly:** static code review confirms
+   `SpawnTabDomain::DomainName(name)` resolves via
+   `Mux::resolve_spawn_tab_domain` -> `get_domain_by_name` against exactly
+   the name `spawn_single_pane_tab` registers, so the wiring is correct
+   by inspection. But the actual interactive acceptance criterion --
+   press the real "new tab" keybinding (Ctrl+T) in a live window with
+   `per_tab_process_isolation = true`, confirm a new isolated tab opens
+   and works, then kill that tab's hosting process and confirm the
+   window and other tabs survive -- was attempted and NOT achieved this
+   session. `SendKeys` and an `AttachThreadInput`-based foreground-force
+   attempt both failed to make a self-launched isolated test window
+   accept synthetic keyboard input (Windows' foreground-lock protections
+   blocked focus-stealing from a non-interactive script context). Crush's
+   own session reported the identical inability for a different reason
+   (the HARD CONSTRAINT against touching real windows). This is the
+   actual point of the whole initiative and it remains unverified by a
+   live interactive test -- flagging this prominently rather than
+   treating the code-review-level confidence as equivalent to having
+   watched it work. A human manually testing this live (as has happened
+   for every other UI-facing change this session) would close this gap
+   directly.
+
+Verified (mechanical/automated only, given the gap above):
+`cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D
+warnings`, `cargo fmt --check`, `cargo test -p wezterm-gui -p
+wezterm-mux-server-impl -p wezterm-client -p wezterm-mux-server -p mux -p
+config`, all clean.
