@@ -355,10 +355,9 @@ impl Client {
     ) -> anyhow::Result<Self> {
         use smol::Async;
 
-        // SAFETY: `Async::new` is documented as only performing async-signal-safe operations
-        // (creating a pipe pair and registering with the async runtime). It is infallible
-        // on valid input, and the returned `Async<T>` preserves the same `Read`/`Write`
-        // semantics as `T`. The `stream` is already connected and authenticated by the caller.
+        // `stream` is already connected and authenticated by the caller (via the
+        // WebSocket rendezvous handshake) -- this just registers it with the
+        // async runtime, matching the wrapping already done in `conn.rs`.
         let stream: Box<dyn conn::AsyncReadAndWrite> = Box::new(Async::new(stream)?);
         let reconnectable = conn::Reconnectable::new(client_domain_config, Some(stream));
         Ok(Self::new(local_domain_id, reconnectable))
