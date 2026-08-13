@@ -398,6 +398,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         // ----------------- Edit
         SendEnterOrNewline(Modifiers::CTRL),
         SendEnterOrNewline(Modifiers::SHIFT),
+        SendChar(Modifiers::CTRL, 'j'),
         PasteFrom(ClipboardPasteSource::PrimarySelection),
         CopyTo(ClipboardCopyDestination::PrimarySelection),
         CopyTo(ClipboardCopyDestination::Clipboard),

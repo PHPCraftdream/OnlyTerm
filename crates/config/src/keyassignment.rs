@@ -390,6 +390,15 @@ pub enum KeyAssignment {
     /// a plain/legacy app can do with this chord. This is the default
     /// binding for CTRL+Enter and SHIFT+Enter.
     SendEnterOrNewline(Modifiers),
+    /// Sends the given character, with the given modifiers held, through
+    /// whatever keyboard protocol the pane's app has negotiated
+    /// (win32-input-mode or kitty) -- the modifiers are part of what gets
+    /// encoded, so eg. `SendChar(Modifiers::CTRL, 'j')` is distinguishable
+    /// from a bare 'j' keypress once decoded by the app. Falls back to the
+    /// standard ASCII control-code encoding (`ctrl_mapping`) when `mods`
+    /// contains CTRL and no protocol was negotiated, or to the raw
+    /// character byte otherwise.
+    SendChar(Modifiers, char),
     CompleteSelection(ClipboardCopyDestination),
     CompleteSelectionOrOpenLinkAtMouseCursor(ClipboardCopyDestination),
     StartWindowDrag,

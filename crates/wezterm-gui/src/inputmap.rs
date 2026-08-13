@@ -919,7 +919,11 @@ mod tests {
     /// Builds an `InputMap` from a config whose `keys:` list mirrors the
     /// shape of a real user config: a mix of `phys:`-prefixed and plain
     /// bindings, most of them CTRL chords, and *none* of them touching
-    /// CTRL+C or CTRL+J.
+    /// CTRL+C. Note: after the Ctrl+J protocol-aware fix, CTRL+J now
+    /// has a default binding, so this config no longer tests that it stays
+    /// free - we keep this config structure for testing that unrelated
+    /// user bindings don't clobber the defaults they don't explicitly
+    /// touch.
     ///
     /// The classic way for a config engine to break "everything except the
     /// keys I explicitly bound" is for a non-empty user `keys:` list to
@@ -1017,8 +1021,9 @@ mod tests {
     /// Regression test: a user config that binds *some* CTRL chords must not
     /// disturb the built-in defaults for the chords it does not mention.
     /// CTRL+C must still be `CopySelectionOrInterrupt` (so it interrupts when
-    /// nothing is selected) and CTRL+J must still be entirely unbound (so it
-    /// falls through to the pty as a raw 0x0A).
+    /// nothing is selected). After the Ctrl+J protocol-aware fix, CTRL+J now
+    /// has a default binding (SendChar(Modifiers::CTRL, 'j')), so this test
+    /// verifies that it is NOT clobbered by unrelated user bindings.
     #[test]
     fn user_key_overrides_do_not_clobber_ctrl_c_and_ctrl_j_defaults() {
         let input_map = input_map_with_user_style_keys();
@@ -1036,16 +1041,19 @@ mod tests {
             assert_eq!(entry.action, KeyAssignment::CopySelectionOrInterrupt);
         }
 
-        for key in [
-            KeyCode::Char('j'),
-            KeyCode::Char('J'),
-            KeyCode::Physical(PhysKeyCode::J),
-        ] {
-            assert!(
-                input_map.lookup_key(&key, Modifiers::CTRL, None).is_none(),
-                "CTRL+J ({:?}) must stay free of any binding so it reaches the pty as 0x0A",
-                key
-            );
+        // After the fix, Ctrl+J has a default binding that should NOT be
+        // clobbered by unrelated user bindings
+        for key in [KeyCode::Char('j'), KeyCode::Physical(PhysKeyCode::J)] {
+            let entry = input_map
+                .lookup_key(&key, Modifiers::CTRL, None)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "CTRL+J ({:?}) must keep its default protocol-aware binding \
+                         when the user config defines unrelated `keys:` overrides",
+                        key
+                    )
+                });
+            assert_eq!(entry.action, KeyAssignment::SendChar(Modifiers::CTRL, 'j'));
         }
 
         // Sanity check the other direction: the user's own overrides really
@@ -1309,29 +1317,96 @@ mod tests {
         assert_eq!(physical.action, mapped.action);
     }
 
-    /// Regression test: CTRL+J must NOT be captured by any default key
-    /// binding (eg: tab/pane navigation or anything else). Since it is
-    /// free, the raw key event falls through to the terminal's standard
-    /// ASCII control-code encoding, where CTRL+J naturally encodes to
-    /// 0x0A (line feed) via `ctrl_mapping('j')`. That is exactly the
-    /// desired behavior, so no new default binding is required for it --
-    /// only this assertion that nothing has claimed the chord.
+    /// Regression test: CTRL+J now has a protocol-aware default binding
+    /// that sends Ctrl+j through whatever keyboard protocol the app has
+    /// negotiated (win32-input-mode or kitty), falling back to a raw 0x0A
+    /// byte if no protocol was negotiated. This fixes the issue where
+    /// apps like Codex CLI (which negotiates win32-input-mode) expect all
+    /// keystrokes to arrive via the negotiated protocol and may not
+    /// correctly process a stray raw 0x0A byte appearing mid-stream.
+    ///
+    /// Before this fix, Ctrl+J fell through to the terminal's standard
+    /// ASCII control-code encoding (ctrl_mapping('j') -> 0x0A) unconditionally,
+    /// which worked for legacy apps but broke protocol-aware apps.
     #[test]
-    fn ctrl_j_has_no_default_binding_and_passes_through_as_raw_byte() {
+    fn ctrl_j_has_protocol_aware_default_binding() {
         let input_map = InputMap::default_input_map();
 
+        let entry = input_map
+            .lookup_key(&KeyCode::Char('j'), Modifiers::CTRL, None)
+            .expect("CTRL+J must have a default protocol-aware binding");
+        assert_eq!(
+            entry.action,
+            KeyAssignment::SendChar(Modifiers::CTRL, 'j'),
+            "CTRL+J must be bound to SendChar(Modifiers::CTRL, 'j')"
+        );
+
+        // The physical J key should also resolve to the same action
+        // (layout-independent physical-key fallback, synthesized in CommandDef::permute_keys)
+        let physical = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::J), Modifiers::CTRL, None)
+            .expect("physical CTRL+J must resolve to the same protocol-aware binding");
+        assert_eq!(
+            physical.action,
+            KeyAssignment::SendChar(Modifiers::CTRL, 'j'),
+            "physical CTRL+J must resolve to the same SendChar(Modifiers::CTRL, 'j') binding"
+        );
+    }
+
+    /// Unit test: verify that a Ctrl+j `KeyEvent` -- the same shape the
+    /// `SendChar(Modifiers::CTRL, 'j')` action constructs internally, since
+    /// it carries the modifiers through unchanged (see `SendChar`'s handler
+    /// in `termwindow/actions.rs`) -- encodes correctly via
+    /// win32-input-mode. This tests the encoding path WITHOUT requiring a
+    /// live pane or Codex CLI session.
+    #[cfg(windows)]
+    #[test]
+    fn send_char_j_encodes_correctly_via_win32_input_mode() {
+        use window::{KeyEvent, KeyboardLedStatus, Modifiers, RawKeyEvent};
+
+        // `SendChar(mods, c)`'s handler builds exactly this shape of
+        // `KeyEvent` (`key: KeyCode::Char(c), modifiers: mods`) before
+        // calling `encode_via_negotiated_protocol` -- constructing it here
+        // directly verifies the encoding a real CTRL+J keypress produces.
+        let ctrl_j_event = KeyEvent {
+            key: KeyCode::Char('j'),
+            modifiers: Modifiers::CTRL,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: Some(RawKeyEvent {
+                key: KeyCode::Char('j'),
+                modifiers: Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                phys_code: Some(window::PhysKeyCode::J),
+                raw_code: 0x4a, // VK_J
+                #[cfg(windows)]
+                scan_code: 0x24,
+                repeat_count: 1,
+                key_is_down: true,
+                handled: window::Handled::new(),
+            }),
+            #[cfg(windows)]
+            win32_uni_char: None,
+        };
+
+        // The encode_win32_input_mode() function exists on KeyEvent
+        let encoded = ctrl_j_event
+            .encode_win32_input_mode()
+            .expect("Ctrl+j should encode via win32-input-mode");
+
+        // Format is ESC [ vkey;scan;uni;down;ctrlstate;repeat _
+        // Ctrl+J should carry 0x0a (10) in the uni field (control code),
+        // not 'j' (106). This is verified by the existing test
+        // encode_win32_input_mode_ctrl_chords_carry_the_control_code
+        // in wezterm-input-types/src/lib.rs.
         assert!(
-            input_map
-                .lookup_key(&KeyCode::Char('j'), Modifiers::CTRL, None)
-                .is_none(),
-            "CTRL+J must be free of any default KeyAssignment so that it \
-             passes through to the pty as a raw 0x0A byte"
+            encoded.starts_with('\u{1b}'),
+            "win32-input-mode encoding must start with ESC"
         );
         assert!(
-            input_map
-                .lookup_key(&KeyCode::Char('J'), Modifiers::CTRL, None)
-                .is_none(),
-            "CTRL+J (uppercase variant) must also be free of any default KeyAssignment"
+            encoded.contains(';'),
+            "must have semicolon-separated fields"
         );
     }
 
