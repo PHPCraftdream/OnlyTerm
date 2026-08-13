@@ -2,8 +2,8 @@ use crate::gui_api::guiwin::GuiWin;
 use mux::termwiztermtab::TermWizTerminal;
 use termwiz::cell::{AttributeChange, CellAttributes, Intensity};
 use termwiz::color::ColorAttribute;
-use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers};
-use termwiz::surface::Change;
+use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent};
+use termwiz::surface::{Change, Position};
 use termwiz::terminal::Terminal;
 use window::WindowOps;
 
@@ -47,12 +47,25 @@ fn center_block(lines: &[String], width: usize) -> Vec<String> {
 ///
 /// Does *not* copy anything to the clipboard on its own -- clobbering
 /// whatever the user already had copied just because they glanced at the
-/// version would be surprising. Pressing Ctrl+Shift+C copies on demand
+/// version would be surprising. A clickable Copy button copies on demand
 /// instead (via `gui_win.window`, since this closure runs on its own
 /// spawned thread with no direct access to the `TermWindow` that owns
 /// the real clipboard-setting code).
+///
+/// That button replaces an advertised "Press Ctrl+Shift+C to copy" that
+/// could never have worked: SHIFT|CTRL C is a *global* default binding to
+/// `CopyTo(Clipboard)`, so `TermWindow::process_key` resolves and consumes
+/// it before the keypress is ever written to this pane's input stream --
+/// the overlay's own match arm for it was unreachable, and the global
+/// action it ran instead copies the (empty) selection, so pressing it did
+/// nothing at all.
 pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyhow::Result<()> {
-    term.no_grab_mouse_in_raw_mode();
+    // Mouse grab is deliberately left on (unlike the sibling `debug` and
+    // `prompt` overlays, which call `no_grab_mouse_in_raw_mode`): without it
+    // the pane never receives `InputEvent::Mouse` and the Copy button below
+    // could not be clicked. The cost is that dragging no longer selects text
+    // inside this overlay, which is precisely what the button makes
+    // unnecessary here.
     term.set_raw_mode()?;
     term.render(&[Change::Title("OnlyTerm version".to_string())])?;
 
@@ -113,7 +126,7 @@ pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyho
         (size.cols, size.rows)
     };
 
-    let total_display_lines = box_lines.len() + 2 /* blank + hint */;
+    let total_display_lines = box_lines.len() + 3 /* blank + button + hint */;
     let top_pad = screen_rows.saturating_sub(total_display_lines) / 2;
 
     let mut boxed_text = "\r\n".repeat(top_pad);
@@ -123,27 +136,61 @@ pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyho
     }
     boxed_text.push_str("\r\n");
 
-    let render = |term: &mut TermWizTerminal, copied: bool| -> anyhow::Result<()> {
+    // The button's screen position has to be known outside the render
+    // closure too, since hit-testing a click is exactly "is this cell inside
+    // the button". `boxed_text` above ends by emitting the blank separator
+    // row, which leaves the next free row one past the box.
+    const BUTTON_LABEL: &str = "[ Copy ]";
+    let button_w = BUTTON_LABEL.chars().count();
+    let button_x = screen_cols.saturating_sub(button_w) / 2;
+    let button_row = top_pad + box_lines.len() + 1;
+
+    let render = |term: &mut TermWizTerminal, copied: bool, hovered: bool| -> anyhow::Result<()> {
         let hint_line = if copied {
             "Copied to clipboard  ·  Press Esc to close"
         } else {
-            "Press Ctrl+Shift+C to copy  ·  Press Esc to close"
+            "Click Copy, or press Enter  ·  Press Esc to close"
         };
-        let hint_text = format!("{}\r\n", center(hint_line, screen_cols));
 
-        term.render(&[
+        let mut changes = vec![
             Change::ClearScreen(ColorAttribute::Default),
             AttributeChange::Intensity(Intensity::Bold).into(),
             Change::Text(boxed_text.clone()),
             Change::AllAttributes(CellAttributes::default()),
-            AttributeChange::Intensity(Intensity::Half).into(),
-            Change::Text(hint_text),
-            Change::AllAttributes(CellAttributes::default()),
-        ])?;
+            Change::CursorPosition {
+                x: Position::Absolute(button_x),
+                y: Position::Absolute(button_row),
+            },
+        ];
+        if hovered {
+            changes.push(AttributeChange::Reverse(true).into());
+        }
+        changes.push(Change::Text(BUTTON_LABEL.to_string()));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+
+        changes.push(Change::CursorPosition {
+            x: Position::Absolute(0),
+            y: Position::Absolute(button_row + 1),
+        });
+        changes.push(AttributeChange::Intensity(Intensity::Half).into());
+        changes.push(Change::Text(center(hint_line, screen_cols)));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+
+        term.render(&changes)?;
         Ok(())
     };
 
-    render(&mut term, false)?;
+    let mut copied = false;
+    let mut hovered = false;
+    render(&mut term, copied, hovered)?;
+
+    let copy = |term: &mut TermWizTerminal, copied: &mut bool, hovered: bool| {
+        gui_win
+            .window
+            .set_clipboard(::window::Clipboard::Clipboard, clipboard_text.clone());
+        *copied = true;
+        render(term, *copied, hovered)
+    };
 
     loop {
         match term.poll_input(None)? {
@@ -151,44 +198,41 @@ pub fn show_version_overlay(mut term: TermWizTerminal, gui_win: GuiWin) -> anyho
                 key: KeyCode::Escape,
                 ..
             })) => return Ok(()),
-            // Ctrl+Shift+C for copy, not bare `c`: a bare unmodified key is
-            // layout-dependent by design (it's meant to be literal text
-            // input), so on a non-US layout the physical C key wouldn't
-            // even produce the char 'c'. Chords that include CTRL (or ALT)
-            // instead resolve through this fork's physical-key-preference
-            // normalization (crates/window/src/os/windows/window.rs), so
-            // this works the same regardless of the active layout -- same
-            // fix class as the Alt+V passthrough fix earlier this session.
-            // Checked before the bare Ctrl+C/Ctrl+D close arm below so the
-            // Shift-qualified chord doesn't fall through to it.
-            //
-            // Deliberately NOT checking `modifiers.contains(Modifiers::SHIFT)`
-            // here: `window.rs`'s `normalize_shift()` always folds a
-            // Shift+letter chord into the uppercase letter with the
-            // *general* SHIFT bit removed (only positional LEFT_SHIFT/
-            // RIGHT_SHIFT survive that step), and `TermWizTerminalPane::
-            // key_down` (crates/mux/src/termwiztermtab.rs) strips those
-            // positional bits too before this overlay ever sees the event.
-            // So a real Ctrl+Shift+C physically never arrives here with the
-            // general SHIFT bit set -- requiring it made this arm
-            // unreachable. `InputMap::lookup_key` already accounts for the
-            // same fold when matching ordinary keybindings; matching on the
-            // uppercased char alone is the same convention applied here.
+            // Enter and Space activate the button, matching how a focused
+            // button behaves anywhere else. Neither is claimed by a global
+            // key assignment, so unlike the Ctrl+Shift+C this replaces (see
+            // the function doc comment), both actually reach this overlay.
             Some(InputEvent::Key(KeyEvent {
-                key: KeyCode::Char('C'),
-                modifiers,
+                key: KeyCode::Enter | KeyCode::Char('\r') | KeyCode::Char(' '),
                 ..
-            })) if modifiers.contains(Modifiers::CTRL) => {
-                gui_win
-                    .window
-                    .set_clipboard(::window::Clipboard::Clipboard, clipboard_text.clone());
-                render(&mut term, true)?;
-            }
+            })) => copy(&mut term, &mut copied, hovered)?,
             Some(InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('c') | KeyCode::Char('d'),
                 modifiers,
                 ..
             })) if modifiers.contains(Modifiers::CTRL) => return Ok(()),
+            Some(InputEvent::Mouse(MouseEvent {
+                x,
+                y,
+                mouse_buttons,
+                ..
+            })) => {
+                let x = x as usize;
+                let y = y as usize;
+                let now_hovered = y == button_row && x >= button_x && x < button_x + button_w;
+                let hover_changed = now_hovered != hovered;
+                hovered = now_hovered;
+
+                if hovered && mouse_buttons == MouseButtons::LEFT {
+                    copy(&mut term, &mut copied, hovered)?;
+                } else if hover_changed {
+                    // Only repaint when the highlight actually changes:
+                    // grabbing the mouse delivers an event for every cell of
+                    // motion anywhere in the pane, and a repaint clears and
+                    // redraws the entire screen.
+                    render(&mut term, copied, hovered)?;
+                }
+            }
             None => return Ok(()),
             _ => {}
         }
