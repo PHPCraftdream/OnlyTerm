@@ -24,15 +24,12 @@ use std::time::Instant;
 
 /// Result of attempting to spawn an elevated single-pane tab.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum ElevatedSinglePaneResult {
     /// The elevated child connected and authenticated; here is the live stream.
-    #[allow(dead_code)]
     Success(wezterm_uds::UnixStream),
     /// User declined the UAC prompt (ERROR_CANCELLED / 1223).
     UserCancelled,
     /// Spawn, connect, or handshake failed, with a human-readable reason.
-    #[allow(dead_code)]
     Failed(String),
 }
 
@@ -169,6 +166,7 @@ fn construct_single_pane_command_line(
 /// * `ElevateResult::Success` - Elevated window spawned successfully.
 /// * `ElevateResult::UserCancelled` - User cancelled the UAC prompt.
 /// * `ElevateResult::Failed(message)` - Failed to spawn with an error message.
+#[allow(dead_code)] // Kept for potential future "open in new OS window" option
 pub fn spawn_elevated_window(shell_args: &[String], _priority: ProcessPriority) -> ElevateResult {
     use winapi::shared::winerror::ERROR_CANCELLED;
     use winapi::um::shellapi::ShellExecuteExW;
@@ -258,8 +256,6 @@ pub fn spawn_elevated_window(shell_args: &[String], _priority: ProcessPriority) 
 ///   loopback). Its pane is rendered inside the existing non-elevated GUI window
 ///   via the mux protocol once connected, so the child itself is launched with
 ///   `SW_HIDE` to avoid a confusing console-window flash.
-/// - This function is currently unused and will be wired in by a follow-up task
-///   that integrates it into the "New Tab Options" dialog's admin path.
 ///
 /// # Parameters
 ///
@@ -278,7 +274,6 @@ pub fn spawn_elevated_window(shell_args: &[String], _priority: ProcessPriority) 
 /// * `ElevatedSinglePaneResult::UserCancelled` - User cancelled the UAC prompt.
 /// * `ElevatedSinglePaneResult::Failed(message)` - Spawn, connect, or handshake
 ///   failed with an error message.
-#[allow(dead_code)] // Wired in by a follow-up task
 pub fn spawn_elevated_single_pane(
     shell_args: &[String],
     cwd: Option<&std::path::Path>,

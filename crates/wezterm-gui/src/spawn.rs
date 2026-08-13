@@ -1,14 +1,17 @@
 use anyhow::{anyhow, bail, Context};
 use config::keyassignment::SpawnCommand;
-use config::{TermConfig, UnixDomain};
+use config::{ProcessPriority, TermConfig, UnixDomain};
 use mux::activity::Activity;
 use mux::domain::{alloc_domain_id, Domain, SplitSource};
 use mux::tab::SplitRequest;
 use mux::window::WindowId as MuxWindowId;
 use mux::Mux;
 use portable_pty::CommandBuilder;
+use promise::spawn::spawn_into_new_thread;
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use wezterm_client::domain::{ClientDomain, ClientDomainConfig};
 use wezterm_term::TerminalSize;
 
@@ -155,6 +158,119 @@ async fn spawn_single_pane_tab(
     client_domain.attach_with_spinner(attach_window_id).await?;
 
     if attach_window_id.is_some() {
+        if let Some(pane) = mux
+            .iter_panes()
+            .into_iter()
+            .find(|p| p.domain_id() == domain.domain_id())
+        {
+            pane.set_config(term_config);
+        }
+    }
+
+    Ok(())
+}
+
+/// Spawn an elevated (admin, UAC) single-pane tab using the WebSocket rendezvous path.
+/// This is the elevated counterpart to `spawn_single_pane_tab`.
+///
+/// This function:
+/// - Participates in the same per-window debounce as `spawn_single_pane_tab`
+///   (via `pending_single_pane_spawns()`) to prevent duplicate UAC prompts.
+/// - Offloads the blocking `spawn_elevated_single_pane` call to a real OS thread
+///   via `spawn_into_new_thread` (it blocks on the UAC prompt and the WebSocket
+///   handshake wait).
+/// - On success, builds a `ClientDomain`, registers it with the `Mux`, and
+///   attaches via `attach_stream_with_spinner` (quiet spinner, not the raw log).
+/// - On failure/cancellation, returns an `Err` with a clear message; the caller
+///   (`execute_new_tab_run_request`) surfaces this as a toast notification.
+///
+/// # Cancel-safety
+/// This function awaits a spawned task (`spawn_into_new_thread`) and then
+/// `attach_stream_with_spinner`. Dropping the `Task` detaches the thread (§B21),
+/// but the thread owns the `stream`, so no resource is lost. `attach_stream_with_spinner`
+/// is cancel-safe (see its doc comment). The debounce guard's `Drop` impl is
+/// infallible and idempotent.
+pub async fn spawn_elevated_single_pane_tab(
+    argv: Vec<String>,
+    priority: ProcessPriority,
+    cwd: Option<PathBuf>,
+    src_window_id: Option<MuxWindowId>,
+    term_config: Arc<TermConfig>,
+) -> anyhow::Result<()> {
+    // See `pending_single_pane_spawns`'s doc comment: silently drop a
+    // repeat "new tab" trigger for a window that already has one of these
+    // spawns in flight, instead of piling up another UAC prompt.
+    let _pending_guard = if let Some(window_id) = src_window_id {
+        if !pending_single_pane_spawns()
+            .lock()
+            .unwrap()
+            .insert(window_id)
+        {
+            return Ok(());
+        }
+        Some(PendingSpawnGuard(window_id))
+    } else {
+        None
+    };
+
+    let mux = Mux::get();
+
+    // Run the blocking spawn (UAC prompt + WebSocket handshake) on a real OS thread.
+    let result_task = spawn_into_new_thread(move || {
+        Ok(crate::elevate::spawn_elevated_single_pane(
+            &argv,
+            cwd.as_deref(),
+            priority,
+            Duration::from_secs(30),
+        ))
+    });
+
+    let result = result_task.await.context("failed to join spawn thread")?;
+
+    let stream = match result {
+        crate::elevate::ElevatedSinglePaneResult::Success(stream) => stream,
+        crate::elevate::ElevatedSinglePaneResult::UserCancelled => {
+            bail!("elevation was cancelled")
+        }
+        crate::elevate::ElevatedSinglePaneResult::Failed(msg) => {
+            bail!("failed to spawn elevated single pane: {}", msg)
+        }
+    };
+
+    // Build a UnixDomain config for the ClientDomain.
+    // Unlike the non-elevated `spawn_single_pane_tab`, we have no `proxy_command`
+    // to run — the connection already exists — so we set `proxy_command: None`.
+    // Other fields match the non-elevated case.
+    let domain_name = format!("single-pane-elev-{}", alloc_domain_id());
+    let unix_domain = UnixDomain {
+        name: domain_name,
+        socket_path: None, // Not used when we already have a stream
+        connect_automatically: false,
+        no_serve_automatically: true,
+        serve_command: None,
+        proxy_command: None, // No proxy_command — we already have a connected stream
+        skip_permissions_check: true, // Not applicable for already-connected stream
+        read_timeout: Duration::from_secs(60),
+        write_timeout: Duration::from_secs(60),
+        local_echo_threshold_ms: None,
+        overlay_lag_indicator: false,
+    };
+
+    // Create and register the ClientDomain.
+    let client_domain_config = ClientDomainConfig::Unix(unix_domain);
+    let client_domain = Arc::new(ClientDomain::new(client_domain_config));
+    let domain: Arc<dyn Domain> = client_domain.clone();
+    mux.add_domain(&domain);
+
+    // Attach to the domain: the elevated child has already connected and is ready.
+    // Use `attach_stream_with_spinner` (quiet animated spinner) instead of the raw
+    // `Domain::attach` log, matching the UX pattern of the non-elevated path.
+    client_domain
+        .attach_stream_with_spinner(src_window_id, stream)
+        .await?;
+
+    // Apply the term_config to the resulting pane.
+    if src_window_id.is_some() {
         if let Some(pane) = mux
             .iter_panes()
             .into_iter()

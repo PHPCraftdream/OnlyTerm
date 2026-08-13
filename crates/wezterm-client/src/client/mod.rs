@@ -233,7 +233,7 @@ impl Drop for PromiseMap {
 }
 
 impl Client {
-    fn new(local_domain_id: Option<DomainId>, mut reconnectable: Reconnectable) -> Self {
+    pub fn new(local_domain_id: Option<DomainId>, mut reconnectable: Reconnectable) -> Self {
         let client_domain_config = reconnectable.config.clone();
         let is_reconnectable = reconnectable.reconnectable();
         let is_local = reconnectable.is_local();
@@ -338,6 +338,29 @@ impl Client {
 
     pub fn into_client_domain_config(self) -> ClientDomainConfig {
         self.client_domain_config
+    }
+
+    /// Create a Client from an already-connected UnixStream.
+    /// This is for the elevated-tab path where the connection is already established
+    /// and authenticated via the WebSocket rendezvous handshake.
+    ///
+    /// # Cancel-safety
+    /// This function performs only a cheap `Async::new` wrap and spawns a thread.
+    /// The `Async::new` call is synchronous but fast (just async-signal-safe registration),
+    /// and the thread spawn is infallible. Cancellation cannot leave state inconsistent.
+    pub fn new_with_stream(
+        local_domain_id: Option<DomainId>,
+        client_domain_config: ClientDomainConfig,
+        stream: wezterm_uds::UnixStream,
+    ) -> anyhow::Result<Self> {
+        use smol::Async;
+
+        // `stream` is already connected and authenticated by the caller (via the
+        // WebSocket rendezvous handshake) -- this just registers it with the
+        // async runtime, matching the wrapping already done in `conn.rs`.
+        let stream: Box<dyn conn::AsyncReadAndWrite> = Box::new(Async::new(stream)?);
+        let reconnectable = conn::Reconnectable::new(client_domain_config, Some(stream));
+        Ok(Self::new(local_domain_id, reconnectable))
     }
 
     pub async fn verify_version_compat(
