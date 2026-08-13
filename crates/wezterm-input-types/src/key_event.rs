@@ -231,7 +231,27 @@ impl KeyEvent {
                     || self.modifiers.contains(Modifiers::ALT);
                 let uni = if prefer_physical {
                     if self.modifiers.contains(Modifiers::CTRL) {
-                        ctrl_mapping(*c).map(|c| c as u32).unwrap_or(0)
+                        // `ctrl_mapping` only covers letter/punctuation keys
+                        // (it derives the classic Ctrl+<letter> control byte,
+                        // eg. 0x0a for Ctrl+J) -- it does not know `*c` when
+                        // `*c` is already a control character itself, eg.
+                        // '\r' for the synthetic Ctrl+Enter event
+                        // `SendEnterOrNewline` constructs (see
+                        // termwindow/actions.rs). A real physical Ctrl+Enter
+                        // keypress still reports UnicodeChar = 0x0d in a
+                        // genuine Windows KEY_EVENT_RECORD (the same byte as
+                        // bare Enter -- Ctrl held or not doesn't change CR's
+                        // own control code, exactly like Ctrl+M), so falling
+                        // back to the character itself here matches real
+                        // console behavior instead of the previous
+                        // `unwrap_or(0)`, which sent UnicodeChar = 0 --
+                        // "no character at all" -- for any Ctrl+<char> whose
+                        // char isn't a letter ctrl_mapping recognizes. That
+                        // false "no character" record is what a real Ctrl+
+                        // Enter never actually produces, and is a plausible
+                        // reason a receiving app fails to recognize the
+                        // record as a modified-Enter at all.
+                        ctrl_mapping(*c).map(|c| c as u32).unwrap_or(*c as u32)
                     } else {
                         *c as u32
                     }

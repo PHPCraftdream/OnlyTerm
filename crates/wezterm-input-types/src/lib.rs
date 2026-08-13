@@ -215,6 +215,15 @@ mod test {
             22,
             "Ctrl+V must carry 0x16, not 'v' (118)"
         );
+        assert_eq!(
+            win32_input_mode_uni_char('\r', PhysKeyCode::Return, 0x0d, 0x1c),
+            13,
+            "Ctrl+Enter must carry 0x0d (the same control code as bare Enter, \
+             exactly like a real Windows KEY_EVENT_RECORD reports it -- ctrl_mapping \
+             only covers letter/punctuation keys, so falling back to '\\0' for a \
+             char it doesn't recognize (as this used to) silently produced a \
+             UnicodeChar of 0, an event no real Ctrl+Enter keypress ever sends"
+        );
     }
 
     #[cfg(windows)]
