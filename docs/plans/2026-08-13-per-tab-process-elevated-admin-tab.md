@@ -215,3 +215,179 @@ mux-client/server) не пересекается с gsudo и не требует
 — причина: краш хостинга вкладки не должен затрагивать ничего, кроме самой
 вкладки. Цена по производительности принята сознательно. Вопрос закрыт,
 дальнейшие фазы реализации исходят из этого без дальнейших уточнений scope.
+
+## 7. Phase A findings (crush, 2026-08-13)
+
+### Transport Mechanism Comparison
+
+#### Option 1: ACL'd Unix Domain Socket
+
+**Security properties:**
+- Currently **INSECURE on Windows**: any process running as the same user can connect (no ACL enforcement)
+- Would require implementing real Windows DACL via `SetNamedSecurityInfoW` to restrict socket file to current user's SID
+- Filesystem object that could be discovered and tampered with by malicious processes
+- Socket file path is discoverable in the filesystem (both a feature for debugging and a risk)
+
+**Implementation complexity:**
+- Need to implement Windows DACL setting (non-trivial — requires understanding Windows security descriptors, SIDs, ACLs)
+- Need to manage socket file lifecycle (creation, cleanup on exit, handling crashes, stale file cleanup)
+- Need to handle concurrent access (only one GUI should connect to a single-pane process)
+- Existing code in `crates/wezterm-uds/src/lib.rs` wraps `uds_windows` but has no ACL enforcement
+- Client connection path already exists via `UnixStream::connect`
+
+**Pros:**
+- Reuses existing UDS infrastructure
+- Familiar pattern from Unix/Linux world
+- Socket file is discoverable via filesystem (useful for debugging/monitoring)
+
+**Cons:**
+- Windows DACL implementation is complex and error-prone
+- Security-sensitive code — bugs could allow unauthorized access from other user processes
+- Filesystem object management adds complexity (cleanup, permissions, concurrent access)
+- Socket file could be left behind on crashes (stale endpoints)
+- Authentication is filesystem-path-based, not process-based
+
+#### Option 2: proxy_command / socketpair() Transport
+
+**Security properties:**
+- **INHERENTLY SECURE**: no filesystem object, so no ACL surface to get wrong
+- Socket handle is inherited ONLY by the specific child process at spawn time via `socketpair()`
+- No other process can connect to the socket (handle is not exposed to any other process)
+- Process-based security rather than filesystem-based — the handle is exclusively owned
+
+**Implementation complexity:**
+- Already fully implemented in `crates/wezterm-client/src/client/conn.rs` lines 36-83
+- Uses `filedescriptor::socketpair()` to create paired socket handles
+- Child process gets one handle via `cmd.stdin(b.as_stdio()?)` and `cmd.stdout(b.as_stdio()?)`
+- Parent keeps the other handle and returns it as `UnixStream::from_raw_socket(a.into_raw_socket())`
+- No filesystem object to manage, no permissions to set, no cleanup code needed
+- Connection is implicit at spawn time — no retry logic, no "does socket exist" checks
+
+**Pros:**
+- Zero ACL work — inherit-only handles provide strong security guarantees by construction
+- No filesystem management (no socket file, no path, no permissions)
+- Existing code path already works and is production-tested
+- Simpler lifecycle: when child exits, socket closes automatically (no cleanup code)
+- No stale endpoints (socket dies with the processes)
+
+**Cons:**
+- Requires using `proxy_command` field on `UnixDomain` (already exists in config)
+- Need to implement a `--single-pane` mode flag in the hosting process (trivial)
+- Connection is only possible at spawn time (no post-start discovery — this is a feature, not a bug)
+
+### Recommendation: Use proxy_command / socketpair() Transport
+
+**Decision**: Use Option 2 (proxy_command / socketpair() transport) for Phase A.
+
+**Reasoning**:
+
+1. **Security by construction**: Socket handles are inherit-only and exclusively owned. No other process can connect — not just "no ACL bug," but "no ACL surface at all." This is fundamentally stronger than any DACL-based approach, where implementation bugs could allow unauthorized access.
+
+2. **Implementation simplicity**: The code path already exists and is fully functional. No Windows DACL code needed. No filesystem management. No cleanup logic. The hosting process only needs a `--single-pane` flag to distinguish its lifecycle (exit when pane exits vs long-lived daemon).
+
+3. **Lifecycle simplicity**: When the child process exits, the socket closes automatically. No stale file cleanup. No "is this socket file still valid?" checks. The model maps directly to the single-pane use case: process life = pane life.
+
+4. **No hidden complexity**: Option 1 would require:
+   - Windows DACL implementation (complex, error-prone)
+   - Socket file lifecycle management (creation, permissions, cleanup, crashes)
+   - Concurrent access protection (only one GUI should attach)
+   - All of these are security-sensitive code paths
+
+   Option 2 requires:
+   - Add a `--single-pane` flag to `onlyterm-mux-server`
+   - Modify spawn logic to exit when the sole pane exits (instead of daemonizing)
+   - Configure `UnixDomain.proxy_command = ["onlyterm-mux-server", "--single-pane"]`
+
+5. **Pattern alignment**: This is exactly how `UnixDomain.proxy_command` is designed to work — spawning a command and using stdin/stdout as the transport. The only difference is lifecycle management (single-pane vs long-lived), which is a small behavioral flag.
+
+### Why Option 1 is the wrong choice for Phase A
+
+While UDS is the familiar pattern from Unix/Linux, on Windows it introduces unnecessary complexity and security risk:
+
+- **Windows DACL is unfamiliar territory**: This codebase is Windows-only, but DACL APIs are complex and error-prone. A bug here would be a security vulnerability.
+- **Filesystem objects are unnecessary**: For a process that spawns once, exits once, and has exactly one client, a filesystem socket adds complexity without value.
+- **Phased approach**: Phase A should prove the concept with the simplest possible mechanism. If UDS is ever needed (e.g., for post-start discovery in Phase C), it can be added later with proven working code to validate against.
+
+### Conclusion
+
+For Phase A, use the existing `proxy_command` / `socketpair()` transport. It provides:
+- Strong security guarantees by construction (inherit-only handles)
+- Minimal implementation effort (add a flag and change lifecycle)
+- Simple lifecycle (process exit = socket close)
+- Production-tested code path
+
+## 8. Phase A: real end-to-end verification (orchestrator, 2026-08-13)
+
+The crush session above honestly reported it could not complete the full
+manual end-to-end attach-and-render-as-tab check ("I could not safely test
+without potentially disrupting user processes"). The orchestrating session
+did complete it, in an isolated `CARGO_TARGET_DIR`, using self-launched
+processes whose exact PIDs were confirmed by path before touching anything
+(per this repo's process-safety rule) -- and found two real bugs the crush
+session's own build/clippy/fmt/test pass did not catch, because neither a
+compiler nor a linter can see "this future is constructed but never
+polled" as anything worse than a style nit, and neither runs the actual
+IPC path:
+
+1. **The mux protocol dispatcher was never actually driven.**
+   `spawn_stdio_listener()`'s original form did
+   `let _ = wezterm_mux_server_impl::dispatch::process(stream);` inside a
+   bare `thread::spawn` closure. `dispatch::process` is `async fn` --
+   calling it only constructs a `Future`; nothing runs until something
+   polls it. `let _ = <future>;` drops that future immediately, unpolled.
+   The clippy lint that exists specifically to catch this
+   (`let_underscore_future`) fired correctly and was suppressed with
+   `#[allow(...)]` instead of fixed. Net effect: the single-pane process
+   would accept its inherited connection and then do nothing with it --
+   silently. Fixed by using `promise::spawn::spawn_into_main_thread(async
+   move { dispatch::process(stream).await... }).detach()`, the same
+   primitive `LocalListener::run` already uses for daemon-mode
+   connections, scheduled onto the same `SimpleExecutor` that
+   `run_single_pane_mode`'s `executor.tick()` loop is already polling --
+   no separate OS thread needed.
+2. **Winsock was never initialized in the child process.** Confirmed by
+   an actual manual run: `onlyterm_mux_server > Either the application
+   has not called WSAStartup, or WSAStartup failed. (os error 10093)`.
+   Daemon mode gets `WSAStartup` "for free" because
+   `filedescriptor::socketpair()` (called on the parent/GUI side) calls
+   it -- but Winsock initialization is per-process, not inherited across
+   a process boundary along with a socket handle. Single-pane mode's
+   child never calls `socketpair()` itself (it only inherits an
+   already-created handle as stdin), so it needs its own explicit
+   `WSAStartup`, added as `init_winsock()` (same `Once` + `WSAStartup`
+   pattern as `filedescriptor::windows::socketpair::init_winsock`,
+   which is private to that crate and not reusable directly), called
+   before `spawn_stdio_listener()` wraps the inherited handle.
+
+After both fixes: `cargo build -p wezterm-mux-server`, `cargo clippy -p
+wezterm-mux-server --all-targets -- -D warnings` (no `#[allow(...)]`
+needed this time) both clean. Manual end-to-end verification, actually
+performed:
+
+1. Wrote a throwaway `.ktav` test config with a `unix_domains` entry:
+   `proxy_command: [<path>/onlyterm-mux-server.exe, --single-pane]`,
+   `no_serve_automatically: true`, `connect_automatically: false`.
+2. Launched the real GUI (`onlyterm-gui.exe --config-file
+   test-single-pane.ktav connect single-pane-test`) from the isolated
+   build -- a self-launched, PID-confirmed instance, never one of the
+   6 real production windows.
+3. Before the fixes: the GUI logged the WSAStartup error, then after a
+   1-minute timeout logged `Timed out while parsing the response from
+   the server` and exited on its own.
+4. After the fixes: no errors at all. The window stayed open (did not
+   hit the timeout path this time -- itself a meaningful signal the
+   handshake succeeded). A screenshot of the live window confirms a
+   real `cmd.exe` prompt (`C:\Users\Computer>`, tab titled "1: Computer")
+   rendered as an ordinary tab -- the single-pane hosting process's PTY,
+   attached over the proxy_command/socketpair transport, indistinguishable
+   in the UI from a normal local tab. This is the acceptance criterion
+   from section 4 (Phase A), genuinely met.
+5. Both self-launched test processes (the GUI instance and the spawned
+   `onlyterm-mux-server.exe --single-pane` child) were closed by their
+   exact confirmed PIDs after verification; the 6 real production
+   `onlyterm-gui.exe` instances were untouched throughout (verified by
+   path before and after).
+
+**Conclusion:** Phase A's core mechanism is now genuinely proven end to
+end, not just compiled and linted. Phase B (generalizing ordinary
+`SpawnTab` to this path) can proceed on this foundation.

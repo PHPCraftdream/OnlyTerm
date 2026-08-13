@@ -22,14 +22,16 @@ mux.workspace = true
 portable-pty = { workspace=true, features = ["serde_support"]}
 promise.workspace = true
 sefer-alloc.workspace = true
+smol.workspace = true
 umask.workspace = true
 wezterm-blob-leases = {workspace=true, features=["simple_tempdir"]}
 wezterm-mux-server-impl.workspace = true
 wezterm-gui-subcommands.workspace = true
 wezterm-term.workspace = true
+wezterm-uds.workspace = true
 
 [target."cfg(windows)".dependencies]
-winapi = { workspace=true, features = [ "winuser" ]}
+winapi = { workspace=true, features = [ "winuser", "winsock2" ]}
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource.workspace = true
