@@ -1117,7 +1117,26 @@ impl TermWindow {
                     #[cfg(windows)]
                     win32_uni_char: None,
                 };
-                match self.encode_via_negotiated_protocol(pane, &event) {
+                let encoded = self.encode_via_negotiated_protocol(pane, &event);
+                // Logged at info (not trace) deliberately: this chord is rare
+                // and user-initiated, and which of the two branches below
+                // fires -- plus what the pane claims to have negotiated -- is
+                // the single most useful fact when a multi-line prompt (Codex
+                // CLI and friends) refuses to insert a newline. The same
+                // keypress can submit, do nothing, or insert a newline
+                // depending entirely on this decision, and the pane's
+                // encoding is now sourced from the *remote* terminal for
+                // hosted tabs, so it cannot be inferred from local state.
+                log::info!(
+                    "SendEnterOrNewline({:?}): pane keyboard encoding is {:?}, sending {}",
+                    mods,
+                    pane.get_keyboard_encoding(),
+                    match &encoded {
+                        Some(seq) => format!("encoded {:?}", seq),
+                        None => "a literal LF (no protocol negotiated)".to_string(),
+                    }
+                );
+                match encoded {
                     Some(encoded) => {
                         pane.writer().write_all(encoded.as_bytes()).ok();
                     }

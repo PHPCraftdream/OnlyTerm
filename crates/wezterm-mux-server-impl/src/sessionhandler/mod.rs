@@ -91,6 +91,20 @@ impl PduPolicy {
                 //   what made this reachable at all -- paste uses a different PDU).
                 // - Resize: terminal geometry change, no privilege escalation.
                 // - KillPane: terminate the single pane (normal exit path).
+                // - SetPalette: the GUI pushes the user's configured colour
+                //   scheme down to the pane's terminal. Confirmed live via
+                //   this very allow-list's own rejection log: without it the
+                //   elevated pane keeps the *default* palette while the GUI
+                //   renders with the user's scheme, which showed up as
+                //   pasted text on a grey background with a foreground so
+                //   close to it that the text was only readable once
+                //   selected. Purely cosmetic state -- it cannot spawn,
+                //   read, or escalate anything.
+                // - SetFocusedPane/WindowTitleChanged/TabTitleChanged:
+                //   presentation bookkeeping the GUI sends for the session it
+                //   already owns (which pane has focus, what the title is).
+                //   Also seen rejected in that same log. No privileged
+                //   effect; rejecting them only desynchronises the UI.
                 //
                 // Explicitly rejected (not exhaustive, but the most dangerous):
                 // - SpawnV2: arbitrary process spawn with elevated privileges (the
@@ -107,8 +121,6 @@ impl PduPolicy {
                 //   SwapActivePaneWithIndex/RotatePanes/AdjustPaneSize: pane
                 //   layout manipulation.
                 // - GetPaneRenderableDimensions/GetImageCell: rendering internals.
-                // - WindowTitleChanged/TabTitleChanged: metadata manipulation.
-                // - SetPalette: terminal state mutation.
                 // - GetTlsCreds: credential query.
                 matches!(
                     pdu,
@@ -124,6 +136,10 @@ impl PduPolicy {
                         | codec::Pdu::SendPaste(_)
                         | codec::Pdu::Resize(_)
                         | codec::Pdu::KillPane(_)
+                        | codec::Pdu::SetPalette(_)
+                        | codec::Pdu::SetFocusedPane(_)
+                        | codec::Pdu::WindowTitleChanged(_)
+                        | codec::Pdu::TabTitleChanged(_)
                 )
             }
         }

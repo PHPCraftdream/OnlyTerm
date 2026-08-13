@@ -206,23 +206,39 @@ fn test_pdu_policy_elevated_allowlist_rejects_dangerous_pdus() {
     // test_pdu_policy_elevated_allowlist_allows_only_allowed_pdus.
     assert!(!policy.is_allowed(&codec::Pdu::GetTlsCreds(GetTlsCreds {})));
 
-    // Metadata and state mutation
+    // NOTE: SetPalette, SetFocusedPane, WindowTitleChanged and
+    // TabTitleChanged are deliberately NOT rejected -- see
+    // test_pdu_policy_elevated_allowlist_allows_presentation_state.
+}
+
+/// The presentation/bookkeeping PDUs the GUI pushes for a session it already
+/// owns. These carry no privileged effect -- they cannot spawn a process,
+/// read pane content, or enumerate anything outside this session -- and
+/// rejecting them actively breaks the tab: `SetPalette` in particular left a
+/// live elevated pane rendering with the default colour scheme while the GUI
+/// drew it with the user's, which showed up as pasted text on a grey
+/// background that was only readable once selected.
+#[test]
+fn test_pdu_policy_elevated_allowlist_allows_presentation_state() {
+    let policy = PduPolicy::ElevatedSinglePaneAllowList;
+
+    assert!(policy.is_allowed(&codec::Pdu::SetPalette(SetPalette {
+        pane_id: 0,
+        palette: Default::default(),
+    })));
+    assert!(policy.is_allowed(&codec::Pdu::SetFocusedPane(SetFocusedPane { pane_id: 0 })));
     assert!(
-        !policy.is_allowed(&codec::Pdu::WindowTitleChanged(WindowTitleChanged {
+        policy.is_allowed(&codec::Pdu::WindowTitleChanged(WindowTitleChanged {
             window_id: 0,
             title: "".to_string(),
         }))
     );
     assert!(
-        !policy.is_allowed(&codec::Pdu::TabTitleChanged(TabTitleChanged {
+        policy.is_allowed(&codec::Pdu::TabTitleChanged(TabTitleChanged {
             tab_id: 0,
             title: "".to_string(),
         }))
     );
-    assert!(!policy.is_allowed(&codec::Pdu::SetPalette(SetPalette {
-        pane_id: 0,
-        palette: Default::default(),
-    })));
 }
 
 /// A `Pane` whose only interesting property is the keyboard encoding it
