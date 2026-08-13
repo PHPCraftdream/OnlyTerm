@@ -1126,16 +1126,26 @@ impl TermWindow {
                     }
                 }
             }
-            SendChar(c) => {
+            SendChar(mods, c) => {
+                // See `SendEnterOrNewline` above: route through whatever
+                // keyboard protocol the app has negotiated so a modified
+                // chord like CTRL+j is distinguishable from a bare 'j' once
+                // decoded by the app, instead of a hardcoded byte
+                // unconditionally masking the chord from ever reaching that
+                // negotiation. The modifiers are part of the synthetic
+                // event -- dropping them here would silently turn eg.
+                // CTRL+j into a plain 'j' keypress for any app that HAS
+                // negotiated a protocol, which defeats the point of this
+                // action.
                 let event = KeyEvent {
                     key: KeyCode::Char(*c),
-                    modifiers: Modifiers::NONE,
+                    modifiers: *mods,
                     leds: KeyboardLedStatus::empty(),
                     repeat_count: 1,
                     key_is_down: true,
                     raw: Some(RawKeyEvent {
                         key: KeyCode::Char(*c),
-                        modifiers: Modifiers::NONE,
+                        modifiers: *mods,
                         leds: KeyboardLedStatus::empty(),
                         phys_code: None,
                         raw_code: 0,
@@ -1153,7 +1163,18 @@ impl TermWindow {
                         pane.writer().write_all(encoded.as_bytes()).ok();
                     }
                     None => {
-                        pane.writer().write_all(&[*c as u8]).ok();
+                        // No protocol negotiated: fall back to the standard
+                        // ASCII control-code encoding when CTRL is held
+                        // (eg. CTRL+j -> 0x0A), matching what a plain/legacy
+                        // app would already get from this chord if nothing
+                        // had bound it at all -- otherwise send the raw
+                        // character byte.
+                        let byte = if mods.contains(Modifiers::CTRL) {
+                            ctrl_mapping(*c).map(|c| c as u8).unwrap_or(*c as u8)
+                        } else {
+                            *c as u8
+                        };
+                        pane.writer().write_all(&[byte]).ok();
                     }
                 }
             }

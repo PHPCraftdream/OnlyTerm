@@ -1239,17 +1239,17 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
             menubar: &[],
             icon: Some("md_keyboard_return"),
         },
-        SendChar(c) => {
-            let (brief, doc, keys) = if *c == 'j' {
+        SendChar(mods, c) => {
+            let (brief, doc, keys) = if *mods == Modifiers::CTRL && *c == 'j' {
                 (
                     "Send CTRL+J, or a newline".into(),
-                    "Sends 'j' through whatever keyboard protocol the active pane's \
+                    "Sends CTRL+j through whatever keyboard protocol the active pane's \
                      app has negotiated (eg. an app using win32-input-mode or kitty \
-                     keyboard protocol gets a properly encoded keypress), falling back \
-                     to a literal LF (0x0A) byte if no protocol was negotiated. This \
-                     gives Ctrl+J protocol awareness, so apps like Codex CLI that expect \
-                     win32-input-mode-encoded keystrokes get the correct form instead \
-                     of a mixed raw-byte/CSI-u stream."
+                     keyboard protocol gets a properly encoded modified keypress), \
+                     falling back to a literal LF (0x0A) byte if no protocol was \
+                     negotiated. This gives Ctrl+J protocol awareness, so apps like \
+                     Codex CLI that expect win32-input-mode-encoded keystrokes get the \
+                     correct form instead of a mixed raw-byte/CSI-u stream."
                     .into(),
                     vec![(Modifiers::CTRL, "j".into())],
                 )
@@ -1257,9 +1257,11 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
                 (
                     format!("Send '{}' via negotiated protocol or raw byte", c).into(),
                     format!(
-                        "Sends character '{}' through whatever keyboard protocol the \
-                         pane's app has negotiated (win32-input-mode or kitty), falling \
-                         back to the raw character byte if no protocol was negotiated.",
+                        "Sends character '{}' with the given modifiers through whatever \
+                         keyboard protocol the pane's app has negotiated (win32-input-mode \
+                         or kitty), falling back to the raw character byte (or its \
+                         standard control-code encoding, if CTRL is held) if no protocol \
+                         was negotiated.",
                         c
                     )
                     .into(),

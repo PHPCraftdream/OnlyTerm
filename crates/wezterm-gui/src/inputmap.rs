@@ -1022,8 +1022,8 @@ mod tests {
     /// disturb the built-in defaults for the chords it does not mention.
     /// CTRL+C must still be `CopySelectionOrInterrupt` (so it interrupts when
     /// nothing is selected). After the Ctrl+J protocol-aware fix, CTRL+J now
-    /// has a default binding (SendChar('j')), so this test verifies that it
-    /// is NOT clobbered by unrelated user bindings.
+    /// has a default binding (SendChar(Modifiers::CTRL, 'j')), so this test
+    /// verifies that it is NOT clobbered by unrelated user bindings.
     #[test]
     fn user_key_overrides_do_not_clobber_ctrl_c_and_ctrl_j_defaults() {
         let input_map = input_map_with_user_style_keys();
@@ -1053,7 +1053,7 @@ mod tests {
                         key
                     )
                 });
-            assert_eq!(entry.action, KeyAssignment::SendChar('j'));
+            assert_eq!(entry.action, KeyAssignment::SendChar(Modifiers::CTRL, 'j'));
         }
 
         // Sanity check the other direction: the user's own overrides really
@@ -1337,8 +1337,8 @@ mod tests {
             .expect("CTRL+J must have a default protocol-aware binding");
         assert_eq!(
             entry.action,
-            KeyAssignment::SendChar('j'),
-            "CTRL+J must be bound to SendChar('j')"
+            KeyAssignment::SendChar(Modifiers::CTRL, 'j'),
+            "CTRL+J must be bound to SendChar(Modifiers::CTRL, 'j')"
         );
 
         // The physical J key should also resolve to the same action
@@ -1348,30 +1348,26 @@ mod tests {
             .expect("physical CTRL+J must resolve to the same protocol-aware binding");
         assert_eq!(
             physical.action,
-            KeyAssignment::SendChar('j'),
-            "physical CTRL+J must resolve to the same SendChar('j') binding"
+            KeyAssignment::SendChar(Modifiers::CTRL, 'j'),
+            "physical CTRL+J must resolve to the same SendChar(Modifiers::CTRL, 'j') binding"
         );
     }
 
-    /// Unit test: verify that SendChar('j') constructs a KeyEvent that
-    /// encodes correctly via win32-input-mode. This tests the encoding
-    /// path WITHOUT requiring a live pane or Codex CLI session.
-    ///
-    /// The key contract is that SendChar(c) should produce the same
-    /// encoding as a real KeyEvent for that character, so apps that
-    /// negotiate win32-input-mode get the proper CSI-u form they expect.
+    /// Unit test: verify that a Ctrl+j `KeyEvent` -- the same shape the
+    /// `SendChar(Modifiers::CTRL, 'j')` action constructs internally, since
+    /// it carries the modifiers through unchanged (see `SendChar`'s handler
+    /// in `termwindow/actions.rs`) -- encodes correctly via
+    /// win32-input-mode. This tests the encoding path WITHOUT requiring a
+    /// live pane or Codex CLI session.
     #[cfg(windows)]
     #[test]
     fn send_char_j_encodes_correctly_via_win32_input_mode() {
         use window::{KeyEvent, KeyboardLedStatus, Modifiers, RawKeyEvent};
 
-        // For Ctrl+J, we'd use Modifiers::CTRL. The SendChar('j') action
-        // constructs a KeyEvent for 'j' with NO modifiers - it's the KEY
-        // BINDING (Ctrl+J pressed) that provides the context. When the user
-        // actually presses Ctrl+J and it resolves to SendChar('j'), the
-        // implementation sends Ctrl+j through the negotiated protocol.
-        //
-        // Let's verify that a Ctrl+j KeyEvent encodes correctly:
+        // `SendChar(mods, c)`'s handler builds exactly this shape of
+        // `KeyEvent` (`key: KeyCode::Char(c), modifiers: mods`) before
+        // calling `encode_via_negotiated_protocol` -- constructing it here
+        // directly verifies the encoding a real CTRL+J keypress produces.
         let ctrl_j_event = KeyEvent {
             key: KeyCode::Char('j'),
             modifiers: Modifiers::CTRL,
