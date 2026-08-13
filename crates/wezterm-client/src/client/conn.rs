@@ -123,28 +123,25 @@ where
 }
 
 #[derive(Debug)]
-pub(super) struct Reconnectable {
-    pub(super) config: ClientDomainConfig,
+pub struct Reconnectable {
+    pub config: ClientDomainConfig,
     stream: Option<Box<dyn AsyncReadAndWrite>>,
 }
 
 impl Reconnectable {
-    pub(super) fn new(
-        config: ClientDomainConfig,
-        stream: Option<Box<dyn AsyncReadAndWrite>>,
-    ) -> Self {
+    pub fn new(config: ClientDomainConfig, stream: Option<Box<dyn AsyncReadAndWrite>>) -> Self {
         Self { config, stream }
     }
 
-    pub(super) fn take_stream(&mut self) -> Option<Box<dyn AsyncReadAndWrite>> {
+    pub fn take_stream(&mut self) -> Option<Box<dyn AsyncReadAndWrite>> {
         self.stream.take()
     }
 
-    pub(super) fn is_local(&mut self) -> bool {
+    pub fn is_local(&mut self) -> bool {
         matches!(&self.config, ClientDomainConfig::Unix(_))
     }
 
-    pub(super) fn reconnectable(&mut self) -> bool {
+    pub fn reconnectable(&mut self) -> bool {
         match &self.config {
             // It doesn't make sense to reconnect to a unix socket; we only
             // get disconnected it it dies, so respawning it would not preserve

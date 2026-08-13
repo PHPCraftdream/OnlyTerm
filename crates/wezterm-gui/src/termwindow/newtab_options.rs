@@ -1,4 +1,3 @@
-use crate::elevate::{spawn_elevated_window, ElevateResult};
 use crate::spawn::SpawnWhere;
 use crate::termwindow::box_model::*;
 use crate::termwindow::modal::Modal;
@@ -12,6 +11,7 @@ use config::keyassignment::{KeyAssignment, SpawnCommand, SpawnTabDomain};
 use config::{Dimension, ProcessPriority};
 use std::cell::{Ref, RefCell};
 use std::path::PathBuf;
+use std::sync::Arc;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -637,14 +637,13 @@ pub struct NewTabRunRequest {
 }
 
 /// Acts on a `NewTabRunRequest`: spawns a normal tab directly, or -- for
-/// the elevated case -- hands off to `spawn_elevated_window` on a
-/// background task (it blocks on the UAC prompt) and reports back via a
-/// toast notification if the user declines or it fails outright. A
-/// declined/failed elevation intentionally does not open a placeholder
-/// tab: doing so safely would mean either shell-escaping the failure
-/// message before handing it to `cmd.exe /c`, or inventing a new
-/// non-PTY pane type that nothing else in this codebase has -- the toast
-/// convention already used for `OpenConfigFile` failures avoids both.
+/// the elevated case -- spawns an elevated tab inside the existing window
+/// and reports back via a toast notification if the user declines or it fails.
+/// A declined/failed elevation intentionally does not open a placeholder tab:
+/// doing so safely would mean either shell-escaping the failure message before
+/// handing it to `cmd.exe /c`, or inventing a new non-PTY pane type that nothing
+/// else in this codebase has -- the toast convention already used for
+/// `OpenConfigFile` failures avoids both.
 pub fn execute_new_tab_run_request(term_window: &mut TermWindow, request: NewTabRunRequest) {
     let NewTabRunRequest {
         argv,
@@ -665,28 +664,29 @@ pub fn execute_new_tab_run_request(term_window: &mut TermWindow, request: NewTab
         return;
     }
 
-    // `spawn_elevated_window` blocks the calling thread until the UAC
-    // prompt is resolved (`ShellExecuteExW` with `lpVerb = "runas"` is
-    // synchronous). `promise::spawn::spawn` alone would run this on the
-    // *main* thread's cooperative executor (see `promise::spawn::spawn`
-    // -> `spawn_local`), freezing the whole GUI for as long as the UAC
-    // prompt is up. `spawn_into_new_thread` is the primitive that
-    // actually runs the closure on a real `std::thread`, marshalling
-    // its result back onto the main thread as a plain awaitable `Task`.
-    let task =
-        promise::spawn::spawn_into_new_thread(move || Ok(spawn_elevated_window(&argv, priority)));
+    // For elevated tabs, we use the new WebSocket rendezvous path that opens
+    // a tab inside the existing window. The blocking UAC prompt and handshake
+    // are handled inside `spawn_elevated_single_pane_tab`, which internally
+    // offloads to `spawn_into_new_thread`. We still wrap the whole thing in
+    // `promise::spawn::spawn` to keep this function non-blocking from the
+    // caller's perspective (matching the old `spawn_elevated_window` pattern).
+    let src_window_id = term_window.mux_window_id;
+    let term_config = Arc::new(config::TermConfig::with_config(term_window.config.clone()));
+
     promise::spawn::spawn(async move {
-        let message = match task.await {
-            Ok(ElevateResult::Success) => return,
-            Ok(ElevateResult::UserCancelled) => {
-                "New Tab Options: elevation was cancelled.".to_string()
-            }
-            Ok(ElevateResult::Failed(err)) => {
-                format!("New Tab Options: failed to start an elevated window: {err}")
-            }
-            Err(err) => format!("New Tab Options: failed to start an elevated window: {err:#}"),
-        };
-        wezterm_toast_notification::persistent_toast_notification("OnlyTerm", &message);
+        let result = crate::spawn::spawn_elevated_single_pane_tab(
+            argv,
+            priority,
+            None,
+            Some(src_window_id),
+            term_config,
+        )
+        .await;
+
+        if let Err(err) = result {
+            let message = format!("New Tab Options: {}", err);
+            wezterm_toast_notification::persistent_toast_notification("OnlyTerm", &message);
+        }
     })
     .detach();
 }

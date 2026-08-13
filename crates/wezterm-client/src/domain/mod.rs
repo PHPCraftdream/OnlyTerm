@@ -578,6 +578,76 @@ impl ClientDomain {
         Ok(())
     }
 
+    /// Same as `attach_impl`, but takes an already-connected UnixStream instead
+    /// of dialing out. Used by the elevated-tab path.
+    ///
+    /// # Cancel-safety
+    /// The spawned thread runs `Client::new_with_stream`, which is a cheap
+    /// `Async::new` wrap and thread spawn (both infallible). The only `.await`
+    /// is on the thread join, which is cancel-safe: dropping the join handle
+    /// detaches the thread (§B21), and the thread itself owns its `stream`,
+    /// so no resource is lost on cancellation. The later `.await`s are RPC
+    /// calls that are idempotent or no-ops to retry.
+    async fn attach_impl_stream(
+        &self,
+        window_id: Option<WindowId>,
+        ui: ConnectionUI,
+        verbose: bool,
+        stream: wezterm_uds::UnixStream,
+    ) -> anyhow::Result<()> {
+        if self.state() == DomainState::Attached {
+            // Already attached
+            return Ok(());
+        }
+
+        let domain_id = self.local_domain_id;
+        let config = self.config.clone();
+
+        let activity = mux::activity::Activity::new();
+
+        ui.async_run_and_log_error({
+            let ui = ui.clone();
+            async move {
+                let client = spawn_into_new_thread(move || {
+                    Client::new_with_stream(Some(domain_id), config.clone(), stream)
+                })
+                .await?;
+
+                if verbose {
+                    ui.output_str("Checking server version\n");
+                }
+                client.verify_version_compat(&ui).await?;
+
+                if verbose {
+                    ui.output_str("Version check OK!  Requesting pane list...\n");
+                }
+                let panes = client.list_panes().await?;
+                if verbose {
+                    ui.output_str(&format!(
+                        "Server has {} tabs.  Attaching to local UI...\n",
+                        panes.tabs.len()
+                    ));
+                }
+                ClientDomain::finish_attach(domain_id, client, panes, window_id)
+            }
+        })
+        .await
+        .map_err(|e| {
+            // Always report errors, even in non-verbose mode -- silence
+            // should only ever hide routine progress noise, never a real
+            // failure.
+            ui.output_str(&format!("Error during attach: {:#}\n", e));
+            e
+        })?;
+
+        if verbose {
+            ui.output_str("Attached!\n");
+        }
+        drop(activity);
+        ui.close();
+        Ok(())
+    }
+
     /// Same as `Domain::attach`, but shows a plain animated spinner in the
     /// placeholder tab instead of `Domain::attach`'s raw connection-progress
     /// text log. Used by the automatic per-tab-process-isolation spawn path
@@ -627,6 +697,58 @@ impl ClientDomain {
         }
 
         let result = self.attach_impl(window_id, ui, false).await;
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        result
+    }
+
+    /// Same as `attach_with_spinner`, but takes an already-connected UnixStream
+    /// instead of dialing out. Used by the elevated-tab path: the stream is already
+    /// authenticated via the WebSocket rendezvous handshake in
+    /// `crate::elevate::spawn_elevated_single_pane`.
+    ///
+    /// # Cancel-safety
+    /// This function spawns a detached spinner task (safe to drop), then awaits
+    /// `attach_impl_stream`. The spinner task's `AtomicBool` is `Relaxed`-ordered:
+    /// if cancellation races with the write, the worst outcome is an extra frame
+    /// or a missed stop signal, both benign. `attach_impl_stream` itself is
+    /// cancel-safe (see its doc comment).
+    pub async fn attach_stream_with_spinner(
+        &self,
+        window_id: Option<WindowId>,
+        stream: wezterm_uds::UnixStream,
+    ) -> anyhow::Result<()> {
+        let ui = ConnectionUI::with_params(ConnectionUIParams {
+            window_id,
+            ..Default::default()
+        });
+
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let ui = ui.clone();
+            let stop = Arc::clone(&stop);
+            promise::spawn::spawn(async move {
+                const FRAMES: &[char] = &['|', '/', '-', '\\'];
+                let mut i = 0usize;
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    ui.output(vec![
+                        termwiz::surface::Change::ClearScreen(Default::default()),
+                        termwiz::surface::Change::CursorPosition {
+                            x: termwiz::surface::Position::Absolute(0),
+                            y: termwiz::surface::Position::Absolute(0),
+                        },
+                        termwiz::surface::Change::Text(format!(
+                            "{} Opening tab...",
+                            FRAMES[i % FRAMES.len()]
+                        )),
+                    ]);
+                    i += 1;
+                    smol::Timer::after(std::time::Duration::from_millis(90)).await;
+                }
+            })
+            .detach();
+        }
+
+        let result = self.attach_impl_stream(window_id, ui, false, stream).await;
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
         result
     }
