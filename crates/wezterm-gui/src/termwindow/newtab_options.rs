@@ -288,31 +288,141 @@ impl NewTabOptions {
         // arrangement `fancy_tab_bar` uses for a tab's own close button.
         // `×` (U+00D7) rather than a dedicated cross glyph: it is present in
         // essentially every font, so it cannot fall back to a tofu box.
-        let title_text = Element::new(&font, ElementContent::Text("New Tab Options".to_string()))
-            .colors(normal_colors.clone());
+        //
+        // A `Children` row shrink-wraps to its own content by default (see
+        // `box_model::compute_element`'s `Children` branch), so without help
+        // this row would only be as wide as "New Tab Options ×" -- which is
+        // why the cross used to sit right after the text instead of in the
+        // panel's corner. An explicit `min_width` on the row fixes that.
+        //
+        // The subtle part is what that width must be. A `Float::Right` child
+        // is laid out at `max_x + float_width` (where `max_x` has already
+        // been raised to `min_width`), so the float's own width is added ON
+        // TOP of `min_width` rather than fitting inside it. Asking for the
+        // full panel width here therefore produces a row one cross wider
+        // than the panel, and the cross hangs off the right edge -- which is
+        // exactly what happened. Reserving space by *guessing* the cross's
+        // rendered width failed too: an estimate of "padding + about one
+        // cell" undershot, because text shaping makes no promise that a
+        // glyph advance is a whole number of grid cells.
+        //
+        // So the cross's width is not estimated, it is anchored: `min_width`
+        // holds its content box at one cell, making its outer width
+        // padding + 1 cell. (`max_width` must NOT be used for this. On a
+        // text element that is a clipping bound, not a shrink bound -- the
+        // glyph loop breaks as soon as the next advance would cross it, so
+        // pinning max_width to one cell deleted the "×" entirely and left
+        // only its hover rectangle behind.)
+        //
+        // The other half is measuring against the right thing. The panel is
+        // handed a layout rect of `desired_pixel_width`, but its own border
+        // and padding are subtracted from *inside* that, so the content area
+        // every row actually gets is narrower -- by 0.25 cell of padding and
+        // 1px of border on each side. Computing this row from the outer
+        // figure, as an earlier attempt did, therefore overshot by exactly
+        // that much and pushed the cross past the panel edge.
+        let cell_w = term_window.render_metrics.cell_size.width as f32;
+        let title_row_margin_cells = 1.0; // this row's own 0.5 + 0.5 left/right margin, below
+                                          // Equal left/right padding, so the glyph sits centred in the
+                                          // highlight box that appears under the pointer -- unequal padding
+                                          // put it visibly off to one side.
+        let close_pad_cells = 0.5;
+        let close_content_cells = 1.0; // anchored by min_width below
+                                       // A margin, not a narrower row: the float is positioned by its OUTER
+                                       // width, so a right margin pushes the visible box inward while the
+                                       // row -- and therefore the rule drawn under it -- still spans the
+                                       // full width. Shrinking the row instead would have pulled that rule
+                                       // short on one side only. It doubles as slack for the last couple of
+                                       // pixels of overshoot that the arithmetic above still leaves.
+        let close_margin_right_cells = 0.75;
+        let close_outer_width =
+            (close_pad_cells * 2. + close_content_cells + close_margin_right_cells) * cell_w;
+
+        // The panel's usable content width: its layout rect less its own
+        // 0.25-cell padding and 1px border on each side.
+        let panel_content_width = (desired_pixel_width - 0.5 * cell_w - 2.0).max(0.);
+        // The width this row occupies inside that, less its own margins.
+        let title_row_total_width = (panel_content_width - title_row_margin_cells * cell_w).max(0.);
+        // What to ask for, given a Float::Right child is placed at
+        // `min_width + float_width` and so adds its own width on top.
+        let title_row_min_width = (title_row_total_width - close_outer_width).max(0.);
+
+        let title_str = "New Tab Options";
+        let title_text_width = title_str.chars().count() as f32 * cell_w;
+        // Centers the title across the row's full width -- there is no
+        // text-align primitive in this box model, only padding. Clamped so a
+        // long title can never be pushed underneath the cross.
+        let title_left_pad = ((title_row_total_width - title_text_width) / 2.)
+            .min((title_row_min_width - title_text_width).max(0.))
+            .max(0.);
+        let title_text = Element::new(&font, ElementContent::Text(title_str.to_string()))
+            .colors(normal_colors.clone())
+            .padding(BoxDimension {
+                left: Dimension::Pixels(title_left_pad),
+                right: Dimension::Pixels(0.),
+                top: Dimension::Pixels(0.),
+                bottom: Dimension::Pixels(0.),
+            });
 
         let close_element = Element::new(&font, ElementContent::Text("×".to_string()))
             .colors(normal_colors.clone())
             .hover_colors(Some(selected_colors.clone()))
+            // No min_width: it would hold the content box at a full cell
+            // while the "×" glyph advance is narrower, so the glyph rendered
+            // hard against the left of its own highlight box. Letting the box
+            // shrink-wrap the glyph lets the equal padding centre it. The
+            // reserve computed above stays valid because it now OVER-states
+            // the cross's width, and over-stating is the safe direction:
+            // the float is placed at `row min_width + its actual width`, so
+            // a too-large reserve only tucks it further inside.
             .padding(BoxDimension {
-                left: Dimension::Cells(0.5),
-                right: Dimension::Cells(0.25),
+                left: Dimension::Cells(close_pad_cells),
+                right: Dimension::Cells(close_pad_cells),
+                top: Dimension::Cells(0.),
+                bottom: Dimension::Cells(0.),
+            })
+            .margin(BoxDimension {
+                left: Dimension::Cells(0.),
+                right: Dimension::Cells(close_margin_right_cells),
                 top: Dimension::Cells(0.),
                 bottom: Dimension::Cells(0.),
             })
             .float(Float::Right)
             .item_type(UIItemType::NewTabOptionClose);
 
+        // The rule under the title is a bottom-only border: `BoxDimension`
+        // fields are independent, so left/top/right stay zero and nothing
+        // renders there, while a nonzero bottom width and an opaque border
+        // color (unlike `normal_colors.border`, which matches the
+        // background and is therefore invisible by design elsewhere in this
+        // dialog) draw a single visible line spanning this row's width.
+        let title_rule_colors = ElementColors {
+            border: BorderColor::new(fg_color),
+            ..normal_colors.clone()
+        };
         let title_element = Element::new(
             &font,
             ElementContent::Children(vec![title_text, close_element]),
         )
-        .colors(normal_colors.clone())
+        .colors(title_rule_colors)
+        .min_width(Some(Dimension::Pixels(title_row_min_width)))
         .margin(BoxDimension {
             left: Dimension::Cells(0.5),
             right: Dimension::Cells(0.5),
             top: Dimension::Cells(0.5),
-            bottom: Dimension::Cells(0.5),
+            bottom: Dimension::Cells(0.25),
+        })
+        .padding(BoxDimension {
+            left: Dimension::Pixels(0.),
+            top: Dimension::Pixels(0.),
+            right: Dimension::Pixels(0.),
+            bottom: Dimension::Cells(0.25),
+        })
+        .border(BoxDimension {
+            left: Dimension::Pixels(0.),
+            top: Dimension::Pixels(0.),
+            right: Dimension::Pixels(0.),
+            bottom: Dimension::Pixels(1.),
         })
         .display(DisplayType::Block);
         elements.push(title_element);
@@ -463,16 +573,24 @@ impl NewTabOptions {
         // so. Carries no `item_type`, so it is inert: not clickable, and not
         // part of the Tab focus order (`FocusItem` drives that, and this line
         // deliberately has no entry there).
-        let hint_element =
-            Element::new(&font, ElementContent::Text("Esc or × to close".to_string()))
-                .colors(normal_colors.clone())
-                .margin(BoxDimension {
-                    left: Dimension::Cells(0.5),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.),
-                    bottom: Dimension::Cells(0.5),
-                })
-                .display(DisplayType::Block);
+        let hint_str = "Esc or × to close";
+        let hint_left_pad =
+            ((title_row_total_width - hint_str.chars().count() as f32 * cell_w) / 2.).max(0.);
+        let hint_element = Element::new(&font, ElementContent::Text(hint_str.to_string()))
+            .colors(normal_colors.clone())
+            .padding(BoxDimension {
+                left: Dimension::Pixels(hint_left_pad),
+                right: Dimension::Pixels(0.),
+                top: Dimension::Pixels(0.),
+                bottom: Dimension::Pixels(0.),
+            })
+            .margin(BoxDimension {
+                left: Dimension::Cells(0.5),
+                right: Dimension::Cells(0.5),
+                top: Dimension::Cells(0.),
+                bottom: Dimension::Cells(0.5),
+            })
+            .display(DisplayType::Block);
         elements.push(hint_element);
 
         let element = Element::new(&font, ElementContent::Children(elements))
