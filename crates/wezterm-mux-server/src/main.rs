@@ -83,6 +83,13 @@ struct Opt {
     #[arg(long = "token", value_parser)]
     token: Option<String>,
 
+    /// PID of the parent GUI process to supervise.
+    /// When provided, the child will watch for the parent's termination
+    /// and exit when the parent dies. This is used for elevated single-pane
+    /// mode to ensure the elevated child dies with its non-elevated parent.
+    #[arg(long = "supervise-pid", value_parser)]
+    supervise_pid: Option<u32>,
+
     /// Instead of executing your shell, run PROG.
     /// For example: `wezterm start -- bash -l` will spawn bash
     /// as if it were a login shell.
@@ -308,6 +315,146 @@ pub fn spawn_listener() -> anyhow::Result<()> {
 /// the pane, so the hosted shell cannot survive as an orphan -- which for
 /// an elevated tab would mean a live elevated shell the user's own
 /// non-elevated tools cannot terminate.
+/// Spawn a parent-watcher thread that monitors the parent process and exits
+/// when the parent dies.
+///
+/// This is used for elevated single-pane mode, where the elevated child cannot
+/// be assigned to a job object by its medium-integrity parent. Instead, the
+/// child opens a handle to its parent (which is allowed across integrity
+/// boundaries) and waits for the parent to terminate.
+///
+/// # Why this runs in a dedicated thread
+///
+/// The entire point of this watchdog is to survive a wedged main loop. If the
+/// main async executor is blocked or dead, this thread must still be able to
+/// terminate the process. Therefore, this thread shares no state with the main
+/// loop - it simply opens a handle and waits on it, with no locks or shared
+/// mutable state.
+///
+/// # Why OpenProcess happens immediately at startup
+///
+/// Windows reuses process IDs. If we resolved the PID lazily later, the PID
+/// might already belong to an unrelated process by that time. At that point,
+/// we'd be waiting on a stranger and would outlive our real parent anyway.
+/// By opening the handle at startup, we capture a reference to the specific
+/// process that spawned us before its PID can be reused.
+///
+/// # Failure handling
+///
+/// - No `--supervise-pid` given: Not an error - the non-elevated path doesn't
+///   pass this flag, and it doesn't need this mechanism (t582 handles that
+///   case via job objects). We simply don't spawn the watcher thread.
+/// - OpenProcess fails: Log a warning and continue without parent watching.
+///   This can happen if the parent has already exited, or if there's a
+///   permission issue (unlikely since elevated processes can open lower-
+///   integrity processes).
+/// - Parent already gone at startup: Log and exit immediately. Continuing
+///   would mean we're an orphan with no client to serve.
+#[cfg(windows)]
+fn spawn_parent_watcher(supervise_pid: Option<u32>) {
+    use winapi::shared::minwindef::DWORD;
+    use winapi::um::errhandlingapi::GetLastError;
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::OpenProcess;
+    use winapi::um::synchapi::WaitForSingleObject;
+    use winapi::um::winbase::{INFINITE, WAIT_OBJECT_0};
+    use winapi::um::winnt::SYNCHRONIZE;
+
+    let Some(parent_pid) = supervise_pid else {
+        // No --supervise-pid: non-elevated path or older invocation.
+        // No need to spawn a watcher thread.
+        return;
+    };
+
+    /// Carries the parent's process handle onto the watcher thread.
+    ///
+    /// A Windows HANDLE is an index into a process-wide table, not something
+    /// owned by the thread that obtained it, so using it from another thread
+    /// is sound -- but it is spelled as a raw pointer, which the compiler
+    /// must assume is not `Send`.
+    struct ParentHandle(winapi::um::winnt::HANDLE);
+    // SAFETY: see above -- the handle is valid process-wide, and exactly one
+    // thread owns this value at a time because it is moved, not shared.
+    unsafe impl Send for ParentHandle {}
+
+    // Resolve the pid to a handle HERE, on the calling thread, before the
+    // watcher thread even exists. Windows recycles process ids, so every
+    // moment between the parent handing us its pid and us pinning it down is
+    // a window in which that pid could come to mean some unrelated process --
+    // and a watcher waiting on a stranger would never fire, leaving exactly
+    // the orphan this function exists to prevent. Deferring the call into the
+    // spawned thread would widen that window by however long the scheduler
+    // takes to run it, for no benefit.
+    //
+    // SAFETY: OpenProcess is a standard Windows API call; SYNCHRONIZE is the
+    // minimal access right needed to wait on the handle.
+    let h_parent = unsafe { OpenProcess(SYNCHRONIZE, false as i32, parent_pid as DWORD) };
+
+    if h_parent.is_null() {
+        // SAFETY: GetLastError takes no arguments and has no preconditions;
+        // it just reads the calling thread's last-error TLS slot.
+        let error_code = unsafe { GetLastError() };
+        log::warn!(
+            "Parent-watcher: OpenProcess({}) failed with error {}. \
+             This typically means the parent has already exited.",
+            parent_pid,
+            error_code
+        );
+        // Parent already gone before we finished starting: exit rather than
+        // carry on. There is no client left to serve, and continuing would
+        // leave a shell -- an elevated one, on that path -- running with
+        // nothing able to reach it. That is the orphan case, arriving early.
+        std::process::exit(1);
+    }
+
+    let h_parent = ParentHandle(h_parent);
+
+    std::thread::spawn(move || {
+        let h_parent = h_parent.0;
+
+        log::info!(
+            "Parent-watcher: opened handle to parent PID {}, waiting...",
+            parent_pid
+        );
+
+        // Wait for the parent to signal (terminate).
+        // SAFETY: h_parent is a valid process handle returned by OpenProcess.
+        // WaitForSingleObject blocks until the handle is signaled (process exits)
+        // or the timeout expires. INFINITE means wait forever.
+        let wait_result = unsafe { WaitForSingleObject(h_parent, INFINITE) };
+
+        // SAFETY: h_parent is a valid process handle returned by OpenProcess and
+        // we have sole ownership of it; closing it here is correct after we're
+        // done waiting.
+        unsafe { CloseHandle(h_parent) };
+
+        match wait_result {
+            WAIT_OBJECT_0 => {
+                // Parent has exited. Terminate ourselves.
+                log::info!(
+                    "Parent-watcher: parent PID {} has terminated, exiting",
+                    parent_pid
+                );
+                std::process::exit(0);
+            }
+            _ => {
+                // Unexpected wait result (shouldn't happen with INFINITE timeout)
+                // SAFETY: GetLastError takes no arguments and has no preconditions;
+                // it just reads the calling thread's last-error TLS slot.
+                let error_code = unsafe { GetLastError() };
+                log::error!(
+                    "Parent-watcher: WaitForSingleObject returned unexpected result {} (GetLastError={}). \
+                     This should not happen with INFINITE timeout. Continuing without parent supervision.",
+                    wait_result,
+                    error_code
+                );
+                // Don't exit - we may still be serving a client. Log the error
+                // and continue running.
+            }
+        }
+    });
+}
+
 fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
     // Validate that WebSocket flags are used together
     let ws_rendezvous = match (&opts.connect_ws_port, &opts.token) {
@@ -316,6 +463,11 @@ fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
         (Some(port), Some(token)) => Some((*port, token.clone())),
         (None, None) => None,
     };
+
+    // Spawn parent-watcher thread early, before any async work starts.
+    // This ensures we're watching the parent even if startup stalls.
+    #[cfg(windows)]
+    spawn_parent_watcher(opts.supervise_pid);
 
     let _config = config::configuration();
 

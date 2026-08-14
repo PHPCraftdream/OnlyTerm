@@ -26,6 +26,17 @@ impl ProxyCommand {
         Mux::set_mux(&mux);
 
         let target = unix_dom.target();
+        // The second element is the Job Object owning the spawned
+        // `proxy_command` child, when there was one. It has to be *named*
+        // rather than discarded into `_`: the job carries
+        // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so binding it to `_` would close
+        // the handle at the end of this very statement and have the kernel
+        // kill the child we just spawned to talk to. Bound to a name, it lives
+        // until this function returns, which is exactly as long as the proxy
+        // session needs it.
+        #[cfg(windows)]
+        let (mut stream, _child_job) = unix_connect_with_retry(&target, false, None)?;
+        #[cfg(not(windows))]
         let mut stream = unix_connect_with_retry(&target, false, None)?;
 
         let pdu = Pdu::SetClientId(SetClientId {

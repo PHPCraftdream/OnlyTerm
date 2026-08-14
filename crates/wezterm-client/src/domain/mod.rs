@@ -209,6 +209,15 @@ impl ClientDomain {
         log::info!("detached domain {}", self.local_domain_id);
         self.inner.lock().unwrap().take();
         let mux = Mux::get();
+
+        // Remove the domain from the mux's registration maps. This must be
+        // done BEFORE calling domain_was_detached, because that function
+        // may drop references to the domain and we want the mux state to
+        // be clean for the rest of the teardown.
+        if let Some(domain) = mux.get_domain(self.local_domain_id) {
+            mux.remove_domain(&domain);
+        }
+
         mux.domain_was_detached(self.local_domain_id);
     }
 

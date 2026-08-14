@@ -8,11 +8,27 @@ use smol::Async;
 use std::marker::Unpin;
 use wezterm_uds::UnixStream;
 
+#[cfg(windows)]
+use filedescriptor::OwnedHandle;
+
+#[cfg(windows)]
+use super::windows_job::assign_to_kill_on_close_job;
+
+/// Helper type to return both a stream and an optional job handle from
+/// unix_connect_with_retry. On Windows, the job handle must be kept alive
+/// for the child to live; on other platforms, there is no job handle.
+#[cfg(windows)]
+type ConnectResult = (UnixStream, Option<OwnedHandle>);
+
+/// On non-Windows platforms, we only return the stream.
+#[cfg(not(windows))]
+type ConnectResult = UnixStream;
+
 pub fn unix_connect_with_retry(
     target: &UnixTarget,
     just_spawned: bool,
     max_attempts: Option<u64>,
-) -> anyhow::Result<UnixStream> {
+) -> anyhow::Result<ConnectResult> {
     let mut error = None;
 
     if just_spawned {
@@ -27,7 +43,12 @@ pub fn unix_connect_with_retry(
         }
         match target {
             UnixTarget::Socket(path) => match UnixStream::connect(path) {
-                Ok(stream) => return Ok(stream),
+                Ok(stream) => {
+                    #[cfg(windows)]
+                    return Ok((stream, None));
+                    #[cfg(not(windows))]
+                    return Ok(stream);
+                }
                 Err(err) => {
                     error =
                         Some(Err(err).with_context(|| format!("connecting to {}", path.display())))
@@ -62,6 +83,23 @@ pub fn unix_connect_with_retry(
                     .spawn()
                     .with_context(|| format!("spawning proxy command {:?}", cmd))?;
 
+                // Put the non-elevated proxy_command child into a Job Object
+                // configured with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE. This ensures
+                // that if the GUI dies (even via TerminateProcess where no user-space
+                // cleanup runs), the kernel will force-kill the child. This is a
+                // defense-in-depth mechanism; the child already exits when its client
+                // goes away (see wait_for_single_pane_shutdown in mux-server), but a
+                // wedged child stuck in a blocking syscall cannot respond to that
+                // signal.
+                //
+                // The job handle is returned to the caller and must be kept alive
+                // for as long as the connection to this child should exist. When the
+                // handle is dropped, the kernel kills the child.
+                #[cfg(windows)]
+                let job = assign_to_kill_on_close_job(&child, &format!("{:?}", cmd));
+                #[cfg(not(windows))]
+                let job = None;
+
                 error.take();
 
                 // Grace period to detect whether connection failed
@@ -93,7 +131,11 @@ pub fn unix_connect_with_retry(
                     // used or closed elsewhere.
                     unsafe {
                         use std::os::windows::io::{FromRawSocket, IntoRawSocket};
-                        return Ok(UnixStream::from_raw_socket(a.into_raw_socket()));
+                        let stream = UnixStream::from_raw_socket(a.into_raw_socket());
+                        #[cfg(windows)]
+                        return Ok((stream, job));
+                        #[cfg(not(windows))]
+                        return Ok(stream);
                     }
                 }
             }
@@ -126,11 +168,22 @@ where
 pub struct Reconnectable {
     pub config: ClientDomainConfig,
     stream: Option<Box<dyn AsyncReadAndWrite>>,
+    #[cfg(windows)]
+    /// Job handle for the proxy_command child process, if any.
+    /// Keeping this handle alive ensures the child lives; dropping it
+    /// (e.g., when the GUI process dies) triggers JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    /// and the kernel force-kills the child and any descendants.
+    proxy_child_job: Option<OwnedHandle>,
 }
 
 impl Reconnectable {
     pub fn new(config: ClientDomainConfig, stream: Option<Box<dyn AsyncReadAndWrite>>) -> Self {
-        Self { config, stream }
+        Self {
+            config,
+            stream,
+            #[cfg(windows)]
+            proxy_child_job: None,
+        }
     }
 
     pub fn take_stream(&mut self) -> Option<Box<dyn AsyncReadAndWrite>> {
@@ -176,8 +229,11 @@ impl Reconnectable {
 
         let max_attempts = if no_auto_start { Some(1) } else { None };
 
-        let stream = match unix_connect_with_retry(&target, false, max_attempts) {
-            Ok(stream) => stream,
+        let (stream, job) = match unix_connect_with_retry(&target, false, max_attempts) {
+            #[cfg(windows)]
+            Ok((stream, job)) => (stream, job),
+            #[cfg(not(windows))]
+            Ok(stream) => (stream, None),
             Err(e) => {
                 if no_auto_start || unix_dom.no_serve_automatically || !initial {
                     bail!("failed to connect to {:?}: {}", target, e);
@@ -218,11 +274,23 @@ impl Reconnectable {
                     }
                 });
 
-                unix_connect_with_retry(&target, true, None).with_context(|| {
-                    format!("(after spawning server) failed to connect to {:?}", target)
-                })?
+                let (stream, job) =
+                    unix_connect_with_retry(&target, true, None).with_context(|| {
+                        format!("(after spawning server) failed to connect to {:?}", target)
+                    })?;
+                #[cfg(windows)]
+                let (stream, job) = (stream, job);
+                #[cfg(not(windows))]
+                let (stream, job) = (stream, None);
+                (stream, job)
             }
         };
+
+        // Store the job handle in Reconnectable so it lives as long as the connection.
+        #[cfg(windows)]
+        {
+            self.proxy_child_job = job;
+        }
 
         ui.output_str("Connected!\n");
         stream.set_read_timeout(Some(unix_dom.read_timeout))?;

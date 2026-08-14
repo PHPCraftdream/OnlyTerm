@@ -32,7 +32,17 @@ wezterm-term.workspace = true
 wezterm-uds.workspace = true
 
 [target."cfg(windows)".dependencies]
-winapi = { workspace=true, features = [ "winuser", "winsock2" ]}
+winapi = { workspace=true, features = [
+    "winuser",
+    "winsock2",
+    "errhandlingapi",
+    "handleapi",
+    "processthreadsapi",
+    "synchapi",
+    "winbase",
+    "winnt",
+    "minwindef",
+]}
 
 [target.'cfg(windows)'.build-dependencies]
 embed-resource.workspace = true

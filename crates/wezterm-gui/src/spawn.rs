@@ -101,6 +101,16 @@ async fn spawn_single_pane_tab(
         mux_server_path.to_string_lossy().to_string(),
         "--single-pane".to_string(),
     ];
+
+    // Pass the current process ID so the child can watch us and die when we do.
+    // This is important for both elevated and non-elevated single-pane children.
+    // For elevated children, this is the primary mechanism since job objects
+    // cannot cross integrity boundaries. For non-elevated children, this is
+    // a backup mechanism in case t582's job object setup fails.
+    let current_pid = std::process::id();
+    proxy_command.push("--supervise-pid".to_string());
+    proxy_command.push(current_pid.to_string());
+
     if let Some(cwd) = spawn.cwd.as_ref() {
         let cwd = cwd.to_str().ok_or_else(|| {
             anyhow!(

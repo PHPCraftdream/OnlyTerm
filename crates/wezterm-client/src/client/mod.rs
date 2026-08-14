@@ -17,6 +17,8 @@ use thiserror::Error;
 
 mod conn;
 mod unilateral;
+#[cfg(windows)]
+mod windows_job;
 
 use conn::Reconnectable;
 pub use conn::{unix_connect_with_retry, AsyncReadAndWrite};

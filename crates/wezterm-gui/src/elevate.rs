@@ -94,8 +94,8 @@ fn construct_start_command_line(shell_args: &[String]) -> String {
 
 /// Construct a command line string for spawning an elevated single-pane child.
 ///
-/// The format is: `--single-pane --connect-ws-port <port> --token <token> [--cwd <dir>]
-/// [--priority <name>] [-- <shell> <arg1> <arg2> ...]`
+/// The format is: `--single-pane --connect-ws-port <port> --token <token> --supervise-pid <pid>
+/// [--cwd <dir>] [--priority <name>] [-- <shell> <arg1> <arg2> ...]`
 ///
 /// Arguments are properly quoted if they contain spaces or special characters.
 fn construct_single_pane_command_line(
@@ -105,7 +105,12 @@ fn construct_single_pane_command_line(
     priority: ProcessPriority,
     shell_args: &[String],
 ) -> String {
-    let mut result = format!("--single-pane --connect-ws-port {} --token {}", port, token);
+    let mut result = format!(
+        "--single-pane --connect-ws-port {} --token {} --supervise-pid {}",
+        port,
+        token,
+        std::process::id()
+    );
 
     if let Some(cwd) = cwd {
         if let Some(cwd_str) = cwd.to_str() {
@@ -465,9 +470,13 @@ mod tests {
             ProcessPriority::Normal,
             &[],
         );
+        let current_pid = std::process::id();
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123"
+            format!(
+                "--single-pane --connect-ws-port 12345 --token test-token-abc123 --supervise-pid {}",
+                current_pid
+            )
         );
     }
 
@@ -480,9 +489,13 @@ mod tests {
             ProcessPriority::Normal,
             &[],
         );
+        let current_pid = std::process::id();
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123 --cwd C:\\Users\\Test"
+            format!(
+                "--single-pane --connect-ws-port 12345 --token test-token-abc123 --supervise-pid {} --cwd C:\\Users\\Test",
+                current_pid
+            )
         );
     }
 
@@ -496,9 +509,13 @@ mod tests {
             ProcessPriority::High,
             &[],
         );
+        let current_pid = std::process::id();
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123 --priority High"
+            format!(
+                "--single-pane --connect-ws-port 12345 --token test-token-abc123 --supervise-pid {} --priority High",
+                current_pid
+            )
         );
     }
 
@@ -515,9 +532,13 @@ mod tests {
                 "echo hello".to_string(),
             ],
         );
+        let current_pid = std::process::id();
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123 -- cmd.exe /k \"echo hello\""
+            format!(
+                "--single-pane --connect-ws-port 12345 --token test-token-abc123 --supervise-pid {} -- cmd.exe /k \"echo hello\"",
+                current_pid
+            )
         );
     }
 
@@ -530,15 +551,22 @@ mod tests {
             ProcessPriority::High,
             &["powershell.exe".to_string(), "-NoProfile".to_string()],
         );
+        let current_pid = std::process::id();
         #[cfg(windows)]
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123 --cwd \"C:\\Program Files\\App\" --priority High -- powershell.exe -NoProfile"
+            format!(
+                "--single-pane --connect-ws-port 12345 --token test-token-abc123 --supervise-pid {} --cwd \"C:\\Program Files\\App\" --priority High -- powershell.exe -NoProfile",
+                current_pid
+            )
         );
         #[cfg(not(windows))]
         assert_eq!(
             result,
-            "--single-pane --connect-ws-port 12345 --token test-token-abc123 --cwd \"C:\\Program Files\\App\" -- powershell.exe -NoProfile"
+            format!(
+                "--single-pane --connect-ws-port 12345 --token test-token-abc123 --supervise-pid {} --cwd \"C:\\Program Files\\App\" -- powershell.exe -NoProfile",
+                current_pid
+            )
         );
     }
 
@@ -568,5 +596,114 @@ mod tests {
     #[test]
     fn test_quote_arg_empty() {
         assert_eq!(quote_arg(""), "\"\"");
+    }
+
+    /// Measures what the `hProcess` handle from `ShellExecuteExW` can actually
+    /// do: whether a medium-integrity parent can assign its elevated child to a
+    /// job object using the handle returned with `SEE_MASK_NOCLOSEPROCESS`. If
+    /// it can, that is a stronger mechanism than the parent-death watchdog and
+    /// this code should be revisited.
+    ///
+    /// Ignored by default, and it must stay that way: it really does elevate,
+    /// so an ordinary `cargo test` run would throw a UAC dialog at whoever
+    /// happened to be at the keyboard and then fail if they declined. Run it
+    /// deliberately, and only when you want the answer:
+    ///
+    /// ```text
+    /// cargo test -p wezterm-gui --
+    ///     test_can_assign_elevated_child_to_job_via_shell_execute_handle
+    ///     --ignored --nocapture
+    /// ```
+    #[test]
+    #[cfg(windows)]
+    #[ignore = "spawns a real UAC prompt; run explicitly with --ignored"]
+    fn test_can_assign_elevated_child_to_job_via_shell_execute_handle() {
+        use std::ptr;
+        use winapi::um::errhandlingapi::GetLastError;
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::jobapi2::{AssignProcessToJobObject, CreateJobObjectW};
+        use winapi::um::shellapi::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS};
+        use winapi::um::winuser::SW_HIDE;
+
+        // SAFETY: every call in this block is a plain Win32 FFI call made with
+        // arguments this function owns and keeps alive across it: the wide
+        // strings outlive the SHELLEXECUTEINFOW that borrows their pointers,
+        // the struct itself is zero-initialised before its fields are set, and
+        // each handle obtained is checked for null and closed on every path
+        // out. Nothing here is shared with another thread.
+        unsafe {
+            // Resolve the path to onlyterm-mux-server.exe
+            let exe_path = match std::env::current_exe() {
+                Ok(path) => path.with_file_name("onlyterm-mux-server.exe"),
+                Err(err) => {
+                    panic!("Failed to resolve current executable: {}", err)
+                }
+            };
+
+            let exe_path_str = match exe_path.to_str() {
+                Some(s) => s,
+                None => {
+                    panic!("Mux-server path is not valid UTF-8")
+                }
+            };
+
+            // Build a minimal command line that just exits immediately
+            // Use --help which exits without needing a full mux server setup
+            let parameters = "--help";
+
+            let exe_wide = wide_string(exe_path_str);
+            let operation = wide_string("runas");
+            let params_wide = wide_string(parameters);
+
+            let mut sei = std::mem::zeroed::<winapi::um::shellapi::SHELLEXECUTEINFOW>();
+            sei.cbSize = std::mem::size_of::<winapi::um::shellapi::SHELLEXECUTEINFOW>() as u32;
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+            sei.lpVerb = operation.as_ptr();
+            sei.lpFile = exe_wide.as_ptr();
+            sei.lpParameters = params_wide.as_ptr();
+            sei.nShow = SW_HIDE;
+
+            // Try to spawn the elevated process
+            let result = ShellExecuteExW(&mut sei);
+
+            if result == 0 {
+                let error_code = GetLastError();
+                panic!(
+                    "ShellExecuteExW failed: error {}. This test requires UAC approval.",
+                    error_code
+                );
+            }
+
+            let h_process = sei.hProcess;
+
+            // Create a job object
+            let job_name = wide_string(&format!("test-job-{}", std::process::id()));
+            let h_job = CreateJobObjectW(ptr::null_mut(), job_name.as_ptr());
+
+            if h_job.is_null() {
+                let error_code = GetLastError();
+                CloseHandle(h_process);
+                panic!("CreateJobObjectW failed: error {}", error_code);
+            }
+
+            // Try to assign the elevated process to the job
+            let assign_result = AssignProcessToJobObject(h_job, h_process);
+
+            if assign_result == 0 {
+                let error_code = GetLastError();
+                CloseHandle(h_process);
+                CloseHandle(h_job);
+                panic!(
+                    "AssignProcessToJobObject FAILED with error {}: \
+                     medium-integrity parent CANNOT assign elevated child to job via hProcess handle. \
+                     This confirms the integrity boundary blocks this approach.",
+                    error_code
+                );
+            }
+
+            // If we get here, assignment succeeded
+            CloseHandle(h_process);
+            CloseHandle(h_job);
+        }
     }
 }
