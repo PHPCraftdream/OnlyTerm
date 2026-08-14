@@ -132,10 +132,17 @@ Write-Host "Install dir:  $InstallDir"
 # 1. Build (unless -SkipBuild)
 # ---------------------------------------------------------------------------
 if (-not $SkipBuild) {
-    Write-Host "`n==> cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server" -ForegroundColor Cyan
+    # strip-ansi-escapes is its own workspace member, not a dependency of the
+    # other three -- omitting it here used to work only by accident, because
+    # a leftover release/ directory from an earlier full-workspace build
+    # still had it. The first time this ran against a clean/relocated
+    # CARGO_TARGET_DIR it wasn't there, and step 3 below failed on a missing
+    # required file after a successful 14-minute build. Building it
+    # explicitly removes that dependency on leftover state.
+    Write-Host "`n==> cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes" -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
-        & cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server
+        & cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
         if ($LASTEXITCODE -ne 0) {
             throw "cargo build failed with exit code $LASTEXITCODE"
         }
