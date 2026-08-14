@@ -3,7 +3,7 @@ use config::keyassignment::SpawnCommand;
 use config::{ProcessPriority, TermConfig, UnixDomain};
 use mux::activity::Activity;
 use mux::domain::{alloc_domain_id, Domain, SplitSource};
-use mux::tab::SplitRequest;
+use mux::tab::{SplitRequest, Tab};
 use mux::window::WindowId as MuxWindowId;
 use mux::Mux;
 use portable_pty::CommandBuilder;
@@ -190,13 +190,17 @@ async fn spawn_single_pane_tab(
 /// but the thread owns the `stream`, so no resource is lost. `attach_stream_with_spinner`
 /// is cancel-safe (see its doc comment). The debounce guard's `Drop` impl is
 /// infallible and idempotent.
+/// Returns the tab that now hosts the elevated pane, or `None` when there is
+/// none to return: either the spawn was debounced away, or the tab could not
+/// be resolved afterwards. Callers that only want the side effect can ignore
+/// it; `--start-conf` needs it to apply the tab's title and startup commands.
 pub async fn spawn_elevated_single_pane_tab(
     argv: Vec<String>,
     priority: ProcessPriority,
     cwd: Option<PathBuf>,
     src_window_id: Option<MuxWindowId>,
     term_config: Arc<TermConfig>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Arc<Tab>>> {
     // See `pending_single_pane_spawns`'s doc comment: silently drop a
     // repeat "new tab" trigger for a window that already has one of these
     // spawns in flight, instead of piling up another UAC prompt.
@@ -206,7 +210,7 @@ pub async fn spawn_elevated_single_pane_tab(
             .unwrap()
             .insert(window_id)
         {
-            return Ok(());
+            return Ok(None);
         }
         Some(PendingSpawnGuard(window_id))
     } else {
@@ -290,25 +294,34 @@ pub async fn spawn_elevated_single_pane_tab(
     // without this call `Tab::is_elevated` stays false for every tab and
     // that entire rendering path is unreachable -- which is exactly why no
     // indicator was appearing despite being implemented.
-    match pane
+    let tab = match pane
         .as_ref()
         .and_then(|pane| mux.resolve_pane_id(pane.pane_id()))
     {
         Some((_domain_id, _window_id, tab_id)) => match mux.get_tab(tab_id) {
-            Some(tab) => tab.set_elevated(true),
-            None => log::warn!(
-                "elevated tab {} vanished before it could be flagged as elevated; \
-                 it will render without the admin indicator",
-                tab_id
-            ),
+            Some(tab) => {
+                tab.set_elevated(true);
+                Some(tab)
+            }
+            None => {
+                log::warn!(
+                    "elevated tab {} vanished before it could be flagged as elevated; \
+                     it will render without the admin indicator",
+                    tab_id
+                );
+                None
+            }
         },
-        None => log::warn!(
-            "could not resolve the elevated pane to a tab; the tab will render \
-             without the admin indicator"
-        ),
-    }
+        None => {
+            log::warn!(
+                "could not resolve the elevated pane to a tab; the tab will render \
+                 without the admin indicator"
+            );
+            None
+        }
+    };
 
-    Ok(())
+    Ok(tab)
 }
 
 #[derive(Copy, Debug, Clone, Eq, PartialEq)]

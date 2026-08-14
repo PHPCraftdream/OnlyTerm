@@ -1,4 +1,6 @@
+use crate::keyassignment::ProcessPriority;
 use crate::ktav_value::ktav_value_to_dynamic;
+use crate::shell::Shell;
 use ktav::value::Value as KtavValue;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -28,8 +30,28 @@ pub struct StartupTab {
 
     /// Shell command lines "typed" into the tab right after its shell
     /// starts, run after `StartupLayout::commands`, in the order given.
+    ///
+    /// These are typed straight in, without waiting for a prompt, so a
+    /// command that starts an interactive or full-screen program swallows
+    /// everything listed after it -- put such a command last. `git branch`
+    /// is the usual surprise here: past a screenful of output git pipes
+    /// through its pager, and the pager eats the following commands as its
+    /// own keystrokes. Setting `GIT_PAGER: cat` in `vars` avoids that.
     #[dynamic(default)]
     pub commands: Vec<String>,
+
+    /// Which shell to launch, overriding `StartupLayout::shell`. When
+    /// neither is set the usual `default_prog` applies.
+    pub shell: Option<Shell>,
+
+    /// Process priority for this tab's shell, overriding
+    /// `StartupLayout::priority`.
+    pub priority: Option<ProcessPriority>,
+
+    /// Whether to launch this tab elevated, overriding
+    /// `StartupLayout::admin`. Each elevated tab raises its own UAC prompt,
+    /// which the user has to accept before the next tab is spawned.
+    pub admin: Option<bool>,
 }
 
 /// The document shape parsed from a `--start-conf <file>.ktav` file: a set
@@ -57,16 +79,49 @@ pub struct StartupLayout {
     pub vars: HashMap<String, String>,
 
     /// Shell command lines run in every tab, before that tab's own
-    /// `commands`.
+    /// `commands`. See `StartupTab::commands` for the caveat about
+    /// interactive commands swallowing the ones after them.
     #[dynamic(default)]
     pub commands: Vec<String>,
+
+    /// Which shell tabs launch when they don't name their own. Unset means
+    /// the usual `default_prog`.
+    pub shell: Option<Shell>,
+
+    /// Process priority for tabs that don't set their own.
+    pub priority: Option<ProcessPriority>,
+
+    /// Whether tabs launch elevated when they don't say otherwise. Note that
+    /// each elevated tab raises its own UAC prompt.
+    pub admin: Option<bool>,
 
     /// The tabs to open, in order. Must be non-empty.
     #[dynamic(default)]
     pub tabs: Vec<StartupTab>,
 }
 
+/// How a single tab resolves after `StartupTab`'s settings are laid over the
+/// layout-wide ones -- the same "tab wins" rule `root_dir` and `vars` follow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedTabOptions {
+    pub shell: Option<Shell>,
+    pub priority: ProcessPriority,
+    pub admin: bool,
+}
+
 impl StartupLayout {
+    /// Resolves the launch options for `tab` against this layout's defaults.
+    pub fn tab_options(&self, tab: &StartupTab) -> ResolvedTabOptions {
+        ResolvedTabOptions {
+            shell: tab.shell.or(self.shell),
+            priority: tab
+                .priority
+                .or(self.priority)
+                .unwrap_or(ProcessPriority::Normal),
+            admin: tab.admin.or(self.admin).unwrap_or(false),
+        }
+    }
+
     /// Loads and parses a `--start-conf` file. Deliberately standalone
     /// from `Config::load_with_overrides` (`crates/config/src/config_impl.rs`)
     /// -- same ktav-to-`wezterm_dynamic`-to-struct pipeline, but this
@@ -399,6 +454,120 @@ tabs: [
 
         assert!(
             err.to_string().contains("top-level ktav object"),
+            "unexpected error: {}",
+            err
+        );
+    }
+
+    /// Loads a layout from an inline document, using a caller-chosen file
+    /// name so parallel tests never race on the same temp path.
+    fn load_doc(name: &str, doc: &str) -> anyhow::Result<StartupLayout> {
+        let path = std::env::temp_dir().join(format!("onlyterm-start-conf-{name}.ktav"));
+        std::fs::write(&path, doc).unwrap();
+        let result = StartupLayout::load(&path);
+        std::fs::remove_file(&path).ok();
+        result
+    }
+
+    #[test]
+    fn shell_priority_and_admin_parse_in_their_documented_spelling() {
+        let layout = load_doc(
+            "tab-options",
+            r#"
+tabs: [
+    {
+        shell: powershell
+        priority: above_normal
+        admin: true
+    }
+]
+"#,
+        )
+        .expect("layout should parse");
+
+        let options = layout.tab_options(&layout.tabs[0]);
+        assert_eq!(options.shell, Some(Shell::Powershell));
+        assert_eq!(options.priority, ProcessPriority::AboveNormal);
+        assert!(options.admin);
+    }
+
+    /// Layout-wide values apply to a tab that says nothing, exactly like
+    /// `root_dir` and `vars` already do.
+    #[test]
+    fn a_tab_inherits_the_layouts_options() {
+        let layout = load_doc(
+            "tab-options-inherit",
+            r#"
+shell: bash
+priority: high
+admin: true
+
+tabs: [
+    {
+        title: inherits-everything
+    }
+]
+"#,
+        )
+        .expect("layout should parse");
+
+        let options = layout.tab_options(&layout.tabs[0]);
+        assert_eq!(options.shell, Some(Shell::Bash));
+        assert_eq!(options.priority, ProcessPriority::High);
+        assert!(options.admin);
+    }
+
+    /// ...and a tab that does say something wins over the layout, including
+    /// when it turns an inherited `admin: true` back off.
+    #[test]
+    fn a_tabs_own_options_override_the_layouts() {
+        let layout = load_doc(
+            "tab-options-override",
+            r#"
+shell: bash
+priority: high
+admin: true
+
+tabs: [
+    {
+        shell: cmd
+        priority: idle
+        admin: false
+    }
+]
+"#,
+        )
+        .expect("layout should parse");
+
+        let options = layout.tab_options(&layout.tabs[0]);
+        assert_eq!(options.shell, Some(Shell::Cmd));
+        assert_eq!(options.priority, ProcessPriority::Idle);
+        assert!(
+            !options.admin,
+            "a tab must be able to opt back out of an inherited admin: true"
+        );
+    }
+
+    /// Saying nothing anywhere has to keep behaving exactly as it did before
+    /// these three settings existed: default_prog, normal priority, no
+    /// elevation.
+    #[test]
+    fn a_layout_that_sets_nothing_keeps_the_previous_defaults() {
+        let layout = load_doc("tab-options-absent", "tabs: [ { title: plain } ]\n")
+            .expect("layout should parse");
+
+        let options = layout.tab_options(&layout.tabs[0]);
+        assert_eq!(options.shell, None);
+        assert_eq!(options.priority, ProcessPriority::Normal);
+        assert!(!options.admin);
+    }
+
+    #[test]
+    fn a_misspelled_shell_is_rejected_rather_than_ignored() {
+        let err = load_doc("tab-options-bad-shell", "tabs: [ { shell: fish } ]\n")
+            .expect_err("an unknown shell must not be silently ignored");
+        assert!(
+            err.to_string().contains("fish"),
             "unexpected error: {}",
             err
         );

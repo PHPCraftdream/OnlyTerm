@@ -5,9 +5,7 @@ use std::path::PathBuf;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 /// Windows process priority classes for spawned processes.
-#[derive(
-    Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, FromDynamic, ToDynamic,
-)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToDynamic)]
 pub enum ProcessPriority {
     /// Idle priority class (0x00000040)
     Idle,
@@ -22,6 +20,59 @@ pub enum ProcessPriority {
     High,
     /// Realtime priority class (0x00000100)
     Realtime,
+}
+
+impl ProcessPriority {
+    pub const ALL: [ProcessPriority; 6] = [
+        ProcessPriority::Idle,
+        ProcessPriority::BelowNormal,
+        ProcessPriority::Normal,
+        ProcessPriority::AboveNormal,
+        ProcessPriority::High,
+        ProcessPriority::Realtime,
+    ];
+
+    /// The lower-case, underscore-separated spelling used in `--start-conf`
+    /// layouts.
+    pub fn name(self) -> &'static str {
+        match self {
+            ProcessPriority::Idle => "idle",
+            ProcessPriority::BelowNormal => "below_normal",
+            ProcessPriority::Normal => "normal",
+            ProcessPriority::AboveNormal => "above_normal",
+            ProcessPriority::High => "high",
+            ProcessPriority::Realtime => "realtime",
+        }
+    }
+}
+
+/// Hand-written rather than derived so that spelling is forgiving: matching
+/// is case-insensitive and ignores `_`, `-` and spaces. This is strictly
+/// more permissive than the derive it replaces, so every config that already
+/// said `AboveNormal` keeps working, and `above_normal` -- the spelling
+/// `--start-conf` layouts document -- now works too.
+impl FromDynamic for ProcessPriority {
+    fn from_dynamic(
+        value: &wezterm_dynamic::Value,
+        options: wezterm_dynamic::FromDynamicOptions,
+    ) -> Result<Self, wezterm_dynamic::Error> {
+        let s = String::from_dynamic(value, options)?;
+        let token = crate::shell::normalize_token(&s);
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|p| crate::shell::normalize_token(p.name()) == token)
+            .ok_or_else(|| {
+                wezterm_dynamic::Error::Message(format!(
+                    "`{s}` is not a valid process priority; use one of {}",
+                    Self::ALL
+                        .iter()
+                        .map(|p| p.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })
+    }
 }
 
 #[cfg(windows)]

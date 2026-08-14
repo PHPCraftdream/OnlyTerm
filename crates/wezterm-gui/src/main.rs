@@ -19,7 +19,7 @@ use mux::Mux;
 use portable_pty::cmdbuilder::CommandBuilder;
 use std::borrow::Cow;
 use std::env::current_dir;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -302,32 +302,88 @@ async fn spawn_startup_layout(
     let size = config.initial_size(dpi as u32, Some(cell_pixel_dims(&config, dpi)?));
 
     for (idx, tab_conf) in layout.tabs.iter().enumerate() {
-        let mut builder = config.build_prog(
-            None,
-            config.default_prog.as_ref(),
-            config.default_cwd.as_ref(),
-        )?;
+        let options = layout.tab_options(tab_conf);
         // A tab's own `root_dir` wins over the layout-wide one, which in
-        // turn wins over `config.default_cwd` that `build_prog` just
-        // applied above -- same override order `run_terminal_gui` already
-        // uses for the plain `--cwd` flag vs. `config.default_cwd`.
-        if let Some(root_dir) = tab_conf.root_dir.as_ref().or(layout.root_dir.as_ref()) {
-            builder.cwd(root_dir);
-        }
-        for (k, v) in layout.vars.iter().chain(tab_conf.vars.iter()) {
-            builder.env(k, v);
-        }
+        // turn wins over `config.default_cwd` that `build_prog` applies --
+        // the same override order `run_terminal_gui` already uses for the
+        // plain `--cwd` flag vs. `config.default_cwd`.
+        let cwd = tab_conf.root_dir.as_ref().or(layout.root_dir.as_ref());
+        let shell_argv = options.shell.map(|shell| shell.argv());
 
-        let tab = domain
-            .spawn(size, Some(builder), None, window_id)
+        let tab = if options.admin {
+            // Elevation can only go through the hosting-process path, which
+            // takes an argv rather than a `CommandBuilder`. It also cannot
+            // carry this tab's `vars`: the elevated child is launched by
+            // `ShellExecuteExW`, which gives no way to hand it an
+            // environment block, so say so rather than silently dropping
+            // them.
+            if !layout.vars.is_empty() || !tab_conf.vars.is_empty() {
+                log::warn!(
+                    "--start-conf: tab {} is `admin: true`, so its environment \
+                     variables cannot be applied -- elevated tabs are launched \
+                     via ShellExecuteExW, which cannot pass an environment",
+                    idx + 1
+                );
+            }
+            let argv = shell_argv.unwrap_or_else(|| {
+                config
+                    .default_prog
+                    .clone()
+                    .unwrap_or_else(|| vec!["cmd.exe".to_string()])
+            });
+            crate::spawn::spawn_elevated_single_pane_tab(
+                argv,
+                options.priority,
+                cwd.cloned(),
+                Some(window_id),
+                Arc::new(config::TermConfig::with_config(config.clone())),
+            )
             .await
             .with_context(|| {
                 format!(
-                    "spawning tab {} of {} (--start-conf)",
+                    "spawning elevated tab {} of {} (--start-conf)",
                     idx + 1,
                     layout.tabs.len()
                 )
-            })?;
+            })?
+        } else {
+            let prog = shell_argv
+                .as_ref()
+                .map(|argv| argv.iter().map(OsStr::new).collect());
+            let mut builder = config.build_prog(
+                prog,
+                config.default_prog.as_ref(),
+                config.default_cwd.as_ref(),
+            )?;
+            if let Some(cwd) = cwd {
+                builder.cwd(cwd);
+            }
+            for (k, v) in layout.vars.iter().chain(tab_conf.vars.iter()) {
+                builder.env(k, v);
+            }
+            #[cfg(windows)]
+            builder.set_priority_class(options.priority.to_win32_flag());
+
+            Some(
+                domain
+                    .spawn(size, Some(builder), None, window_id)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "spawning tab {} of {} (--start-conf)",
+                            idx + 1,
+                            layout.tabs.len()
+                        )
+                    })?,
+            )
+        };
+
+        // `None` means the spawn was debounced away or its tab could not be
+        // resolved; both already logged, and there is nothing left to title
+        // or type into.
+        let Some(tab) = tab else {
+            continue;
+        };
 
         if let Some(title) = &tab_conf.title {
             tab.set_title(title);

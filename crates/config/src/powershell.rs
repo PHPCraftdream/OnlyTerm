@@ -179,7 +179,8 @@ mod tests {
             assert_eq!(
                 argv_of(&cmd).len(),
                 4,
-                "{prog} should have been given the preamble"
+                "{} should have been given the preamble",
+                prog
             );
         }
     }
@@ -218,7 +219,8 @@ mod tests {
             assert_eq!(
                 argv_of(&cmd),
                 args,
-                "{args:?} already says what to run and must be left alone"
+                "{:?} already says what to run and must be left alone",
+                args
             );
         }
     }
@@ -240,7 +242,7 @@ mod tests {
         for prog in ["cmd.exe", "bash.exe", "wsl.exe", "powershell-ish.exe"] {
             let mut cmd = build(&[prog]);
             ensure_powershell_utf8(&mut cmd);
-            assert_eq!(argv_of(&cmd), vec![prog], "{prog} must not be touched");
+            assert_eq!(argv_of(&cmd), vec![prog], "{} must not be touched", prog);
         }
     }
 }

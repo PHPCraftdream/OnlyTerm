@@ -30,6 +30,7 @@ pub mod meta;
 pub mod powershell;
 mod scheme_data;
 mod serial;
+pub mod shell;
 mod start_conf;
 mod terminal;
 mod text_style;
