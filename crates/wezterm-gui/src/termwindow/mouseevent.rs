@@ -41,7 +41,8 @@ impl super::TermWindow {
             | UIItemType::ScrollThumb
             | UIItemType::Split(_)
             | UIItemType::NewTabOptionRadio { .. }
-            | UIItemType::NewTabOptionRun => {}
+            | UIItemType::NewTabOptionRun
+            | UIItemType::NewTabOptionClose => {}
         }
     }
 
@@ -54,7 +55,8 @@ impl super::TermWindow {
             | UIItemType::ScrollThumb
             | UIItemType::Split(_)
             | UIItemType::NewTabOptionRadio { .. }
-            | UIItemType::NewTabOptionRun => {}
+            | UIItemType::NewTabOptionRun
+            | UIItemType::NewTabOptionClose => {}
         }
     }
 
@@ -129,9 +131,20 @@ impl super::TermWindow {
                     // Completed a window drag
                     return;
                 }
-                if press == &MousePress::Left && self.dragging.take().is_some() {
-                    // Completed a drag
-                    return;
+                if press == &MousePress::Left {
+                    if let Some((item, _)) = self.dragging.take() {
+                        // Completed a drag. A tab reorder drag swaps the
+                        // pointer to the hand cursor for as long as the tab
+                        // is held (see `drag_tab`), so put it back now that
+                        // it isn't. Only for the tab bar: a split-resize drag
+                        // leaves its own sizing cursor in place, and clobbering
+                        // that with an arrow would flicker until the next Move
+                        // recomputed it.
+                        if matches!(item.item_type, UIItemType::TabBar(TabBarItem::Tab { .. })) {
+                            context.set_cursor(Some(MouseCursor::Arrow));
+                        }
+                        return;
+                    }
                 }
             }
 
@@ -418,6 +431,15 @@ impl super::TermWindow {
         // `self.dragging` (see the WMEK::Release handling above).
         self.dragging.replace((item, event.clone()));
 
+        // Show a hand for as long as the tab is being carried. Windows has no
+        // closed/grabbing-hand cursor among its stock set -- IDC_HAND is the
+        // pointing hand -- and drawing our own was tried and deliberately
+        // reverted: a hand-drawn cursor ignores the user's cursor scheme, the
+        // "large cursors" accessibility setting and high-contrast inversion,
+        // which is a poor trade for a slightly better-fitting shape. The arrow
+        // is restored on mouse-up in the WMEK::Release branch above.
+        context.set_cursor(Some(MouseCursor::Hand));
+
         if let Some(target) = self.resolve_ui_item(&event) {
             if let UIItemType::TabBar(TabBarItem::Tab { tab_idx, .. }) = target.item_type {
                 if self.move_tab(tab_idx).is_ok() {
@@ -460,6 +482,9 @@ impl super::TermWindow {
             }
             UIItemType::NewTabOptionRun => {
                 self.mouse_event_newtab_options_run(item, event, context);
+            }
+            UIItemType::NewTabOptionClose => {
+                self.mouse_event_newtab_options_close(item, event, context);
             }
         }
     }
@@ -532,6 +557,21 @@ impl super::TermWindow {
                 self.cancel_modal();
                 execute_new_tab_run_request(self, request);
             }
+        }
+        context.set_cursor(Some(MouseCursor::Hand));
+    }
+
+    /// The dialog's close cross. Deliberately routes through the same
+    /// `cancel_modal` that Esc uses, so the two dismissal paths cannot drift
+    /// apart -- notably, neither of them starts a tab.
+    fn mouse_event_newtab_options_close(
+        &mut self,
+        _item: UIItem,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        if let WMEK::Press(MousePress::Left) = event.kind {
+            self.cancel_modal();
         }
         context.set_cursor(Some(MouseCursor::Hand));
     }

@@ -637,7 +637,9 @@ impl TermWindow {
         self.show_prompt_input_line(&PromptInputLine {
             action: Box::new(KeyAssignment::RenameCurrentTab),
             initial_value: Some(current_title),
-            description: "Enter new name for tab".to_string(),
+            // The prompt has always cancelled on Esc (see `PromptHost`'s
+            // resolve_action in overlay/prompt.rs), but nothing said so.
+            description: "Enter new name for tab.  Esc to cancel.".to_string(),
             prompt: "New name: ".to_string(),
         });
     }

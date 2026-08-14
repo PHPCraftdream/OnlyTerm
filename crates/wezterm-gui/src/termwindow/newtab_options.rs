@@ -283,17 +283,38 @@ impl NewTabOptions {
 
         let mut elements = Vec::new();
 
-        // Title: its own block-level row so it starts on its own line.
-        let title_element =
-            Element::new(&font, ElementContent::Text("New Tab Options".to_string()))
-                .colors(normal_colors.clone())
-                .margin(BoxDimension {
-                    left: Dimension::Cells(0.5),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.5),
-                    bottom: Dimension::Cells(0.5),
-                })
-                .display(DisplayType::Block);
+        // Title: its own block-level row so it starts on its own line, with
+        // the close cross floated to the right edge of that row -- the same
+        // arrangement `fancy_tab_bar` uses for a tab's own close button.
+        // `×` (U+00D7) rather than a dedicated cross glyph: it is present in
+        // essentially every font, so it cannot fall back to a tofu box.
+        let title_text = Element::new(&font, ElementContent::Text("New Tab Options".to_string()))
+            .colors(normal_colors.clone());
+
+        let close_element = Element::new(&font, ElementContent::Text("×".to_string()))
+            .colors(normal_colors.clone())
+            .hover_colors(Some(selected_colors.clone()))
+            .padding(BoxDimension {
+                left: Dimension::Cells(0.5),
+                right: Dimension::Cells(0.25),
+                top: Dimension::Cells(0.),
+                bottom: Dimension::Cells(0.),
+            })
+            .float(Float::Right)
+            .item_type(UIItemType::NewTabOptionClose);
+
+        let title_element = Element::new(
+            &font,
+            ElementContent::Children(vec![title_text, close_element]),
+        )
+        .colors(normal_colors.clone())
+        .margin(BoxDimension {
+            left: Dimension::Cells(0.5),
+            right: Dimension::Cells(0.5),
+            top: Dimension::Cells(0.5),
+            bottom: Dimension::Cells(0.5),
+        })
+        .display(DisplayType::Block);
         elements.push(title_element);
 
         // Each option group is one block-level row (so groups stack
@@ -437,6 +458,22 @@ impl NewTabOptions {
         .display(DisplayType::Block);
         run_element.item_type = Some(UIItemType::NewTabOptionRun);
         elements.push(run_element);
+
+        // Esc has always dismissed this dialog, but nothing on screen said
+        // so. Carries no `item_type`, so it is inert: not clickable, and not
+        // part of the Tab focus order (`FocusItem` drives that, and this line
+        // deliberately has no entry there).
+        let hint_element =
+            Element::new(&font, ElementContent::Text("Esc or × to close".to_string()))
+                .colors(normal_colors.clone())
+                .margin(BoxDimension {
+                    left: Dimension::Cells(0.5),
+                    right: Dimension::Cells(0.5),
+                    top: Dimension::Cells(0.),
+                    bottom: Dimension::Cells(0.5),
+                })
+                .display(DisplayType::Block);
+        elements.push(hint_element);
 
         let element = Element::new(&font, ElementContent::Children(elements))
             .colors(ElementColors {

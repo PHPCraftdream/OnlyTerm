@@ -181,6 +181,8 @@ pub enum UIItemType {
         choice: usize,
     },
     NewTabOptionRun,
+    /// The dialog's close cross. Dismisses the modal, exactly as Esc does.
+    NewTabOptionClose,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
