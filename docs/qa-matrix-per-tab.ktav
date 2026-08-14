@@ -1,0 +1,65 @@
+## QA matrix for per-tab hosting (task #586).
+## Covers the non-admin half of shell x priority without needing a UAC click.
+## Launch with:
+##   onlyterm-gui.exe start --start-conf docs/qa-matrix-per-tab.ktav
+##
+## Note: tabs opened this way do NOT get per-tab process isolation, even with
+## per_tab_process_isolation on -- see the architecture doc. So this matrix
+## exercises shell selection and priority, not the hosting-process path.
+##
+## `realtime` is deliberately absent: REALTIME_PRIORITY_CLASS can starve
+## input handling on the whole machine, and this matrix is not worth
+## wedging the user's desktop for.
+##
+## To verify: with the layout open, list the GUI's child processes and compare
+## each shell's priority class against its tab. The paired OpenConsole.exe
+## hosts take the GUI's OWN class, not the tab's -- expected, since they are
+## spawned by CreatePseudoConsole inside conpty.dll, not by this codebase.
+
+tabs: [
+  {
+    title: cmd-idle
+    shell: cmd
+    priority: idle
+  }
+  {
+    title: cmd-below
+    shell: cmd
+    priority: below_normal
+  }
+  {
+    title: cmd-normal
+    shell: cmd
+    priority: normal
+  }
+  {
+    title: cmd-above
+    shell: cmd
+    priority: above_normal
+  }
+  {
+    title: cmd-high
+    shell: cmd
+    priority: high
+  }
+  {
+    title: ps-normal
+    shell: powershell
+    priority: normal
+  }
+  {
+    title: ps-high
+    shell: powershell
+    priority: high
+  }
+  {
+    title: bash-normal
+    shell: bash
+    priority: normal
+  }
+  {
+    title: wsl-normal
+    shell: wsl
+    priority: normal
+  }
+]
