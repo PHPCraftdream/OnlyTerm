@@ -269,15 +269,43 @@ pub async fn spawn_elevated_single_pane_tab(
         .attach_stream_with_spinner(src_window_id, stream)
         .await?;
 
+    // The attach above is what created the pane, so this is the first point
+    // at which it can be found. Used for two unrelated things below, hence
+    // the single lookup.
+    let pane = mux
+        .iter_panes()
+        .into_iter()
+        .find(|p| p.domain_id() == domain.domain_id());
+
     // Apply the term_config to the resulting pane.
     if src_window_id.is_some() {
-        if let Some(pane) = mux
-            .iter_panes()
-            .into_iter()
-            .find(|p| p.domain_id() == domain.domain_id())
-        {
+        if let Some(pane) = &pane {
             pane.set_config(term_config);
         }
+    }
+
+    // Flag the tab as elevated, which is what makes the tab bar draw its
+    // admin indicator: the tab's border gets painted in the tab's own text
+    // colour (see `fancy_tab_bar.rs`). Nothing else sets this flag, so
+    // without this call `Tab::is_elevated` stays false for every tab and
+    // that entire rendering path is unreachable -- which is exactly why no
+    // indicator was appearing despite being implemented.
+    match pane
+        .as_ref()
+        .and_then(|pane| mux.resolve_pane_id(pane.pane_id()))
+    {
+        Some((_domain_id, _window_id, tab_id)) => match mux.get_tab(tab_id) {
+            Some(tab) => tab.set_elevated(true),
+            None => log::warn!(
+                "elevated tab {} vanished before it could be flagged as elevated; \
+                 it will render without the admin indicator",
+                tab_id
+            ),
+        },
+        None => log::warn!(
+            "could not resolve the elevated pane to a tab; the tab will render \
+             without the admin indicator"
+        ),
     }
 
     Ok(())
