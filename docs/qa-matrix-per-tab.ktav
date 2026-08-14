@@ -3,9 +3,10 @@
 ## Launch with:
 ##   onlyterm-gui.exe start --start-conf docs/qa-matrix-per-tab.ktav
 ##
-## Note: tabs opened this way do NOT get per-tab process isolation, even with
-## per_tab_process_isolation on -- see the architecture doc. So this matrix
-## exercises shell selection and priority, not the hosting-process path.
+## Add --config per_tab_process_isolation=true to run the same matrix through
+## the hosting-process path instead; each tab then gets its own
+## onlyterm-mux-server.exe, and the priority classes below apply to the shell
+## inside it.
 ##
 ## `realtime` is deliberately absent: REALTIME_PRIORITY_CLASS can starve
 ## input handling on the whole machine, and this matrix is not worth

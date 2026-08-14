@@ -38,6 +38,18 @@ pub struct UnixDomain {
     /// the socket.
     pub proxy_command: Option<Vec<String>>,
 
+    /// Environment variables set on the `proxy_command` process, layered on
+    /// top of the environment it inherits. Ignored when `proxy_command` is
+    /// unset.
+    ///
+    /// This exists because a per-tab hosting process is spawned *as* the
+    /// proxy command, and a tab may carry its own `vars` (see
+    /// `--start-conf`). Passing them as command-line arguments instead would
+    /// publish their values to every process running as this user, which is
+    /// not acceptable for something that may hold a token or a password.
+    #[dynamic(default)]
+    pub proxy_env: HashMap<String, String>,
+
     /// If true, bypass checking for secure ownership of the
     /// socket_path.  This is not recommended on a multi-user
     /// system, but is useful for example when running the
@@ -72,6 +84,7 @@ impl Default for UnixDomain {
             connect_automatically: false,
             no_serve_automatically: false,
             serve_command: None,
+            proxy_env: HashMap::new(),
             skip_permissions_check: false,
             read_timeout: default_read_timeout(),
             write_timeout: default_write_timeout(),
@@ -85,7 +98,15 @@ impl Default for UnixDomain {
 #[derive(Debug)]
 pub enum UnixTarget {
     Socket(PathBuf),
-    Proxy(Vec<String>),
+    Proxy {
+        argv: Vec<String>,
+        /// Applied on top of the environment the proxy command would
+        /// otherwise inherit. Carried here rather than appended to `argv`
+        /// on purpose: a command line is readable by other processes of the
+        /// same user, and environment values are exactly the sort of thing
+        /// (tokens, credentials) that must not be published that way.
+        env: HashMap<String, String>,
+    },
 }
 
 impl UnixDomain {
@@ -98,7 +119,10 @@ impl UnixDomain {
 
     pub fn target(&self) -> UnixTarget {
         if let Some(proxy) = &self.proxy_command {
-            UnixTarget::Proxy(proxy.clone())
+            UnixTarget::Proxy {
+                argv: proxy.clone(),
+                env: self.proxy_env.clone(),
+            }
         } else {
             UnixTarget::Socket(self.socket_path())
         }

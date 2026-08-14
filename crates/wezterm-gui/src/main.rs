@@ -346,6 +346,60 @@ async fn spawn_startup_layout(
                     layout.tabs.len()
                 )
             })?
+        } else if config.per_tab_process_isolation {
+            // Same isolation the interactive "new tab" path gets. Without
+            // this branch a layout's tabs stayed inside the GUI process even
+            // with the option on, so one window could hold isolated tabs
+            // opened by hand and non-isolated ones from the layout -- and the
+            // long-lived tabs a startup layout creates are precisely the ones
+            // worth containing.
+            //
+            // The tab's `vars` travel to the hosting process as a real
+            // environment (see `UnixDomain::proxy_env`), not as command-line
+            // arguments, so they are not exposed to other processes.
+            let spawn = config::keyassignment::SpawnCommand {
+                args: shell_argv.clone(),
+                cwd: cwd.map(|c| c.to_path_buf()),
+                set_environment_variables: layout
+                    .vars
+                    .iter()
+                    .chain(tab_conf.vars.iter())
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+                priority: Some(options.priority),
+                ..Default::default()
+            };
+            // Run as its own task rather than awaiting inline, and that is
+            // not a style choice. An `async fn` keeps its state *inside*
+            // whichever future awaits it, so holding this one (which in turn
+            // holds `attach_with_spinner`) inside `spawn_startup_layout` grew
+            // that future past what the main thread's stack could carry: the
+            // GUI died during startup with "thread 'main' has overflowed its
+            // stack", after the hosting child had already come up fine.
+            // `Box::pin` around the call is NOT enough in a debug build --
+            // the future is still materialised on the stack before it is
+            // moved into the box. Spawning leaves only a small `Task` handle
+            // here and lets the executor own the future, which is exactly
+            // what the interactive caller in spawn.rs already does.
+            let term_config = Arc::new(config::TermConfig::with_config(config.clone()));
+            promise::spawn::spawn(async move {
+                crate::spawn::spawn_single_pane_tab(
+                    spawn,
+                    crate::spawn::SpawnWhere::NewTab,
+                    size,
+                    Some(window_id),
+                    term_config,
+                )
+                .await
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "spawning isolated tab {} of {} (--start-conf)",
+                    idx + 1,
+                    layout.tabs.len()
+                )
+            })?
         } else {
             let prog = shell_argv
                 .as_ref()

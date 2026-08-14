@@ -54,9 +54,13 @@ pub fn unix_connect_with_retry(
                         Some(Err(err).with_context(|| format!("connecting to {}", path.display())))
                 }
             },
-            UnixTarget::Proxy(argv) => {
+            UnixTarget::Proxy { argv, env } => {
                 let mut cmd = std::process::Command::new(&argv[0]);
                 cmd.args(&argv[1..]);
+                // Layered on top of the inherited environment rather than
+                // replacing it: the child still needs PATH and the rest to
+                // start a shell at all.
+                cmd.envs(env);
 
                 // Without this, Windows allocates a brand new visible
                 // console window for the child, because it's a

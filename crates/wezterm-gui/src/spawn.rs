@@ -49,23 +49,17 @@ impl Drop for PendingSpawnGuard {
 /// plus a stray window in practice (confirmed via live testing) -- the
 /// desired shell/cwd/priority must instead be passed to the child process
 /// as CLI args, which is what the arguments below do.
-async fn spawn_single_pane_tab(
+pub(crate) async fn spawn_single_pane_tab(
     spawn: SpawnCommand,
     spawn_where: SpawnWhere,
     _size: TerminalSize,
     src_window_id: Option<MuxWindowId>,
     term_config: Arc<TermConfig>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Arc<Tab>>> {
     if matches!(spawn_where, SpawnWhere::SplitPane(_)) {
         // Splitting through single-pane domains is NOT supported in Phase B
         // (explicitly out of scope per task requirements)
         bail!("SplitPane is not supported with per_tab_process_isolation yet");
-    }
-    if !spawn.set_environment_variables.is_empty() {
-        bail!(
-            "per_tab_process_isolation does not yet support custom \
-             environment variables for spawned tabs"
-        );
     }
 
     // See `pending_single_pane_spawns`'s doc comment: silently drop a
@@ -77,7 +71,7 @@ async fn spawn_single_pane_tab(
             .unwrap()
             .insert(window_id)
         {
-            return Ok(());
+            return Ok(None);
         }
         Some(PendingSpawnGuard(window_id))
     } else {
@@ -140,6 +134,10 @@ async fn spawn_single_pane_tab(
         serve_command: None,
         proxy_command: Some(proxy_command),
         skip_permissions_check: true, // Not applicable for proxy_command
+        // The tab's own environment, handed to the hosting process itself
+        // rather than appended to `proxy_command`: a command line is readable
+        // by any process of this user, and these values may be secrets.
+        proxy_env: spawn.set_environment_variables.clone(),
         read_timeout: std::time::Duration::from_secs(60),
         write_timeout: std::time::Duration::from_secs(60),
         local_echo_threshold_ms: None,
@@ -167,6 +165,11 @@ async fn spawn_single_pane_tab(
     // tab instead of a raw connection-progress log -- see its doc comment.
     client_domain.attach_with_spinner(attach_window_id).await?;
 
+    // Resolve the tab that now hosts this pane, so callers that need to act
+    // on it -- `--start-conf` applies a title and types its startup commands
+    // -- can do so. Returning `None` is not an error: it means the pane could
+    // not be resolved, which the caller decides how to treat.
+    let mut spawned_tab = None;
     if attach_window_id.is_some() {
         if let Some(pane) = mux
             .iter_panes()
@@ -174,10 +177,13 @@ async fn spawn_single_pane_tab(
             .find(|p| p.domain_id() == domain.domain_id())
         {
             pane.set_config(term_config);
+            spawned_tab = mux
+                .resolve_pane_id(pane.pane_id())
+                .and_then(|(_domain_id, _window_id, tab_id)| mux.get_tab(tab_id));
         }
     }
 
-    Ok(())
+    Ok(spawned_tab)
 }
 
 /// Spawn an elevated (admin, UAC) single-pane tab using the WebSocket rendezvous path.
@@ -259,6 +265,11 @@ pub async fn spawn_elevated_single_pane_tab(
     let unix_domain = UnixDomain {
         name: domain_name,
         socket_path: None, // Not used when we already have a stream
+        // No effect here: `proxy_env` only applies to a `proxy_command`, and
+        // this path has none -- the elevated child is launched by
+        // `ShellExecuteExW`, which cannot be handed an environment at all.
+        // That limitation is warned about at the `--start-conf` call site.
+        proxy_env: Default::default(),
         connect_automatically: false,
         no_serve_automatically: true,
         serve_command: None,
@@ -359,7 +370,11 @@ pub fn spawn_command_impl(
             config.per_tab_process_isolation && !matches!(spawn_where, SpawnWhere::SplitPane(_));
 
         if let Err(err) = if use_single_pane {
-            spawn_single_pane_tab(spawn, spawn_where, size, src_window_id, term_config).await
+            // The tab it returns is only of interest to callers that then act
+            // on it (see `--start-conf`); this path just wants the side effect.
+            spawn_single_pane_tab(spawn, spawn_where, size, src_window_id, term_config)
+                .await
+                .map(|_tab| ())
         } else {
             spawn_command_internal(spawn, spawn_where, size, src_window_id, term_config).await
         } {
