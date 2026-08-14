@@ -27,6 +27,7 @@ pub mod keyassignment;
 mod keys;
 pub mod ktav_value;
 pub mod meta;
+pub mod powershell;
 mod scheme_data;
 mod serial;
 mod start_conf;

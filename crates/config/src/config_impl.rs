@@ -880,6 +880,10 @@ impl Config {
             }
         }
 
+        // Has to come after `replace_default_prog` above, since that is what
+        // decides which program is actually being launched.
+        crate::powershell::ensure_powershell_utf8(cmd);
+
         // Augment WSLENV so that TERM related environment propagates
         // across the win32/wsl boundary
         let mut wsl_env = std::env::var("WSLENV").ok();
