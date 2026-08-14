@@ -314,6 +314,148 @@ fn spawn_bridge_to_local_stream(
 /// It exists purely as a liveness backstop.
 const PUMP_POLL_TIMEOUT: Duration = Duration::from_millis(250);
 
+/// Upper bound on how long to drain WebSocket data after the local side
+/// closes. This bounds the teardown time when a peer has vanished or is
+/// wedged, preventing indefinite hangs while still giving well-behaved
+/// peers a chance to deliver their final bytes.
+///
+/// CHOSEN VALUE: 2 seconds is long enough for a 16 MiB payload (the
+/// regression test case) to drain through the WebSocket bridge at the
+/// measured throughput of ~50-100 MiB/s, but short enough that a genuinely
+/// wedged peer doesn't stall teardown indefinitely. 2 seconds at 50 MiB/s
+/// allows ~100 MiB to drain - far more than the 16 MiB test payload.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Settles the WebSocket before closing it, once the local side has gone
+/// away (`bridge_end` returned EOF).
+///
+/// # Which half actually fixes the tail loss
+///
+/// Worth being precise, because the obvious reading is the wrong one.
+///
+/// The defect is on the *sending* side: the application writes its last
+/// bytes and drops its end of the socketpair. Those bytes reached
+/// `ws.write()`, which only queues them in tungstenite's outgoing buffer --
+/// and a single `flush()` on a non-blocking socket can return `WouldBlock`
+/// with frames still pending. The old code closed and returned anyway, so
+/// the queued tail died with the WebSocket; the receiver saw EOF in about
+/// three runs out of four, around PDU 61 of 64.
+///
+/// So it is the **bounded flush loop** that carries the fix. In that
+/// scenario nothing is arriving, so draining reads cannot be what helps --
+/// an earlier version of this function claimed exactly that in its comments
+/// and was wrong. Before deleting either loop as redundant, re-run
+/// `tests/tail_loss_regression.rs` with this function's body reverted:
+/// `test_websocket_bridge_no_tail_loss_on_sender_close` is the test that
+/// fails against the bug (its `..._on_receiver_close` sibling passes either
+/// way and proves nothing about this).
+///
+/// The read loop still earns its keep: it keeps consuming while we wait, so
+/// a peer that is mid-send does not stall against its own full write buffer
+/// while we are trying to flush into the same connection.
+///
+/// Both loops share one deadline. An unbounded settle would re-introduce the
+/// hang this crate has already shipped once, merely moved to teardown.
+///
+/// Returns the number of bytes drained from the peer (for logging).
+fn drain_websocket_before_close(
+    ws: &mut WebSocket<TcpStream>,
+    bridge_end: &mut filedescriptor::FileDescriptor,
+) -> usize {
+    let deadline = Instant::now() + DRAIN_TIMEOUT;
+    let mut bytes_drained = 0;
+
+    loop {
+        // Check timeout first
+        if Instant::now() >= deadline {
+            if bytes_drained > 0 {
+                log::warn!(
+                    "elevated tab rendezvous bridge: drain timeout after {} bytes (may have lost data)",
+                    bytes_drained
+                );
+            } else {
+                log::debug!("elevated tab rendezvous bridge: drain timeout, no data to drain");
+            }
+            break;
+        }
+
+        // Try to read from WebSocket
+        match ws.read() {
+            Ok(Message::Binary(data)) => {
+                bytes_drained += data.len();
+                // Write to local side; if this fails, we can't deliver the data anyway
+                // (the local side is already closed), so log and continue draining.
+                if let Err(err) =
+                    write_all_to_local(bridge_end, ws.get_ref().as_socket_descriptor(), &data)
+                {
+                    log::debug!(
+                        "elevated tab rendezvous bridge: failed to write drained data: {err:#}"
+                    );
+                    // Keep trying to drain even if we can't deliver; we want to
+                    // read everything we can from the WebSocket to avoid hanging
+                    // the peer on their own write buffer.
+                }
+            }
+            // Text/Ping/Pong/Frame: not part of this protocol; ignore and keep draining.
+            Ok(_) => {}
+            // No more data available
+            Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Could poll here for more data, but we're in shutdown - give
+                // the peer a brief window and then exit. This avoids waiting on
+                // a peer that may never come back.
+                std::thread::sleep(Duration::from_millis(10));
+                // Continue looping to check deadline and try again
+                continue;
+            }
+            // WebSocket is properly closed - we're done
+            Err(tungstenite::Error::ConnectionClosed) | Err(tungstenite::Error::AlreadyClosed) => {
+                if bytes_drained > 0 {
+                    log::debug!(
+                        "elevated tab rendezvous bridge: drained {} bytes before WebSocket close",
+                        bytes_drained
+                    );
+                }
+                break;
+            }
+            // Other errors - log and break
+            Err(err) => {
+                log::debug!(
+                    "elevated tab rendezvous bridge: WebSocket read error during drain: {err:#}"
+                );
+                break;
+            }
+        }
+    }
+
+    // Now close the WebSocket cleanly, and -- the part that actually fixes
+    // the tail loss -- keep flushing until the outgoing buffer is empty or
+    // the shared deadline expires. `close` itself only queues the close
+    // frame; a single `flush` on a non-blocking socket may leave both it and
+    // any preceding data frames pending.
+    let _ = ws.close(None);
+    loop {
+        match ws.flush() {
+            Ok(()) => break,
+            Err(tungstenite::Error::Io(ref e)) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    log::warn!(
+                        "elevated tab rendezvous bridge: could not flush the outgoing buffer \
+                         within {:?} of the peer closing; the tail of this stream is lost",
+                        DRAIN_TIMEOUT
+                    );
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            // ConnectionClosed/AlreadyClosed here mean the close completed;
+            // anything else is not something a retry would help with.
+            Err(_) => break,
+        }
+    }
+
+    bytes_drained
+}
+
 /// The actual pump loop: drains everything currently available from the
 /// WebSocket (forwarding binary payloads to `bridge_end`) and from
 /// `bridge_end` (forwarding as WebSocket binary messages), then parks in
@@ -375,9 +517,10 @@ fn pump_bridge(ws: &mut WebSocket<TcpStream>, bridge_end: &mut filedescriptor::F
         while !ws_write_pending {
             match bridge_end.read(&mut buf) {
                 Ok(0) => {
-                    log::debug!("elevated tab rendezvous bridge: local side closed");
-                    let _ = ws.close(None);
-                    let _ = ws.flush();
+                    log::debug!(
+                        "elevated tab rendezvous bridge: local side closed, draining WebSocket"
+                    );
+                    drain_websocket_before_close(ws, bridge_end);
                     return;
                 }
                 Ok(n) => match ws.write(Message::Binary(buf[..n].to_vec().into())) {
