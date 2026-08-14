@@ -15,3 +15,6 @@ http.workspace = true
 log.workspace = true
 tungstenite.workspace = true
 wezterm-uds.workspace = true
+
+[dev-dependencies]
+codec = { path = "../codec" }

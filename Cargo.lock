@@ -5763,6 +5763,7 @@ name = "wezterm-elevated-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codec",
  "filedescriptor",
  "getrandom 0.3.4",
  "http",

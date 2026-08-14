@@ -33,7 +33,7 @@
 //! anything else.
 
 use anyhow::Context;
-use filedescriptor::{poll, pollfd, AsRawSocketDescriptor, POLLIN, POLLOUT};
+use filedescriptor::{poll, pollfd, AsRawSocketDescriptor, POLLERR, POLLHUP, POLLIN, POLLOUT};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::{Duration, Instant};
@@ -342,7 +342,9 @@ fn pump_bridge(ws: &mut WebSocket<TcpStream>, bridge_end: &mut filedescriptor::F
         loop {
             match ws.read() {
                 Ok(Message::Binary(data)) => {
-                    if let Err(err) = write_all_to_local(bridge_end, &data) {
+                    if let Err(err) =
+                        write_all_to_local(bridge_end, ws.get_ref().as_socket_descriptor(), &data)
+                    {
                         log::debug!("elevated tab rendezvous bridge: local write failed: {err:#}");
                         return;
                     }
@@ -452,8 +454,36 @@ fn pump_bridge(ws: &mut WebSocket<TcpStream>, bridge_end: &mut filedescriptor::F
 /// *after* having already written part of the buffer -- silently
 /// truncating the byte stream the mux protocol is carrying. So retry
 /// `WouldBlock` here, waiting for writability rather than spinning.
+///
+/// The write must not outlive the connection it belongs to: even when the
+/// local send buffer is full, we must still detect WebSocket-side closure.
+/// If the WebSocket dies while `dest` is backed up, polling only `dest`
+/// would block forever -- the write would never complete, and the pump
+/// thread would never return to its main loop to notice the dead peer.
+/// So we poll both `dest` and `ws_fd` simultaneously, and POLLHUP/POLLERR on
+/// the WebSocket fd terminates the write as an error -- the same invariant
+/// `pump_bridge` already enforces for its own poll loop.
+///
+/// The WebSocket entry asks for *no* events at all rather than POLLIN, which
+/// matters: we only ever reach this poll because `dest` is backed up, and the
+/// reason it is backed up is that the WebSocket is delivering faster than the
+/// local side drains -- so there is almost always unread data waiting on it.
+/// Asking for POLLIN would therefore return immediately every time, turning
+/// this wait into a busy loop that pegs a core for as long as the backpressure
+/// lasts. Measured on this platform (`WSAPoll`): with `events: 0` a readable
+/// socket does not wake the poll (revents 0), while a closed peer still
+/// reports POLLHUP (revents 0x2). That is exactly the pair of properties this
+/// needs, and it is why the hangup flags are read from `filedescriptor`'s
+/// re-exports rather than written as literals -- the POSIX values differ from
+/// the Windows ones (POLLHUP is 0x10 there but 0x2 here, where 0x10 is
+/// POLLOUT), so a hardcoded constant silently disables this check.
+///
+/// We don't check POLLHUP on `dest` because a socketpair end doesn't poll
+/// POLLHUP on the peer's closure; we detect that via EOF when the pump loop
+/// returns to reading from `bridge_end`.
 fn write_all_to_local(
     dest: &mut filedescriptor::FileDescriptor,
+    ws_fd: usize,
     mut data: &[u8],
 ) -> std::io::Result<()> {
     while !data.is_empty() {
@@ -467,13 +497,34 @@ fn write_all_to_local(
             Ok(n) => data = &data[n..],
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                let mut pfd = [pollfd {
-                    fd: dest.as_socket_descriptor(),
-                    events: POLLOUT,
-                    revents: 0,
-                }];
+                // Poll both descriptors: we need writability on `dest`, but
+                // we must also detect hangup on the WebSocket side. See the
+                // doc comment for why the WebSocket entry asks for no events.
+                let mut pfd = [
+                    pollfd {
+                        fd: ws_fd,
+                        events: 0,
+                        revents: 0,
+                    },
+                    pollfd {
+                        fd: dest.as_socket_descriptor(),
+                        events: POLLOUT,
+                        revents: 0,
+                    },
+                ];
                 poll(&mut pfd, Some(PUMP_POLL_TIMEOUT))
                     .map_err(|err| std::io::Error::other(format!("{err:#}")))?;
+
+                // If the WebSocket side is closed (POLLHUP/POLLERR), this write
+                // cannot succeed and the pump should exit. We only check the
+                // WebSocket fd, not `dest`, because socketpair ends don't poll
+                // POLLHUP on peer closure (that's detected via EOF on read).
+                if pfd[0].revents & (POLLERR | POLLHUP) != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        "connection closed while waiting for send buffer space",
+                    ));
+                }
             }
             Err(e) => return Err(e),
         }
