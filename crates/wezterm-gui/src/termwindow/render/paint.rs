@@ -234,6 +234,13 @@ impl crate::TermWindow {
                             window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                                 tw.scheduled_animation.borrow_mut().take();
                                 if tw.tab_bar.next_progress_frame_due().is_some() {
+                                    // Deliberately NOT the coalesced entry
+                                    // point: this timer already fires at
+                                    // INDETERMINATE_SPINNER_INTERVAL, which is
+                                    // the same 100ms as
+                                    // TITLE_UPDATE_MIN_INTERVAL, so gating it
+                                    // would drop spinner frames rather than
+                                    // save any work.
                                     tw.update_title_post_status();
                                 }
                                 win.invalidate();

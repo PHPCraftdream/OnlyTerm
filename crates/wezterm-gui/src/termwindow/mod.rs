@@ -381,6 +381,9 @@ pub struct TermWindow {
     retained_rows: RefCell<HashMap<mux::pane::PaneId, render::RetainedPaneRows>>,
 
     last_status_call: Instant,
+    /// Rate-limit state for title/tab-bar rebuilds; see
+    /// TITLE_UPDATE_MIN_INTERVAL in actions.rs.
+    title_update_coalescer: actions::TitleUpdateCoalescer,
     cursor_blink_state: RefCell<ColorEase>,
     blink_state: RefCell<ColorEase>,
     rapid_blink_state: RefCell<ColorEase>,

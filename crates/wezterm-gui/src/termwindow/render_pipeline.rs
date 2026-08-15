@@ -229,6 +229,7 @@ impl TermWindow {
                 &config,
             )),
             last_status_call: Instant::now(),
+            title_update_coalescer: Default::default(),
             cursor_blink_state: RefCell::new(ColorEase::new(
                 config.cursor_blink_rate,
                 config.cursor_blink_ease_in,
@@ -1332,7 +1333,12 @@ impl TermWindow {
                         | Alert::Progress(_),
                     ..
                 } => {
-                    self.update_title();
+                    // The hot one: a full-screen TUI re-sets its title,
+                    // cwd and progress on every repaint, and each of those
+                    // used to force a full rebuild through the contended
+                    // terminal lock. Rate-limited; see
+                    // TITLE_UPDATE_MIN_INTERVAL.
+                    self.update_title_coalesced();
                 }
                 MuxNotification::Alert {
                     alert: Alert::PaletteChanged,
@@ -1405,7 +1411,7 @@ impl TermWindow {
                 }
                 MuxNotification::WindowInvalidated(_) => {
                     window.invalidate();
-                    self.update_title_post_status();
+                    self.update_title_post_status_coalesced();
                 }
                 MuxNotification::WindowRemoved(_window_id) => {
                     // Handled by frontend
@@ -1418,14 +1424,14 @@ impl TermWindow {
                 }
                 MuxNotification::PaneFocused(_) => {
                     // Also handled by clientpane
-                    self.update_title_post_status();
+                    self.update_title_post_status_coalesced();
                 }
                 MuxNotification::TabReflowed(_) => {
                     // Also handled by wezterm-client
-                    self.update_title_post_status();
+                    self.update_title_post_status_coalesced();
                 }
                 MuxNotification::TabTitleChanged { .. } => {
-                    self.update_title_post_status();
+                    self.update_title_post_status_coalesced();
                 }
                 MuxNotification::PaneAdded(_)
                 | MuxNotification::WorkspaceRenamed { .. }
