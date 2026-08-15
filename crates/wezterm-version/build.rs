@@ -63,8 +63,41 @@ fn main() {
     let build_time = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
     println!("cargo:rustc-env=ONLYTERM_CI_BUILD_TIME={}", build_time);
 
+    // Tell cargo to re-run this script whenever HEAD moves. This must happen
+    // REGARDLESS of which branch below produces the version string: the commit
+    // hash and count above are captured on every path, so tying the rerun
+    // trigger to only one of them freezes them on the others.
+    //
+    // Paths are emitted verbatim, NOT canonicalized. On Windows,
+    // `canonicalize()` returns an extended-length path (`\\?\D:\...`), which
+    // cargo does not match against the plain path it tracks -- so the
+    // dependency registered but never fired, and this script stopped running
+    // altogether. Measured: a release binary built from a checkout 55 commits
+    // past the last time this script ran still reported the older commit,
+    // hash and build date, because cargo reused its cached output.
+    //
+    // Three entries are needed to cover how git stores a branch tip:
+    // `HEAD` itself (changes on checkout, and holds the sha when detached),
+    // the loose ref file it points at (changes on commit), and `packed-refs`
+    // (where `git gc` moves refs, leaving no loose file to watch).
+    if let Some(dot_git) = find_dot_git(Path::new(".")) {
+        if dot_git.is_dir() {
+            let head_path = dot_git.join("HEAD");
+            println!("cargo:rerun-if-changed={}", head_path.display());
+            println!(
+                "cargo:rerun-if-changed={}",
+                dot_git.join("packed-refs").display()
+            );
+            if let Ok(contents) = std::fs::read_to_string(&head_path) {
+                if let Some(refname) = contents.trim().strip_prefix("ref: ") {
+                    println!("cargo:rerun-if-changed={}", dot_git.join(refname).display());
+                }
+            }
+        }
+    }
+
     // If a file named `.tag` is present, we'll take its contents for the
-    // version number that we report in wezterm -h.
+    // version number that we report in `--version`.
     let mut ci_tag = String::new();
     if let Ok(tag) = std::fs::read("../.tag") {
         if let Ok(s) = String::from_utf8(tag) {
@@ -82,31 +115,7 @@ fn main() {
         // shelling out to the `git` binary via `std::process::Command`, not
         // from git2/libgit2. Replaced with a plain filesystem walk so this
         // build script doesn't need to link libgit2 at all.
-        if let Some(dot_git) = find_dot_git(Path::new(".")) {
-            // Resolve HEAD (possibly a symlink-like "ref: refs/heads/foo"
-            // pointer file) to the actual ref file that changes on checkout,
-            // so that cargo knows to rerun this build script when the
-            // current branch/commit changes.
-            if dot_git.is_dir() {
-                let head_path = dot_git.join("HEAD");
-                if let Ok(contents) = std::fs::read_to_string(&head_path) {
-                    let contents = contents.trim();
-                    if let Some(refname) = contents.strip_prefix("ref: ") {
-                        let path = dot_git.join(refname);
-                        if path.exists() {
-                            if let Ok(canon) = path.canonicalize() {
-                                println!("cargo:rerun-if-changed={}", canon.display());
-                            }
-                        }
-                    } else if head_path.exists() {
-                        // Detached HEAD: HEAD itself contains the commit sha.
-                        if let Ok(canon) = head_path.canonicalize() {
-                            println!("cargo:rerun-if-changed={}", canon.display());
-                        }
-                    }
-                }
-            }
-
+        if find_dot_git(Path::new(".")).is_some() {
             // Prefer a human-meaningful version derived from the nearest
             // reachable `v*` tag (e.g. `v0.0.2-alpha`, or
             // `v0.0.2-alpha-3-gabc1234` for commits past the tag) so that

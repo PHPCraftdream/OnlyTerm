@@ -442,7 +442,7 @@ fn get_error_window() -> ConnectionUI {
     }
 
     let ui = ConnectionUI::new_with_no_close_delay();
-    ui.title("wezterm Configuration Error");
+    ui.title("OnlyTerm Configuration Error");
     err.replace(ui.clone());
     ui
 }

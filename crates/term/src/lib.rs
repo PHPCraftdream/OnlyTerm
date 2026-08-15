@@ -23,6 +23,22 @@ use std::str;
 use wezterm_dynamic::{FromDynamic, ToDynamic};
 use wezterm_surface::SequenceNo;
 
+/// The title a terminal carries until the program running inside it sets one
+/// of its own.
+///
+/// This is user-visible, and not only as a fallback: an overlay pane -- the
+/// version overlay on Ctrl+I, the debug overlay -- is a terminal that nobody
+/// ever writes a title to, and `TermWizTerminalPane::get_title` hands this
+/// straight to the window title. It used to read "wezterm", which is the
+/// project this one was forked from, so opening the version overlay renamed
+/// the window after the wrong program.
+///
+/// `LocalPane::get_title` compares against this constant to decide when a
+/// pane still has its default title and should show the foreground process
+/// name instead. Both sides must agree, which is why this is a shared
+/// constant rather than a literal repeated in two crates.
+pub const DEFAULT_TERMINAL_TITLE: &str = "OnlyTerm";
+
 pub mod config;
 pub use config::TerminalConfiguration;
 

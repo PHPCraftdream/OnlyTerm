@@ -23,7 +23,13 @@ use setcwd::SetCwdCommand;
 //    let message = "; ❤ 😍🤢\n\x1b[91;mw00t\n\x1b[37;104;m bleet\x1b[0;m.";
 
 #[derive(Debug, Parser)]
+// `name` is set explicitly because clap otherwise takes the *package* name,
+// which is still `wezterm` -- the crate directories keep the upstream names
+// deliberately, so that fixes can still be merged from the project this was
+// forked from. Without this, `--version` introduced the program as
+// "wezterm v0.0.8...".
 #[command(
+    name = "onlyterm",
     about = "OnlyTerm - Terminal Emulator (fork of WezTerm)\nhttp://github.com/wezterm/wezterm",
     version = wezterm_version()
 )]

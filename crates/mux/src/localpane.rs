@@ -826,7 +826,7 @@ impl Pane for LocalPane {
 
         // If the title is the default pane title, then try to spice
         // things up a bit by returning the process basename instead
-        if title == "wezterm" {
+        if title == wezterm_term::DEFAULT_TERMINAL_TITLE {
             if let Some(proc_name) = self.get_foreground_process_name(CachePolicy::AllowStale) {
                 let proc_name = std::path::Path::new(&proc_name);
                 if let Some(name) = proc_name.file_name() {
