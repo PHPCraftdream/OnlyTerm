@@ -44,3 +44,4 @@ wezterm-term = { workspace = true, features=["use_serde"] }
 
 [target."cfg(windows)".dependencies]
 winapi = { workspace=true, features = ["winuser"]}
+winreg.workspace = true

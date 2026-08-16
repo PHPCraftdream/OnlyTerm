@@ -15,7 +15,7 @@ use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 
 /// Re-exported from the config crate so the dialog and `--start-conf`
 /// layouts cannot disagree about what argv each shell name means.
-use config::shell::Shell;
+use config::shell::{available_shells, AvailableShell};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Elevation {
@@ -87,7 +87,17 @@ enum FocusItem {
 
 pub struct NewTabOptions {
     element: RefCell<Option<Vec<ComputedElement>>>,
-    selected_shell: RefCell<Shell>,
+    /// The shells this machine actually has, detected once when the dialog
+    /// is opened rather than per frame: `compute` re-runs on every focus
+    /// move, and detection touches the filesystem and the registry.
+    /// Re-detecting per open (rather than once per process) is what lets a
+    /// Git for Windows installed mid-session show up without a restart.
+    shells: Vec<AvailableShell>,
+    /// An index into `shells`, not a `Shell`: which shells exist varies by
+    /// machine, so there is no fixed table for a `Shell` to be an index
+    /// into. `available_shells` guarantees at least one entry, so index 0 is
+    /// always valid.
+    selected_shell: RefCell<usize>,
     selected_elevation: RefCell<Elevation>,
     selected_priority: RefCell<Priority>,
     focus: RefCell<FocusItem>,
@@ -95,30 +105,43 @@ pub struct NewTabOptions {
 
 impl NewTabOptions {
     pub fn new(_term_window: &TermWindow) -> Self {
+        let shells = available_shells();
+        log::debug!(
+            "New Tab Options: offering shells {:?}",
+            shells
+                .iter()
+                .map(|s| (s.shell.name(), s.path.display().to_string()))
+                .collect::<Vec<_>>()
+        );
         Self {
             element: RefCell::new(None),
-            selected_shell: RefCell::new(Shell::Cmd),
+            shells,
+            // Index 0 is `cmd` on any machine that has it, since detection
+            // preserves `Shell::ALL` order and that list leads with cmd --
+            // which is the documented default for this dialog.
+            selected_shell: RefCell::new(0),
             selected_elevation: RefCell::new(Elevation::Normal),
             selected_priority: RefCell::new(Priority::Normal),
             focus: RefCell::new(FocusItem::Shell(0)),
         }
     }
 
-    fn total_focus_items() -> usize {
-        Shell::ALL.len() + Elevation::ALL.len() + Priority::ALL.len() + 1
+    fn total_focus_items(&self) -> usize {
+        self.shells.len() + Elevation::ALL.len() + Priority::ALL.len() + 1
     }
 
-    fn focus_item_to_index(item: FocusItem) -> usize {
+    fn focus_item_to_index(&self, item: FocusItem) -> usize {
+        let shell_len = self.shells.len();
         match item {
             FocusItem::Shell(idx) => idx,
-            FocusItem::Elevation(idx) => Shell::ALL.len() + idx,
-            FocusItem::Priority(idx) => Shell::ALL.len() + Elevation::ALL.len() + idx,
-            FocusItem::Run => Shell::ALL.len() + Elevation::ALL.len() + Priority::ALL.len(),
+            FocusItem::Elevation(idx) => shell_len + idx,
+            FocusItem::Priority(idx) => shell_len + Elevation::ALL.len() + idx,
+            FocusItem::Run => shell_len + Elevation::ALL.len() + Priority::ALL.len(),
         }
     }
 
-    fn index_to_focus_item(index: usize) -> FocusItem {
-        let shell_len = Shell::ALL.len();
+    fn index_to_focus_item(&self, index: usize) -> FocusItem {
+        let shell_len = self.shells.len();
         let elevation_len = Elevation::ALL.len();
         let priority_len = Priority::ALL.len();
 
@@ -134,14 +157,14 @@ impl NewTabOptions {
     }
 
     fn move_focus(&self, direction: isize) {
-        let current_idx = Self::focus_item_to_index(*self.focus.borrow());
-        let total = Self::total_focus_items();
+        let current_idx = self.focus_item_to_index(*self.focus.borrow());
+        let total = self.total_focus_items();
         let new_idx = if direction >= 0 {
             (current_idx as isize + direction).rem_euclid(total as isize) as usize
         } else {
             (current_idx as isize + total as isize + direction).rem_euclid(total as isize) as usize
         };
-        *self.focus.borrow_mut() = Self::index_to_focus_item(new_idx);
+        *self.focus.borrow_mut() = self.index_to_focus_item(new_idx);
     }
 
     /// Selects whatever is currently focused. Only correct for the
@@ -155,7 +178,7 @@ impl NewTabOptions {
         let current = *self.focus.borrow();
         match current {
             FocusItem::Shell(idx) => {
-                *self.selected_shell.borrow_mut() = Shell::ALL[idx];
+                *self.selected_shell.borrow_mut() = idx;
                 None
             }
             FocusItem::Elevation(idx) => {
@@ -172,7 +195,8 @@ impl NewTabOptions {
 
     fn compute(
         term_window: &mut TermWindow,
-        selected_shell: Shell,
+        shells: &[AvailableShell],
+        selected_shell: usize,
         selected_elevation: Elevation,
         selected_priority: Priority,
         focus: FocusItem,
@@ -206,7 +230,7 @@ impl NewTabOptions {
             }
             width
         };
-        let shell_names: Vec<&str> = Shell::ALL.iter().map(|s| s.name()).collect();
+        let shell_names: Vec<&str> = shells.iter().map(|s| s.shell.name()).collect();
         let elevation_names: Vec<&str> = Elevation::ALL.iter().map(|s| s.name()).collect();
         let priority_names: Vec<&str> = Priority::ALL.iter().map(|s| s.name()).collect();
         let content_width_cells = [
@@ -456,14 +480,14 @@ impl NewTabOptions {
                 .display(DisplayType::Block)
         }
 
-        let shell_items = Shell::ALL
+        let shell_items = shells
             .iter()
             .enumerate()
-            .map(|(idx, shell)| {
-                let is_selected = selected_shell == *shell;
+            .map(|(idx, available)| {
+                let is_selected = selected_shell == idx;
                 let is_focused = matches!(focus, FocusItem::Shell(i) if i == idx);
                 let radio_char = if is_selected { "●" } else { "○" };
-                let text = format!("{} {}", radio_char, shell.name());
+                let text = format!("{} {}", radio_char, available.shell.name());
                 let mut radio_element = style_item(
                     Element::new(&font, ElementContent::Text(text)),
                     is_selected,
@@ -679,8 +703,8 @@ impl NewTabOptions {
     pub fn handle_selection(&self, group: NewTabOptionGroup, choice: usize) {
         match group {
             NewTabOptionGroup::Shell => {
-                if let Some(shell) = Shell::ALL.get(choice) {
-                    *self.selected_shell.borrow_mut() = *shell;
+                if choice < self.shells.len() {
+                    *self.selected_shell.borrow_mut() = choice;
                     *self.focus.borrow_mut() = FocusItem::Shell(choice);
                 }
             }
@@ -709,8 +733,14 @@ impl NewTabOptions {
     /// (dropping any `RefCell`/`Rc` borrow on the modal) before the
     /// actual spawn -- which needs `&mut TermWindow` -- happens.
     pub fn run(&self) -> NewTabRunRequest {
+        let idx = *self.selected_shell.borrow();
+        // `available_shells` never returns an empty list and every path that
+        // writes `selected_shell` bounds-checks against it, so this holds --
+        // but falling back to the first entry keeps a future off-by-one from
+        // being a panic in the middle of a modal.
+        let shell = self.shells.get(idx).or_else(|| self.shells.first());
         NewTabRunRequest {
-            argv: self.selected_shell.borrow().argv(),
+            argv: shell.map(|s| s.shell.argv()).unwrap_or_default(),
             elevated: matches!(*self.selected_elevation.borrow(), Elevation::Admin),
             priority: self.selected_priority.borrow().to_process_priority(),
         }
@@ -832,6 +862,7 @@ impl Modal for NewTabOptions {
         if self.element.borrow().is_none() {
             let element = Self::compute(
                 term_window,
+                &self.shells,
                 *self.selected_shell.borrow(),
                 *self.selected_elevation.borrow(),
                 *self.selected_priority.borrow(),
@@ -852,6 +883,7 @@ impl Modal for NewTabOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use config::shell::Shell;
 
     /// The preamble itself, and the rule for when it may be injected, are
     /// covered by `config::powershell`'s own tests. What matters here is that
@@ -860,17 +892,36 @@ mod tests {
     /// the tab the user just asked for.
     #[test]
     fn powershell_argv_keeps_the_session_open_and_sets_utf8() {
-        let mut expected = vec!["powershell.exe".to_string()];
-        expected.extend(config::powershell::powershell_utf8_args());
-
-        assert_eq!(Shell::Powershell.argv(), expected);
-        assert!(expected.contains(&"-NoExit".to_string()));
+        let argv = Shell::Powershell.argv();
+        assert_eq!(&argv[1..], config::powershell::powershell_utf8_args());
+        assert!(argv.contains(&"-NoExit".to_string()));
     }
 
     /// The other shells must not accidentally pick up PowerShell-only flags.
+    /// argv[0] varies by machine now that it is a resolved path, so only the
+    /// absence of trailing arguments is assertable here.
     #[test]
     fn other_shells_are_launched_bare() {
-        assert_eq!(Shell::Cmd.argv(), vec!["cmd.exe".to_string()]);
-        assert_eq!(Shell::Wsl.argv(), vec!["wsl.exe".to_string()]);
+        for shell in [Shell::Cmd, Shell::Wsl, Shell::Bash] {
+            assert_eq!(shell.argv().len(), 1, "{:?} took extra args", shell);
+        }
+    }
+
+    /// The dialog selects index 0 of the detected list on open, and its
+    /// documented default is "cmd". That only holds while detection puts cmd
+    /// first, so pin the two together: if cmd is present at all, it leads.
+    #[test]
+    fn the_dialogs_default_selection_is_cmd_wherever_cmd_exists() {
+        let offered = available_shells();
+        if offered
+            .iter()
+            .any(|available| available.shell == Shell::Cmd)
+        {
+            assert_eq!(
+                offered[0].shell,
+                Shell::Cmd,
+                "the dialog opens on index 0, which must be cmd"
+            );
+        }
     }
 }
