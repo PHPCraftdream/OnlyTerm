@@ -839,6 +839,23 @@ pub struct Config {
     #[dynamic(default = "default_ctrl_letter_as_char_processes")]
     pub win32_input_ctrl_letter_as_char_processes: Vec<String>,
 
+    /// Executable base names (matched case-insensitively anywhere in the
+    /// pane's process tree) for which SHIFT+Enter is sent as ESC followed by
+    /// CR (`\x1b\r`) instead of a faithful modified-Enter key record.
+    ///
+    /// A faithful SHIFT+Enter is the correct encoding and stays the default.
+    /// It is useless to an application that reads the byte stream rather than
+    /// console records, though: conhost renders the record down to a bare
+    /// `\r`, which is indistinguishable from plain Enter, so the chord
+    /// submits instead of inserting a newline. `ESC` `CR` is the convention
+    /// such applications recognise for "newline, not submit".
+    ///
+    /// Do NOT widen this to applications that read console records --
+    /// Codex CLI resolves SHIFT+Enter by virtual key and needs the faithful
+    /// form; ESC CR would be two unrelated keypresses to it.
+    #[dynamic(default = "default_shift_enter_esc_cr_processes")]
+    pub shift_enter_esc_cr_processes: Vec<String>,
+
     #[dynamic(default = "default_stateless_process_list")]
     pub skip_close_confirmation_for_processes_named: Vec<String>,
 
@@ -1322,6 +1339,13 @@ fn default_disable_bidi_for_processes_named() -> Vec<String> {
 
 fn default_ctrl_letter_as_char_processes() -> Vec<String> {
     ["codex.exe", "codex"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_shift_enter_esc_cr_processes() -> Vec<String> {
+    ["claude.exe", "claude"]
         .iter()
         .map(|s| s.to_string())
         .collect()

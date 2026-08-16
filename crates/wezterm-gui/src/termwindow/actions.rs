@@ -1285,6 +1285,27 @@ impl TermWindow {
                 // negotiated such a protocol get the '\n' fallback, since
                 // that's the best a plain/legacy app can do with this
                 // chord.
+                // An application that reads the byte stream instead of console
+                // records cannot see this chord at all: conhost renders the
+                // modified-Enter record down to a bare `\r`, identical to
+                // plain Enter, so the keypress submits rather than inserting a
+                // newline. Those applications recognise ESC CR for "newline,
+                // not submit" -- see `shift_enter_esc_cr_processes`, and note
+                // it must stay narrow, since Codex CLI resolves this chord by
+                // virtual key and needs the faithful record.
+                let esc_cr = mods.contains(Modifiers::SHIFT)
+                    && !mods.contains(Modifiers::CTRL)
+                    && self.shift_enter_esc_cr_for(pane);
+                if esc_cr {
+                    log::info!(
+                        "SendEnterOrNewline({:?}) on pane {}: sending ESC CR for a \
+                         byte-stream reader",
+                        mods,
+                        pane.pane_id(),
+                    );
+                    pane.writer().write_all(b"\x1b\r").ok();
+                    return Ok(PerformAssignmentResult::Handled);
+                }
                 let event = synthetic_key_down(KeyCode::Char('\r'), *mods);
                 let encoded = self.encode_via_negotiated_protocol(pane, &event);
                 // Logged at info (not trace) deliberately: this chord is rare

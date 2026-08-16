@@ -271,23 +271,49 @@ impl super::TermWindow {
     /// cost is only paid for CTRL chords, which arrive at human speed --
     /// this deliberately does not run on ordinary typing.
     fn ctrl_letter_as_char_for(&self, pane: &Arc<dyn Pane>) -> bool {
-        if self
-            .config
-            .win32_input_ctrl_letter_as_char_processes
-            .is_empty()
-        {
+        self.pane_runs_any_of(
+            pane,
+            &self.config.win32_input_ctrl_letter_as_char_processes,
+            "ctrl_letter_as_char",
+        )
+    }
+
+    /// Whether SHIFT+Enter should be sent to `pane` as ESC CR rather than as
+    /// a faithful modified-Enter record; see
+    /// `Config::shift_enter_esc_cr_processes`.
+    pub(crate) fn shift_enter_esc_cr_for(&self, pane: &Arc<dyn Pane>) -> bool {
+        self.pane_runs_any_of(
+            pane,
+            &self.config.shift_enter_esc_cr_processes,
+            "shift_enter_esc_cr",
+        )
+    }
+
+    /// Whether any executable in `pane`'s process tree matches `wanted`.
+    ///
+    /// Matched against the whole tree, not the foreground process: a program
+    /// started through a wrapper hides behind whichever link is youngest --
+    /// Codex CLI runs as `codex.cmd` -> node -> `codex.exe` and the
+    /// foreground call returns `node_repl.exe`, so a foreground-only match
+    /// silently never fires.
+    ///
+    /// Callers must gate this on the chord actually being one that could be
+    /// affected. It walks a process tree (cached, but not free), and
+    /// `encode_win32_input` runs for every key that reaches passthrough, not
+    /// only for chords.
+    fn pane_runs_any_of(&self, pane: &Arc<dyn Pane>, wanted: &[String], what: &str) -> bool {
+        if wanted.is_empty() {
             return false;
         }
         let Some(names) = pane.get_process_tree_exe_names(CachePolicy::AllowStale) else {
             return false;
         };
-        let matched = self
-            .config
-            .win32_input_ctrl_letter_as_char_processes
+        let matched = wanted
             .iter()
             .any(|want| names.iter().any(|have| have.eq_ignore_ascii_case(want)));
         log::debug!(
-            "ctrl_letter_as_char pane {} tree={:?} -> {}",
+            "{} pane {} tree={:?} -> {}",
+            what,
             pane.pane_id(),
             names,
             matched,
