@@ -788,7 +788,27 @@ impl super::TermWindow {
     pub fn key_event_impl(&mut self, window_key: KeyEvent, context: &dyn WindowOps) {
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
-            None => return,
+            None => {
+                // A `--choose-tab` window has no pane until the user presses
+                // Run, and returning here left its dialog unable to receive a
+                // single keystroke -- the modal dispatch further down is never
+                // reached. A modal owns the keyboard regardless of what is
+                // behind it, so hand the key over before the pane is required.
+                //
+                // Deliberately scoped to the no-pane case: whenever a pane
+                // does exist, the path below is unchanged, leader handling and
+                // all.
+                if let Some(modal) = self.get_modal() {
+                    if window_key.key_is_down {
+                        if let Key::Code(key) =
+                            self.win_key_code_to_termwiz_key_code(&window_key.key)
+                        {
+                            modal.key_down(key, window_key.modifiers, self).ok();
+                        }
+                    }
+                }
+                return;
+            }
         };
 
         // The leader key is a kind of modal modifier key.

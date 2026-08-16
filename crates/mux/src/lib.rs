@@ -1469,17 +1469,27 @@ impl Mux {
             let window = self
                 .get_window_mut(window_id)
                 .ok_or_else(|| anyhow!("window_id {} not found on this server", window_id))?;
-            let tab = window
-                .get_active()
-                .ok_or_else(|| anyhow!("window {} has no tabs", window_id))?;
-            let pane = tab
-                .get_active_pane()
-                .ok_or_else(|| anyhow!("active tab in window {} has no panes", window_id))?;
-            term_config = pane.get_config();
-
-            let size = tab.get_size();
-
-            (window_id, size)
+            // A window that exists but holds no tab is not a broken state: the
+            // `--choose-tab` startup mode opens exactly that -- a window whose
+            // only content is the New Tab Options dialog -- and this call is
+            // what creates its first tab. Geometry and terminal config are
+            // normally inherited from the active tab; with no tab to inherit
+            // from, fall back to what the caller passed, which is the same
+            // thing the new-window branch below does.
+            match window.get_active() {
+                Some(tab) => {
+                    let pane = tab.get_active_pane().ok_or_else(|| {
+                        anyhow!("active tab in window {} has no panes", window_id)
+                    })?;
+                    term_config = pane.get_config();
+                    let size = tab.get_size();
+                    (window_id, size)
+                }
+                None => {
+                    term_config = None;
+                    (window_id, size)
+                }
+            }
         } else {
             term_config = None;
             window_builder = self.new_empty_window(Some(workspace_for_new_window), window_position);

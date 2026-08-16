@@ -62,10 +62,17 @@ impl super::TermWindow {
 
     pub fn mouse_event_impl(&mut self, event: MouseEvent, context: &dyn WindowOps) {
         log::trace!("{:?}", event);
-        let pane = match self.get_active_pane_or_overlay() {
-            Some(pane) => pane,
-            None => return,
-        };
+        // A window can legitimately have no pane at all: `--choose-tab` opens
+        // one whose only content is the New Tab Options modal, and the first
+        // tab does not exist until the user presses Run. Returning here in
+        // that state made the dialog completely unclickable, because this is
+        // upstream of all UI-item hit testing. So the pane is optional from
+        // here on, and only the paths that genuinely need one bail out.
+        let pane = self.get_active_pane_or_overlay();
+        if pane.is_none() && self.modal.borrow().is_none() {
+            // No pane and no modal: nothing on screen that could want a click.
+            return;
+        }
 
         self.current_mouse_event.replace(event.clone());
 
@@ -93,7 +100,7 @@ impl super::TermWindow {
             .sub((padding_left + border.left.get() as f32) as isize)
             .max(0) as f32)
             / self.render_metrics.cell_size.width as f32;
-        let x = if !pane.is_mouse_grabbed() {
+        let x = if !pane.as_ref().is_some_and(|p| p.is_mouse_grabbed()) {
             // Round the x coordinate so that we're a bit more forgiving of
             // the horizontal position when selecting cells
             x.round()
@@ -274,22 +281,24 @@ impl super::TermWindow {
                 self.current_mouse_capture = Some(MouseCapture::UI);
             }
             self.mouse_event_ui_item(item, pane, y, event, context);
-        } else if matches!(
-            self.current_mouse_capture,
-            None | Some(MouseCapture::TerminalPane(_))
-        ) {
-            self.mouse_event_terminal(
-                pane,
-                ClickPosition {
-                    column: x,
-                    row: y,
-                    x_pixel_offset,
-                    y_pixel_offset,
-                },
-                event,
-                context,
-                capture_mouse,
-            );
+        } else if let Some(pane) = pane {
+            if matches!(
+                self.current_mouse_capture,
+                None | Some(MouseCapture::TerminalPane(_))
+            ) {
+                self.mouse_event_terminal(
+                    pane,
+                    ClickPosition {
+                        column: x,
+                        row: y,
+                        x_pixel_offset,
+                        y_pixel_offset,
+                    },
+                    event,
+                    context,
+                    capture_mouse,
+                );
+            }
         }
 
         if prior_ui_item != ui_item {
@@ -449,10 +458,13 @@ impl super::TermWindow {
         }
     }
 
+    /// `pane` is optional because a `--choose-tab` window has none until the
+    /// user presses Run; only the scrollbar items genuinely need one, and they
+    /// cannot be on screen in that state anyway.
     fn mouse_event_ui_item(
         &mut self,
         item: UIItem,
-        pane: Arc<dyn Pane>,
+        pane: Option<Arc<dyn Pane>>,
         _y: i64,
         event: MouseEvent,
         context: &dyn WindowOps,
@@ -463,13 +475,19 @@ impl super::TermWindow {
                 self.mouse_event_tab_bar(item, tab_bar_item, event, context);
             }
             UIItemType::AboveScrollThumb => {
-                self.mouse_event_above_scroll_thumb(item, pane, event, context);
+                if let Some(pane) = pane {
+                    self.mouse_event_above_scroll_thumb(item, pane, event, context);
+                }
             }
             UIItemType::ScrollThumb => {
-                self.mouse_event_scroll_thumb(item, pane, event, context);
+                if let Some(pane) = pane {
+                    self.mouse_event_scroll_thumb(item, pane, event, context);
+                }
             }
             UIItemType::BelowScrollThumb => {
-                self.mouse_event_below_scroll_thumb(item, pane, event, context);
+                if let Some(pane) = pane {
+                    self.mouse_event_below_scroll_thumb(item, pane, event, context);
+                }
             }
             UIItemType::Split(split) => {
                 self.mouse_event_split(item, split, event, context);
@@ -562,8 +580,9 @@ impl super::TermWindow {
     }
 
     /// The dialog's close cross. Deliberately routes through the same
-    /// `cancel_modal` that Esc uses, so the two dismissal paths cannot drift
-    /// apart -- notably, neither of them starts a tab.
+    /// `perform_dismiss` that Esc uses, so the two dismissal paths cannot
+    /// drift apart -- notably, neither of them starts a tab, and either may
+    /// end the process when the dialog was opened by `--choose-tab`.
     fn mouse_event_newtab_options_close(
         &mut self,
         _item: UIItem,
@@ -571,7 +590,20 @@ impl super::TermWindow {
         context: &dyn WindowOps,
     ) {
         if let WMEK::Press(MousePress::Left) = event.kind {
-            self.cancel_modal();
+            use crate::termwindow::newtab_options::{perform_dismiss, NewTabOptions, OnCancel};
+            // Read the choice and release the borrow before dispatching:
+            // `perform_dismiss` may call `cancel_modal`, which takes
+            // `borrow_mut()` on this very `RefCell`. Holding the `Ref` across
+            // that call is a guaranteed `BorrowMutError`, not a rare race.
+            let on_cancel = {
+                let modal = self.modal.borrow();
+                modal
+                    .as_ref()
+                    .and_then(|m| m.downcast_ref::<NewTabOptions>())
+                    .map(|newtab| newtab.on_cancel())
+            };
+            // No dialog to ask means nothing to quit for: dismiss, as before.
+            perform_dismiss(on_cancel.unwrap_or(OnCancel::Dismiss), self);
         }
         context.set_cursor(Some(MouseCursor::Hand));
     }
