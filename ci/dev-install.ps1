@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-  Build OnlyTerm in release mode and install/update it in place on this
-  Windows machine, without going through the full Inno Setup packaging
-  pipeline (ci/windows-installer.iss) -- for local dev iteration only.
+  Build OnlyTerm in release mode and install/update it, including Explorer context
+  menu entries, without the full Inno Setup packaging pipeline -- for local dev
+  iteration only.
 
 .DESCRIPTION
   Builds onlyterm / onlyterm-gui / onlyterm-mux-server in --release mode,
   then hot-swaps the fresh binaries plus their runtime dependencies
   (conpty.dll, OpenConsole.exe, strip-ansi-escapes.exe) and .pdb files into
-  the install directory, and makes sure Windows Error Reporting is
-  configured to save a full crash dump for onlyterm-gui.exe if it ever
-  crashes.
+  the install directory, configures Windows Error Reporting for full crash
+  dumps, and registers Explorer context menu entries ("Open OnlyTerm here" and
+  "OnlyTerm Run As") for Drive, Directory, and Directory\Background.
 
   "Hot-swap" means already-running OnlyTerm processes are never stopped:
   each destination file is renamed aside (to "<name>.old") instead of being
@@ -269,6 +269,84 @@ New-ItemProperty -Path $werKey -Name "DumpCount" -PropertyType DWord -Value 10 -
 Write-Host "    DumpFolder = $dumpFolder"
 Write-Host "    DumpType   = 2 (full dump)"
 Write-Host "    DumpCount  = 10"
+
+# ---------------------------------------------------------------------------
+# 5. Install/update Explorer context menu entries (Open OnlyTerm here and
+#    OnlyTerm Run As) for Drive, Directory, and Directory\Background.
+#
+#    HKA (in the .iss) maps to HKLM for an elevated install. We update rather
+#    than fail if keys already exist, since a dev install after a real install
+#    is the normal case, and the exe path may have changed.
+#
+#    The %V tail differs per scope, and all three are deliberate. They are
+#    copied from ci/windows-installer.iss so that a dev install behaves like a
+#    real one. Explorer substitutes a different shape of path per scope, and
+#    CommandLineToArgvW then reads `\\` as one backslash and `\"` as a literal
+#    quote, so each tail lands on the same result -- the clicked folder:
+#      Drive       %V = C:\      -> "%V\"  is "C:\\"     -> C:\
+#      Directory   %V = C:\foo   -> "%V\\" is "C:\foo\\" -> C:\foo\
+#      Background  %V = C:\foo   -> "%V    is unterminated, which that parser
+#                                   reads as "to end of line" -> C:\foo
+#
+#    The argument strings are single-quoted deliberately. They are full of
+#    quotes and backslashes, and getting the escaping wrong in a double-quoted
+#    string does NOT fail loudly: an unterminated string simply swallows the
+#    following lines until it finds a closing quote, and the file still parses
+#    clean. That exact mistake was made here once already.
+# ---------------------------------------------------------------------------
+Write-Host "`n==> Installing/updating Explorer context menu entries" -ForegroundColor Cyan
+$exePath = Join-Path $InstallDir "onlyterm-gui.exe"
+$entriesInstalled = 0
+
+# Helper function: idempotently create/update a context menu entry
+function Install-ContextMenuEntry {
+    param(
+        [Parameter(Mandatory)][string]$Scope,        # "Drive", "Directory", or "Directory\Background"
+        [Parameter(Mandatory)][string]$Label,        # e.g., "Open OnlyTerm here" or "OnlyTerm Run As"
+        [Parameter(Mandatory)][string]$ArgumentList  # arguments for the exe, including %V quoting
+    )
+
+    $keyPath = "HKLM:\SOFTWARE\Classes\$Scope\shell\$Label"
+    $commandKeyPath = "$keyPath\command"
+
+    # Create/update the main key and icon value
+    if (-not (Test-Path $keyPath)) {
+        New-Item -Path $keyPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $keyPath -Name "icon" -Value $exePath -Force | Out-Null
+
+    # Create/update the command subkey
+    $command = "`"$exePath`" $ArgumentList"
+    if (-not (Test-Path $commandKeyPath)) {
+        New-Item -Path $commandKeyPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $commandKeyPath -Name "(default)" -Value $command -Force | Out-Null
+}
+
+# One row per scope; the two labels differ only by `--choose-tab`, which makes
+# OnlyTerm open the New Tab Options dialog instead of a tab, so the user picks
+# shell / elevation / priority and gets exactly one tab of that kind -- in the
+# folder they right-clicked.
+$scopeTails = @(
+    @{ Scope = 'Drive';                Tail = '--cwd "%V\"'   }
+    @{ Scope = 'Directory';            Tail = '--cwd "%V\\"'  }
+    @{ Scope = 'Directory\Background'; Tail = '--cwd "%V'     }
+)
+
+foreach ($s in $scopeTails) {
+    foreach ($e in @(
+        @{ Label = 'Open OnlyTerm here'; Extra = '' }
+        @{ Label = 'OnlyTerm Run As';    Extra = '--choose-tab ' }
+    )) {
+        # Not `$args`: that is an automatic variable in PowerShell.
+        $argLine = "start --no-auto-connect $($e.Extra)$($s.Tail)"
+        Install-ContextMenuEntry -Scope $s.Scope -Label $e.Label -ArgumentList $argLine
+        Write-Host "    $($s.Scope)\shell\$($e.Label)"
+        $entriesInstalled++
+    }
+}
+
+Write-Host "    ($entriesInstalled entry(s) installed/updated)"
 
 $installedGui = Join-Path $InstallDir "onlyterm-gui.exe"
 $stamp = (Get-Item $installedGui).LastWriteTime
