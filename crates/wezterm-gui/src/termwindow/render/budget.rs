@@ -130,6 +130,30 @@ impl RowSweep {
     }
 }
 
+/// Resolve the cursor's row slot for [`RowSweep::new`], or `None` when the
+/// cursor is outside the rows this frame renders.
+///
+/// `viewport_top` MUST be the stable index of the first row the frame is
+/// about to render -- the same origin used to build the range of rows fetched
+/// from the pane -- and NOT the pane's `physical_top`. The two are equal only
+/// while the pane sits at the bottom of its scrollback; once it is scrolled
+/// back they diverge, and a slot computed from the wrong origin names a
+/// different row. That matters because this slot is the one row
+/// [`RowSweep::decide`] exempts from the frame-build budget unconditionally:
+/// get it wrong and the exemption is spent on an innocent row while the
+/// cursor's own row is the one left showing last frame's pixels.
+pub fn cursor_row_slot(
+    cursor_y: isize,
+    viewport_top: isize,
+    viewport_rows: usize,
+) -> Option<usize> {
+    if cursor_y < viewport_top || (cursor_y - viewport_top) >= viewport_rows as isize {
+        None
+    } else {
+        Some((cursor_y - viewport_top) as usize)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,6 +166,39 @@ mod tests {
     fn mock_deadline() -> Option<Instant> {
         // A deadline that will appear "over budget" when compared to mock_instant().
         Some(Instant::now() - std::time::Duration::from_millis(1))
+    }
+
+    #[test]
+    fn cursor_slot_is_relative_to_the_rows_being_rendered() {
+        // Sitting at the bottom of the scrollback: the frame renders rows
+        // starting at physical_top, so the two origins agree.
+        assert_eq!(cursor_row_slot(1007, 1000, 24), Some(7));
+        // First and last slot of the viewport.
+        assert_eq!(cursor_row_slot(1000, 1000, 24), Some(0));
+        assert_eq!(cursor_row_slot(1023, 1000, 24), Some(23));
+        // Cursor above or below the rendered rows is not a slot at all.
+        assert_eq!(cursor_row_slot(999, 1000, 24), None);
+        assert_eq!(cursor_row_slot(1024, 1000, 24), None);
+        // A pane with no rows can't have a cursor slot.
+        assert_eq!(cursor_row_slot(1000, 1000, 0), None);
+    }
+
+    #[test]
+    fn cursor_slot_follows_a_scrolled_back_viewport() {
+        // The pane is scrolled back: the frame renders stable rows
+        // 940..964 even though physical_top is still 1000.
+        //
+        // Passing physical_top here instead of the viewport origin is the
+        // bug this test pins. With viewport_top = 940 the cursor at stable
+        // row 1007 is off-screen and must yield None; computing the slot
+        // against physical_top = 1000 would have answered Some(7) --
+        // claiming the budget exemption for slot 7, which is stable row
+        // 947, a row the cursor is nowhere near.
+        assert_eq!(cursor_row_slot(1007, 940, 24), None);
+
+        // And a cursor that IS inside the scrolled-back view gets the slot
+        // measured from that view's top, not from physical_top.
+        assert_eq!(cursor_row_slot(947, 940, 24), Some(7));
     }
 
     #[test]

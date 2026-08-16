@@ -1,7 +1,7 @@
 use crate::quad::{HeapQuadAllocator, HeapQuadAllocatorExt, QuadTrait, TripleLayerQuadAllocator};
 use crate::selection::SelectionRange;
 use crate::termwindow::box_model::*;
-use crate::termwindow::render::budget::{RowAction, RowSweep};
+use crate::termwindow::render::budget::{cursor_row_slot, RowAction, RowSweep};
 use crate::termwindow::render::{
     bidi_disabled_by_foreground_process, same_hyperlink, CursorProperties, LineQuadCacheKey,
     LineQuadCacheValue, LineToEleShapeCacheKey, RenderScreenLineParams,
@@ -400,13 +400,21 @@ impl crate::TermWindow {
 
             // Task #457: compute the cursor's visible row slot (0-indexed from viewport top),
             // if the cursor is within the current viewport.
-            let cursor_row_slot = if cursor.y < dims.physical_top
-                || (cursor.y - dims.physical_top) >= dims.viewport_rows as StableRowIndex
-            {
-                None
-            } else {
-                Some((cursor.y - dims.physical_top) as usize)
-            };
+            //
+            // The origin has to be the same one `stable_range` above uses,
+            // and that one is `current_viewport` when the pane is scrolled
+            // back. Indexing off `dims.physical_top` instead would hand
+            // RowSweep a slot number belonging to a different row, so its
+            // "always keep the cursor row live" exemption
+            // (render::budget::RowSweep::decide) would protect an innocent
+            // row and let the cursor's own row go stale. Typing does not
+            // reach that state today -- maybe_scroll_to_bottom_for_input
+            // pins the viewport to the bottom on every keypress, which makes
+            // the two origins equal -- but nothing enforces that coupling,
+            // and a stale cursor row is exactly the failure this exemption
+            // exists to prevent.
+            let viewport_top = current_viewport.unwrap_or(dims.physical_top);
+            let cursor_row_slot = cursor_row_slot(cursor.y, viewport_top, dims.viewport_rows);
 
             use crate::termwindow::render::{RetainedPaneRows, RetainedRow, RetainedStamp};
 
