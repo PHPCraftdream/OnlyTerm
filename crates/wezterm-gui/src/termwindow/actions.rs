@@ -1860,7 +1860,7 @@ impl TermWindow {
                 self.set_modal(Rc::new(modal));
             }
             ActivateNewTabOptions => {
-                let modal = crate::termwindow::newtab_options::NewTabOptions::new(self);
+                let modal = crate::termwindow::newtab_options::NewTabOptions::new();
                 self.set_modal(Rc::new(modal));
             }
             PromptInputLine(args) => self.show_prompt_input_line(args),

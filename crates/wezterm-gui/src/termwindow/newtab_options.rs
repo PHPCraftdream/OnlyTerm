@@ -7,9 +7,12 @@ use crate::termwindow::render::corners::{
 };
 use crate::termwindow::{DimensionContext, NewTabOptionGroup, TermWindow, UIItemType};
 use crate::utilsprites::RenderMetrics;
+use ::window::{Connection, ConnectionOps};
 use config::keyassignment::{KeyAssignment, SpawnCommand, SpawnTabDomain};
 use config::{Dimension, ProcessPriority};
+use mux::activity::Activity;
 use std::cell::{Ref, RefCell};
+use std::path::PathBuf;
 use std::sync::Arc;
 use wezterm_term::{KeyCode, KeyModifiers, MouseEvent};
 
@@ -31,6 +34,16 @@ enum Priority {
     AboveNormal,
     High,
     Realtime,
+}
+
+/// What happens when the dialog is dismissed (Esc or the close cross).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnCancel {
+    /// Ordinary invocation: dismiss and go back to the tab underneath.
+    Dismiss,
+    /// Startup invocation: there is no tab underneath, so dismissing the
+    /// dialog means dismissing the application.
+    QuitApplication,
 }
 
 impl Elevation {
@@ -101,17 +114,45 @@ pub struct NewTabOptions {
     selected_elevation: RefCell<Elevation>,
     selected_priority: RefCell<Priority>,
     focus: RefCell<FocusItem>,
+    /// What happens when the dialog is dismissed (Esc or the close cross).
+    on_cancel: OnCancel,
+    /// The Activity that keeps the mux alive while the dialog is open.
+    /// Only used in startup mode; in ordinary invocation this is None.
+    /// RefCell allows run() to take ownership when Run is pressed.
+    _activity: RefCell<Option<Activity>>,
+    /// Where the spawned tab should start. Set only in startup mode, from the
+    /// launch's `--cwd` -- an ordinary invocation has a pane underneath, whose
+    /// directory the normal spawn path already inherits.
+    cwd: Option<PathBuf>,
 }
 
 impl NewTabOptions {
-    pub fn new(_term_window: &TermWindow) -> Self {
+    /// Takes no `&TermWindow`, unlike its sibling `CommandPalette::new(self)`:
+    /// it never used one, and without it the defaults below are testable.
+    pub fn new() -> Self {
+        Self::build(OnCancel::Dismiss, None, None)
+    }
+
+    /// The startup (`--choose-tab`) form: dismissing ends the process, the
+    /// `Activity` keeps the tabless mux alive, and `cwd` is where the tab the
+    /// user asks for will start.
+    pub fn new_with_on_cancel(
+        on_cancel: OnCancel,
+        activity: Activity,
+        cwd: Option<PathBuf>,
+    ) -> Self {
+        Self::build(on_cancel, Some(activity), cwd)
+    }
+
+    fn build(on_cancel: OnCancel, activity: Option<Activity>, cwd: Option<PathBuf>) -> Self {
         let shells = available_shells();
         log::debug!(
-            "New Tab Options: offering shells {:?}",
+            "New Tab Options: offering shells {:?}, cwd {:?}",
             shells
                 .iter()
                 .map(|s| (s.shell.name(), s.path.display().to_string()))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
+            cwd,
         );
         Self {
             element: RefCell::new(None),
@@ -123,9 +164,43 @@ impl NewTabOptions {
             selected_elevation: RefCell::new(Elevation::Normal),
             selected_priority: RefCell::new(Priority::Normal),
             focus: RefCell::new(FocusItem::Shell(0)),
+            on_cancel,
+            _activity: RefCell::new(activity),
+            cwd,
         }
     }
 
+    pub fn on_cancel(&self) -> OnCancel {
+        self.on_cancel
+    }
+
+    fn dismiss(&self, term_window: &TermWindow) {
+        perform_dismiss(self.on_cancel, term_window);
+    }
+}
+
+/// The single place that decides what dismissing this dialog means. Both
+/// routes out of the dialog go through here so they cannot drift apart --
+/// which matters more than usual now that one of the two outcomes is
+/// "terminate the process".
+///
+/// A free function taking the choice by value, rather than a method, because
+/// the mouse path reaches the dialog through `TermWindow::modal`, and
+/// `cancel_modal` takes `borrow_mut()` on that same `RefCell`. Holding a
+/// `Ref` across the call is an immediate `BorrowMutError`, so that caller has
+/// to read the choice, drop its borrow, and only then dispatch -- at which
+/// point it no longer has the dialog to call a method on.
+pub(crate) fn perform_dismiss(on_cancel: OnCancel, term_window: &TermWindow) {
+    match on_cancel {
+        OnCancel::QuitApplication => {
+            let con = Connection::get().expect("call on gui thread");
+            con.terminate_message_loop();
+        }
+        OnCancel::Dismiss => term_window.cancel_modal(),
+    }
+}
+
+impl NewTabOptions {
     fn total_focus_items(&self) -> usize {
         self.shells.len() + Elevation::ALL.len() + Priority::ALL.len() + 1
     }
@@ -743,6 +818,8 @@ impl NewTabOptions {
             argv: shell.map(|s| s.shell.argv()).unwrap_or_default(),
             elevated: matches!(*self.selected_elevation.borrow(), Elevation::Admin),
             priority: self.selected_priority.borrow().to_process_priority(),
+            chooser_activity: self._activity.borrow_mut().take(),
+            cwd: self.cwd.clone(),
         }
     }
 }
@@ -753,28 +830,53 @@ pub struct NewTabRunRequest {
     argv: Vec<String>,
     elevated: bool,
     priority: ProcessPriority,
+    /// The Activity that keeps the mux alive while the chooser dialog is open.
+    /// Must be held alive until the spawned tab exists in the mux to prevent
+    /// prune_dead_windows from terminating the app during spawn.
+    chooser_activity: Option<Activity>,
+    /// Startup mode only: the `--cwd` the launch was given, e.g. the folder
+    /// that was right-clicked for "OnlyTerm Run As".
+    cwd: Option<PathBuf>,
 }
 
-/// Acts on a `NewTabRunRequest`: spawns a normal tab directly, or -- for
-/// the elevated case -- spawns an elevated tab inside the existing window
-/// and reports back via a toast notification if the user declines or it fails.
-/// A declined/failed elevation intentionally does not open a placeholder tab:
-/// doing so safely would mean either shell-escaping the failure message before
-/// handing it to `cmd.exe /c`, or inventing a new non-PTY pane type that nothing
-/// else in this codebase has -- the toast convention already used for
-/// `OpenConfigFile` failures avoids both.
 pub fn execute_new_tab_run_request(term_window: &mut TermWindow, request: NewTabRunRequest) {
     let NewTabRunRequest {
         argv,
         elevated,
         priority,
+        chooser_activity,
+        cwd,
     } = request;
 
+    let src_window_id = term_window.mux_window_id;
+
     if !elevated {
+        // Hold the chooser Activity across the `spawn_command` call, so that
+        // the request to spawn is queued before this Activity's release is.
+        //
+        // `spawn_command` does not spawn anything synchronously -- it queues a
+        // detached task, and that task creates its own Activity on its first
+        // poll (spawn.rs, `spawn_command_internal`). Dropping ours releases the
+        // last Activity and queues `prune_dead_windows`, which would delete
+        // this still-tabless window and end the process. What saves us is
+        // ordering, not timing: `promise::spawn::spawn` and
+        // `spawn_into_main_thread` both schedule through
+        // `schedule_runnable(_, true)`, i.e. the one high-priority main-thread
+        // queue, so the spawn task is polled -- and takes its own Activity --
+        // before the prune runs.
+        //
+        // That makes this correct but load-bearing on a detail two crates
+        // away: moving the spawn to `spawn_with_low_priority` (which exists,
+        // in that same module) would invert the order and silently bring back
+        // "pressing Run quits the application".
+        let _guard = chooser_activity;
         term_window.spawn_command(
             &SpawnCommand {
                 args: Some(argv),
                 priority: Some(priority),
+                // Startup mode only; `None` leaves the usual inheritance in
+                // place for a dialog opened over an existing pane.
+                cwd,
                 domain: SpawnTabDomain::CurrentPaneDomain,
                 ..Default::default()
             },
@@ -789,14 +891,13 @@ pub fn execute_new_tab_run_request(term_window: &mut TermWindow, request: NewTab
     // offloads to `spawn_into_new_thread`. We still wrap the whole thing in
     // `promise::spawn::spawn` to keep this function non-blocking from the
     // caller's perspective (matching the old `spawn_elevated_window` pattern).
-    let src_window_id = term_window.mux_window_id;
     let term_config = Arc::new(config::TermConfig::with_config(term_window.config.clone()));
 
     promise::spawn::spawn(async move {
         let result = crate::spawn::spawn_elevated_single_pane_tab(
             argv,
             priority,
-            None,
+            cwd,
             Some(src_window_id),
             term_config,
         )
@@ -806,6 +907,8 @@ pub fn execute_new_tab_run_request(term_window: &mut TermWindow, request: NewTab
             let message = format!("New Tab Options: {}", err);
             wezterm_toast_notification::persistent_toast_notification("OnlyTerm", &message);
         }
+        // chooser_activity is dropped here, after the async spawn completes.
+        drop(chooser_activity);
     })
     .detach();
 }
@@ -831,7 +934,7 @@ impl Modal for NewTabOptions {
     ) -> anyhow::Result<bool> {
         match (key, mods) {
             (KeyCode::Escape, KeyModifiers::NONE) => {
-                term_window.cancel_modal();
+                self.dismiss(term_window);
             }
             (KeyCode::Tab, KeyModifiers::NONE) => {
                 self.move_focus(1);
@@ -923,5 +1026,15 @@ mod tests {
                 "the dialog opens on index 0, which must be cmd"
             );
         }
+    }
+
+    /// The ordinary constructor defaults to OnCancel::Dismiss, so a
+    /// right-click on the plus button (or ActivateNewTabOptions key binding)
+    /// never accidentally quits the application even if the startup
+    /// chooser code later changes.
+    #[test]
+    fn ordinary_ctor_defaults_to_dismiss() {
+        let dialog = NewTabOptions::new();
+        assert_eq!(dialog.on_cancel(), OnCancel::Dismiss);
     }
 }

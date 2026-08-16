@@ -52,6 +52,7 @@ mod scrollbar;
 mod selection;
 mod shapecache;
 mod spawn;
+mod startup_chooser;
 mod stats;
 mod tabbar;
 mod termwindow;
@@ -569,6 +570,32 @@ async fn async_run_terminal_gui(
     if let Some(start_conf) = &opts.start_conf {
         let layout = config::StartupLayout::load(start_conf)?;
         return spawn_startup_layout(&layout, domain, opts.workspace.clone()).await;
+    }
+
+    // `--choose-tab` opens a window with the New Tab Options dialog and no
+    // tab at all: the first tab is spawned only once the user picks a shell
+    // and presses Run, and dismissing the dialog exits, because there is
+    // nothing behind it. Like the `--start-conf` branch above it returns
+    // early, bypassing `spawn_tab_in_domain_if_mux_is_empty`.
+    //
+    // The `Activity` is what keeps this alive. A mux holding a window with
+    // zero panes is "empty", and `prune_dead_windows` deletes it and sends
+    // `MuxNotification::Empty`, which terminates the process -- unless an
+    // Activity is outstanding, which both that function and the notification
+    // handler check first. The one `new_empty_window`'s builder holds is no
+    // use here: it is surrendered inside `notify()` and dropped as soon as
+    // `WindowCreated` has been sent.
+    //
+    // Armed *before* the window is created, not after: `MuxWindowBuilder`
+    // sends its notification synchronously when it is dropped on the mux
+    // thread, and the slot has to already hold the Activity by the time
+    // anything can act on that notification.
+    if opts.choose_tab {
+        crate::startup_chooser::arm(mux::activity::Activity::new(), opts.cwd.clone());
+        // Dropping the builder is what publishes `WindowCreated`; binding it
+        // to `_` would drop it here anyway, but silently.
+        drop(mux.new_empty_window(opts.workspace.clone(), None));
+        return Ok(());
     }
 
     let is_connecting = opts.attach;
@@ -1259,6 +1286,7 @@ fn run() -> anyhow::Result<()> {
                 no_auto_connect: false,
                 cwd: None,
                 start_conf: None,
+                choose_tab: false,
             },
             Some(connect.domain_name),
         ),

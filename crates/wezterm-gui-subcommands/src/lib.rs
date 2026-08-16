@@ -120,6 +120,17 @@ pub struct StartCommand {
     /// as if it were a login shell. [aliases: -e]
     #[arg(value_parser, value_hint=ValueHint::CommandWithArguments, num_args=1.., conflicts_with = "start_conf")]
     pub prog: Vec<OsString>,
+
+    /// Open the New Tab Options dialog instead of the initial tab: the tab is
+    /// spawned only once you pick a shell and press Run. Dismissing the dialog
+    /// (Esc or the close cross) exits, because there is nothing behind it.
+    ///
+    /// Conflicts with `--start-conf` and PROG, which say *what* to launch --
+    /// the thing this flag exists to ask. It deliberately does NOT conflict
+    /// with `--cwd`, which says *where*: the Explorer "OnlyTerm Run As" entry
+    /// passes the clicked folder that way, and the chosen shell starts there.
+    #[arg(long = "choose-tab", conflicts_with_all = ["start_conf", "prog"])]
+    pub choose_tab: bool,
 }
 
 #[derive(Debug, Parser, Clone)]

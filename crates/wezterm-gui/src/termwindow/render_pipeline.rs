@@ -489,6 +489,19 @@ impl TermWindow {
             }
             myself.load_os_parameters();
             myself.subscribe_to_pane_updates();
+
+            // If the startup chooser is armed, install the New Tab Options
+            // modal now that the window is fully constructed. This happens
+            // at most once: the first window to finish construction takes the
+            // chooser, every later window gets None.
+            if let Some(pending) = crate::startup_chooser::take() {
+                let modal = crate::termwindow::newtab_options::NewTabOptions::new_with_on_cancel(
+                    crate::termwindow::newtab_options::OnCancel::QuitApplication,
+                    pending.activity,
+                    pending.cwd,
+                );
+                myself.set_modal(std::rc::Rc::new(modal));
+            }
         }
 
         crate::update::start_update_checker();
