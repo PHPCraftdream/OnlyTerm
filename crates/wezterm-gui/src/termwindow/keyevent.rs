@@ -5,7 +5,7 @@ use ::window::{
 };
 use anyhow::Context;
 use config::keyassignment::{KeyAssignment, KeyTableEntry};
-use mux::pane::{Pane, PerformAssignmentResult};
+use mux::pane::{CachePolicy, Pane, PerformAssignmentResult};
 use smol::Timer;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -202,6 +202,38 @@ fn is_newline_chord(keycode: &KeyCode, mods: Modifiers) -> bool {
     }
 }
 
+/// True for any CTRL+<character key> chord -- the class the "Ctrl+C and
+/// Ctrl+J do nothing under a Cyrillic layout, but work under a Latin one"
+/// reports fall into.
+///
+/// Every stage between the Windows message and the bytes on the wire has
+/// been made layout-independent by a separate fix (window.rs's
+/// prefer_physical, vkey_to_phys, KeyCode::to_phys,
+/// PhysKeyCode::to_win32_key_codes, CommandDef::permute_keys), so the
+/// remaining question is no longer "which stage is layout-dependent" but
+/// "which stage does this keypress actually reach, and with what identity".
+/// Only a log taken on the failing machine, under the failing layout, can
+/// answer that -- hence unconditional (not gated on `debug_key_events`,
+/// which the user would have to know to turn on).
+///
+/// Scoped to CTRL, and to non-modifier keys, so the volume stays bounded:
+/// plain typing, SHIFT and ALT chords log nothing, and neither does merely
+/// holding Ctrl down. RingLog flushes to disk per record (see ringlog.rs),
+/// so a looser predicate here is a burst of synchronous disk writes -- the
+/// first cut of this diagnostic did include the modifier itself and Ctrl's
+/// auto-repeat alone produced ~30 records a second, drowning the chords it
+/// was meant to capture.
+fn is_ctrl_chord_of_interest(keycode: &KeyCode, mods: Modifiers) -> bool {
+    if !mods.contains(Modifiers::CTRL) {
+        return false;
+    }
+    match keycode {
+        KeyCode::Char(_) => true,
+        KeyCode::Physical(phys) => !phys.to_key_code().is_modifier(),
+        _ => false,
+    }
+}
+
 impl super::TermWindow {
     pub(crate) fn encode_win32_input(
         &self,
@@ -213,7 +245,54 @@ impl super::TermWindow {
         {
             return None;
         }
-        key.encode_win32_input_mode()
+        // Only a CTRL+<letter> chord can be affected by the substitution, and
+        // deciding it costs a walk of the pane's process tree -- so the
+        // question is asked only when the answer can matter. The first cut of
+        // this called it for every key event that reached passthrough, i.e.
+        // on ordinary typing, which is exactly the per-keystroke process-tree
+        // work this codebase has already had to remove from the render path
+        // once (see `bidi_process_override` in render/pane.rs).
+        let ctrl_letter_as_char = matches!(&key.key, KeyCode::Char(c) if c.is_ascii_alphabetic())
+            && key.modifiers.contains(Modifiers::CTRL)
+            && self.ctrl_letter_as_char_for(pane);
+        key.encode_win32_input_mode(ctrl_letter_as_char)
+    }
+
+    /// Whether this pane's foreground process is one of the applications
+    /// that need a Ctrl+<letter> chord to carry the plain letter rather
+    /// than the ASCII control code; see
+    /// `Config::win32_input_ctrl_letter_as_char_processes` and
+    /// docs/codex-cyrillic-ctrl-chords.md.
+    ///
+    /// Re-derived per call rather than cached here: the underlying
+    /// `get_foreground_process_name` has its own short-lived cache, and the
+    /// answer has to follow the foreground process, so that leaving Codex
+    /// restores the faithful encoding without any bookkeeping of ours. The
+    /// cost is only paid for CTRL chords, which arrive at human speed --
+    /// this deliberately does not run on ordinary typing.
+    fn ctrl_letter_as_char_for(&self, pane: &Arc<dyn Pane>) -> bool {
+        if self
+            .config
+            .win32_input_ctrl_letter_as_char_processes
+            .is_empty()
+        {
+            return false;
+        }
+        let Some(names) = pane.get_process_tree_exe_names(CachePolicy::AllowStale) else {
+            return false;
+        };
+        let matched = self
+            .config
+            .win32_input_ctrl_letter_as_char_processes
+            .iter()
+            .any(|want| names.iter().any(|have| have.eq_ignore_ascii_case(want)));
+        log::debug!(
+            "ctrl_letter_as_char pane {} tree={:?} -> {}",
+            pane.pane_id(),
+            names,
+            matched,
+        );
+        matched
     }
 
     pub(crate) fn encode_kitty_input(
@@ -338,11 +417,14 @@ impl super::TermWindow {
             // lookup result computed above rather than calling lookup_key
             // again, since it mutates key-table stack state and calling it
             // twice per keypress would double-apply that.
-            if is_newline_chord(keycode, effective_mods) {
+            if is_newline_chord(keycode, effective_mods)
+                || is_ctrl_chord_of_interest(keycode, effective_mods)
+            {
                 log::info!(
-                    "diag: newline chord {:?} {:?} -> key table lookup {}",
+                    "diag: chord {:?} {:?} pass={:?} -> key table lookup {}",
                     keycode,
                     effective_mods,
+                    only_key_bindings,
                     match &looked_up {
                         Some((entry, _)) => format!("matched, action={:?}", entry.action),
                         None => "found NO entry (falls through to raw typing)".to_string(),
@@ -522,6 +604,27 @@ impl super::TermWindow {
             Some(pane) => pane,
             None => return,
         };
+
+        // Unconditional diagnostic for CTRL chords: this is the earliest
+        // point at which the keypress exists inside OnlyTerm, so it shows
+        // the identity Windows actually handed us -- before any of our own
+        // normalization. If a Cyrillic-layout Ctrl+J arrives here with the
+        // wrong phys_code or vk, every later stage is working from bad
+        // input and there is no point looking at them. See
+        // `is_ctrl_chord_of_interest`.
+        if is_ctrl_chord_of_interest(&key.key, key.modifiers) {
+            log::info!(
+                "diag: raw key event key={:?} phys_code={:?} vk={:#04x} sc={:#04x} \
+                 mods={:?} down={} pane_encoding={:?}",
+                key.key,
+                key.phys_code,
+                key.raw_code,
+                key.scan_code,
+                key.modifiers,
+                key.key_is_down,
+                pane.get_keyboard_encoding(),
+            );
+        }
 
         // First, try to match raw physical key
         let phys_key = match &key.key {
@@ -740,8 +843,28 @@ impl super::TermWindow {
                     pane.get_keyboard_encoding(),
                 );
 
+                // Unconditional for CTRL chords: this is where a chord that
+                // matched no key binding turns into actual bytes, and which
+                // of the three encoders runs is decided by what the app in
+                // the pane negotiated. That is the one thing that differs
+                // between two apps in the same window under the same layout
+                // -- eg. Claude Code working while Codex CLI does not -- so
+                // the chosen path and the exact bytes are what a bug report
+                // needs. See `is_ctrl_chord_of_interest`.
+                let diag_ctrl = is_ctrl_chord_of_interest(&window_key.key, modifiers);
+
                 let res = if let Some(encoded) = self.encode_win32_input(&pane, &window_key) {
                     log::trace!("diag: chose win32-input-mode path, encoded={:?}", encoded);
+                    if diag_ctrl {
+                        log::info!(
+                            "diag: passthrough via win32-input-mode, key={:?} mods={:?} \
+                             win32_uni_char={:?} encoded={:?}",
+                            window_key.key,
+                            modifiers,
+                            window_key.win32_uni_char,
+                            encoded,
+                        );
+                    }
                     if self.config.debug_key_events {
                         log::info!("win32: Encoded input as {:?}", encoded);
                     }
@@ -750,6 +873,14 @@ impl super::TermWindow {
                         .context("sending win32-input-mode encoded data")
                 } else if let Some(encoded) = self.encode_kitty_input(&pane, &window_key) {
                     log::trace!("diag: chose kitty path, encoded={:?}", encoded);
+                    if diag_ctrl {
+                        log::info!(
+                            "diag: passthrough via kitty, key={:?} mods={:?} encoded={:?}",
+                            window_key.key,
+                            modifiers,
+                            encoded,
+                        );
+                    }
                     if self.config.debug_key_events {
                         log::info!("kitty: Encoded input as {:?}", encoded);
                     }
@@ -758,6 +889,19 @@ impl super::TermWindow {
                         .context("sending kitty encoded data")
                 } else {
                     log::trace!("diag: chose legacy pane.key_down/key_up path");
+                    if diag_ctrl {
+                        log::info!(
+                            "diag: passthrough via legacy pane.key_{}, key={:?} mods={:?} \
+                             (pane negotiated {:?}, allow_win32_input_mode={}, \
+                             enable_kitty_keyboard={})",
+                            if window_key.key_is_down { "down" } else { "up" },
+                            key,
+                            modifiers,
+                            pane.get_keyboard_encoding(),
+                            self.config.allow_win32_input_mode,
+                            self.config.enable_kitty_keyboard,
+                        );
+                    }
                     if self.config.debug_key_events {
                         log::info!(
                             "send to pane {} key={:?} mods={:?}",

@@ -1375,7 +1375,7 @@ mod tests {
     fn send_char_j_encodes_correctly_via_win32_input_mode() {
         let encoded =
             crate::termwindow::actions::synthetic_key_down(KeyCode::Char('j'), Modifiers::CTRL)
-                .encode_win32_input_mode()
+                .encode_win32_input_mode(false)
                 .expect("Ctrl+j should encode via win32-input-mode");
 
         // ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _ -- VK_J (0x4a = 74), the J key's
@@ -1403,7 +1403,7 @@ mod tests {
         };
 
         let encoded = crate::termwindow::actions::synthetic_key_down(KeyCode::Char(c), mods)
-            .encode_win32_input_mode()
+            .encode_win32_input_mode(false)
             .expect("CTRL+Enter's bound chord should encode via win32-input-mode");
         assert_eq!(encoded, "\u{1b}[74;36;10;1;8;1_");
     }
@@ -1417,7 +1417,7 @@ mod tests {
     fn shift_enter_encodes_as_a_real_modified_enter() {
         let encoded =
             crate::termwindow::actions::synthetic_key_down(KeyCode::Char('\r'), Modifiers::SHIFT)
-                .encode_win32_input_mode()
+                .encode_win32_input_mode(false)
                 .expect("Shift+Enter should encode via win32-input-mode");
 
         // VK_RETURN (0x0d = 13), Enter's scan code (0x1c = 28), CR (0x0d = 13),

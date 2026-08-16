@@ -145,7 +145,11 @@ impl KeyEvent {
 
     /// <https://github.com/microsoft/terminal/blob/main/doc/specs/%234999%20-%20Improved%20keyboard%20handling%20in%20Conpty.md>
     #[cfg(windows)]
-    pub fn encode_win32_input_mode(&self) -> Option<String> {
+    /// `ctrl_letter_as_char` is an application-compatibility switch decided
+    /// by the caller from the pane's foreground process; see the comment on
+    /// its use in the `KeyCode::Char` arm below. Pass `false` for the
+    /// faithful encoding.
+    pub fn encode_win32_input_mode(&self, ctrl_letter_as_char: bool) -> Option<String> {
         let phys = self.raw.as_ref()?;
 
         let vkey = phys.raw_code;
@@ -251,7 +255,31 @@ impl KeyEvent {
                         // Enter never actually produces, and is a plausible
                         // reason a receiving app fails to recognize the
                         // record as a modified-Enter at all.
-                        ctrl_mapping(*c).map(|c| c as u32).unwrap_or(*c as u32)
+                        // `ctrl_letter_as_char` sends the base letter (0x6A
+                        // 'j') here instead of the control code (0x0A), for
+                        // the narrow set of applications whose console
+                        // reader ignores this field when it is below 0x20
+                        // and re-derives the character from the virtual key
+                        // via ToUnicodeEx under the active layout -- which
+                        // resolves VK_J to 'о' under a Cyrillic layout and
+                        // loses the chord. Measured: with the letter here,
+                        // Codex CLI accepts Ctrl+J/Ctrl+Enter/Ctrl+C under a
+                        // Cyrillic layout; with the control code it does
+                        // not.
+                        //
+                        // It is off by default because it is wrong in
+                        // general -- a genuine KEY_EVENT_RECORD carries the
+                        // control code, conhost passes this field to
+                        // byte-stream readers verbatim, and Claude Code was
+                        // measured to break (typing a literal 'j') the
+                        // moment it receives the letter. The caller decides
+                        // per pane; see
+                        // `Config::win32_input_ctrl_letter_as_char_processes`.
+                        if ctrl_letter_as_char {
+                            *c as u32
+                        } else {
+                            ctrl_mapping(*c).map(|c| c as u32).unwrap_or(*c as u32)
+                        }
                     } else {
                         *c as u32
                     }

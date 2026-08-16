@@ -188,7 +188,7 @@ mod test {
                 }),
                 win32_uni_char: None,
             };
-            let encoded = event.encode_win32_input_mode().expect("raw is Some");
+            let encoded = event.encode_win32_input_mode(false).expect("raw is Some");
             // Format is ESC [ vkey;scan;uni;down;ctrlstate;repeat _
             let uni_field = encoded
                 .trim_start_matches('\u{1b}')
@@ -224,6 +224,103 @@ mod test {
              char it doesn't recognize (as this used to) silently produced a \
              UnicodeChar of 0, an event no real Ctrl+Enter keypress ever sends"
         );
+    }
+
+    /// The `ctrl_letter_as_char` compatibility switch swaps the control code
+    /// for the plain letter, and must do so ONLY when asked.
+    ///
+    /// Both halves are asserted deliberately. The "on" half is the fix for
+    /// applications whose console reader re-derives the character from the
+    /// virtual key under the active layout (Codex CLI; see
+    /// docs/codex-cyrillic-ctrl-chords.md). The "off" half is the part that
+    /// protects everyone else: this substitution was measured to break
+    /// Claude Code, which reads the byte stream and receives this field
+    /// verbatim, so a regression that made it unconditional would trade one
+    /// broken application for another.
+    #[cfg(windows)]
+    #[test]
+    fn encode_win32_input_mode_ctrl_letter_as_char_is_opt_in() {
+        fn uni_char(c: char, phys: PhysKeyCode, vkey: u32, scan: u32, as_char: bool) -> u32 {
+            let event = KeyEvent {
+                key: KeyCode::Char(c),
+                modifiers: Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: Some(RawKeyEvent {
+                    key: KeyCode::Char(c),
+                    modifiers: Modifiers::CTRL,
+                    leds: KeyboardLedStatus::empty(),
+                    phys_code: Some(phys),
+                    raw_code: vkey,
+                    scan_code: scan,
+                    repeat_count: 1,
+                    key_is_down: true,
+                    handled: Handled::new(),
+                }),
+                win32_uni_char: None,
+            };
+            event
+                .encode_win32_input_mode(as_char)
+                .expect("raw is Some")
+                .trim_start_matches('\u{1b}')
+                .trim_start_matches('[')
+                .trim_end_matches('_')
+                .split(';')
+                .nth(2)
+                .expect("uni field present")
+                .parse::<u32>()
+                .unwrap()
+        }
+
+        assert_eq!(
+            uni_char('j', PhysKeyCode::J, 0x4a, 0x24, true),
+            0x6a,
+            "with the switch on, Ctrl+J must carry the letter 'j' (0x6a) so that a \
+             reader which only re-derives from the virtual key for UnicodeChar < 0x20 \
+             takes it verbatim instead"
+        );
+        assert_eq!(
+            uni_char('c', PhysKeyCode::C, 0x43, 0x2e, true),
+            0x63,
+            "with the switch on, Ctrl+C must carry the letter 'c' (0x63)"
+        );
+
+        assert_eq!(
+            uni_char('j', PhysKeyCode::J, 0x4a, 0x24, false),
+            0x0a,
+            "with the switch off, the faithful control code must be unchanged"
+        );
+        assert_eq!(
+            uni_char('c', PhysKeyCode::C, 0x43, 0x2e, false),
+            0x03,
+            "with the switch off, the faithful control code must be unchanged"
+        );
+
+        // Vk and Sc stay honest either way: they name the physical key, and
+        // nothing about this switch may make them lie.
+        let encoded_on = KeyEvent {
+            key: KeyCode::Char('j'),
+            modifiers: Modifiers::CTRL,
+            leds: KeyboardLedStatus::empty(),
+            repeat_count: 1,
+            key_is_down: true,
+            raw: Some(RawKeyEvent {
+                key: KeyCode::Char('j'),
+                modifiers: Modifiers::CTRL,
+                leds: KeyboardLedStatus::empty(),
+                phys_code: Some(PhysKeyCode::J),
+                raw_code: 0x4a,
+                scan_code: 0x24,
+                repeat_count: 1,
+                key_is_down: true,
+                handled: Handled::new(),
+            }),
+            win32_uni_char: None,
+        }
+        .encode_win32_input_mode(true)
+        .expect("raw is Some");
+        assert_eq!(encoded_on, "\u{1b}[74;36;106;1;8;1_");
     }
 
     #[cfg(windows)]
@@ -263,7 +360,7 @@ mod test {
             }),
             win32_uni_char: None,
         };
-        let encoded = event.encode_win32_input_mode().expect("raw is Some");
+        let encoded = event.encode_win32_input_mode(false).expect("raw is Some");
         let uni_field = encoded
             .trim_start_matches('\u{1b}')
             .trim_start_matches('[')

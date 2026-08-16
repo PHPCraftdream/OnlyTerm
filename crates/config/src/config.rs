@@ -813,6 +813,32 @@ pub struct Config {
     #[dynamic(default = "default_disable_bidi_for_processes_named")]
     pub disable_bidi_for_processes_named: Vec<String>,
 
+    /// Executable basenames (matched case-insensitively against the pane's
+    /// live foreground process) for which a Ctrl+<letter> chord is encoded
+    /// with the plain letter in the win32-input-mode `UnicodeChar` field
+    /// instead of the ASCII control code -- eg. `j` (0x6A) rather than 0x0A
+    /// for Ctrl+J.
+    ///
+    /// The control code is what a genuine KEY_EVENT_RECORD carries and stays
+    /// the default for everything else. This list exists for applications
+    /// whose console reader ignores `UnicodeChar` when it is below 0x20 and
+    /// instead re-derives the character from the virtual key via
+    /// `ToUnicodeEx` under the *active* keyboard layout: under a Cyrillic
+    /// layout that turns VK_J into 'о' and VK_C into 'с', so the chord is
+    /// looked up as Ctrl+о / Ctrl+с and silently does nothing. A printable
+    /// `UnicodeChar` is taken verbatim by those readers, which sidesteps the
+    /// re-derivation entirely.
+    ///
+    /// Keep this list tight. The substitution is measurably WRONG for
+    /// applications that read the byte stream, because conhost hands this
+    /// field through verbatim: Claude Code, for instance, works correctly
+    /// today and starts receiving a literal 'j' where it expects 0x0A.
+    ///
+    /// Measured against Codex CLI 0.147.0; see
+    /// docs/codex-cyrillic-ctrl-chords.md for the full investigation.
+    #[dynamic(default = "default_ctrl_letter_as_char_processes")]
+    pub win32_input_ctrl_letter_as_char_processes: Vec<String>,
+
     #[dynamic(default = "default_stateless_process_list")]
     pub skip_close_confirmation_for_processes_named: Vec<String>,
 
@@ -1289,6 +1315,13 @@ fn default_tiling_desktop_environments() -> Vec<String> {
 
 fn default_disable_bidi_for_processes_named() -> Vec<String> {
     ["claude.exe", "claude"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_ctrl_letter_as_char_processes() -> Vec<String> {
+    ["codex.exe", "codex"]
         .iter()
         .map(|s| s.to_string())
         .collect()

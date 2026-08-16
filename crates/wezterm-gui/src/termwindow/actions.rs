@@ -1245,7 +1245,25 @@ impl TermWindow {
                     // form and may not treat a bare `\x03` as an interrupt
                     // while that mode is active.
                     let event = synthetic_key_down(KeyCode::Char('c'), Modifiers::CTRL);
-                    match self.encode_via_negotiated_protocol(pane, &event) {
+                    let encoded = self.encode_via_negotiated_protocol(pane, &event);
+                    // Logged at info for the same reason as SendChar below:
+                    // "Ctrl+C did not interrupt" has two completely different
+                    // causes -- the binding never matched so this arm never
+                    // ran, or it ran and the app ignored what we sent -- and
+                    // they are indistinguishable to the user.
+                    log::info!(
+                        "CopySelectionOrInterrupt (no selection) on pane {}: keyboard encoding \
+                         is {:?}, allow_win32_input_mode={}, enable_kitty_keyboard={}, sending {}",
+                        pane.pane_id(),
+                        pane.get_keyboard_encoding(),
+                        self.config.allow_win32_input_mode,
+                        self.config.enable_kitty_keyboard,
+                        match &encoded {
+                            Some(encoded) => format!("encoded {:?}", encoded),
+                            None => "legacy \\x03".to_string(),
+                        }
+                    );
+                    match encoded {
                         Some(encoded) => {
                             pane.writer().write_all(encoded.as_bytes()).ok();
                         }

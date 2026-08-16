@@ -382,6 +382,24 @@ pub trait Pane: Downcast + Send + Sync {
         None
     }
 
+    /// Executable base names of EVERY process in this pane's tree, not just
+    /// the one `get_foreground_process_name` picks.
+    ///
+    /// The foreground heuristic returns a single process -- on Windows, the
+    /// most recently started one sharing the console -- which is the right
+    /// answer for "what is the user interacting with" but the wrong one for
+    /// "is program X running in this pane". A program launched through a
+    /// wrapper hides behind whichever link of the chain happens to be
+    /// youngest: Codex CLI is `codex.cmd` -> node -> `codex.exe`, and the
+    /// foreground call was measured to return `node_repl.exe`, so matching
+    /// on it alone silently never fires.
+    fn get_process_tree_exe_names(
+        &self,
+        _policy: CachePolicy,
+    ) -> Option<std::collections::HashSet<String>> {
+        None
+    }
+
     fn tty_name(&self) -> Option<String> {
         None
     }

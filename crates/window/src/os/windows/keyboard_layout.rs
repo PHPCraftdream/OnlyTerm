@@ -273,6 +273,22 @@ impl KeyboardLayoutInfo {
             return;
         }
 
+        // Logged unconditionally, and deliberately: this fires only when the
+        // active layout actually changes, so it is a handful of records per
+        // session, and it is the only timestamped record of WHICH layout was
+        // active. Without it a keyboard log taken to investigate a
+        // layout-dependent report cannot be split into its "working" and
+        // "failing" halves at all -- the first attempt at exactly that
+        // produced six chord captures that were indistinguishable from one
+        // another, and no way to tell whether the failing layout had even
+        // been selected. The low word of an HKL is the language identifier:
+        // 0x0409 = en-US, 0x0419 = ru-RU.
+        log::info!(
+            "diag: active keyboard layout changed to hkl={:#010x} (langid={:#06x})",
+            current_layout as usize,
+            (current_layout as usize) & 0xffff,
+        );
+
         let mut saved_state = [0u8; 256];
         if GetKeyboardState(saved_state.as_mut_ptr()) == 0 {
             return;

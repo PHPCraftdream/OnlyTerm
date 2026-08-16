@@ -982,6 +982,14 @@ impl Pane for LocalPane {
         None
     }
 
+    fn get_process_tree_exe_names(
+        &self,
+        policy: CachePolicy,
+    ) -> Option<std::collections::HashSet<String>> {
+        self.divine_process_list(policy)
+            .map(|info| info.root.flatten_to_exe_names())
+    }
+
     fn can_close_without_prompting(&self, _reason: CloseReason) -> bool {
         if let Some(info) = self.divine_process_list(CachePolicy::FetchImmediate) {
             log::trace!(
