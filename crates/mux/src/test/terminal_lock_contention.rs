@@ -631,3 +631,160 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
         );
     }
 }
+
+/// Regression test: `resize()` must never run concurrently with
+/// `perform_actions_chunked`'s per-chunk loop. Without `resize_guard`,
+/// a resize landing between two chunks of one logical ConPTY repaint
+/// would apply the chunk's tail to a `Screen` sized for a different
+/// geometry than the one the repaint was drawn for -- this is what
+/// produced the "input echoed one row below the prompt" artifact this
+/// test was written to pin down.
+///
+/// The first version of this test asserted that `resize()`'s and the
+/// chunked batch's *outer call* wall-clock spans never overlap. That's
+/// the wrong invariant: when one side is genuinely queued waiting for
+/// `resize_guard`, its outer call legitimately overlaps the holder's --
+/// that's what a correctly-working mutex looks like, not a violation.
+/// (This was caught empirically: that version failed on a build that
+/// has the real fix, because contention alone produces overlap.)
+///
+/// What actually proves the guard is shared correctly between both call
+/// sites is contention itself: `resize_timed` reports only the time
+/// spent *waiting to acquire* `resize_guard`, separate from the work
+/// done while holding it (mirroring every other `_timed` helper in this
+/// file). Hammer `resize()` while a small-chunk_size batch is
+/// continuously holding `resize_guard` for large fractions of the test
+/// duration; if the guard is genuinely shared, a good fraction of those
+/// resize calls must measurably wait for it. If `perform_actions_chunked`
+/// (or `resize` itself) ever stops taking `resize_guard` -- the actual
+/// regression this guards against -- resize calls would essentially
+/// never see contention from the batch thread and this assertion would
+/// fail.
+#[test]
+fn resize_blocks_on_a_concurrent_chunked_batch() {
+    let _mux_guard = super::MUX_TEST_GUARD.lock();
+
+    let pane = make_pane();
+    let stop = Arc::new(AtomicBool::new(false));
+    let resize_wait_samples = Arc::new(WaitSamples::new());
+
+    let start_barrier = Arc::new(Barrier::new(2));
+
+    let resize_handle = {
+        let pane = Arc::clone(&pane);
+        let stop = Arc::clone(&stop);
+        let samples = Arc::clone(&resize_wait_samples);
+        let barrier = Arc::clone(&start_barrier);
+        std::thread::spawn(move || {
+            let sizes = [
+                TerminalSize {
+                    rows: ROWS,
+                    cols: COLS,
+                    pixel_width: COLS * 8,
+                    pixel_height: ROWS * 16,
+                    dpi: 0,
+                },
+                TerminalSize {
+                    rows: ROWS + 10,
+                    cols: COLS - 20,
+                    pixel_width: (COLS - 20) * 8,
+                    pixel_height: (ROWS + 10) * 16,
+                    dpi: 0,
+                },
+            ];
+            let mut toggle = 0usize;
+            barrier.wait();
+            while !stop.load(Ordering::Relaxed) {
+                let size = sizes[toggle % sizes.len()];
+                toggle += 1;
+                let (waited, _hold) = pane.resize_timed(size).expect("resize");
+                samples.record(waited);
+            }
+        })
+    };
+
+    // Batch thread: same shape as the chunking test above, but with a
+    // deliberately small chunk_size so `resize_guard` (held for the
+    // whole batch, not per-chunk) stays held for a large fraction of
+    // wall-clock time relative to an individual resize call.
+    const CHUNK_SIZE: usize = 4;
+    let mut rng_state: u64 = 0x9E3779B97F4A7C15;
+    let mut parser = termwiz::escape::parser::Parser::new();
+
+    start_barrier.wait();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut n_batches = 0;
+    while Instant::now() < deadline {
+        let bytes = generate_output_batch(&mut rng_state, 128 * 1024);
+        let mut actions = Vec::new();
+        parser.parse(&bytes, |action| actions.push(action));
+
+        let samples = pane.perform_actions_chunked_timed(actions, CHUNK_SIZE);
+        n_batches += 1;
+
+        assert!(
+            samples.len() > 50,
+            "sanity: expected chunk_size={CHUNK_SIZE} to split a 128KiB batch into \
+             many chunks, got {}",
+            samples.len()
+        );
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    resize_handle.join().unwrap();
+
+    let (n_resize, p50_wait, p95_wait, max_wait) = resize_wait_samples.stats();
+    eprintln!(
+        "resize_blocks_on_a_concurrent_chunked_batch: n_batches={n_batches} \
+         n_resizes={n_resize} resize_guard_wait p50={p50_wait:?} p95={p95_wait:?} max={max_wait:?}"
+    );
+    assert!(n_batches > 0, "batch thread produced no samples");
+    assert!(
+        n_resize > 0,
+        "resize thread produced no samples -- test didn't exercise contention"
+    );
+
+    // The core claim: resize_guard is the same mutex on both sides, and
+    // each batch holds it continuously for a large fraction of a second
+    // (chunk_size=4 keeps each individual chunk's hold brief, but
+    // `resize_guard` wraps the *whole* per-batch loop). The resize
+    // thread loops far faster than that, so most resize calls land in
+    // the short gaps between batches and see near-zero wait (this was
+    // observed directly: p50 was ~100ns) -- only whichever resize call
+    // happens to be in flight when a batch acquires the guard gets
+    // blocked, for as long as that batch's entire chunked loop takes.
+    // So the discriminating signal here is `max_wait`, not the median:
+    // it should land in the same tens-to-hundreds-of-ms range as a
+    // batch's own hold time (measured directly in the chunking test
+    // above: ~800ms+ for a 128KiB batch at chunk_size=4). 50ms is
+    // comfortably below that while still far above the sub-microsecond
+    // wait an uncontended `parking_lot::Mutex` acquisition costs -- so
+    // this only passes when the two call sites are genuinely fighting
+    // over the same lock.
+    assert!(
+        max_wait > Duration::from_millis(50),
+        "no resize() call waited more than {:?} for resize_guard, even though a chunked \
+         batch should have been holding it continuously for large stretches of the test -- \
+         this is the signature of resize_guard NOT actually being shared between resize() \
+         and perform_actions_chunked (the regression this test exists to catch), not of \
+         healthy contention",
+        max_wait,
+    );
+
+    // Also confirm resize() is still functionally correct under this
+    // contention, not just "eventually returns": the final call's
+    // geometry must have taken effect.
+    let final_size = TerminalSize {
+        rows: ROWS,
+        cols: COLS,
+        pixel_width: COLS * 8,
+        pixel_height: ROWS * 16,
+        dpi: 0,
+    };
+    pane.resize(final_size).expect("final resize");
+    let dims = pane.get_dimensions();
+    assert_eq!(
+        dims.cols, COLS,
+        "resize() did not take effect after the contended run"
+    );
+}

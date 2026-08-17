@@ -230,6 +230,14 @@ pub struct LocalPane {
     // treat "pty already gone" as a normal, silent case rather than a bug.
     pty: Mutex<Option<Box<dyn MasterPty>>>,
     writer: Mutex<Box<dyn Write + Send>>,
+    /// Serializes `resize()` against `perform_actions_chunked()`'s batch
+    /// loop (held for the whole batch there, not per-chunk -- see its
+    /// call site). Without this, a resize could land between two chunks
+    /// of one logical ConPTY repaint that our own chunking split apart,
+    /// applying the chunk's tail under a different geometry than the one
+    /// it was drawn for. Always acquired before `terminal`/`pty` below,
+    /// in both places that take it, to keep lock order consistent.
+    resize_guard: Mutex<()>,
     domain_id: DomainId,
     tmux_domain: Mutex<Option<Arc<TmuxDomainState>>>,
     /// Task #247: `Arc`-wrapped so that `divine_process_list`'s
@@ -767,6 +775,20 @@ impl Pane for LocalPane {
     }
 
     fn resize(&self, size: TerminalSize) -> Result<(), Error> {
+        let _resize_guard = self.resize_guard.lock();
+
+        // Hold `terminal.lock()` across both the pty resize and the
+        // terminal model's resize, not just the latter: `pty.resize()`
+        // (ConPTY on Windows) can react to the new geometry by writing a
+        // repaint to the pty immediately, which the per-pane reader
+        // thread (`read_from_pane_pty`) parses and applies via
+        // `perform_actions`/`perform_actions_chunked` -- both of which
+        // also take `terminal.lock()`. Without holding it here too, that
+        // reader thread could win the race and apply ConPTY's
+        // new-geometry-relative cursor moves to a `Screen` that's still
+        // sized for the old geometry, landing text on the wrong row.
+        let mut term = self.terminal.lock();
+
         // If the pty is already gone (pane killed, teardown deferred --
         // see `kill()`), there's nowhere for a resize to go; silently
         // skip the pty resize but still update the terminal model, since
@@ -780,7 +802,7 @@ impl Pane for LocalPane {
                 pixel_height: size.pixel_height.try_into()?,
             })?;
         }
-        self.terminal.lock().resize(size);
+        term.resize(size);
         Ok(())
     }
 
@@ -1447,6 +1469,7 @@ impl LocalPane {
             }),
             pty: Mutex::new(Some(pty)),
             writer: Mutex::new(writer),
+            resize_guard: Mutex::new(()),
             domain_id,
             tmux_domain: Mutex::new(None),
             proc_list: Arc::new(Mutex::new(None)),
@@ -1480,12 +1503,19 @@ impl LocalPane {
     /// self-contained and `Terminal::perform_actions` makes no
     /// assumption that spans a call boundary (each call only bumps the
     /// sequence number and re-triggers the "unseen output" check, both
-    /// of which are correct to do once per chunk).
+    /// of which are correct to do once per chunk) -- PROVIDED nothing
+    /// changes the terminal's geometry between chunks, which is exactly
+    /// what `resize_guard` (held below, for the whole batch) rules out:
+    /// without it, a `resize()` landing between two chunks of one
+    /// logical ConPTY repaint would apply the chunk's tail under a
+    /// different geometry than the one it was drawn for.
     fn perform_actions_chunked(&self, actions: Vec<Action>, chunk_size: usize) {
         if actions.len() <= chunk_size.max(1) {
             // Common case (small batches, e.g. interactive typing): no
             // benefit to chunking, so avoid the `Vec` chunking overhead
-            // and just take the lock once, as before.
+            // and just take the lock once, as before. A single lock
+            // acquisition can't be sliced by a concurrent resize, so
+            // `resize_guard` isn't needed here.
             lock_terminal_timed(
                 &self.terminal,
                 "localpane.terminal_lock.wait.perform_actions",
@@ -1494,6 +1524,7 @@ impl LocalPane {
             return;
         }
 
+        let _resize_guard = self.resize_guard.lock();
         for chunk in actions.chunks(chunk_size.max(1)) {
             lock_terminal_timed(
                 &self.terminal,
@@ -1760,6 +1791,7 @@ impl LocalPane {
         chunk_size: usize,
     ) -> Vec<(Duration, Duration)> {
         let mut samples = Vec::new();
+        let _resize_guard = self.resize_guard.lock();
         for chunk in actions.chunks(chunk_size.max(1)) {
             let wait_start = Instant::now();
             let mut term = self.terminal.lock();
@@ -1789,6 +1821,35 @@ impl LocalPane {
         let mut term = self.terminal.lock();
         let waited = wait_start.elapsed();
         (waited, term.mouse_event(event))
+    }
+
+    /// Like the other `_timed` helpers, but for `resize()`: measures only
+    /// the wait to acquire `resize_guard` (the coordination point shared
+    /// with `perform_actions_chunked`), not the whole call. Used by
+    /// `test::terminal_lock_contention` to prove the guard is genuinely
+    /// contended by a concurrent chunked batch, rather than by asserting
+    /// on wall-clock overlap of the two outer calls (which is a weaker
+    /// and, worse, misleading signal: a caller that's queued waiting for
+    /// the guard has an outer call span that legitimately overlaps the
+    /// holder's, even though the guard is working correctly).
+    #[cfg(test)]
+    pub(crate) fn resize_timed(&self, size: TerminalSize) -> anyhow::Result<(Duration, Duration)> {
+        let wait_start = Instant::now();
+        let _resize_guard = self.resize_guard.lock();
+        let waited = wait_start.elapsed();
+
+        let hold_start = Instant::now();
+        let mut term = self.terminal.lock();
+        if let Some(pty) = self.pty.lock().as_ref() {
+            pty.resize(PtySize {
+                rows: size.rows.try_into()?,
+                cols: size.cols.try_into()?,
+                pixel_width: size.pixel_width.try_into()?,
+                pixel_height: size.pixel_height.try_into()?,
+            })?;
+        }
+        term.resize(size);
+        Ok((waited, hold_start.elapsed()))
     }
 
     /// Test-only escape hatch for `test::wedged_pane_isolation`: installs a
