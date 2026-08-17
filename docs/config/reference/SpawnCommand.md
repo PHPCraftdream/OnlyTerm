@@ -16,6 +16,13 @@ action: {
     ## on the `args` field.
     label: List all the files!
 
+    ## An explicit tab title, applied once as soon as the tab is spawned.
+    ## Takes priority over `default_tab_title` (see the config reference),
+    ## but a later explicit rename (F2 / `wezterm cli set-tab-title`)
+    ## always overrides it.
+    ## If omitted, the tab shows its cwd basename instead.
+    title: My build
+
     ## The argument array specifying the command and its arguments.
     ## If omitted, the default program for the target domain will be
     ## spawned.

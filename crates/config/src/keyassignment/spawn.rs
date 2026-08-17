@@ -131,6 +131,14 @@ pub struct SpawnCommand {
     /// Optional descriptive label
     pub label: Option<String>,
 
+    /// Explicit tab title to apply as soon as the tab is spawned.
+    /// If omitted, `Config::default_tab_title` is used instead; if that is
+    /// also unset, the tab falls back to its cwd basename. Either way this
+    /// is a one-shot value applied at spawn time, not a live template --
+    /// an explicit rename (F2 / `wezterm cli set-tab-title`) always
+    /// overrides it afterwards.
+    pub title: Option<String>,
+
     /// The command line to use.
     /// If omitted, the default command associated with the
     /// domain will be used instead, which is typically the
@@ -172,6 +180,9 @@ impl std::fmt::Display for SpawnCommand {
         write!(fmt, "SpawnCommand")?;
         if let Some(label) = &self.label {
             write!(fmt, " label='{}'", label)?;
+        }
+        if let Some(title) = &self.title {
+            write!(fmt, " title='{}'", title)?;
         }
         write!(fmt, " domain={:?}", self.domain)?;
         if let Some(args) = &self.args {
@@ -217,6 +228,7 @@ impl SpawnCommand {
         let cwd = cmd.get_cwd().map(PathBuf::from);
         Ok(Self {
             label: None,
+            title: None,
             domain: SpawnTabDomain::DefaultDomain,
             args: if args.is_empty() { None } else { Some(args) },
             set_environment_variables,

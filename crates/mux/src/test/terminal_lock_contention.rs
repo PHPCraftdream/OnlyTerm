@@ -158,6 +158,7 @@ fn make_pane() -> Arc<LocalPane> {
         writer,
         1,
         "loadtest".to_string(),
+        None,
     ))
 }
 

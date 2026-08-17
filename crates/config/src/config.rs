@@ -521,18 +521,13 @@ pub struct Config {
     #[dynamic(default)]
     pub tab_and_split_indices_are_zero_based: bool,
 
-    /// If true, the default tab title (used when the tab doesn't have an
-    /// explicitly assigned title and no `format-tab-title` event handler
-    /// is registered) is derived from the last path component (basename)
-    /// of the active pane's current working directory, rather than from
-    /// the pane's title (which is usually the running program's name).
-    /// The same applies to the default window title (`format-window-title`
-    /// fallback). OnlyTerm defaults this to true (upstream wezterm
-    /// defaults to false) so the tab/window title tracks `cd` out of the
-    /// box - it updates whenever the shell reports a new working directory
-    /// (OSC 7), without needing a config-side event handler.
-    #[dynamic(default = "default_true")]
-    pub use_cwd_basename_as_tab_title: bool,
+    /// Fallback tab title (used when a tab hasn't been explicitly renamed
+    /// via F2 / `wezterm cli set-tab-title`, and `SpawnCommand::title`
+    /// wasn't set for that particular launch) applied to every newly
+    /// spawned tab. If unset, the tab title tracks the cwd basename
+    /// instead. See `SpawnCommand::title` for the per-launch override that
+    /// takes priority over this.
+    pub default_tab_title: Option<String>,
 
     /// If true, new GUI windows are maximized immediately after being
     /// shown. Upstream wezterm has no built-in option for this - users

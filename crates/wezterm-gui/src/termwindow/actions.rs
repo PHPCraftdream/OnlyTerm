@@ -497,18 +497,14 @@ impl TermWindow {
         drop(window);
 
         let title = if let (Some(pos), Some(tab)) = (active_pane, active_tab) {
-            // Mirrors compute_tab_title's fallback (crate::tabbar):
-            // prefer the cwd basename over the pane's own title (the
-            // running program's name) when configured to do so, so
-            // the window title tracks `cd` the same way the tab
-            // title does.
-            let pane_title = if self.config.use_cwd_basename_as_tab_title {
-                match &pos.current_working_dir {
-                    Some(cwd) if !cwd.is_empty() => crate::tabbar::basename_of_path(cwd),
-                    _ => pos.title.clone(),
-                }
-            } else {
-                pos.title.clone()
+            // Mirrors compute_tab_title's fallback (crate::tabbar): the
+            // cwd basename, observed directly from the OS rather than the
+            // pane's own OSC 0/2 title, so the window title tracks `cd`
+            // the same way the tab title does and isn't shell-controlled
+            // either.
+            let pane_title = match &pos.current_working_dir {
+                Some(cwd) if !cwd.is_empty() => crate::tabbar::basename_of_path(cwd),
+                _ => pos.title.clone(),
             };
             if num_tabs == 1 {
                 format!("{}{}", if pos.is_zoomed { "[Z] " } else { "" }, pane_title)
@@ -2542,6 +2538,7 @@ mod title_latency_probe {
             writer,
             1,
             "perf-probe".to_string(),
+            None,
         ))
     }
 

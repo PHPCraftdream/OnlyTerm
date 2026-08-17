@@ -150,6 +150,11 @@ pub enum MouseCapture {
 
 /// Type used together with Window::notify to do something in the
 /// context of the window-specific event loop
+// `PerformAssignment`'s inline `KeyAssignment` already dwarfed the other
+// variants before `SpawnCommand::title` added one more `Option<String>` to
+// it; boxing that one field to shrink this enum isn't worth doing for a
+// notification type that isn't sent at any meaningful rate.
+#[allow(clippy::large_enum_variant)]
 pub enum TermWindowNotif {
     InvalidateShapeCache,
     PerformAssignment {

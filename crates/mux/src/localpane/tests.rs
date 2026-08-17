@@ -215,6 +215,7 @@ fn make_pane() -> (Arc<LocalPane>, Arc<std::sync::atomic::AtomicBool>) {
         writer,
         1,
         "test".to_string(),
+        None,
     ));
     (pane, dropped)
 }
@@ -260,6 +261,7 @@ fn make_pane_with_real_pid() -> Arc<LocalPane> {
         writer,
         1,
         "test".to_string(),
+        None,
     ))
 }
 
@@ -307,6 +309,7 @@ fn make_pane_with_tracked_writer() -> (
         writer,
         1,
         "test".to_string(),
+        None,
     ));
     (pane, pty_dropped, writer_dropped)
 }
@@ -357,6 +360,7 @@ fn make_pane_with_blocking_writer() -> (
         writer,
         1,
         "test".to_string(),
+        None,
     ));
     (pane, gate, wrote)
 }
@@ -460,6 +464,7 @@ fn make_pane_with_writer_wrapper() -> (
         Box::new(writer),
         1,
         "test".to_string(),
+        None,
     ));
     (pane, gate, wrote)
 }

@@ -240,6 +240,7 @@ impl TmuxDomainState {
             Box::new(writer),
             self.domain_id,
             "tmux pane".to_string(),
+            None,
         )))
     }
 

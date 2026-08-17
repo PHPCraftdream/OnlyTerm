@@ -948,10 +948,25 @@ impl Pane for LocalPane {
     }
 
     fn get_current_working_dir(&self, policy: CachePolicy) -> Option<Url> {
-        // Only the `terminal.lock()` half of this is in scope for task
-        // #246's bounded-wait treatment; `divine_current_working_dir()`
-        // (the cache-miss fallback below) is a separate, already-tracked
-        // problem (task #247) and is deliberately left as-is here.
+        // Ask the OS for the foreground process's real cwd first: OSC 7 is
+        // just text the shell chooses to print, so a build script that
+        // cd's around internally and back (or a shell integration that
+        // fires it on every prompt render) can make the OSC-7-reported
+        // value flap independently of where the process tree actually is.
+        // `divine_current_working_dir()` reads the OS's own bookkeeping
+        // and can't be spoofed or skipped by whatever the pane is running.
+        // It also doesn't touch `self.terminal`, so this is cheaper than
+        // the OSC-7 path under the same contention task #246 was written
+        // for.
+        if let Some(cwd) = self.divine_current_working_dir(policy) {
+            self.last_known_good.lock().cwd = Some(cwd.clone());
+            return Some(cwd);
+        }
+
+        // Nothing to divine from (most commonly: the foreground-process
+        // cache is cold and a background fetch is already in flight, see
+        // task #247) -- fall back to the shell's own OSC 7 announcement,
+        // bounded the same way as the other terminal-lock accessors below.
         match try_lock_terminal_for(
             &self.terminal,
             &self.unresponsive,
@@ -959,8 +974,10 @@ impl Pane for LocalPane {
             |term| term.get_current_dir().cloned(),
         ) {
             Some(cwd) => {
-                self.last_known_good.lock().cwd = cwd.clone();
-                cwd.or_else(|| self.divine_current_working_dir(policy))
+                if cwd.is_some() {
+                    self.last_known_good.lock().cwd = cwd.clone();
+                }
+                cwd
             }
             None => self.last_known_good.lock().cwd.clone(),
         }
@@ -1395,6 +1412,7 @@ fn split_child(
 }
 
 impl LocalPane {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         pane_id: PaneId,
         mut terminal: Terminal,
@@ -1403,6 +1421,7 @@ impl LocalPane {
         writer: Box<dyn Write + Send>,
         domain_id: DomainId,
         command_description: String,
+        starting_cwd: Option<Url>,
     ) -> Self {
         let (process, signaller, pid) = split_child(process);
 
@@ -1436,7 +1455,10 @@ impl LocalPane {
             unseen_output,
             unresponsive: Arc::new(AtomicBool::new(false)),
             render_budget_exceeded: Arc::new(Mutex::new(None)),
-            last_known_good: Mutex::new(CachedTerminalInfo::default()),
+            last_known_good: Mutex::new(CachedTerminalInfo {
+                cwd: starting_cwd,
+                ..Default::default()
+            }),
         }
     }
 

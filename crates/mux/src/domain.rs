@@ -500,6 +500,18 @@ impl Domain for LocalDomain {
             .await
             .context("build_command")?;
 
+        // Seed the pane's cwd cache with the directory it's about to be
+        // spawned into (falling back to $HOME, matching what an unset cwd
+        // resolves to at spawn time). This is shown as a placeholder tab
+        // title until the foreground-process cache (task #247) has warmed
+        // up enough for `divine_current_working_dir` to report the real,
+        // OS-observed value.
+        let starting_cwd = cmd
+            .get_cwd()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| config::HOME_DIR.clone());
+        let starting_cwd = url::Url::from_directory_path(starting_cwd).ok();
+
         let command_line = cmd
             .as_unix_command_line()
             .unwrap_or_else(|err| format!("error rendering command line: {:?}", err));
@@ -565,6 +577,7 @@ impl Domain for LocalDomain {
                     Box::new(writer),
                     self.id,
                     command_description,
+                    starting_cwd,
                 ));
                 let mux = Mux::get();
                 mux.add_pane(&pane)?;
@@ -601,6 +614,7 @@ impl Domain for LocalDomain {
                 Box::new(writer),
                 self.id,
                 command_description,
+                starting_cwd.clone(),
             )),
             Err(err) => {
                 // Show the error to the user in the new pane
@@ -617,6 +631,7 @@ impl Domain for LocalDomain {
                     Box::new(writer),
                     self.id,
                     command_description,
+                    starting_cwd,
                 ))
             }
         };

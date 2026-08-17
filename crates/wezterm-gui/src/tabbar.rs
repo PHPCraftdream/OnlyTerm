@@ -193,19 +193,25 @@ fn compute_tab_title(tab: &TabInformation, config: &ConfigHandle) -> TitleText {
 
     if let Some(pane) = &tab.active_pane {
         let mut title = if !tab.tab_title.is_empty() {
-            // An explicitly assigned tab title (via `wezterm cli
-            // set-tab-title` or similar) always wins.
+            // An explicit rename (`wezterm cli set-tab-title`, the rename
+            // UI) or a config-provided title applied at spawn time
+            // (`SpawnCommand::title` / `default_tab_title`) -- both go
+            // through the same `Tab::set_title`, so whichever happened
+            // most recently wins here.
             tab.tab_title.clone()
-        } else if config.use_cwd_basename_as_tab_title {
-            // Fall back to the cwd basename when requested and
-            // available; otherwise fall back further to the pane's
-            // own title (usually the foreground process name).
+        } else {
+            // Otherwise: the cwd basename, as observed directly from the
+            // OS rather than the pane's own OSC 0/2 "set title" escape
+            // sequence -- nothing running inside the pane gets to choose
+            // the tab's title. `pane.current_working_dir` is only empty
+            // for panes that have no notion of a cwd at all (internal
+            // overlays like search/copy-mode), where falling back to the
+            // pane's own (internally assigned, not shell-controlled)
+            // title is harmless.
             match &pane.current_working_dir {
                 Some(cwd) if !cwd.is_empty() => basename_of_path(cwd),
                 _ => pane.title.clone(),
             }
-        } else {
-            pane.title.clone()
         };
 
         let classic_spacing = if config.use_fancy_tab_bar { "" } else { " " };

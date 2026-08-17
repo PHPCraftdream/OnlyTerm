@@ -183,6 +183,12 @@ pub(crate) async fn spawn_single_pane_tab(
         }
     }
 
+    if let Some(tab) = &spawned_tab {
+        if let Some(title) = resolve_spawn_title(&spawn) {
+            tab.set_title(&title);
+        }
+    }
+
     Ok(spawned_tab)
 }
 
@@ -345,6 +351,17 @@ pub async fn spawn_elevated_single_pane_tab(
     Ok(tab)
 }
 
+/// Resolves the title to apply to a freshly spawned tab: an explicit
+/// per-launch `SpawnCommand::title` wins, falling back to the config-wide
+/// `default_tab_title`. `None` means "no config title" -- the tab keeps
+/// showing its cwd basename instead.
+fn resolve_spawn_title(spawn: &SpawnCommand) -> Option<String> {
+    spawn
+        .title
+        .clone()
+        .or_else(|| config::configuration().default_tab_title.clone())
+}
+
 #[derive(Copy, Debug, Clone, Eq, PartialEq)]
 pub enum SpawnWhere {
     NewWindow,
@@ -475,7 +492,8 @@ pub async fn spawn_command_internal(
             }
         }
         _ => {
-            let (_tab, pane, window_id) = mux
+            let title = resolve_spawn_title(&spawn);
+            let (tab, pane, window_id) = mux
                 .spawn_tab_or_window(
                     match spawn_where {
                         SpawnWhere::NewWindow => None,
@@ -491,6 +509,10 @@ pub async fn spawn_command_internal(
                 )
                 .await
                 .context("spawn_tab_or_window")?;
+
+            if let Some(title) = title {
+                tab.set_title(&title);
+            }
 
             // If it was created in this window, it copies our handlers.
             // Otherwise, we'll pick them up when we later respond to

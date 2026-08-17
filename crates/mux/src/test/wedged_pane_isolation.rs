@@ -181,6 +181,7 @@ fn make_pane(name: &str) -> (Arc<LocalPane>, Arc<Mutex<()>>, Arc<AtomicBool>) {
         Box::new(writer),
         1,
         name.to_string(),
+        None,
     ));
     (pane, gate, wrote)
 }
