@@ -325,6 +325,79 @@ fn test_resize_wrap_escape_code_issue_978() {
     assert_visible_contents(&term, file!(), line!(), &["====", "SS", "", ""]);
 }
 
+/// A cursor resting in column 0 of a line that is *not* the continuation
+/// of a wrapped line must stay exactly where it is when the terminal is
+/// widened.
+///
+/// `rewrap_lines` has a special case for a cursor that reflow places in
+/// column 0: a terminal leaves the cursor parked in the last column of a
+/// full line (with the wrap pending) rather than moving it to column 0 of
+/// the next row, so a logical cursor offset that is an exact multiple of
+/// the new width has to be pushed back onto the end of the previous row.
+/// The condition that selects that case only asked whether the cursor
+/// landed in column 0 of a row other than the first -- which is also true
+/// for the utterly ordinary cursor position produced by a plain newline.
+/// Every widening resize therefore yanked such a cursor up onto the end
+/// of the previous row, and the next character the program printed landed
+/// at the far right of the line above instead of at the start of its own.
+///
+/// This is what garbled a `--start-conf` tab: its startup commands are
+/// typed in immediately, so the shell is mid-output when the window
+/// maximizes and the resize lands right on a just-emitted newline.
+#[test]
+fn test_resize_wider_keeps_a_column_zero_cursor_on_its_own_row() {
+    let mut term = TestTerm::new(4, 10, 0);
+
+    // A completed line plus a newline: the cursor is legitimately at
+    // column 0 of row 1, and row 0 is not a wrapped line.
+    term.print("hello\r\n");
+    term.assert_cursor_pos(0, 1, Some("plain newline puts the cursor on row 1"), None);
+
+    term.resize(TerminalSize {
+        rows: 4,
+        cols: 20,
+        ..Default::default()
+    });
+
+    term.assert_cursor_pos(
+        0,
+        1,
+        Some("widening must not move a column-zero cursor onto the previous row"),
+        None,
+    );
+
+    // ...and printing must continue on that row, not at the tail of the
+    // one above it.
+    term.print("X");
+    assert_visible_contents(&term, file!(), line!(), &["hello", "X", "", ""]);
+}
+
+/// The flip side of the case above: a cursor that reflow *does* place in
+/// column 0 because its logical line wrapped exactly at the new width
+/// still has to be pushed back onto the end of the previous row, which is
+/// where a terminal really parks it. `test_resize_2162` covers the same
+/// invariant from the outside; this states it directly so that narrowing
+/// the special case can't silently remove it.
+#[test]
+fn test_resize_keeps_a_wrapped_cursor_at_the_end_of_the_previous_row() {
+    let mut term = TestTerm::new(4, 20, 0);
+    term.print("some long long text");
+    term.assert_cursor_pos(19, 0, None, Some(0));
+
+    term.resize(TerminalSize {
+        rows: 4,
+        cols: 19,
+        ..Default::default()
+    });
+
+    term.assert_cursor_pos(
+        19,
+        0,
+        Some("a cursor parked at the wrap point belongs on the previous row"),
+        None,
+    );
+}
+
 /// UP-35 / upstream issue #6623: resizing the *primary* screen (no
 /// alt screen involved at all) after enough output has scrolled the
 /// screen should leave the cursor on the actual last line of output,

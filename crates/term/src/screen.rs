@@ -151,7 +151,25 @@ impl Screen {
                 // line and it won't resize with the line correctly.
                 // Put it back on the prior line. The cursor is now
                 // technically outside of the viewport width.
-                if adjusted_cursor.0 == 0 && adjusted_cursor.1 > 0 {
+                //
+                // This only applies when the cursor really did land in
+                // column zero *because its logical line wrapped* there
+                // (`num_lines > 0`, ie. its offset is a non-zero multiple
+                // of the new width): that is the position a terminal
+                // parks at the end of the previous row with the wrap
+                // pending, so reflow has to park it there too. Testing
+                // `adjusted_cursor.1 > 0` instead -- ie. merely "not on
+                // the first row of the screen" -- also caught the wholly
+                // ordinary cursor a plain newline leaves at the start of
+                // its own row, and yanked it up onto the end of the row
+                // above (and to `physical_cols`, one past the last valid
+                // column) on every widening resize. The next character
+                // the program printed then landed at the far right of the
+                // previous line and pushed the rest of its output a row
+                // down -- which is what garbled a `--start-conf` tab,
+                // whose startup commands are typed in immediately and so
+                // leave the shell mid-output when the window maximizes.
+                if num_lines > 0 && adjusted_cursor.0 == 0 && adjusted_cursor.1 > 0 {
                     if physical_cols < self.physical_cols {
                         // getting smaller: preserve its original position
                         // on the prior line
