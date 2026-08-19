@@ -72,6 +72,26 @@ impl TermWindow {
                 );
                 self.render_state.replace(render_state);
 
+                // The atlas this window's cached sprites were allocated
+                // from has just been replaced by the empty one that came
+                // with `RenderState::new`. Every other path that installs
+                // a different atlas (`recreate_texture_atlas`, called on
+                // font rescale and on `OutOfTextureSpace`) drops the
+                // caches that embed atlas coordinates; this one has to do
+                // it too, and it is the path that matters most because it
+                // is reached with the caches already full: the in-place
+                // renderer rebuild `finish_renderer_rebuild` performs
+                // after a render-thread hang or a wgpu device error keeps
+                // the window and all its panes alive, and with them every
+                // shaped line, `Rc<CachedGlyph>` and tab-bar
+                // `ComputedElement` pointing into the atlas that just went
+                // away. Without this, the window comes back drawing those
+                // stale coordinates against the new, empty atlas -- solid
+                // blocks where the text should be -- and only heals as the
+                // LFU caches evict entries. At first window creation the
+                // caches are empty, so this is a no-op there.
+                self.invalidate_atlas_dependent_caches();
+
                 // A working renderer is now installed, but -- unlike before
                 // task #425 -- the Windows `WM_ERASEBKGND` placeholder
                 // (task #330; see `WindowOps::clear_placeholder_

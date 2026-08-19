@@ -1021,7 +1021,27 @@ impl crate::TermWindow {
         }
     }
 
-    pub fn recreate_texture_atlas(&mut self, size: Option<usize>) -> anyhow::Result<()> {
+    /// Drops everything this window has cached that embeds glyph atlas
+    /// coordinates, so that the next frame re-shapes and re-allocates
+    /// against whatever atlas is current.
+    ///
+    /// Anything holding a `Sprite` is stale the moment the atlas it was
+    /// allocated from goes away: the sprite is a rectangle *into a
+    /// texture*, and drawing it against a different texture samples
+    /// whatever happens to live at those coordinates -- in practice solid
+    /// blocks of background, since a fresh atlas is empty. That is not
+    /// limited to the shape caches: `fancy_tab_bar` holds a whole
+    /// `ComputedElement` whose cells are `ElementCell::Sprite`/`Glyph`,
+    /// and the modal is the same.
+    ///
+    /// The caches keyed by `shape_generation` (`line_quad_cache`, the
+    /// retained per-row quads) are covered by bumping it; `shape_cache`
+    /// is keyed by text and font only, so it has to be cleared outright.
+    ///
+    /// Call this from every path that installs a different atlas --
+    /// including the ones that replace the whole `RenderState`, not just
+    /// the ones that resize the atlas in place.
+    pub(crate) fn invalidate_atlas_dependent_caches(&mut self) {
         // Reset frame signature on atlas resize - texture content changed,
         // so the previous frame is no longer comparable (task #450)
         self.last_frame_signature = None;
@@ -1030,6 +1050,12 @@ impl crate::TermWindow {
         self.line_to_ele_shape_cache.borrow_mut().clear();
         // Task #439: clear shape_hash_cache on texture atlas resize
         self.shape_hash_cache.borrow_mut().clear();
+        self.invalidate_fancy_tab_bar();
+        self.invalidate_modal();
+    }
+
+    pub fn recreate_texture_atlas(&mut self, size: Option<usize>) -> anyhow::Result<()> {
+        self.invalidate_atlas_dependent_caches();
         if let Some(render_state) = self.render_state.as_mut() {
             render_state.recreate_texture_atlas(&self.fonts, &self.render_metrics, size)?;
         }
