@@ -325,6 +325,35 @@ impl RenderThreadHandle {
         is_hung_given(&self.submit_started_at, threshold)
     }
 
+    /// Returns true if this window's render thread has *died* -- exited
+    /// `render_thread_loop` without anyone asking it to.
+    ///
+    /// This is a different failure from `render_thread_is_hung`, and it is
+    /// the one that used to be invisible. A panic inside a GPU call unwinds
+    /// the render thread and `std::thread` swallows it, so the process
+    /// survives with no thread left to turn `Frame` messages into pixels:
+    /// the window keeps pumping its message loop (Windows still reports it
+    /// as responding) and never paints again. Observed live -- ConPTY
+    /// window frozen for 17 minutes with a `Surface::present` panic as the
+    /// last line in its log and no render thread in the dump.
+    ///
+    /// It reads as *not* hung, and deliberately so: `ClearSubmitStartedAtOnExit`
+    /// clears `submit_started_at` while unwinding, precisely so a dead
+    /// thread stops being misreported as a stuck one (which used to make
+    /// the supervisor rebuild replacements in a loop). That fix left the
+    /// death itself with no signal at all, which is what this predicate
+    /// restores.
+    ///
+    /// The sentinel's last strong reference is dropped by the thread
+    /// closure strictly after `render_thread_loop` returns, so a zero
+    /// strong count means "that thread is finished", not merely "it is
+    /// unwinding". `window_destroyed` distinguishes the two ways it can
+    /// finish: `shutdown()` sets that flag *before* sending `Shutdown`, so
+    /// an orderly teardown is never reported as a death.
+    pub fn render_thread_has_died(&self) -> bool {
+        !self.window_destroyed.load(Ordering::Acquire) && self.teardown_sentinel.strong_count() == 0
+    }
+
     /// Type-erased `Weak` handle to this render thread's teardown sentinel
     /// (task #292), for `TermWindow::begin_renderer_rebuild` to stash
     /// alongside the retired WebGpu child HWND via
@@ -560,9 +589,49 @@ fn submit_one_frame(
     }
     // See `ClearSubmitStartedAtOnExit`'s doc comment: this clears
     // `submit_started_at` even if `webgpu.submit_frame` panics.
+    //
+    // And it can panic: wgpu's `Surface::present` reports failure by
+    // panicking rather than returning, and it is not routed through the
+    // uncaptured-error callback that `WebGpuState` installs for device
+    // errors. Observed live -- a window whose GPU ran out of memory logged
+    // `Present failed: Not enough memory resources (0x8007000E)` followed by
+    // a panic in `wgpu_core.rs`, and that was the last thing it ever logged:
+    // the panic unwound the render thread out of existence, leaving the
+    // window pumping its message loop forever with nobody to paint it.
+    //
+    // Catching it here keeps the thread alive so the frame is merely lost,
+    // which is the same outcome as any other failed submit, and lets
+    // `submit_one_frame` fall through to its normal error handling below.
+    // `render_thread_has_died` covers the case where a panic escapes some
+    // *other* call on this thread; this arm covers the one that is known to
+    // happen, and recovers from it without a whole renderer rebuild.
     let result = {
         let _clear_on_exit = ClearSubmitStartedAtOnExit(submit_started_at);
-        webgpu.submit_frame(frame)
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| webgpu.submit_frame(frame)))
+        {
+            Ok(result) => result,
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "non-string panic payload".to_string());
+                log::error!(
+                    "render thread: submit_frame panicked ({}); dropping this frame and \
+                     keeping the render thread alive",
+                    msg
+                );
+                metrics::counter!("gui.render_thread.submit_panic").increment(1);
+                // Reported as `Other` rather than `OutOfMemory`: the observed
+                // panic was an out-of-memory `present`, but nothing here can
+                // confirm that for the next one, and the real reason is in
+                // the log line above. `Other` lands in the same arm below as
+                // every non-`Lost`/`Outdated` variant, which signals the GUI
+                // thread to rebuild this window's renderer through the
+                // existing circuit breaker.
+                Err(wgpu::SurfaceError::Other)
+            }
+        }
     };
     if result.is_ok() && !*placeholder_cleared {
         // Task #407: this is the first frame this render thread has ever
@@ -632,17 +701,45 @@ fn submit_one_frame(
                     // reusing task #253's in-place rebuild (and its circuit
                     // breaker, so a persistently broken adapter that throws
                     // this on every frame doesn't loop-rebuild forever).
-                    let win = window.clone();
-                    let reason = format!(
-                        "this window's render thread hit a GPU surface error ({:?}) \
-                         other than the transient Lost/Outdated case",
-                        other
-                    );
-                    window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                        move |tw| {
-                            tw.handle_render_error_recovery(&win, &reason);
-                        },
-                    )));
+                    if !surface_error_needs_renderer_rebuild(&other) {
+                        // Out of memory is a *shortage*, not a broken device.
+                        // Answering it by tearing the renderer down and
+                        // building a new one is both unnecessary and the
+                        // single most dangerous thing available: rebuilding
+                        // calls `CreateSwapChainForHwnd`, and a crash dump
+                        // from this machine caught the GPU driver
+                        // dereferencing NULL inside exactly that call while
+                        // the system was still out of memory. The shortage
+                        // that made us rebuild is what made the rebuild
+                        // fatal.
+                        //
+                        // Drop the frame instead and ask for a repaint. If
+                        // memory frees up, the next frame simply works; if
+                        // the device really is broken, it will say so with
+                        // an error that does need a rebuild, or the
+                        // device-lost callback will.
+                        log::warn!(
+                            "render thread: dropping a frame after {:?}; not rebuilding \
+                             the renderer, since recreating a device/swapchain while out \
+                             of memory is how the driver gets pushed over",
+                            other
+                        );
+                        metrics::counter!("gui.render_thread.frame_dropped_out_of_memory")
+                            .increment(1);
+                        window.invalidate();
+                    } else {
+                        let win = window.clone();
+                        let reason = format!(
+                            "this window's render thread hit a GPU surface error ({:?}) \
+                             other than the transient Lost/Outdated case",
+                            other
+                        );
+                        window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                            move |tw| {
+                                tw.handle_render_error_recovery(&win, &reason);
+                            },
+                        )));
+                    }
                 }
             }
         }
@@ -656,6 +753,26 @@ fn submit_one_frame(
     if finish_in_flight_frame(in_flight, repaint_pending) {
         window.invalidate();
     }
+}
+
+/// Whether a surface error means the device/surface is genuinely broken and
+/// has to be rebuilt, or merely that this one frame could not be produced.
+///
+/// `OutOfMemory` is the interesting case, and it is deliberately *not* a
+/// rebuild. It says the system could not find memory right now, which says
+/// nothing about the device being usable a moment later -- and the recovery
+/// it used to trigger (drop the device and surface, create new ones) runs
+/// `CreateSwapChainForHwnd`, which is where a driver starved of memory is
+/// most likely to fail. That is not hypothetical: a crash dump from a
+/// machine running this code caught the GPU driver dereferencing NULL inside
+/// that call, moments after an out-of-memory submit had asked for a rebuild.
+/// Answering a shortage with the most allocation-hungry operation available
+/// turned a dropped frame into a lost window.
+///
+/// `Lost`/`Outdated` never reach here (handled earlier by reconfiguring).
+/// Everything else does describe a device in trouble, and still rebuilds.
+fn surface_error_needs_renderer_rebuild(err: &wgpu::SurfaceError) -> bool {
+    !matches!(err, wgpu::SurfaceError::OutOfMemory)
 }
 
 /// The message-dispatch loop shared by `render_thread_loop` and its unit
@@ -912,6 +1029,116 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         join_handle.join().expect("render thread panicked");
+    }
+
+    /// Builds a `RenderThreadHandle` around a caller-owned teardown sentinel,
+    /// with no GPU and no real thread. `spawn` cannot be used here (it needs
+    /// a `WebGpuState`, hence a GPU adapter), but every field the liveness
+    /// predicates read is plain shared state, so they can be exercised
+    /// directly. Returns the handle plus the sentinel's only strong
+    /// reference: dropping it is what "the render thread returned" looks
+    /// like to the handle.
+    fn handle_with_sentinel(window_destroyed: bool) -> (RenderThreadHandle, Arc<()>) {
+        let (tx, rx) = mpsc::channel();
+        // Keep the receiver alive; a disconnected channel is a different
+        // condition from the one under test.
+        std::mem::forget(rx);
+        let strong = Arc::new(());
+        let handle = RenderThreadHandle {
+            tx,
+            in_flight: Arc::new(AtomicBool::new(false)),
+            repaint_pending: Arc::new(AtomicBool::new(false)),
+            window_destroyed: Arc::new(AtomicBool::new(window_destroyed)),
+            submit_started_at: Arc::new(Mutex::new(None)),
+            teardown_sentinel: Arc::downgrade(&strong),
+        };
+        (handle, strong)
+    }
+
+    /// Running out of memory must not be answered by rebuilding the
+    /// renderer. The rebuild recreates the device and swapchain, and a crash
+    /// dump from this machine caught the GPU driver dereferencing NULL
+    /// inside `CreateSwapChainForHwnd` while the system was still short of
+    /// memory -- so the recovery destroyed the window that the dropped frame
+    /// would merely have flickered.
+    #[test]
+    fn out_of_memory_drops_a_frame_instead_of_rebuilding_the_renderer() {
+        assert!(
+            !surface_error_needs_renderer_rebuild(&wgpu::SurfaceError::OutOfMemory),
+            "an out-of-memory frame must not trigger device/swapchain recreation"
+        );
+    }
+
+    /// Everything that is not a shortage still describes a device in
+    /// trouble, and must keep triggering the rebuild it always did --
+    /// otherwise the narrowing above would quietly disable recovery
+    /// altogether.
+    #[test]
+    fn other_surface_errors_still_rebuild_the_renderer() {
+        for err in [
+            wgpu::SurfaceError::Timeout,
+            wgpu::SurfaceError::Other,
+            // Lost/Outdated are handled before this predicate is consulted,
+            // but if they ever reach it they must not be treated as benign.
+            wgpu::SurfaceError::Lost,
+            wgpu::SurfaceError::Outdated,
+        ] {
+            assert!(
+                surface_error_needs_renderer_rebuild(&err),
+                "{:?} must still be recovered from by rebuilding",
+                err
+            );
+        }
+    }
+
+    /// A render thread that unwound out of `render_thread_loop` -- the shape
+    /// a panic inside a wgpu call leaves behind -- must be reported as dead.
+    ///
+    /// This is the gap that let a window freeze silently for as long as it
+    /// was left open: the thread is gone, so it is *not* hung (
+    /// `ClearSubmitStartedAtOnExit` clears `submit_started_at` during the
+    /// unwind on purpose), and before `render_thread_has_died` existed the
+    /// supervisor consulted nothing else. It saw "not hung", re-armed its
+    /// timer, and the window never painted again while still pumping its
+    /// message loop.
+    #[test]
+    fn a_render_thread_that_exited_is_reported_as_dead_not_as_hung() {
+        let (handle, strong) = handle_with_sentinel(false);
+
+        assert!(
+            !handle.render_thread_has_died(),
+            "a live render thread still holds the sentinel"
+        );
+
+        // The thread returns: its closure drops the sentinel's only strong
+        // reference, strictly after `render_thread_loop` has returned.
+        drop(strong);
+
+        assert!(
+            handle.render_thread_has_died(),
+            "a render thread that has returned must be reported as dead"
+        );
+        assert!(
+            !handle.render_thread_is_hung(),
+            "test premise: a dead thread reads as not-hung, which is exactly \
+             why the supervisor needs the death signal as well"
+        );
+    }
+
+    /// The other way a render thread finishes is on request, and that one
+    /// must not be mistaken for a death -- otherwise closing a window would
+    /// have its supervisor try to rebuild the renderer on the way out.
+    /// `shutdown()` sets `window_destroyed` before sending `Shutdown`, which
+    /// is what makes the two distinguishable.
+    #[test]
+    fn an_orderly_shutdown_is_not_reported_as_a_death() {
+        let (handle, strong) = handle_with_sentinel(true);
+        drop(strong);
+
+        assert!(
+            !handle.render_thread_has_died(),
+            "a thread that exited after shutdown() asked it to is not a death"
+        );
     }
 
     /// Back-pressure bookkeeping test: a fake "in flight" frame slot backed

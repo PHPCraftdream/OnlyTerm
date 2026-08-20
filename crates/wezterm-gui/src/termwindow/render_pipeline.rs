@@ -619,23 +619,40 @@ impl TermWindow {
             // must be a no-op, not a double-rebuild or double-close.
             return;
         }
-        let hung = match self.render_thread.as_ref() {
-            Some(rt) => rt.render_thread_is_hung(),
+        // Two distinct failures, both fatal to this window's rendering and
+        // both recovered the same way. Hung: the thread is alive but stuck
+        // inside one GPU call. Died: it unwound out of `render_thread_loop`
+        // altogether -- a panic in a wgpu call is the observed cause -- and
+        // `std::thread` swallowed the panic, so the process lives on with
+        // nobody left to turn `Frame` messages into pixels. The second one
+        // reads as "not hung" by design (see `render_thread_has_died`), so
+        // supervising only `render_thread_is_hung` let a dead render thread
+        // freeze a window silently and indefinitely: the message loop keeps
+        // pumping, Windows keeps reporting the window as responding, and
+        // nothing ever repaints.
+        let (hung, died) = match self.render_thread.as_ref() {
+            Some(rt) => (rt.render_thread_is_hung(), rt.render_thread_has_died()),
             None => {
                 // Render thread is gone (e.g. window already tearing down);
                 // nothing left to supervise.
                 return;
             }
         };
-        if !hung {
+        if !hung && !died {
             self.schedule_render_thread_hang_check(window);
             return;
         }
 
+        let reason = if died {
+            "this window's render thread has exited unexpectedly (a panic inside a GPU \
+             call unwinds it, and nothing is left to paint this window)"
+        } else {
+            "this window's render thread appears stuck inside a GPU submit/reconfigure \
+             call (not the whole app -- just this window's GPU driver call)"
+        };
         self.attempt_renderer_rebuild_or_close(
             window,
-            "this window's render thread appears stuck inside a GPU submit/reconfigure \
-             call (not the whole app -- just this window's GPU driver call)",
+            reason,
             "this window's render thread has hung and been rebuilt",
             "gui.render_thread.window_renderer_rebuilt",
         );
@@ -752,7 +769,44 @@ impl TermWindow {
         );
         metrics::counter!(rebuilt_metric).increment(1);
 
-        self.begin_renderer_rebuild(window);
+        match rebuild_backoff_for_attempt(attempts_in_window) {
+            None => self.begin_renderer_rebuild(window),
+            Some(delay) => {
+                // Wait before touching the driver again. The reason this
+                // matters is not politeness: the first attempt usually fails
+                // because the system is momentarily out of memory, and
+                // creating a device/surface is exactly what a driver in that
+                // state handles worst. A crash dump from this machine caught
+                // the failure mode -- a NULL dereference inside
+                // `igd10iumd64.dll` while DXGI was building the D3D11 child
+                // device for a flip-model swapchain -- with the two rebuild
+                // attempts 107ms apart. The circuit breaker counts attempts
+                // but never spaced them, so a transient shortage was met with
+                // three immediate re-entries into the code that was failing
+                // because of it.
+                //
+                // Deferred through the same timer/notify path
+                // `schedule_render_thread_hang_check` uses, rather than a
+                // sleep: this runs on the GUI thread, and blocking it here
+                // would freeze every other window in the process.
+                log::warn!(
+                    "waiting {:?} before rebuild attempt {} so a transient GPU memory \
+                     shortage has a chance to clear before we ask the driver again",
+                    delay,
+                    attempts_in_window,
+                );
+                let deadline = Instant::now() + delay;
+                let window = window.clone();
+                promise::spawn::spawn(async move {
+                    Timer::at(deadline).await;
+                    let win = window.clone();
+                    window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                        tw.begin_renderer_rebuild(&win);
+                    })));
+                })
+                .detach();
+            }
+        }
     }
 
     /// The destructive fallback: kill this window's panes (and their child
@@ -820,17 +874,38 @@ impl TermWindow {
             rt.shutdown();
         }
 
-        // Step 2: drop the old GPU resources in the same order the
-        // `Destroyed` handler documents: render_state first (its Drop
-        // deletes programs/buffers/textures/glyph atlas via the context),
-        // then the device+surface (webgpu). The old `webgpu` Arc may still
-        // be referenced by the just-shutdown render thread until its
-        // `recv()` loop actually observes the disconnect, but that's fine --
-        // `Arc` keeps it alive until the last reference (here, or on that
-        // thread) drops it, and the render thread will never issue another
-        // GPU call against it once `window_destroyed` is set (see
-        // `RenderThreadHandle::shutdown`'s doc comment).
-        self.render_state.take();
+        // Step 2: retire the old GPU resources in the same order the
+        // `Destroyed` handler documents: render_state first, then the
+        // device+surface (webgpu) -- but neither is dropped synchronously
+        // here any more.
+        //
+        // We are in this function because this window's device/render
+        // thread was already judged unreliable: a hang, a device-lost
+        // event, or -- the case that motivated this -- a GPU driver being
+        // reinstalled out from under the process. Running `RenderState`'s
+        // ordinary `Drop` right now would call straight back into that same
+        // suspect driver to release its buffers/textures/glyph atlas,
+        // synchronously, on the GUI thread. Observed live: with the driver
+        // genuinely unavailable mid-reinstall, that call never returned --
+        // it froze the GUI message loop for the rest of the process's life,
+        // until the user killed it by hand. Windows' own AppHang mechanism
+        // only *reports* a stuck message loop; it does not recover one.
+        //
+        // `RenderState` holds `Rc`/`RefCell` internally (its glyph
+        // cache/layers are shared with the rest of the GUI-thread-only
+        // rendering code), so it is `!Send` and cannot be hosted on a
+        // background thread for a clean deferred drop. The device it was
+        // built against is being discarded here regardless -- a fresh one
+        // is what the rest of this function goes on to build -- so once the
+        // OS/driver finishes tearing down (or replacing) that device, its
+        // own device-removed cleanup reclaims whatever GPU memory this
+        // `RenderState` still referenced, whether or not wgpu's `Drop` ever
+        // ran for it. `mem::forget` trades a resource release we can no
+        // longer safely attempt for a GUI thread that can no longer hang on
+        // it.
+        if let Some(render_state) = self.render_state.take() {
+            std::mem::forget(render_state);
+        }
         // Mark the outgoing device stale (task #267) before dropping it: its
         // `set_device_lost_callback` closure keeps living (wgpu gives no way
         // to unregister it) for as long as the underlying `wgpu::Device`
@@ -840,6 +915,21 @@ impl TermWindow {
         // perfectly healthy device that replaces it below.
         if let Some(webgpu) = self.webgpu.take() {
             webgpu.mark_stale();
+            // Unlike `RenderState` above, `Arc<WebGpuState>` holds no
+            // `Rc`/`RefCell` and is `Send`, so its eventual drop can be
+            // deferred to a background thread instead of risking the same
+            // suspect-driver call on the GUI thread. This is usually a
+            // no-op: per `old_webgpu_weak`'s comment above, the
+            // just-shutdown render thread typically still holds its own
+            // clone, so this is rarely the last strong reference and this
+            // thread's only job is decrementing a refcount. It matters in
+            // the edge case where that render thread had already exited
+            // (e.g. a rebuild-after-failed-rebuild), where this would
+            // otherwise be the last reference and run the real teardown.
+            std::thread::Builder::new()
+                .name("webgpu-drop".to_string())
+                .spawn(move || drop(webgpu))
+                .ok();
         }
 
         let window_for_async = window.clone();
@@ -1822,5 +1912,91 @@ impl TermWindow {
                 self.selection(pane.pane_id()).seqno = pane.get_current_seqno();
             }
         }
+    }
+}
+
+/// How long to wait before the `attempt`-th in-place renderer rebuild of the
+/// current episode (1-based, matching the number this window has recorded in
+/// `rebuild_attempts`).
+///
+/// The first attempt never waits: the common case is a one-off driver stall,
+/// and delaying its recovery would show the user a frozen window for no
+/// reason. Every attempt after that follows one that just failed, and the
+/// reason it failed is usually that the machine is out of memory right now --
+/// so re-entering device/surface creation immediately walks straight back
+/// into it. Spacing them lets the shortage clear, and bounds how often we
+/// hand a driver in that state the one call it is worst at.
+///
+/// Kept as a free function so the schedule can be asserted without a
+/// `TermWindow`, a GPU or a window.
+fn rebuild_backoff_for_attempt(attempt: usize) -> Option<Duration> {
+    match attempt {
+        0 | 1 => None,
+        2 => Some(Duration::from_millis(250)),
+        _ => Some(Duration::from_millis(1000)),
+    }
+}
+
+#[cfg(test)]
+mod render_state_send_bound_tests {
+    use crate::termwindow::webgpu::WebGpuState;
+    use std::sync::Arc;
+
+    fn assert_send<T: Send>() {}
+
+    /// `Arc<WebGpuState>` must stay `Send` for the background-thread drop in
+    /// `begin_renderer_rebuild`'s Step 2 to compile at all -- if this stops
+    /// compiling, that drop path needs to change to something else that
+    /// still keeps the suspect-driver call off the GUI thread, not just
+    /// have this assertion deleted.
+    ///
+    /// The other half of Step 2's reasoning -- `RenderState` must stay
+    /// `!Send`, which is why it is `mem::forget`-ten there instead of
+    /// following this same background-thread path -- has no equivalent
+    /// test: asserting "does not implement Send" would need to fail to
+    /// *compile*, which a `#[test]` cannot express without a compile-fail
+    /// harness this crate doesn't otherwise depend on. That half of the
+    /// invariant is stated in `begin_renderer_rebuild`'s own comments
+    /// instead; if `RenderState` ever becomes `Send` (e.g. its internal
+    /// `Rc`/`RefCell` replaced with `Arc`/`Mutex`), its `mem::forget` should
+    /// become a background drop like this one.
+    #[test]
+    fn webgpu_state_arc_is_send() {
+        assert_send::<Arc<WebGpuState>>();
+    }
+}
+
+#[cfg(test)]
+mod rebuild_backoff_tests {
+    use super::rebuild_backoff_for_attempt;
+    use std::time::Duration;
+
+    /// The first attempt of an episode must be immediate: a single transient
+    /// driver stall is the common case, and making the user stare at a frozen
+    /// window before recovering it would be a regression in its own right.
+    #[test]
+    fn the_first_rebuild_attempt_is_not_delayed() {
+        assert_eq!(rebuild_backoff_for_attempt(1), None);
+    }
+
+    /// Retries must be spaced. A crash dump from this machine showed two
+    /// attempts 107ms apart, the second one dying inside the GPU driver while
+    /// it was still out of memory from the first.
+    #[test]
+    fn retries_are_spaced_and_do_not_shrink() {
+        let second = rebuild_backoff_for_attempt(2).expect("the second attempt must wait");
+        let third = rebuild_backoff_for_attempt(3).expect("the third attempt must wait");
+
+        assert!(
+            second >= Duration::from_millis(100),
+            "a retry delay shorter than the 107ms gap that crashed is no delay at all, got {:?}",
+            second
+        );
+        assert!(
+            third >= second,
+            "backoff must not shrink as attempts pile up: attempt 2 waits {:?}, attempt 3 waits {:?}",
+            second,
+            third
+        );
     }
 }
