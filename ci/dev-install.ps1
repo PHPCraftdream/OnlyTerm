@@ -166,33 +166,85 @@ if (-not $SkipBuild) {
 #    delete failure here is expected and not an error -- it'll be retried on
 #    the next install.
 # ---------------------------------------------------------------------------
+#    A binary and its .pdb are retired *together*, under one shared suffix.
+#    That pairing is the whole point: a crash dump names the image it was
+#    taken from, and the debugger then needs that build's symbols, not the
+#    newest ones. Retiring them independently (which is what happens if each
+#    file is hot-swapped on its own) quietly loses the symbols, because the
+#    two files have opposite locking behaviour -- a running OnlyTerm keeps
+#    its .exe mapped, so the old .exe survives every install, while nothing
+#    holds a .pdb open, so the old .pdb is deleted and replaced each time.
+#    The result is a directory full of retired binaries with symbols for
+#    only the last one or two of them, discovered the hard way while trying
+#    to read a dump from a process that had been running for three days.
 function Install-FileHotSwap {
     param(
         [Parameter(Mandatory)][string]$Source,
-        [Parameter(Mandatory)][string]$Destination
+        [Parameter(Mandatory)][string]$Destination,
+        # Optional symbol file to retire under the same suffix as, and
+        # install alongside, $Destination.
+        [string]$SymbolSource,
+        [string]$SymbolDestination
     )
 
-    $oldPath = "$Destination.old"
-
-    # Best-effort cleanup of a leftover ".old" from a prior install whose
-    # owning process has since exited. Not fatal if it's still locked.
-    if (Test-Path $oldPath) {
-        Remove-Item -Force -ErrorAction SilentlyContinue $oldPath
+    $suffix = $null
+    if (Test-Path $Destination) {
+        # Prefer the plain ".old" so the common case stays readable; fall
+        # back to a unique suffix once ".old" is taken (which it will be as
+        # soon as a running process has pinned one).
+        $suffix = ".old"
+        if (Test-Path "$Destination$suffix") {
+            $suffix = ".old.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+        }
+        Rename-Item -Force -Path $Destination -NewName (Split-Path -Leaf "$Destination$suffix")
     }
 
-    if (Test-Path $Destination) {
-        # If a ".old" from *this* run's own cleanup attempt above is still
-        # around (still locked by a running process), Rename-Item would
-        # collide with it -- fall back to a unique name in that rare case so
-        # the hot-swap still succeeds rather than aborting the whole install.
-        $renameTarget = $oldPath
-        if (Test-Path $renameTarget) {
-            $renameTarget = "$Destination.old.$([guid]::NewGuid().ToString('N').Substring(0, 8))"
-        }
-        Rename-Item -Force -Path $Destination -NewName (Split-Path -Leaf $renameTarget)
+    if ($SymbolDestination -and $suffix -and (Test-Path $SymbolDestination)) {
+        $retiredSymbol = "$SymbolDestination$suffix"
+        Remove-Item -Force -ErrorAction SilentlyContinue $retiredSymbol
+        Rename-Item -Force -Path $SymbolDestination -NewName (Split-Path -Leaf $retiredSymbol)
     }
 
     Copy-Item -Force $Source $Destination
+    if ($SymbolSource -and $SymbolDestination) {
+        Copy-Item -Force $SymbolSource $SymbolDestination
+    }
+}
+
+# Retired generations are ~50 MB of binary plus ~250 MB of symbols each, so
+# they cannot simply accumulate. Prune oldest-first, but only ones that are
+# genuinely unused: a retired .exe still mapped by a running OnlyTerm cannot
+# be deleted, and that failure is exactly the signal to keep it (and its
+# symbols) around. $Keep generations are kept beyond that, so a dump written
+# shortly before an install can still be read afterwards.
+function Remove-StaleRetiredGenerations {
+    param(
+        [Parameter(Mandatory)][string]$InstallDir,
+        [Parameter(Mandatory)][string]$BinaryName,
+        [string]$SymbolName,
+        [int]$Keep = 5
+    )
+
+    $retired = @(Get-ChildItem -Path $InstallDir -Filter "$BinaryName.old*" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending)
+    if ($retired.Count -le $Keep) {
+        return 0
+    }
+
+    $removed = 0
+    foreach ($old in ($retired | Select-Object -Skip $Keep)) {
+        $suffix = $old.Name.Substring($BinaryName.Length)
+        Remove-Item -Force -ErrorAction SilentlyContinue $old.FullName
+        if (Test-Path $old.FullName) {
+            # Still mapped by a live process: keep its symbols too.
+            continue
+        }
+        $removed++
+        if ($SymbolName) {
+            Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $InstallDir "$SymbolName$suffix")
+        }
+    }
+    return $removed
 }
 
 # ---------------------------------------------------------------------------
@@ -210,10 +262,14 @@ $requiredFiles = @(
     "onlyterm-mux-server.exe",
     "conpty.dll", "OpenConsole.exe", "strip-ansi-escapes.exe"
 )
-# Debug symbols: nice for reading crash dumps, but not fatal if absent.
-$optionalFiles = @(
-    "onlyterm.pdb", "onlyterm_gui.pdb", "onlyterm_mux_server.pdb"
-)
+# Debug symbols, keyed by the binary they belong to so that the two are
+# retired together (see Install-FileHotSwap). Missing symbols are a warning,
+# not an error -- the install is still usable, just not debuggable.
+$symbolFor = @{
+    "onlyterm.exe"            = "onlyterm.pdb"
+    "onlyterm-gui.exe"        = "onlyterm_gui.pdb"
+    "onlyterm-mux-server.exe" = "onlyterm_mux_server.pdb"
+}
 
 $missingRequired = $requiredFiles | Where-Object { -not (Test-Path (Join-Path $ReleaseDir $_)) }
 if ($missingRequired) {
@@ -234,21 +290,37 @@ New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Write-Host "`n==> Hot-swapping binaries into $InstallDir (running OnlyTerm processes are left running)" -ForegroundColor Cyan
 $copied = 0
 foreach ($f in $requiredFiles) {
-    Install-FileHotSwap -Source (Join-Path $ReleaseDir $f) -Destination (Join-Path $InstallDir $f)
-    Write-Host "    $f"
-    $copied++
-}
-foreach ($f in $optionalFiles) {
-    $src = Join-Path $ReleaseDir $f
-    if (Test-Path $src) {
-        Install-FileHotSwap -Source $src -Destination (Join-Path $InstallDir $f)
+    $installArgs = @{
+        Source      = (Join-Path $ReleaseDir $f)
+        Destination = (Join-Path $InstallDir $f)
+    }
+    $pdb = $symbolFor[$f]
+    if ($pdb) {
+        if (Test-Path (Join-Path $ReleaseDir $pdb)) {
+            $installArgs.SymbolSource = (Join-Path $ReleaseDir $pdb)
+            $installArgs.SymbolDestination = (Join-Path $InstallDir $pdb)
+        } else {
+            Write-Warning "    $pdb not found -- installing $f without symbols; a crash dump from this build will not be readable"
+        }
+    }
+    Install-FileHotSwap @installArgs
+    if ($installArgs.SymbolSource) {
+        Write-Host "    $f (+ $pdb)"
+        $copied += 2
+    } else {
         Write-Host "    $f"
         $copied++
-    } else {
-        Write-Warning "    $f not found -- skipped (debug symbols only)"
     }
 }
 Write-Host "    ($copied file(s) copied)"
+
+$pruned = 0
+foreach ($f in $symbolFor.Keys) {
+    $pruned += Remove-StaleRetiredGenerations -InstallDir $InstallDir -BinaryName $f -SymbolName $symbolFor[$f]
+}
+if ($pruned -gt 0) {
+    Write-Host "    (pruned $pruned retired generation(s) no longer mapped by any running process)"
+}
 
 # ---------------------------------------------------------------------------
 # 4. Make sure WER LocalDumps is configured for onlyterm-gui.exe, so a crash
