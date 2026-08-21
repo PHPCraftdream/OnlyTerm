@@ -1,0 +1,39 @@
+[package]
+name = "wezterm-gpu-render"
+version = "0.1.0"
+authors = ["Wez Furlong <wez@wezfurlong.org>"]
+edition = "2018"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow.workspace = true
+bytemuck.workspace = true
+config.workspace = true
+filedescriptor.workspace = true
+futures.workspace = true
+log.workspace = true
+metrics.workspace = true
+parking_lot.workspace = true
+promise.workspace = true
+smol.workspace = true
+wezterm-client.workspace = true
+wgpu.workspace = true
+window.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winapi = { workspace = true, features = [
+    "libloaderapi",
+    "winuser",
+] }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_DirectComposition",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

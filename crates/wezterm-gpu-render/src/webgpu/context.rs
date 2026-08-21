@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::GpuRecoveryNotifier;
 use config::{ConfigHandle, WebGpuPowerPreference};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -7,20 +8,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 use wgpu::util::DeviceExt;
 use window::raw_window_handle::RawWindowHandle;
-use window::{Dimensions, Window, WindowOps};
+use window::Dimensions;
 
 /// A subscriber for device-lost events.
 ///
 /// Each window maintains a weak reference to its own `is_current` flag
 /// (which is set to false when the window's WebGpuState is abandoned) and
-/// a cloned Window handle that can receive recovery notifications via
-/// `Window::notify`.
+/// a recovery callback supplied by the embedder (see `on_gpu_recovery`).
 struct DeviceLostSubscriber {
     /// Weak reference to the window's `is_current` flag. If upgrade fails,
     /// the window has been dropped and this entry should be pruned.
     is_current: Weak<AtomicBool>,
-    /// Cloned Window handle for sending recovery notifications.
-    window: Window,
+    /// Recovery callback supplied by the embedder at registration time (see
+    /// `register_device_lost_subscriber`), already capturing the window it
+    /// must notify -- the same decoupling `host_process_backend::Shared`'s
+    /// `invalidate`/`clear_placeholder_background` callbacks use, so this
+    /// crate never needs to know about `TermWindow`/`TermWindowNotif`.
+    /// Receives the human-readable reason message for the recovery.
+    on_gpu_recovery: GpuRecoveryNotifier,
 }
 
 /// Whether a `DeviceLostSubscriber` should still be notified (and kept in
@@ -83,17 +88,11 @@ fn install_device_lost_callback(
                 reason,
                 message
             );
-            let win = subscriber.window.clone();
-            let win2 = win.clone();
             let reason_msg = format!(
                 "this window's wgpu device was lost ({:?}): {}",
                 reason, message
             );
-            win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                move |tw| {
-                    tw.handle_render_error_recovery(&win2, &reason_msg);
-                },
-            )));
+            (subscriber.on_gpu_recovery)(&reason_msg);
             alive_subscribers.push(subscriber);
         }
         *guard = alive_subscribers;
@@ -146,14 +145,8 @@ fn install_uncaptured_error_callback(
             if !subscriber_is_alive(&subscriber.is_current) {
                 continue;
             }
-            let win = subscriber.window.clone();
-            let win2 = win.clone();
             let reason_msg = format!("this window's wgpu context reported an error: {err}");
-            win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                move |tw| {
-                    tw.handle_render_error_recovery(&win2, &reason_msg);
-                },
-            )));
+            (subscriber.on_gpu_recovery)(&reason_msg);
             alive_subscribers.push(subscriber);
         }
         *guard = alive_subscribers;
@@ -245,8 +238,8 @@ pub struct ProcessGpuContext {
     /// so we cache pipelines per format rather than building one unconditionally.
     pipeline_cache: Mutex<HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>>,
     /// Subscribers to device-lost events. Each entry holds a weak reference
-    /// to a window's `is_current` flag and a cloned Window handle. When the
-    /// device is lost, the callback iterates this list and notifies all still-
+    /// to a window's `is_current` flag and that window's recovery callback.
+    /// When the device is lost, the callback iterates this list and notifies all still-
     /// current windows (skipping dead entries where `is_current` upgrade fails).
     /// Wrapped in Arc so the device-lost callback can access it.
     device_lost_subscribers: Arc<Mutex<Vec<DeviceLostSubscriber>>>,
@@ -507,7 +500,7 @@ impl ProcessGpuContext {
 
         let queue = Arc::new(queue);
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("../../shader.wgsl"));
+        let shader = device.create_shader_module(wgpu::include_wgsl!("../shader.wgsl"));
 
         let shader_uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -608,14 +601,18 @@ impl ProcessGpuContext {
     /// Register a new window as a subscriber to device-lost events.
     ///
     /// When the shared device is lost, the callback will notify all still-
-    /// current windows by calling `Window::notify` with a recovery action.
+    /// current windows via their registered `on_gpu_recovery` callback.
     /// Windows that have been abandoned (their `is_current` flag is false)
     /// or dropped (weak reference upgrade fails) are skipped and their
     /// entries are pruned from the registry.
-    pub fn register_device_lost_subscriber(&self, window: Window, is_current: Arc<AtomicBool>) {
+    pub fn register_device_lost_subscriber(
+        &self,
+        is_current: Arc<AtomicBool>,
+        on_gpu_recovery: GpuRecoveryNotifier,
+    ) {
         let subscriber = DeviceLostSubscriber {
-            window,
             is_current: Arc::downgrade(&is_current),
+            on_gpu_recovery,
         };
         let mut subscribers = self.device_lost_subscribers.lock();
         // Prune dead entries here too, not just in the device-lost callback:

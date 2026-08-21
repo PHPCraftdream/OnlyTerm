@@ -37,7 +37,7 @@
 //! goes through `log::` as usual, which writes to this process's own per-PID
 //! log file, not stdout.
 
-use crate::termwindow::webgpu::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
+use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
 use config::ConfigHandle;
 use std::io::{self, Write};
 use window::bitmaps::Texture2d;

@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::GpuRecoveryNotifier;
 use anyhow::anyhow;
 use config::ConfigHandle;
 use std::sync::Arc;
@@ -103,6 +104,7 @@ impl WebGpuState {
         window: &Window,
         dimensions: Dimensions,
         config: &ConfigHandle,
+        on_gpu_recovery: GpuRecoveryNotifier,
     ) -> anyhow::Result<Self> {
         // On Windows, target the dedicated WebGpu child HWND (see
         // `Window::webgpu_child_hwnd`/task #252) instead of the top-level
@@ -130,7 +132,7 @@ impl WebGpuState {
         // Register this window as a subscriber to device-lost events.
         // The shared ProcessGpuContext has exactly one device-lost callback
         // that fans out to all still-current windows via the subscriber registry.
-        context.register_device_lost_subscriber(window.clone(), Arc::clone(&is_current));
+        context.register_device_lost_subscriber(Arc::clone(&is_current), on_gpu_recovery);
 
         Ok(Self {
             context,
@@ -152,10 +154,13 @@ impl WebGpuState {
     /// Registers for device-lost notifications the same way `new` does: if
     /// the shared device is lost, this window still needs its atlas
     /// rebuilt, even though it has no surface to reconfigure.
-    pub async fn new_device_only(window: &Window, config: &ConfigHandle) -> anyhow::Result<Self> {
+    pub async fn new_device_only(
+        config: &ConfigHandle,
+        on_gpu_recovery: GpuRecoveryNotifier,
+    ) -> anyhow::Result<Self> {
         let context = ProcessGpuContext::get_or_init(config).await?;
         let is_current = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        context.register_device_lost_subscriber(window.clone(), Arc::clone(&is_current));
+        context.register_device_lost_subscriber(Arc::clone(&is_current), on_gpu_recovery);
         Ok(Self {
             context,
             surface: None,

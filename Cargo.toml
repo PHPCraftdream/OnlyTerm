@@ -10,6 +10,7 @@ members = [
   "crates/wezterm-escape-parser",
   "crates/wezterm-dynamic",
   "crates/wezterm-elevated-transport",
+  "crates/wezterm-gpu-render",
   "crates/wezterm-gui",
   "crates/wezterm-mux-server",
   "crates/wezterm-open-url",
@@ -223,6 +224,7 @@ wezterm-dynamic-derive = { version="0.1.1", path="crates/wezterm-dynamic/derive"
 wezterm-elevated-transport = { path = "crates/wezterm-elevated-transport" }
 wezterm-escape-parser = { version="0.1.0", path="crates/wezterm-escape-parser" }
 wezterm-font = { path = "crates/wezterm-font" }
+wezterm-gpu-render = { path = "crates/wezterm-gpu-render" }
 wezterm-gui-subcommands = { path = "crates/wezterm-gui-subcommands" }
 wezterm-input-types = { version="0.1", path = "crates/wezterm-input-types", default-features=false }
 wezterm-mux-server-impl = { path = "crates/wezterm-mux-server-impl" }

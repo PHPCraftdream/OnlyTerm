@@ -17,7 +17,6 @@ use crate::termwindow::render::paint::AllowImage;
 use crate::termwindow::render::{
     LineQuadCacheKey, LineQuadCacheValue, LineToEleShapeCacheKey, LineToElementShapeItem,
 };
-use crate::termwindow::webgpu::WebGpuState;
 use ::wezterm_term::input::{ClickPosition, MouseButton as TMB};
 use ::window::*;
 use config::keyassignment::KeyAssignment;
@@ -39,6 +38,7 @@ use termwiz::hyperlink::Hyperlink;
 use termwiz::surface::SequenceNo;
 use wezterm_dynamic::Value;
 use wezterm_font::FontConfiguration;
+use wezterm_gpu_render::WebGpuState;
 use wezterm_term::color::ColorPalette;
 use wezterm_term::input::LastMouseClick;
 use wezterm_term::{Progress, StableRowIndex, TerminalSize};
@@ -57,11 +57,9 @@ pub mod paneselect;
 mod prevcursor;
 pub mod render;
 mod render_pipeline;
-pub(crate) use render_pipeline::rebuild_backoff_for_attempt;
 pub mod resize;
 mod selection;
 pub mod spawn;
-pub mod webgpu;
 mod window_handler;
 use prevcursor::PrevCursorPos;
 
@@ -482,7 +480,7 @@ pub struct TermWindow {
     // `Box<dyn RenderBackend>`, not the concrete `RenderThreadHandle`: see
     // that trait's doc comment for why every call site here goes through it
     // instead of the concrete type.
-    render_thread: Option<Box<dyn crate::renderthread::RenderBackend>>,
+    render_thread: Option<Box<dyn wezterm_gpu_render::RenderBackend>>,
     /// One-shot guard for the render-thread hang supervisor (see
     /// `schedule_render_thread_hang_check`): set to `true` the moment this
     /// window has been torn down for an observed render-thread hang, so a

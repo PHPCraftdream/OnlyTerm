@@ -1,8 +1,10 @@
 use crate::quad::QuadInstance;
-use crate::termwindow::webgpu::{GpuDraw, GpuFrame, ShaderUniform};
 use crate::termwindow::RenderFrame;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::time::Instant;
+use wezterm_gpu_render::{
+    wire, FrameForm, GpuDraw, GpuFrame, ShaderUniform, SubmittableFrame, WebGpuTexture,
+};
 use window::WindowOps;
 
 /// Computes a frame signature from its constituent parts.
@@ -298,23 +300,23 @@ impl crate::TermWindow {
         metrics::counter!("gui.frame.submitted").increment(1);
 
         // Ask the backend which frame shape it wants *before* building
-        // anything -- see `crate::renderthread::FrameForm`'s doc comment.
+        // anything -- see `wezterm_gpu_render::FrameForm`'s doc comment.
         let frame_form = self
             .render_thread
             .as_ref()
             .map(|rt| rt.frame_form())
-            .unwrap_or(crate::renderthread::FrameForm::InProcess);
+            .unwrap_or(FrameForm::InProcess);
 
         match frame_form {
-            crate::renderthread::FrameForm::InProcess => {
+            FrameForm::InProcess => {
                 let frame = self.build_webgpu_frame(uniform)?;
                 if let Some(rt) = self.render_thread.as_ref() {
-                    rt.send_frame(crate::renderthread::SubmittableFrame::InProcess(frame));
+                    rt.send_frame(SubmittableFrame::InProcess(frame));
                 } else {
                     self.webgpu.as_ref().unwrap().submit_frame(frame)?;
                 }
             }
-            crate::renderthread::FrameForm::Wire { full_resync } => {
+            FrameForm::Wire { full_resync } => {
                 let frame = self.build_wire_frame(full_resync, uniform)?;
                 // A `Wire` frame form only ever comes from a real
                 // `render_thread` (there is no synchronous host-process
@@ -322,7 +324,7 @@ impl crate::TermWindow {
                 self.render_thread
                     .as_ref()
                     .expect("FrameForm::Wire only comes from a render_thread-backed RenderBackend")
-                    .send_frame(crate::renderthread::SubmittableFrame::Wire(frame));
+                    .send_frame(SubmittableFrame::Wire(frame));
             }
         }
         Ok(())
@@ -390,8 +392,6 @@ impl crate::TermWindow {
     }
 
     fn build_webgpu_frame(&mut self, uniform: ShaderUniform) -> anyhow::Result<GpuFrame> {
-        use crate::termwindow::webgpu::WebGpuTexture;
-
         let render_state = self.render_state.as_ref().unwrap();
 
         let tex = render_state.glyph_cache.borrow().atlas.texture();
@@ -466,10 +466,7 @@ impl crate::TermWindow {
         &mut self,
         full_resync: bool,
         uniform: ShaderUniform,
-    ) -> anyhow::Result<crate::termwindow::webgpu::wire::WireFrame> {
-        use crate::termwindow::webgpu::wire::WireFrame;
-        use crate::termwindow::webgpu::WebGpuTexture;
-
+    ) -> anyhow::Result<wire::WireFrame> {
         let render_state = self.render_state.as_ref().unwrap();
 
         let atlas_rc = render_state.glyph_cache.borrow().atlas.texture();
@@ -514,7 +511,7 @@ impl crate::TermWindow {
             }
         }
 
-        Ok(WireFrame {
+        Ok(wire::WireFrame {
             uniform,
             draws,
             atlas_reset,

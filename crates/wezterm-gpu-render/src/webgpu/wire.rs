@@ -34,7 +34,7 @@
 //! this child (or its replacement) to attach to a new surface generation.
 
 use crate::quad::QuadInstance;
-use crate::termwindow::webgpu::ShaderUniform;
+use crate::ShaderUniform;
 use std::io::{self, Read, Write};
 
 #[repr(u32)]

@@ -25,13 +25,14 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use wezterm_gpu_render::{FrameForm, GpuFrame, RenderBackend, SubmittableFrame, WebGpuState};
 
 /// A message sent from the GUI thread to a window's dedicated render
 /// thread.
 pub enum RenderMsg {
     /// A fully built frame ready to submit to the GPU. The render thread
     /// calls `WebGpuState::submit_frame` with this.
-    Frame(crate::termwindow::webgpu::GpuFrame),
+    Frame(GpuFrame),
     /// A resize/reconfigure request. The render thread calls
     /// `WebGpuState::resize` (i.e. `surface.configure`) with this; see
     /// `dispatch_loop` for how a run of back-to-back `Resize` messages gets
@@ -47,7 +48,7 @@ pub enum RenderMsg {
 /// actually submit frames.
 pub struct RenderThreadSeed {
     pub window: ::window::Window,
-    pub webgpu: std::sync::Arc<crate::termwindow::webgpu::WebGpuState>,
+    pub webgpu: std::sync::Arc<WebGpuState>,
     pub rx: std::sync::mpsc::Receiver<RenderMsg>,
     /// True while a frame has been sent to the thread and hasn't finished
     /// submitting yet. Shared with `RenderThreadHandle` (same `Arc`), which
@@ -79,124 +80,6 @@ pub struct RenderThreadSeed {
     /// per-window supervisor (task #223) whether this window's render
     /// thread is currently stuck.
     pub submit_started_at: Arc<Mutex<Option<Instant>>>,
-}
-
-/// Which shape of frame a `RenderBackend` wants from its caller, and
-/// whether that frame must be complete rather than incremental.
-///
-/// Answered by `frame_form()` *before* the caller builds anything, so an
-/// `InProcess`-shaped backend never pays for a `Wire` frame's CPU-side work
-/// (and vice versa) only to throw it away -- see `render/draw.rs`'s frame
-/// dispatch, which asks this first and only then calls the matching
-/// `build_*_frame`.
-pub enum FrameForm {
-    /// Build a `GpuFrame` the ordinary way (`build_webgpu_frame`).
-    InProcess,
-    /// Build a `wire::WireFrame` (`build_wire_frame`) instead -- this
-    /// backend submits across a process boundary and cannot accept live
-    /// `wgpu::Buffer`/`wgpu::Texture` handles tied to the caller's own
-    /// device. `full_resync: true` means this backend just (re)attached to a
-    /// fresh child (first attach, or a post-respawn reattach) whose atlas
-    /// mirror is empty regardless of whether the real atlas's identity
-    /// changed -- the caller must force `atlas_reset` on this build even if
-    /// its own atlas-identity comparison says nothing changed.
-    Wire { full_resync: bool },
-}
-
-/// A built frame ready to hand to `RenderBackend::send_frame`, in whichever
-/// shape that backend's `frame_form()` asked for.
-pub enum SubmittableFrame {
-    InProcess(crate::termwindow::webgpu::GpuFrame),
-    Wire(crate::termwindow::webgpu::wire::WireFrame),
-}
-
-/// Whatever produces pixels for one window's GPU surface, decoupled from
-/// *how* it does that.
-///
-/// Two implementations: `RenderThreadHandle` (in-process, sharing this
-/// window's process-wide `ProcessGpuContext` -- see
-/// `termwindow::webgpu::context`) and `HostProcessBackend` (task #651,
-/// per-window, a dedicated `--gpu-tab-host` child process; see
-/// docs/plans/2026-08-21-per-tab-gpu-process-isolation.md and the `@ox`
-/// architecture review that settled per-window granularity with silent
-/// respawn-in-place over per-tab or a crash-visible epitaph screen).
-/// `TermWindow`/`render_pipeline.rs` talk only to this trait, never to a
-/// concrete implementation directly, so the config-selected backend
-/// (`webgpu_engine`, task #646) can be swapped in behind it without
-/// touching any call site here -- the same shape `per_tab_process_isolation`
-/// already uses for pty/shell isolation, applied to GPU rendering instead.
-///
-/// Deliberately narrow: CPU-side frame *building* (`RenderState`,
-/// `GlyphCache`, quad construction in `box_model.rs`) stays entirely in the
-/// GUI process in every variant. None of the three crashes diagnosed this
-/// session happened there -- all three were inside `Surface::configure`/
-/// `Surface::present`/device creation, which is exactly what a
-/// `RenderBackend` covers: taking an already-built frame and getting it on
-/// screen.
-pub trait RenderBackend {
-    /// Which frame shape (and whether it must be a full resync) this
-    /// backend wants built for its next `send_frame` call. `RenderThreadHandle`
-    /// always answers `FrameForm::InProcess`.
-    fn frame_form(&self) -> FrameForm;
-    /// Whether this backend needs every write to the window's glyph atlas
-    /// recorded (`WebGpuTexture::enable_mirroring`) so that it can be
-    /// replayed into a mirror living somewhere this process's own
-    /// `wgpu::Texture` cannot reach.
-    ///
-    /// `true` only for `HostProcessBackend`, whose child process renders
-    /// against its own device and therefore its own copy of the atlas.
-    ///
-    /// This has to be a separate question from `frame_form()`, asked before
-    /// `RenderState::new` builds the atlas rather than derived from the
-    /// first frame: `UtilSprites::new` writes the util sprites -- including
-    /// `white_space`, the texel every glyph/underline/cursor quad samples --
-    /// during atlas construction, and mirroring switched on any later misses
-    /// them permanently. The child then draws those quads with alpha 0,
-    /// producing a window whose solid-color backgrounds are correct and
-    /// whose text is entirely absent.
-    fn wants_atlas_mirroring(&self) -> bool {
-        false
-    }
-    /// Send a resize/reconfigure request. See `RenderThreadHandle::send_resize`.
-    fn send_resize(&self, dims: ::window::Dimensions);
-    /// Send a frame to be rendered, built in whichever shape `frame_form()`
-    /// asked for. See `RenderThreadHandle::send_frame`.
-    fn send_frame(&self, frame: SubmittableFrame);
-    /// Whether a frame sent via `send_frame` is still being processed. See
-    /// `RenderThreadHandle::is_in_flight`.
-    fn is_in_flight(&self) -> bool;
-    /// Record that a fresh repaint is needed once any in-flight frame
-    /// finishes. See `RenderThreadHandle::set_repaint_pending`.
-    fn set_repaint_pending(&self);
-    /// Ask this backend to stop. See `RenderThreadHandle::shutdown`.
-    fn shutdown(&self);
-    /// Whether this backend appears stuck and cannot resolve it on its own.
-    /// For `RenderThreadHandle`: stuck inside a single GPU call past the
-    /// hang threshold, full stop (there is no recovery path other than the
-    /// window's own supervisor rebuilding the renderer). For
-    /// `HostProcessBackend`: **not** true merely because the current child
-    /// hasn't acked in time -- a respawn already in flight handles that
-    /// itself; this must read `true` only once the backend's own recovery
-    /// is unable to make progress (see `render_thread_has_died`'s contract,
-    /// which this mirrors), so the window's supervisor
-    /// (`check_render_thread_hang_tick`) doesn't pile a full renderer
-    /// rebuild on top of a respawn that is already working.
-    fn render_thread_is_hung(&self) -> bool;
-    /// Whether this backend has died **permanently** -- not coming back on
-    /// its own. For `RenderThreadHandle`: the thread exited without being
-    /// asked to (see the existing doc/tests). For `HostProcessBackend`: a
-    /// child dying is normal and handled internally by respawning it
-    /// (silently, no user-visible epitaph -- a dead child's composition
-    /// surface keeps showing its last presented frame, confirmed
-    /// empirically this session); this must read `false` while a respawn is
-    /// in progress or could still be attempted, and only flips to `true`
-    /// once the respawn budget (`rebuild_backoff_for_attempt`'s shape, 3
-    /// attempts / 30s) is exhausted and this backend has demoted itself
-    /// (sticky, for the window's remaining life) rather than keep retrying.
-    fn render_thread_has_died(&self) -> bool;
-    /// Type-erased teardown signal for `Window::recreate_webgpu_child_window`/
-    /// `sweep_retired_webgpu_children`. See `RenderThreadHandle::teardown_sentinel`.
-    fn teardown_sentinel(&self) -> std::sync::Weak<dyn std::any::Any + Send + Sync>;
 }
 
 impl RenderBackend for RenderThreadHandle {
@@ -426,7 +309,7 @@ impl RenderThreadHandle {
     /// render thread asks for a fresh repaint once it finishes the
     /// in-flight frame -- otherwise this frame's content would just be
     /// lost with nothing to trigger a replacement.
-    pub fn send_frame(&self, frame: crate::termwindow::webgpu::GpuFrame) {
+    pub fn send_frame(&self, frame: GpuFrame) {
         if self.in_flight.swap(true, Ordering::AcqRel) {
             // A frame is already in flight; drop this one (its buffers are
             // released here) instead of queueing, and remember to ask for
@@ -546,7 +429,7 @@ impl RenderThreadHandle {
 /// replacement it could never actually hand new frames to (confirmed live:
 /// this happened during a real wgpu-error-turned-panic crash, before that
 /// panic was itself fixed to no longer happen -- see
-/// `install_uncaptured_error_callback` in `termwindow::webgpu::context`).
+/// `install_uncaptured_error_callback` in `wezterm-gpu-render::context`).
 struct ClearSubmitStartedAtOnExit<'a>(&'a Mutex<Option<Instant>>);
 impl Drop for ClearSubmitStartedAtOnExit<'_> {
     fn drop(&mut self) {
@@ -731,9 +614,9 @@ struct SubmitState<'a> {
 /// desktop, but showing another overlapping OnlyTerm window's real content
 /// through it, which is what task #407 reported.
 fn submit_one_frame(
-    webgpu: &crate::termwindow::webgpu::WebGpuState,
+    webgpu: &WebGpuState,
     window: &::window::Window,
-    frame: crate::termwindow::webgpu::GpuFrame,
+    frame: GpuFrame,
     state: SubmitState<'_>,
     placeholder_cleared: &mut bool,
 ) {
@@ -982,7 +865,7 @@ fn surface_error_needs_renderer_rebuild(err: &wgpu::SurfaceError) -> bool {
 /// `Shutdown` sitting right after a run of `Resize`s).
 fn dispatch_loop(
     rx: &std::sync::mpsc::Receiver<RenderMsg>,
-    on_frame: &mut dyn FnMut(crate::termwindow::webgpu::GpuFrame),
+    on_frame: &mut dyn FnMut(GpuFrame),
     on_resize: &mut dyn FnMut(::window::Dimensions),
 ) {
     let mut carried_over: Option<RenderMsg> = None;

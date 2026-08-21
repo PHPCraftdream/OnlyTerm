@@ -551,7 +551,7 @@ const _: fn() = || {
 #[cfg(test)]
 mod tests {
     use super::clamp_surface_dimensions;
-    use crate::termwindow::webgpu::state_impl::needs_explicit_clear;
+    use crate::webgpu::state_impl::needs_explicit_clear;
 
     const SAMPLE_MAX_TEXTURE_DIMENSION_2D: u32 = 16384;
 

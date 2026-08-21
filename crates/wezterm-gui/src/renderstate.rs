@@ -1,13 +1,13 @@
 use super::glyphcache::GlyphCache;
 use super::quad::*;
 use super::utilsprites::{RenderMetrics, UtilSprites};
-use crate::termwindow::webgpu::{adapter_info_to_gpu_info, WebGpuState, WebGpuTexture};
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::bitmaps::Texture2d;
 use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 use wezterm_font::FontConfiguration;
+use wezterm_gpu_render::{adapter_info_to_gpu_info, WebGpuState, WebGpuTexture};
 use wgpu::util::DeviceExt;
 
 #[derive(Clone)]

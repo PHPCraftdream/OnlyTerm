@@ -9,7 +9,6 @@ use crate::tabbar::TabBarState;
 use crate::termwindow::background::load_background_image;
 use crate::termwindow::keyevent::KeyTableState;
 use crate::termwindow::render::paint::AllowImage;
-use crate::termwindow::webgpu::WebGpuState;
 use crate::utilsprites::RenderMetrics;
 use anyhow::{anyhow, Context};
 use config::{
@@ -27,7 +26,25 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use wezterm_font::FontConfiguration;
+use wezterm_gpu_render::{rebuild_backoff_for_attempt, WebGpuState};
 use wezterm_term::{Alert, StableRowIndex, TerminalSize};
+
+/// Builds the recovery callback handed to the GPU-render crate when a window
+/// registers for device-lost/error notifications: routes the reason string
+/// into the GUI-thread `TermWindowNotif::Apply` that runs
+/// `handle_render_error_recovery` -- exactly what the webgpu context's
+/// subscriber machinery used to do inline, before that code moved out of
+/// this crate.
+fn gpu_recovery_notifier(window: &Window) -> wezterm_gpu_render::GpuRecoveryNotifier {
+    let win = window.clone();
+    Box::new(move |reason: &str| {
+        let reason = reason.to_string();
+        let win2 = win.clone();
+        win.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+            tw.handle_render_error_recovery(&win2, &reason);
+        })));
+    })
+}
 
 impl TermWindow {
     /// Builds and shows the OS window plus renderer for `mux_window_id`.
@@ -368,7 +385,7 @@ impl TermWindow {
         // DirectComposition, spawn failure) -- exactly like falling back to
         // it used to be the *only* option.
         let host_process_backend =
-            crate::host_process_backend::HostProcessBackend::spawn(&window, dimensions);
+            wezterm_gpu_render::HostProcessBackend::spawn(&window, dimensions);
         if host_process_backend.is_none() {
             log::warn!(
                 "HostProcessBackend::spawn failed; falling back to in-process GPU rendering \
@@ -377,9 +394,9 @@ impl TermWindow {
         }
 
         let webgpu = if host_process_backend.is_some() {
-            WebGpuState::new_device_only(&window, &config).await
+            WebGpuState::new_device_only(&config, gpu_recovery_notifier(&window)).await
         } else {
-            WebGpuState::new(&window, dimensions, &config).await
+            WebGpuState::new(&window, dimensions, &config, gpu_recovery_notifier(&window)).await
         };
         let webgpu = match webgpu {
             Ok(state) => Arc::new(state),
@@ -505,7 +522,7 @@ impl TermWindow {
             let mut installed_render_thread = false;
             if let Some(backend) = host_process_backend {
                 myself.render_thread =
-                    Some(Box::new(backend) as Box<dyn crate::renderthread::RenderBackend>);
+                    Some(Box::new(backend) as Box<dyn wezterm_gpu_render::RenderBackend>);
                 installed_render_thread = true;
             } else if config.webgpu_render_thread {
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -525,7 +542,7 @@ impl TermWindow {
                 myself.render_thread =
                     crate::renderthread::RenderThreadHandle::spawn(seed, tx, myself.mux_window_id)
                         .map(|handle| {
-                            Box::new(handle) as Box<dyn crate::renderthread::RenderBackend>
+                            Box::new(handle) as Box<dyn wezterm_gpu_render::RenderBackend>
                         });
                 installed_render_thread = myself.render_thread.is_some();
             }
@@ -1020,7 +1037,13 @@ impl TermWindow {
                 return;
             }
 
-            let result = WebGpuState::new(&window_for_async, dimensions, &config).await;
+            let result = WebGpuState::new(
+                &window_for_async,
+                dimensions,
+                &config,
+                gpu_recovery_notifier(&window_for_async),
+            )
+            .await;
             let win = window_for_async.clone();
             window_for_async.notify(TermWindowNotif::Apply(Box::new(move |tw| {
                 tw.finish_renderer_rebuild(&win, result);
@@ -1159,7 +1182,7 @@ impl TermWindow {
             };
             self.render_thread =
                 crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id)
-                    .map(|handle| Box::new(handle) as Box<dyn crate::renderthread::RenderBackend>);
+                    .map(|handle| Box::new(handle) as Box<dyn wezterm_gpu_render::RenderBackend>);
             if self.render_thread.is_some() {
                 self.schedule_render_thread_hang_check(window);
             }
@@ -1964,36 +1987,10 @@ impl TermWindow {
     }
 }
 
-/// How long to wait before the `attempt`-th in-place renderer rebuild of the
-/// current episode (1-based, matching the number this window has recorded in
-/// `rebuild_attempts`).
-///
-/// The first attempt never waits: the common case is a one-off driver stall,
-/// and delaying its recovery would show the user a frozen window for no
-/// reason. Every attempt after that follows one that just failed, and the
-/// reason it failed is usually that the machine is out of memory right now --
-/// so re-entering device/surface creation immediately walks straight back
-/// into it. Spacing them lets the shortage clear, and bounds how often we
-/// hand a driver in that state the one call it is worst at.
-///
-/// Kept as a free function so the schedule can be asserted without a
-/// `TermWindow`, a GPU or a window. `pub(crate)` so `HostProcessBackend`
-/// (task #651) can reuse the exact same schedule for its own child-process
-/// respawns -- the reasoning transfers unchanged, and if anything applies
-/// more strongly there (a whole process's device creation, not just a
-/// surface reconfigure).
-pub(crate) fn rebuild_backoff_for_attempt(attempt: usize) -> Option<Duration> {
-    match attempt {
-        0 | 1 => None,
-        2 => Some(Duration::from_millis(250)),
-        _ => Some(Duration::from_millis(1000)),
-    }
-}
-
 #[cfg(test)]
 mod render_state_send_bound_tests {
-    use crate::termwindow::webgpu::WebGpuState;
     use std::sync::Arc;
+    use wezterm_gpu_render::WebGpuState;
 
     fn assert_send<T: Send>() {}
 
@@ -2016,40 +2013,5 @@ mod render_state_send_bound_tests {
     #[test]
     fn webgpu_state_arc_is_send() {
         assert_send::<Arc<WebGpuState>>();
-    }
-}
-
-#[cfg(test)]
-mod rebuild_backoff_tests {
-    use super::rebuild_backoff_for_attempt;
-    use std::time::Duration;
-
-    /// The first attempt of an episode must be immediate: a single transient
-    /// driver stall is the common case, and making the user stare at a frozen
-    /// window before recovering it would be a regression in its own right.
-    #[test]
-    fn the_first_rebuild_attempt_is_not_delayed() {
-        assert_eq!(rebuild_backoff_for_attempt(1), None);
-    }
-
-    /// Retries must be spaced. A crash dump from this machine showed two
-    /// attempts 107ms apart, the second one dying inside the GPU driver while
-    /// it was still out of memory from the first.
-    #[test]
-    fn retries_are_spaced_and_do_not_shrink() {
-        let second = rebuild_backoff_for_attempt(2).expect("the second attempt must wait");
-        let third = rebuild_backoff_for_attempt(3).expect("the third attempt must wait");
-
-        assert!(
-            second >= Duration::from_millis(100),
-            "a retry delay shorter than the 107ms gap that crashed is no delay at all, got {:?}",
-            second
-        );
-        assert!(
-            third >= second,
-            "backoff must not shrink as attempts pile up: attempt 2 waits {:?}, attempt 3 waits {:?}",
-            second,
-            third
-        );
     }
 }

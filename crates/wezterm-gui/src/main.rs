@@ -41,9 +41,7 @@ mod download;
 mod elevate;
 mod frontend;
 mod glyphcache;
-mod gpu_tab_host;
 mod gui_api;
-mod host_process_backend;
 mod inputmap;
 mod overlay;
 mod quad;
@@ -1306,8 +1304,8 @@ fn run() -> anyhow::Result<()> {
         ),
         SubCommand::LsFonts(cmd) => run_ls_fonts(config, &cmd),
         SubCommand::ShowKeys(cmd) => run_show_keys(config, &cmd),
-        SubCommand::GpuTabHost(cmd) => crate::gpu_tab_host::run(
-            crate::gpu_tab_host::GpuTabHostArgs {
+        SubCommand::GpuTabHost(cmd) => wezterm_gpu_render::gpu_tab_host::run(
+            wezterm_gpu_render::gpu_tab_host::GpuTabHostArgs {
                 supervise_pid: cmd.supervise_pid,
             },
             config,

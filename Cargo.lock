@@ -5841,6 +5841,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "wezterm-gpu-render"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "config",
+ "filedescriptor",
+ "futures",
+ "log",
+ "metrics",
+ "parking_lot",
+ "promise",
+ "smol",
+ "wezterm-client",
+ "wgpu",
+ "winapi",
+ "window",
+ "windows",
+]
+
+[[package]]
 name = "wezterm-gui"
 version = "0.1.0"
 dependencies = [
@@ -5916,6 +5937,7 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-elevated-transport",
  "wezterm-font",
+ "wezterm-gpu-render",
  "wezterm-gui-subcommands",
  "wezterm-mux-server-impl",
  "wezterm-open-url",
