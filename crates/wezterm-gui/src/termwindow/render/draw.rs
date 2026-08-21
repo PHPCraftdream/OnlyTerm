@@ -473,6 +473,14 @@ impl crate::TermWindow {
         let atlas_tex = atlas_rc
             .downcast_ref::<WebGpuTexture>()
             .expect("HostProcess engine requires the WebGpu render backend");
+        if atlas_tex.mirroring_failed() {
+            if let Some(backend) = self.render_thread.as_ref() {
+                backend.atlas_mirroring_failed();
+            }
+            anyhow::bail!(
+                "GPU atlas mirror exceeded its memory budget; renderer demotion requested"
+            );
+        }
         let atlas_ptr = std::rc::Rc::as_ptr(&atlas_rc) as *const () as usize;
         let atlas_identity_changed = self.last_wire_atlas_ptr.get() != Some(atlas_ptr);
         self.last_wire_atlas_ptr.set(Some(atlas_ptr));

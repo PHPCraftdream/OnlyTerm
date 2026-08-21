@@ -248,6 +248,14 @@ pub struct WebGpuTexture {
 /// `(x, y, width, height)` of one atlas write, in texels.
 type AtlasRect = (u32, u32, u32, u32);
 
+/// Keep the parent-side replay log bounded.  The log is deliberately capped
+/// below the size at which a full wire frame would become an unsafe transient
+/// allocation (the frame body and the child each need their own copy).  If a
+/// window needs more atlas memory than this, the host-process backend falls
+/// back to the in-process renderer rather than allowing an unbounded Rust OOM
+/// abort on the GUI thread.
+const MAX_ATLAS_MIRROR_BYTES: usize = 128 * 1024 * 1024;
+
 /// The record `WebGpuTexture::write` keeps while mirroring is enabled.
 ///
 /// Two levels, because a mirror needs both:
@@ -269,22 +277,62 @@ type AtlasRect = (u32, u32, u32, u32);
 /// and a regrow builds a whole new texture with its own fresh log), so the
 /// only rects that can collide are identical ones, which are collapsed here
 /// to their latest content anyway.
-#[derive(Default)]
 struct AtlasMirrorLog {
-    written: std::collections::BTreeMap<AtlasRect, Vec<u8>>,
+    written: std::collections::BTreeMap<AtlasRect, std::sync::Arc<[u8]>>,
     pending: Vec<AtlasRect>,
+    bytes: usize,
+    max_bytes: usize,
+    over_budget: bool,
+}
+
+impl Default for AtlasMirrorLog {
+    fn default() -> Self {
+        Self::with_limit(MAX_ATLAS_MIRROR_BYTES)
+    }
 }
 
 impl AtlasMirrorLog {
+    fn with_limit(max_bytes: usize) -> Self {
+        Self {
+            written: std::collections::BTreeMap::new(),
+            pending: Vec::new(),
+            bytes: 0,
+            max_bytes,
+            over_budget: false,
+        }
+    }
+
     fn record(&mut self, rect: AtlasRect, pixels: &[u8]) {
-        self.written.insert(rect, pixels.to_vec());
+        if self.over_budget {
+            return;
+        }
+        let old_len = self.written.get(&rect).map_or(0, |old| old.len());
+        let Some(bytes) = self
+            .bytes
+            .checked_sub(old_len)
+            .and_then(|bytes| bytes.checked_add(pixels.len()))
+        else {
+            self.over_budget = true;
+            return;
+        };
+        if bytes > self.max_bytes {
+            self.over_budget = true;
+            log::warn!(
+                "HostProcess atlas mirror exceeded its {} MiB budget; falling back to in-process rendering",
+                self.max_bytes / (1024 * 1024),
+            );
+            return;
+        }
+
+        self.written.insert(rect, std::sync::Arc::from(pixels));
+        self.bytes = bytes;
         if !self.pending.contains(&rect) {
             self.pending.push(rect);
         }
     }
 
     fn updates_for(
-        written: &std::collections::BTreeMap<AtlasRect, Vec<u8>>,
+        written: &std::collections::BTreeMap<AtlasRect, std::sync::Arc<[u8]>>,
         rect: AtlasRect,
     ) -> Option<wire::AtlasUpdate> {
         written.get(&rect).map(|pixels| wire::AtlasUpdate {
@@ -292,8 +340,12 @@ impl AtlasMirrorLog {
             y: rect.1,
             width: rect.2,
             height: rect.3,
-            pixels: pixels.clone(),
+            pixels: std::sync::Arc::clone(pixels),
         })
+    }
+
+    fn is_over_budget(&self) -> bool {
+        self.over_budget
     }
 }
 
@@ -434,6 +486,9 @@ impl WebGpuTexture {
     pub fn drain_dirty_updates(&self) -> Vec<wire::AtlasUpdate> {
         let mut mirror = self.mirror.lock();
         let mirror = &mut *mirror;
+        if mirror.is_over_budget() {
+            return vec![];
+        }
         let pending = std::mem::take(&mut mirror.pending);
         pending
             .into_iter()
@@ -449,6 +504,9 @@ impl WebGpuTexture {
     /// since everything in it is included here.
     pub fn full_atlas_updates(&self) -> Vec<wire::AtlasUpdate> {
         let mut mirror = self.mirror.lock();
+        if mirror.is_over_budget() {
+            return vec![];
+        }
         mirror.pending.clear();
         mirror
             .written
@@ -458,9 +516,15 @@ impl WebGpuTexture {
                 y: rect.1,
                 width: rect.2,
                 height: rect.3,
-                pixels: pixels.clone(),
+                pixels: std::sync::Arc::clone(pixels),
             })
             .collect()
+    }
+
+    /// Whether the replay log has stopped accepting writes because retaining
+    /// another atlas rect would exceed its bounded memory budget.
+    pub fn mirroring_failed(&self) -> bool {
+        self.mirror.lock().is_over_budget()
     }
 }
 
@@ -550,7 +614,7 @@ const _: fn() = || {
 
 #[cfg(test)]
 mod tests {
-    use super::clamp_surface_dimensions;
+    use super::{clamp_surface_dimensions, AtlasMirrorLog};
     use crate::webgpu::state_impl::needs_explicit_clear;
 
     const SAMPLE_MAX_TEXTURE_DIMENSION_2D: u32 = 16384;
@@ -636,6 +700,46 @@ mod tests {
             !needs_explicit_clear(true),
             "Should not need explicit clear when at least one draw was issued"
         );
+    }
+
+    #[test]
+    fn atlas_mirror_replacing_a_rect_does_not_accumulate_bytes() {
+        let rect = (0, 0, 1, 1);
+        let mut mirror = AtlasMirrorLog::with_limit(8);
+
+        mirror.record(rect, &[1, 2, 3, 4]);
+        mirror.record(rect, &[5, 6]);
+
+        assert_eq!(mirror.bytes, 2);
+        assert_eq!(mirror.written.len(), 1);
+        assert!(!mirror.is_over_budget());
+    }
+
+    #[test]
+    fn atlas_mirror_rejects_a_write_before_allocating_over_budget() {
+        let mut mirror = AtlasMirrorLog::with_limit(4);
+
+        mirror.record((0, 0, 1, 1), &[1, 2, 3]);
+        mirror.record((1, 0, 1, 1), &[4, 5]);
+
+        assert_eq!(mirror.bytes, 3);
+        assert_eq!(mirror.written.len(), 1);
+        assert_eq!(mirror.pending.len(), 1);
+        assert!(mirror.is_over_budget());
+    }
+
+    #[test]
+    fn atlas_mirror_updates_share_retained_payload() {
+        let rect = (0, 0, 1, 1);
+        let mut mirror = AtlasMirrorLog::with_limit(8);
+        mirror.record(rect, &[1, 2, 3, 4]);
+
+        let update = AtlasMirrorLog::updates_for(&mirror.written, rect).unwrap();
+        assert_eq!(
+            std::sync::Arc::strong_count(mirror.written.get(&rect).unwrap()),
+            2
+        );
+        assert_eq!(&*update.pixels, &[1, 2, 3, 4]);
     }
 }
 

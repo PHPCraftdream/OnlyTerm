@@ -69,8 +69,11 @@ impl MirroredAtlas {
                 Point::new(update.x as isize, update.y as isize),
                 Size::new(update.width as isize, update.height as isize),
             );
-            let image =
-                Image::from_raw(update.width as usize, update.height as usize, update.pixels);
+            let image = Image::from_raw(
+                update.width as usize,
+                update.height as usize,
+                update.pixels.to_vec(),
+            );
             self.texture.write(rect, &image);
         }
     }

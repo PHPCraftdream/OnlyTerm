@@ -623,6 +623,17 @@ impl RenderBackend for HostProcessBackend {
         true
     }
 
+    fn atlas_mirroring_failed(&self) {
+        if !self.shared.demoted.swap(true, Ordering::AcqRel) {
+            log::error!(
+                "HostProcessBackend: atlas mirror memory budget exhausted; demoting this window to the in-process renderer"
+            );
+            metrics::counter!("gui.host_process.demoted_to_in_process").increment(1);
+            self.shared.in_flight.store(false, Ordering::Release);
+            (self.shared.invalidate)();
+        }
+    }
+
     fn send_resize(&self, dims: Dimensions) {
         *self.shared.dimensions.lock() = dims;
         if let Some(current) = self.shared.current.lock().as_ref() {

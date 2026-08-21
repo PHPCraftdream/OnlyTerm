@@ -104,6 +104,11 @@ pub trait RenderBackend {
     fn wants_atlas_mirroring(&self) -> bool {
         false
     }
+    /// Report that the parent-side atlas replay log could not retain a
+    /// complete mirror within its memory budget.  A host-process backend can
+    /// use this as a graceful signal to demote to in-process rendering;
+    /// ordinary in-process backends have nothing to do.
+    fn atlas_mirroring_failed(&self) {}
     /// Send a resize/reconfigure request. See `RenderThreadHandle::send_resize`.
     fn send_resize(&self, dims: ::window::Dimensions);
     /// Send a frame to be rendered, built in whichever shape `frame_form()`

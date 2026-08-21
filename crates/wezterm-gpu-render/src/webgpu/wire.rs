@@ -36,6 +36,7 @@
 use crate::quad::QuadInstance;
 use crate::ShaderUniform;
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -146,7 +147,11 @@ pub struct AtlasUpdate {
     pub y: u32,
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<u8>,
+    /// Shared with the parent's replay log when a full atlas resync is sent.
+    /// A fresh child still gets an owned allocation while decoding the wire,
+    /// but the parent no longer clones every retained atlas write just to
+    /// build a frame.
+    pub pixels: Arc<[u8]>,
 }
 
 /// A `GpuFrame`'s worth of data that can cross a process boundary. See the
@@ -203,7 +208,7 @@ pub fn write_frame(w: &mut impl Write, frame: &WireFrame) -> io::Result<()> {
             byte_len: update.pixels.len() as u32,
         };
         body.extend_from_slice(bytemuck::bytes_of(&update_header));
-        body.extend_from_slice(&update.pixels);
+        body.extend_from_slice(update.pixels.as_ref());
     }
     write_message(w, WireMessageKind::Frame, &body)
 }
@@ -345,7 +350,7 @@ fn parse_frame(body: &[u8]) -> io::Result<WireFrame> {
             y: update_header.y,
             width: update_header.width,
             height: update_header.height,
-            pixels,
+            pixels: Arc::from(pixels),
         });
     }
 
@@ -382,7 +387,7 @@ mod tests {
                 y: 2,
                 width: 3,
                 height: 4,
-                pixels: vec![9u8; 3 * 4 * 4],
+                pixels: Arc::from(vec![9u8; 3 * 4 * 4]),
             }],
         }
     }
