@@ -1163,6 +1163,16 @@ impl crate::Surface for Surface {
         device: &Device,
         config: &crate::SurfaceConfiguration,
     ) -> Result<(), crate::SurfaceError> {
+        // Covers every DXGI/D3D call this function makes, not just the ones
+        // below the crash this exists to diagnose landed nearest: a live
+        // crash caught `STATUS_NOT_IMPLEMENTED` raised from inside
+        // `CreateSwapChainForHwnd`, but the symbol offset available at the
+        // time (dxgi.dll ships no private PDB) couldn't pin down which call
+        // in this function it actually was. Dropped automatically on every
+        // return path, including the early `?` ones, since it's a plain
+        // local binding.
+        let _risky_driver_call = auxil::dxgi::exception::RiskyDriverCallGuard::enter();
+
         let mut flags = Dxgi::DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
         // We always set ALLOW_TEARING on the swapchain no matter
         // what kind of swapchain we want because ResizeBuffers
@@ -1431,6 +1441,12 @@ impl crate::Queue for Queue {
         surface: &Surface,
         _texture: Texture,
     ) -> Result<(), crate::SurfaceError> {
+        // See the matching guard in `configure` -- same reasoning, this
+        // function's own driver call (`Present`) is the other of the two
+        // sites a live crash has actually been observed to come from
+        // (device out-of-memory during a real `Present` call).
+        let _risky_driver_call = auxil::dxgi::exception::RiskyDriverCallGuard::enter();
+
         let mut swapchain = surface.swap_chain.write();
         let sc = swapchain.as_mut().unwrap();
         sc.acquired_count -= 1;
