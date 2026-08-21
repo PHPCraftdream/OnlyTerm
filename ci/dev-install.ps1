@@ -211,39 +211,72 @@ function Install-FileHotSwap {
     }
 }
 
-# Retired generations are ~50 MB of binary plus ~250 MB of symbols each, so
-# they cannot simply accumulate. Prune oldest-first, but only ones that are
-# genuinely unused: a retired .exe still mapped by a running OnlyTerm cannot
-# be deleted, and that failure is exactly the signal to keep it (and its
-# symbols) around. $Keep generations are kept beyond that, so a dump written
-# shortly before an install can still be read afterwards.
+# Retired binaries and their symbols are pruned on separate schedules, not
+# together: a binary is ~50 MB and locked by any process still running it, so
+# it naturally can't accumulate much; a symbol file is ~250 MB and nothing
+# ever locks it, so with a shared Keep count a day of active development
+# (several installs) pushes a crash-worthy generation's PDB out before the
+# process that might still crash on it has even exited. Disk isn't the
+# constraint here -- measured on this machine, 14 retired PDBs came to 2.4 GB
+# against 698 GB free -- so symbols default to a much longer retention than
+# binaries.
+#
+# The two schedules are separate, but not independent: a symbol is only ever
+# a *candidate* for pruning once its paired binary is actually gone from
+# disk -- whether that binary just got deleted above for being past
+# $KeepBinaries, or an earlier install already removed it. A binary that
+# still exists -- inside $KeepBinaries, or outside it but locked by a live
+# process that could still crash on it -- keeps its symbol regardless of
+# $KeepSymbols. Only once a symbol is orphaned does it start counting
+# against its own, larger retention window. (An earlier version of this
+# function pruned symbols purely by their own age, decoupled entirely from
+# whether the binary survived; a locked binary old enough to fall outside
+# $KeepSymbols on its own timeline then lost its symbols anyway, precisely
+# the case this function exists to prevent -- caught by
+# D:\system_artefact\rust-scratch\test-hotswap.ps1, not by inspection.)
 function Remove-StaleRetiredGenerations {
     param(
         [Parameter(Mandatory)][string]$InstallDir,
         [Parameter(Mandatory)][string]$BinaryName,
         [string]$SymbolName,
-        [int]$Keep = 5
+        [int]$KeepBinaries = 5,
+        [int]$KeepSymbols = 50
     )
 
-    $retired = @(Get-ChildItem -Path $InstallDir -Filter "$BinaryName.old*" -File -ErrorAction SilentlyContinue |
+    $removed = 0
+
+    $retiredBinaries = @(Get-ChildItem -Path $InstallDir -Filter "$BinaryName.old*" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending)
-    if ($retired.Count -le $Keep) {
-        return 0
+    if ($retiredBinaries.Count -gt $KeepBinaries) {
+        foreach ($old in ($retiredBinaries | Select-Object -Skip $KeepBinaries)) {
+            Remove-Item -Force -ErrorAction SilentlyContinue $old.FullName
+            if (-not (Test-Path $old.FullName)) {
+                $removed++
+            }
+            # Still mapped by a live process, or the delete otherwise
+            # failed: leave it for the next install to retry. Its symbol is
+            # untouched below either way, by construction -- see this
+            # function's doc comment.
+        }
     }
 
-    $removed = 0
-    foreach ($old in ($retired | Select-Object -Skip $Keep)) {
-        $suffix = $old.Name.Substring($BinaryName.Length)
-        Remove-Item -Force -ErrorAction SilentlyContinue $old.FullName
-        if (Test-Path $old.FullName) {
-            # Still mapped by a live process: keep its symbols too.
-            continue
-        }
-        $removed++
-        if ($SymbolName) {
-            Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $InstallDir "$SymbolName$suffix")
+    if ($SymbolName) {
+        $retiredSymbols = @(Get-ChildItem -Path $InstallDir -Filter "$SymbolName.old*" -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending)
+        $orphaned = @($retiredSymbols | Where-Object {
+                $suffix = $_.Name.Substring($SymbolName.Length)
+                -not (Test-Path (Join-Path $InstallDir "$BinaryName$suffix"))
+            })
+        if ($orphaned.Count -gt $KeepSymbols) {
+            foreach ($old in ($orphaned | Select-Object -Skip $KeepSymbols)) {
+                Remove-Item -Force -ErrorAction SilentlyContinue $old.FullName
+                if (-not (Test-Path $old.FullName)) {
+                    $removed++
+                }
+            }
         }
     }
+
     return $removed
 }
 
