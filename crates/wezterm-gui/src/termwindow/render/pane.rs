@@ -444,6 +444,15 @@ impl crate::TermWindow {
                             existing.resume_row
                         } else {
                             // Stamp mismatch: reset to a fresh RetainedPaneRows with work_start = 0
+                            log::info!(
+                                "paint_pane: retained rows reset on stamp mismatch: pane_id={} quad_generation {} -> {} viewport_rows={} cursor.y={} viewport_top={}",
+                                pane_id,
+                                existing.stamp.quad_generation,
+                                current_stamp.quad_generation,
+                                dims.viewport_rows,
+                                cursor.y,
+                                viewport_top
+                            );
                             retained_rows.insert(
                                 pane_id,
                                 RetainedPaneRows {

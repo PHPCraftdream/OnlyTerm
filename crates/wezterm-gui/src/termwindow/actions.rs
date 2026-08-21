@@ -643,6 +643,16 @@ impl TermWindow {
         };
 
         if tab_idx < max {
+            let old_active_idx = window.get_active_idx();
+            if old_active_idx != tab_idx {
+                log::info!(
+                    "activate_tab: window {} tab {} -> {} quad_generation={}",
+                    self.mux_window_id,
+                    old_active_idx,
+                    tab_idx,
+                    self.quad_generation
+                );
+            }
             window.save_and_then_set_active(tab_idx);
 
             drop(window);

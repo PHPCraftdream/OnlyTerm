@@ -29,7 +29,14 @@ impl TermWindow {
     pub(super) fn focus_changed(&mut self, focused: bool, window: &Window) {
         log::trace!("Setting focus to {:?}", focused);
         self.focused = if focused { Some(Instant::now()) } else { None };
+        let old_quad_generation = self.quad_generation;
         self.quad_generation += 1;
+        log::info!(
+            "focus_changed: focused={} quad_generation {} -> {}",
+            focused,
+            old_quad_generation,
+            self.quad_generation
+        );
         self.load_os_parameters();
 
         if self.focused.is_none() {
