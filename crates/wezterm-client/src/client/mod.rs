@@ -16,9 +16,10 @@ use std::time::Duration;
 use thiserror::Error;
 
 mod conn;
+pub mod parent_watcher;
 mod unilateral;
 #[cfg(windows)]
-mod windows_job;
+pub mod windows_job;
 
 use conn::Reconnectable;
 pub use conn::{unix_connect_with_retry, AsyncReadAndWrite};
