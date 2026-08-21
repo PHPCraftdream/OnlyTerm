@@ -84,12 +84,14 @@ impl RowSweep {
     /// * `slot` - The current row slot being processed.
     /// * `cache_hit` - Whether this row hit the line_quad_cache.
     /// * `has_retained` - Whether this row has retained quads from a prior frame.
+    /// * `retained_contains_cursor` - Whether this slot's retained quads (if any) have the terminal cursor baked into them.
     /// * `now` - The current wall-clock time.
     pub fn decide(
         &mut self,
         slot: usize,
         cache_hit: bool,
         has_retained: bool,
+        retained_contains_cursor: bool,
         now: Instant,
     ) -> RowAction {
         // Cache hits are always allowed; cheap and keep it fresh regardless of budget.
@@ -101,7 +103,8 @@ impl RowSweep {
         let is_rotation_target = slot >= self.work_start && !self.rotation_progress_made;
         let must_build = !has_retained          // Never drawn before -> MUST NOT be blank
             || self.cursor_row == Some(slot)  // Keep the cursor row live every frame
-            || is_rotation_target; // Force-build the row that actually advances the rotation
+            || is_rotation_target // Force-build the row that actually advances the rotation
+            || retained_contains_cursor; // Retained quads still have a cursor baked in: re-emitting them stale would paint a ghost cursor at the old row once the cursor moved away -- always rebuild
 
         let over_budget = self.deadline.map(|d| now >= d).unwrap_or(false);
 
@@ -210,7 +213,7 @@ mod tests {
         // Test 1: has_retained == false must always Build, even over budget.
         let mut sweep = RowSweep::new(deadline, 0, 10, None);
         for slot in 0..10 {
-            let action = sweep.decide(slot, false, false, mock_instant());
+            let action = sweep.decide(slot, false, false, false, mock_instant());
             assert_eq!(
                 action,
                 RowAction::Build,
@@ -223,7 +226,7 @@ mod tests {
         let cursor_row = 5;
         let mut sweep = RowSweep::new(deadline, 0, 10, Some(cursor_row));
         for slot in 0..10 {
-            let action = sweep.decide(slot, false, true, mock_instant());
+            let action = sweep.decide(slot, false, true, false, mock_instant());
             if slot == cursor_row {
                 assert_eq!(action, RowAction::Build, "cursor row {} must Build", slot);
             }
@@ -233,7 +236,7 @@ mod tests {
         let mut sweep = RowSweep::new(deadline, 0, 10, None);
         let mut built_any = false;
         for slot in 0..10 {
-            let action = sweep.decide(slot, false, true, mock_instant());
+            let action = sweep.decide(slot, false, true, false, mock_instant());
             if action == RowAction::Build {
                 built_any = true;
             }
@@ -253,7 +256,7 @@ mod tests {
         for slot in 0..10 {
             // Skip the first row (which must Build due to forward-progress guarantee).
             if slot == 0 {
-                let action = sweep.decide(slot, false, true, mock_instant());
+                let action = sweep.decide(slot, false, true, false, mock_instant());
                 assert_eq!(
                     action,
                     RowAction::Build,
@@ -263,7 +266,7 @@ mod tests {
             }
 
             // When has_retained == false, we must Build, not defer.
-            let action_no_retained = sweep.decide(slot, false, false, mock_instant());
+            let action_no_retained = sweep.decide(slot, false, false, false, mock_instant());
             assert_ne!(
                 action_no_retained,
                 RowAction::EmitRetained,
@@ -272,7 +275,7 @@ mod tests {
             );
 
             // When has_retained == true and we're over budget, we can defer.
-            let action_with_retained = sweep.decide(slot, false, true, mock_instant());
+            let action_with_retained = sweep.decide(slot, false, true, false, mock_instant());
             assert_eq!(
                 action_with_retained,
                 RowAction::EmitRetained,
@@ -297,7 +300,7 @@ mod tests {
         {
             let mut sweep = RowSweep::new(deadline, work_start, n_rows, None);
             for slot in 0..n_rows {
-                sweep.decide(slot, false, true, mock_instant());
+                sweep.decide(slot, false, true, false, mock_instant());
             }
             let outcome = sweep.finish();
             assert_eq!(
@@ -317,7 +320,7 @@ mod tests {
             frames_completed += 1;
             let mut sweep = RowSweep::new(deadline, work_start, n_rows, None);
             for slot in 0..n_rows {
-                sweep.decide(slot, false, true, mock_instant());
+                sweep.decide(slot, false, true, false, mock_instant());
             }
             let outcome = sweep.finish();
 
@@ -348,7 +351,7 @@ mod tests {
         {
             let mut sweep = RowSweep::new(None, 0, n_rows, None);
             for slot in 0..n_rows {
-                sweep.decide(slot, false, true, mock_instant());
+                sweep.decide(slot, false, true, false, mock_instant());
             }
             let outcome = sweep.finish();
             assert_eq!(
@@ -371,7 +374,7 @@ mod tests {
 
         let mut built_any = false;
         for slot in 0..10 {
-            let action = sweep.decide(slot, false, true, mock_instant());
+            let action = sweep.decide(slot, false, true, false, mock_instant());
             if action == RowAction::Build {
                 built_any = true;
             }
@@ -385,20 +388,26 @@ mod tests {
     #[test]
     fn cursor_row_is_never_deferred() {
         // Cursor row is always built, never deferred, regardless of budget state.
+        // Also test that retained_contains_cursor=true on the cursor row still forces Build.
         let deadline = mock_deadline();
         let cursor_row = 5;
-        let mut sweep = RowSweep::new(deadline, 0, 10, Some(cursor_row));
 
-        for slot in 0..10 {
-            let action = sweep.decide(slot, false, true, mock_instant());
-            if slot == cursor_row {
-                assert_eq!(
-                    action,
-                    RowAction::Build,
-                    "cursor row {} must Build, not {:?}",
-                    slot,
-                    action
-                );
+        for &retained_contains_cursor in &[false, true] {
+            let mut sweep = RowSweep::new(deadline, 0, 10, Some(cursor_row));
+
+            for slot in 0..10 {
+                let action =
+                    sweep.decide(slot, false, true, retained_contains_cursor, mock_instant());
+                if slot == cursor_row {
+                    assert_eq!(
+                        action,
+                        RowAction::Build,
+                        "cursor row {} must Build, not {:?} (retained_contains_cursor={})",
+                        slot,
+                        action,
+                        retained_contains_cursor
+                    );
+                }
             }
         }
     }
@@ -411,7 +420,7 @@ mod tests {
 
         // All cache hits.
         for slot in 0..10 {
-            sweep.decide(slot, true, true, mock_instant());
+            sweep.decide(slot, true, true, false, mock_instant());
         }
         let outcome = sweep.finish();
         assert_eq!(
@@ -432,7 +441,7 @@ mod tests {
         let mut sweep = RowSweep::new(deadline, 0, 10, None);
 
         for slot in 0..10 {
-            let action = sweep.decide(slot, false, true, mock_instant());
+            let action = sweep.decide(slot, false, true, false, mock_instant());
             assert_eq!(
                 action,
                 RowAction::Build,
@@ -450,7 +459,7 @@ mod tests {
 
         // Force deferrals by being over budget and having retained rows.
         for slot in 0..10 {
-            sweep.decide(slot, false, true, mock_instant());
+            sweep.decide(slot, false, true, false, mock_instant());
         }
         let outcome = sweep.finish();
         assert!(
@@ -467,7 +476,7 @@ mod tests {
 
         // Under budget with has_retained = true, only the rotation target builds.
         for slot in 0..10 {
-            sweep.decide(slot, false, true, mock_instant());
+            sweep.decide(slot, false, true, false, mock_instant());
         }
         let outcome = sweep.finish();
         assert_eq!(
@@ -501,7 +510,7 @@ mod tests {
             // With the fix, the rotation target (work_start) is built instead.
 
             for (slot, build_count) in row_build_count.iter_mut().enumerate().take(n_rows) {
-                let action = sweep.decide(slot, false, true, mock_instant());
+                let action = sweep.decide(slot, false, true, false, mock_instant());
                 if action == RowAction::Build {
                     *build_count += 1;
                 }
@@ -536,6 +545,83 @@ mod tests {
             "full sweep should complete in at most {} frames, took {}",
             n_rows,
             frames_completed
+        );
+    }
+
+    #[test]
+    fn retained_cursor_quads_force_rebuild_even_over_budget() {
+        // Cache-miss row with retained quads that contain a cursor sprite must be rebuilt
+        // even when over budget, to avoid emitting a ghost cursor at the old row.
+        let deadline = mock_deadline();
+        let work_start = 5;
+        let slot = 2; // Below work_start, so not the rotation target
+        let cursor_row = 7; // Different from slot, so not the cursor row
+        let mut sweep = RowSweep::new(deadline, work_start, 10, Some(cursor_row));
+
+        let action = sweep.decide(slot, false, true, true, mock_instant());
+        assert_eq!(
+            action,
+            RowAction::Build,
+            "slot {} with retained_contains_cursor=true must Build even over budget and not cursor row",
+            slot
+        );
+    }
+
+    #[test]
+    fn retained_cursor_quads_force_rebuild_below_work_start_without_deadline_pressure() {
+        // Cache-miss row with retained quads that contain a cursor sprite must be rebuilt
+        // even when not over budget and slot is below work_start (the old code would
+        // take the EmitRetained path in this case due to slot < work_start).
+        let deadline = Some(Instant::now() + std::time::Duration::from_secs(1)); // Far in future
+        let work_start = 5;
+        let slot = 2; // Below work_start, so not the rotation target
+        let cursor_row = None; // Not the cursor row
+        let mut sweep = RowSweep::new(deadline, work_start, 10, cursor_row);
+
+        let action = sweep.decide(slot, false, true, true, mock_instant());
+        assert_eq!(
+            action,
+            RowAction::Build,
+            "slot {} with retained_contains_cursor=true must Build even below work_start without deadline pressure",
+            slot
+        );
+    }
+
+    #[test]
+    fn ordinary_retained_rows_still_defer_over_budget() {
+        // Regression guard: ordinary retained rows (without cursor) should still be
+        // deferred when over budget, preserving the task #457 budget optimization.
+        let deadline = mock_deadline();
+        let work_start = 5;
+        let slot = 2; // Below work_start, so not the rotation target
+        let cursor_row = 7; // Different from slot
+        let mut sweep = RowSweep::new(deadline, work_start, 10, Some(cursor_row));
+
+        let action = sweep.decide(slot, false, true, false, mock_instant());
+        assert_eq!(
+            action,
+            RowAction::EmitRetained,
+            "slot {} with retained_contains_cursor=false should EmitRetained when over budget",
+            slot
+        );
+    }
+
+    #[test]
+    fn missing_retained_row_forces_build_regardless_of_contains_cursor_flag() {
+        // Sanity: if has_retained=false, the row must Build regardless of the
+        // retained_contains_cursor flag (the flag alone can never cause EmitRetained).
+        let deadline = mock_deadline();
+        let work_start = 5;
+        let slot = 2; // Below work_start
+        let cursor_row = 7; // Different from slot
+        let mut sweep = RowSweep::new(deadline, work_start, 10, Some(cursor_row));
+
+        let action = sweep.decide(slot, false, false, true, mock_instant());
+        assert_eq!(
+            action,
+            RowAction::Build,
+            "slot {} with has_retained=false must Build regardless of retained_contains_cursor",
+            slot
         );
     }
 }

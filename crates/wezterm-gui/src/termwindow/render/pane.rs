@@ -582,14 +582,17 @@ impl crate::TermWindow {
                     // and is what `RetainedPaneRows.rows` is indexed by.
                     let slot = line_idx;
 
-                    // Task #457: look up whether this slot has retained quads.
-                    let has_retained = self
-                        .term_window
-                        .retained_rows
-                        .borrow()
-                        .get(&self.pane_id)
-                        .and_then(|r| r.rows.get(slot).and_then(|row| row.as_ref()))
-                        .is_some();
+                    // Task #457: look up whether this slot has retained quads, and whether those retained quads have the cursor baked in (for the ghost-cursor fix).
+                    let (has_retained, retained_contains_cursor) = {
+                        let retained_rows = self.term_window.retained_rows.borrow();
+                        let retained = retained_rows
+                            .get(&self.pane_id)
+                            .and_then(|r| r.rows.get(slot).and_then(|row| row.as_ref()));
+                        (
+                            retained.is_some(),
+                            retained.map(|r| r.contains_cursor).unwrap_or(false),
+                        )
+                    };
 
                     // Task #457: do the cache lookup first, capturing cache_hit and the cached_quad if any.
                     let (cache_hit, maybe_cached_quad) = {
@@ -617,9 +620,13 @@ impl crate::TermWindow {
                     };
 
                     // Task #457: ask the sweep what to do with this row.
-                    let action = self
-                        .sweep
-                        .decide(slot, cache_hit, has_retained, Instant::now());
+                    let action = self.sweep.decide(
+                        slot,
+                        cache_hit,
+                        has_retained,
+                        retained_contains_cursor,
+                        Instant::now(),
+                    );
 
                     match action {
                         RowAction::EmitCached => {
@@ -640,6 +647,7 @@ impl crate::TermWindow {
                             let retained_row = RetainedRow {
                                 quads: Rc::clone(&cached_quad.layers),
                                 expires: cached_quad.expires,
+                                contains_cursor: self.cursor.y == stable_row,
                             };
                             if let Some(slot_ref) = self
                                 .term_window
@@ -749,7 +757,11 @@ impl crate::TermWindow {
                                 .put(quad_key, quad_value);
 
                             // Task #457: ALSO store into retained_rows.
-                            let retained_row = RetainedRow { quads, expires };
+                            let retained_row = RetainedRow {
+                                quads,
+                                expires,
+                                contains_cursor: self.cursor.y == stable_row,
+                            };
                             if let Some(slot_ref) = self
                                 .term_window
                                 .retained_rows

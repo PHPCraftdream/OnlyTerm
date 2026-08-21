@@ -141,10 +141,12 @@ pub struct RetainedPaneRows {
 }
 
 /// A retained row's quad data and its expiration (if animated).
+/// Whether these retained quads have the terminal cursor sprite baked into them (rows whose quads contain a cursor must be rebuilt, never re-emitted stale, once the cursor moves away -- otherwise a ghost cursor block renders at the old row).
 #[derive(Clone, Debug)]
 pub struct RetainedRow {
     pub quads: Rc<HeapQuadAllocator>,
     pub expires: Option<Instant>,
+    pub contains_cursor: bool,
 }
 
 /// Fail-safe stamp for retained rows - anything that would invalidate the
