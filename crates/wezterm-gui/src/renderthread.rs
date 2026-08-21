@@ -497,7 +497,35 @@ fn render_thread_loop(seed: RenderThreadSeed) {
                 log::debug!("render thread: skipping stale resize after window destruction");
                 return;
             }
-            resize_webgpu.resize(dims);
+            // Same reasoning as `submit_frame`'s `catch_unwind` in
+            // `submit_one_frame`: a Rust panic escaping `resize` (i.e.
+            // `Surface::configure`) used to take the render thread down
+            // with it, invisibly, for the same reason. This does NOT catch
+            // every way a driver call here can kill the process -- a raw
+            // Win32 structured exception raised from inside DXGI/D3D12
+            // itself (as opposed to a Rust `panic!`) propagates straight
+            // through `catch_unwind` by design; Rust's unwinding only
+            // intercepts its own panics, not arbitrary foreign SEH. Closing
+            // that harder case needs either a vectored exception handler
+            // willing to recover mid-instruction from a call whose
+            // in-flight state is unknown, or moving GPU work into an
+            // isolated child process -- both real architectural decisions,
+            // not something to fold into this fix silently.
+            if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                resize_webgpu.resize(dims);
+            })) {
+                let msg = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| s.to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "non-string panic payload".to_string());
+                log::error!(
+                    "render thread: resize panicked ({}); the render thread survives, but \
+                     this window's surface may now be out of sync with its actual size",
+                    msg
+                );
+                metrics::counter!("gui.render_thread.resize_panic").increment(1);
+            }
         },
     );
 }
