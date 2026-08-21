@@ -732,13 +732,37 @@ mod tests {
             path.pop();
         }
         path.push("onlyterm-gui.exe");
-        assert!(
-            path.exists(),
-            "expected the real onlyterm-gui.exe already built at {:?} -- run \
-             `cargo build -p wezterm-gui` first",
+        if path.exists() {
+            return path;
+        }
+
+        // CI (windows_continuous) builds onlyterm-gui.exe as a separate,
+        // explicit `cargo build --release` step before `cargo nextest run`
+        // (no `--release`) builds and runs this very test in the debug
+        // profile -- nextest's own build of this package for its test
+        // harness does not also emit a plain (non-test) `target/debug/
+        // onlyterm-gui.exe` binary, so the debug-profile path above is
+        // absent even though the exe genuinely exists, just under
+        // `target/release/` from that earlier step in the same job. Try
+        // that before giving up.
+        if path.parent().and_then(|p| p.file_name()) == Some(std::ffi::OsStr::new("debug")) {
+            let release_path = path
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("release")
+                .join("onlyterm-gui.exe");
+            if release_path.exists() {
+                return release_path;
+            }
+        }
+
+        panic!(
+            "expected the real onlyterm-gui.exe already built at {:?} (also checked the \
+             release profile) -- run `cargo build -p wezterm-gui` first",
             path
         );
-        path
     }
 
     static REGISTER_CLASS: Once = Once::new();
