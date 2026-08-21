@@ -65,3 +65,7 @@ dhat-heap.json
 # so the directory (and the rule) survives a fresh clone.
 /tmp/*
 !/tmp/README.md
+
+# Claude Code session working files (delegated-agent prompts/transcripts,
+# ad-hoc patches, local hook settings) -- not part of the project.
+/.claude/
