@@ -203,20 +203,6 @@ fn build_aliases() -> Vec<Alias> {
         }
     }
 
-    for (name, value) in crate::unicode_names::NAMES {
-        push(
-            &mut aliases,
-            Alias {
-                name: Cow::Borrowed(name),
-                character: Character::Unicode {
-                    name,
-                    value: char::from_u32(*value).unwrap(),
-                },
-                group: CharSelectGroup::UnicodeNames,
-            },
-        );
-    }
-
     for (name, value) in termwiz::nerdfonts::NERD_FONT_GLYPHS {
         push(
             &mut aliases,
@@ -414,7 +400,6 @@ impl CharSelector {
             CharSelectGroup::Symbols => "Symbols",
             CharSelectGroup::Flags => "Flags",
             CharSelectGroup::NerdFonts => "NerdFonts",
-            CharSelectGroup::UnicodeNames => "Unicode",
             CharSelectGroup::ShortCodes => "Short Codes",
         };
 

@@ -58,7 +58,6 @@ mod startup_chooser;
 mod stats;
 mod tabbar;
 mod termwindow;
-mod unicode_names;
 mod update;
 mod utilsprites;
 
