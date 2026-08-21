@@ -52,6 +52,58 @@ fn main() {
                 println!("cargo:rerun-if-changed=../../.tag");
             }
         }
+        // Mirrors `wezterm-version/build.rs`'s derivation (duplicated, not
+        // shared: build scripts compile and run independently per crate,
+        // same as the `.tag`-file handling just above already is). Prefer
+        // the nearest reachable `v*` tag, e.g. `v0.0.14-alpha` (or
+        // `v0.0.14-alpha-3-g1234567` for commits past the tag), so this
+        // resource's version matches what `wezterm -h`/`wezterm_version()`
+        // reports; fall back to the plain date-hash form when no tag is
+        // reachable at all. Without this, a local build with no `.tag` file
+        // fell straight to the date-hash form even when a perfectly good
+        // release tag existed, so this resource's version and
+        // `wezterm_version()`'s could disagree.
+        let ci_tag = if !ci_tag.is_empty() {
+            ci_tag
+        } else {
+            std::process::Command::new("git")
+                .args(["describe", "--tags", "--always", "--dirty=-dirty"])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_default()
+        };
+        let commit_hash = std::process::Command::new("git")
+            .args(["rev-parse", "--short=8", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+        let commit_count: u16 = std::process::Command::new("git")
+            .args(["rev-list", "--count", "HEAD"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| String::from_utf8_lossy(&output.stdout).trim().parse().ok())
+            // A `FILEVERSION` component is a 16-bit `WORD`; the commit count
+            // is used as a monotonically increasing build number there, so
+            // saturate rather than silently wrap once history passes 65535
+            // commits (not close today, but wrapping back to a *smaller*
+            // build number would be actively misleading, not just wrong).
+            .unwrap_or(u16::MAX);
+        let build_date = std::process::Command::new("git")
+            .args(["show", "-s", "--format=%cd", "--date=format:%Y-%m-%d"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "unknown".to_string());
+
         let version = if ci_tag.is_empty() {
             let mut cmd = std::process::Command::new("git");
             cmd.args([
@@ -74,6 +126,48 @@ fn main() {
         } else {
             ci_tag
         };
+        // The human-facing version string embedded in `StringFileInfo`
+        // below: the tag/describe form plus the build date, commit hash and
+        // ordinal commit number -- the last two of which plain `git
+        // describe` output doesn't always carry (a checkout sitting exactly
+        // on a release tag has no `-g<hash>` suffix at all, and never carries
+        // a commit count).
+        let version_with_provenance =
+            format!("{version} ({build_date}, commit #{commit_count}, {commit_hash})");
+        // `FILEVERSION`/`PRODUCTVERSION` are the raw 4x`WORD` numeric fields
+        // -- what Windows Error Reporting's crash dialog and the "version:"
+        // line in Application/APPCRASH event log entries actually read, as
+        // opposed to the `StringFileInfo` values above (which is what
+        // Explorer's file-properties dialog shows). Those were hardcoded to
+        // `1,0,0,0` and so every crash report from every build looked
+        // identical regardless of what was actually running. Parsed from
+        // `version`'s leading `major.minor.patch` (after an optional `v`),
+        // stopping at the first character that isn't a digit or a `.` --
+        // handles both the bare `v0.0.14-alpha` form and the
+        // `v0.0.14-alpha-3-g1234567` form `git describe` produces for
+        // commits past the tag. The 4th component is the commit count, a
+        // monotonically increasing build number that ordinary
+        // major.minor.patch has no room for.
+        fn parse_major_minor_patch(version: &str) -> (u16, u16, u16) {
+            let s = version.strip_prefix('v').unwrap_or(version);
+            let mut parts = [0u16; 3];
+            let mut idx = 0;
+            let mut cur = String::new();
+            for ch in s.chars() {
+                if ch.is_ascii_digit() {
+                    cur.push(ch);
+                } else if ch == '.' && idx < 2 {
+                    parts[idx] = cur.parse().unwrap_or(0);
+                    cur.clear();
+                    idx += 1;
+                } else {
+                    break;
+                }
+            }
+            parts[idx] = cur.parse().unwrap_or(0);
+            (parts[0], parts[1], parts[2])
+        }
+        let (ver_major, ver_minor, ver_patch) = parse_major_minor_patch(&version);
 
         let rcfile_name = Path::new(&std::env::var_os("OUT_DIR").unwrap()).join("resource.rc");
         let mut rcfile = std::fs::File::create(&rcfile_name).unwrap();
@@ -87,8 +181,8 @@ fn main() {
 1 RT_MANIFEST "{win}\\manifest.manifest"
 IDI_ICON ICON "{win}\\terminal.ico"
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     {ver_major},{ver_minor},{ver_patch},{commit_count}
+PRODUCTVERSION  {ver_major},{ver_minor},{ver_patch},{commit_count}
 FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
 FILEFLAGS       0
 FILEOS          VOS__WINDOWS32
@@ -101,12 +195,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Wez Furlong\0"
             VALUE "FileDescription",  "WezTerm - Wez's Terminal Emulator\0"
-            VALUE "FileVersion",      "{version}\0"
+            VALUE "FileVersion",      "{version_with_provenance}\0"
             VALUE "LegalCopyright",   "Wez Furlong, MIT licensed\0"
             VALUE "InternalName",     "\0"
             VALUE "OriginalFilename", "\0"
             VALUE "ProductName",      "WezTerm\0"
-            VALUE "ProductVersion",   "{version}\0"
+            VALUE "ProductVersion",   "{version_with_provenance}\0"
         END
     END
     BLOCK "VarFileInfo"
@@ -116,7 +210,7 @@ BEGIN
 END
 "#,
             win = windows_dir.display().to_string().replace("\\", "\\\\"),
-            version = version,
+            version_with_provenance = version_with_provenance,
         )
         .unwrap();
         drop(rcfile);
