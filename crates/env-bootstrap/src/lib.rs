@@ -59,6 +59,22 @@ pub fn bootstrap() {
     setup_logger();
     register_panic_hook();
 
+    // First line of every per-PID log file, deliberately: a crash dump
+    // (or a WER Application Error entry) names the binary and a raw
+    // address, not which commit produced it. Matching a dump to source
+    // meant, more than once, hashing the retired binary on disk and
+    // grepping `git log` for which commit was HEAD when it was built. The
+    // log this process is about to fill in already carries that answer,
+    // as long as it's the very first thing written to it.
+    log::info!(
+        "OnlyTerm {} | commit #{} {} | built {} | {}",
+        wezterm_version::wezterm_version(),
+        wezterm_version::wezterm_commit_count(),
+        wezterm_version::wezterm_commit_hash(),
+        wezterm_version::wezterm_build_time(),
+        wezterm_version::wezterm_target_triple(),
+    );
+
     set_wezterm_executable();
 
     // Remove this env var to avoid weirdness with some vim configurations.
