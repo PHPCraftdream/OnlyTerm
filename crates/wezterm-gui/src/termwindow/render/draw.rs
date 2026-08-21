@@ -278,10 +278,12 @@ impl crate::TermWindow {
         let layer_instances: Vec<&[QuadInstance]> =
             instance_guards.iter().map(|g| g.as_slice()).collect();
 
-        let frame = self.build_webgpu_frame()?;
-
-        // Compute the signature for this frame from the borrows taken above.
-        let signature = self.compute_frame_signature(&frame, &layer_instances);
+        // Computed once, shared by the signature check below and whichever
+        // of `build_webgpu_frame`/`build_wire_frame` ends up running -- and
+        // computed *before* either of them, so a duplicate frame (the common
+        // case under a static screen) never pays for building either shape.
+        let uniform = self.build_shader_uniform();
+        let signature = self.compute_frame_signature(&uniform, &layer_instances);
         drop(instance_guards);
         drop(vbs_guards);
 
@@ -292,21 +294,42 @@ impl crate::TermWindow {
                 return Ok(());
             }
         }
-
-        // New frame or signature differs - submit it
         self.last_frame_signature = Some(signature);
         metrics::counter!("gui.frame.submitted").increment(1);
 
-        if let Some(rt) = self.render_thread.as_ref() {
-            rt.send_frame(frame);
-        } else {
-            self.webgpu.as_ref().unwrap().submit_frame(frame)?;
+        // Ask the backend which frame shape it wants *before* building
+        // anything -- see `crate::renderthread::FrameForm`'s doc comment.
+        let frame_form = self
+            .render_thread
+            .as_ref()
+            .map(|rt| rt.frame_form())
+            .unwrap_or(crate::renderthread::FrameForm::InProcess);
+
+        match frame_form {
+            crate::renderthread::FrameForm::InProcess => {
+                let frame = self.build_webgpu_frame(uniform)?;
+                if let Some(rt) = self.render_thread.as_ref() {
+                    rt.send_frame(crate::renderthread::SubmittableFrame::InProcess(frame));
+                } else {
+                    self.webgpu.as_ref().unwrap().submit_frame(frame)?;
+                }
+            }
+            crate::renderthread::FrameForm::Wire { full_resync } => {
+                let frame = self.build_wire_frame(full_resync, uniform)?;
+                // A `Wire` frame form only ever comes from a real
+                // `render_thread` (there is no synchronous host-process
+                // fallback), so `render_thread` is always `Some` here.
+                self.render_thread
+                    .as_ref()
+                    .expect("FrameForm::Wire only comes from a render_thread-backed RenderBackend")
+                    .send_frame(crate::renderthread::SubmittableFrame::Wire(frame));
+            }
         }
         Ok(())
     }
 
-    /// Computes a content signature for a GpuFrame to detect identical consecutive frames.
-    /// The signature includes:
+    /// Computes a content signature for a frame to detect identical
+    /// consecutive frames. The signature includes:
     /// - All layer QuadInstance data (position/color/tex/hsv/flags)
     /// - uniform.projection (changes on window resize)
     /// - uniform.foreground_text_hsb (changes on config reload)
@@ -318,14 +341,14 @@ impl crate::TermWindow {
     /// stale-pixel bugs.
     fn compute_frame_signature(
         &self,
-        frame: &GpuFrame,
+        uniform: &ShaderUniform,
         layer_instances: &[&[QuadInstance]],
     ) -> u64 {
         compute_frame_signature_from_parts(
             self.dimensions.pixel_width,
             self.dimensions.pixel_height,
-            &frame.uniform.foreground_text_hsb,
-            &frame.uniform.projection,
+            &uniform.foreground_text_hsb,
+            &uniform.projection,
             layer_instances,
         )
     }
@@ -336,15 +359,11 @@ impl crate::TermWindow {
     /// actual GPU submission -- that's `WebGpuState::submit_frame`'s job,
     /// which only needs `&WebGpuState` and can eventually run off the GUI
     /// thread.
-    fn build_webgpu_frame(&mut self) -> anyhow::Result<GpuFrame> {
-        use crate::termwindow::webgpu::WebGpuTexture;
-
-        let render_state = self.render_state.as_ref().unwrap();
-
-        let tex = render_state.glyph_cache.borrow().atlas.texture();
-        let tex = tex.downcast_ref::<WebGpuTexture>().unwrap();
-        let atlas = wgpu::Texture::clone(tex.texture());
-
+    /// Computes this frame's `ShaderUniform` -- shared by `build_webgpu_frame`
+    /// and `build_wire_frame`, and by the signature check that runs before
+    /// either of them, so it's computed exactly once per frame regardless of
+    /// which backend is active.
+    fn build_shader_uniform(&self) -> ShaderUniform {
         let foreground_text_hsb = self.config.foreground_text_hsb;
         let foreground_text_hsb = [
             foreground_text_hsb.hue,
@@ -362,6 +381,22 @@ impl crate::TermWindow {
             1.0,
         )
         .to_arrays_transposed();
+
+        ShaderUniform {
+            foreground_text_hsb,
+            milliseconds,
+            projection,
+        }
+    }
+
+    fn build_webgpu_frame(&mut self, uniform: ShaderUniform) -> anyhow::Result<GpuFrame> {
+        use crate::termwindow::webgpu::WebGpuTexture;
+
+        let render_state = self.render_state.as_ref().unwrap();
+
+        let tex = render_state.glyph_cache.borrow().atlas.texture();
+        let tex = tex.downcast_ref::<WebGpuTexture>().unwrap();
+        let atlas = wgpu::Texture::clone(tex.texture());
 
         let mut draws = Vec::new();
 
@@ -413,11 +448,77 @@ impl crate::TermWindow {
         Ok(GpuFrame {
             draws,
             atlas,
-            uniform: ShaderUniform {
-                foreground_text_hsb,
-                milliseconds,
-                projection,
-            },
+            uniform,
+        })
+    }
+
+    /// Builds a `wire::WireFrame` -- the `HostProcess`-backend equivalent of
+    /// `build_webgpu_frame`: reads the same CPU-side data
+    /// (`TripleVertexBuffer::instances`, already accumulated by painting)
+    /// but never uploads it to a `wgpu::Buffer` on this (the parent's) GPU
+    /// device, since a `wire::WireFrame` crosses a process boundary and a
+    /// live GPU buffer handle cannot. `full_resync` comes from
+    /// `RenderBackend::frame_form`'s `FrameForm::Wire { full_resync }` --
+    /// true right after this backend (re)attached to a fresh child, whose
+    /// atlas mirror is empty regardless of whether the real atlas's
+    /// identity changed this frame.
+    fn build_wire_frame(
+        &mut self,
+        full_resync: bool,
+        uniform: ShaderUniform,
+    ) -> anyhow::Result<crate::termwindow::webgpu::wire::WireFrame> {
+        use crate::termwindow::webgpu::wire::WireFrame;
+        use crate::termwindow::webgpu::WebGpuTexture;
+
+        let render_state = self.render_state.as_ref().unwrap();
+
+        let atlas_rc = render_state.glyph_cache.borrow().atlas.texture();
+        let atlas_tex = atlas_rc
+            .downcast_ref::<WebGpuTexture>()
+            .expect("HostProcess engine requires the WebGpu render backend");
+        let atlas_ptr = std::rc::Rc::as_ptr(&atlas_rc) as *const () as usize;
+        let atlas_identity_changed = self.last_wire_atlas_ptr.get() != Some(atlas_ptr);
+        self.last_wire_atlas_ptr.set(Some(atlas_ptr));
+
+        let atlas_reset = if full_resync || atlas_identity_changed {
+            // Idempotent, and should already be enabled from birth for a
+            // HostProcess-engine window (see `renderstate.rs`'s
+            // `enable_atlas_mirroring_if_needed`) -- this is a defensive
+            // fallback, not the mechanism that closes the "missed the first
+            // glyphs written to a brand new atlas" gap.
+            atlas_tex.enable_mirroring();
+            Some((atlas_tex.width(), atlas_tex.height()))
+        } else {
+            None
+        };
+        // A reset means the receiving mirror is a brand-new, blank texture
+        // (a fresh child process, or a regrown atlas), so the delta since
+        // the last frame is not enough: it has to be handed the atlas's
+        // entire recorded content instead. Shipping only the delta here is
+        // what left a respawned child unable to draw any glyph it had not
+        // personally seen rasterized.
+        let atlas_updates = if atlas_reset.is_some() {
+            atlas_tex.full_atlas_updates()
+        } else {
+            atlas_tex.drain_dirty_updates()
+        };
+
+        let mut draws = Vec::new();
+        for layer in render_state.layers.borrow().iter() {
+            for idx in 0..3 {
+                let vb = &layer.vb.borrow()[idx];
+                if vb.instance_count() > 0 {
+                    draws.push(vb.instances.borrow().clone());
+                }
+                vb.next_index();
+            }
+        }
+
+        Ok(WireFrame {
+            uniform,
+            draws,
+            atlas_reset,
+            atlas_updates,
         })
     }
 }

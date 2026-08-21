@@ -134,8 +134,69 @@ impl WebGpuState {
 
         Ok(Self {
             context,
-            surface,
+            surface: Some(surface),
             is_current,
+        })
+    }
+
+    /// Builds a device-only `WebGpuState`: the shared `ProcessGpuContext`
+    /// (device/queue/shaders/pipelines), but no `WindowGpuSurface` at all --
+    /// no `CreateSwapChainForHwnd`, no `Surface::configure`,
+    /// `Surface::present` never runs for it. For a window using
+    /// `HostProcessBackend` (task #651): the parent still needs a
+    /// `WebGpuState` for backend-agnostic CPU-side work (`RenderState`/
+    /// `GlyphCache`'s atlas texture creation), but must never touch the
+    /// exact three calls behind every GPU crash diagnosed this session --
+    /// all of which live on `WindowGpuSurface`, not `ProcessGpuContext`.
+    ///
+    /// Registers for device-lost notifications the same way `new` does: if
+    /// the shared device is lost, this window still needs its atlas
+    /// rebuilt, even though it has no surface to reconfigure.
+    pub async fn new_device_only(window: &Window, config: &ConfigHandle) -> anyhow::Result<Self> {
+        let context = ProcessGpuContext::get_or_init(config).await?;
+        let is_current = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        context.register_device_lost_subscriber(window.clone(), Arc::clone(&is_current));
+        Ok(Self {
+            context,
+            surface: None,
+            is_current,
+        })
+    }
+
+    /// Builds a `WebGpuState` for the `webgpu_engine: PerTabProcess` GPU-host
+    /// child process (task #650): no `Window` (this process has none of its
+    /// own -- it renders directly into a composition surface the parent
+    /// created), so no device-lost subscriber registration either -- there
+    /// is nothing else in this private, single-tab process to notify. Uses
+    /// its own private `ProcessGpuContext` rather than the shared
+    /// process-wide singleton `get_or_init` returns, since that singleton's
+    /// whole point (one context shared by every window in *this* process)
+    /// doesn't apply here.
+    ///
+    /// # Safety
+    ///
+    /// See `WindowGpuSurface::new_from_composition_surface_handle`.
+    pub async unsafe fn new_headless_from_composition_surface_handle(
+        surface_handle: *mut core::ffi::c_void,
+        dimensions: Dimensions,
+        config: &ConfigHandle,
+    ) -> anyhow::Result<Self> {
+        let context = Arc::new(ProcessGpuContext::new(config).await?);
+        // SAFETY: forwarded from this function's own contract.
+        let surface = unsafe {
+            WindowGpuSurface::new_from_composition_surface_handle(
+                &context,
+                surface_handle,
+                dimensions,
+                config,
+            )
+            .await?
+        };
+
+        Ok(Self {
+            context,
+            surface: Some(surface),
+            is_current: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         })
     }
 
@@ -163,7 +224,14 @@ impl WebGpuState {
     /// needs `&self` (no `TermWindow`/`RenderState` access), which is what
     /// makes it callable from a dedicated render thread in a later task.
     pub fn submit_frame(&self, frame: GpuFrame) -> Result<(), wgpu::SurfaceError> {
-        let output = self.surface.surface.get_current_texture()?;
+        // A device-only `WebGpuState` (see `WebGpuState::surface`'s doc
+        // comment) belongs to a window using `HostProcessBackend`, which
+        // never calls this -- it submits frames in a child process instead.
+        let surface = self
+            .surface
+            .as_ref()
+            .expect("submit_frame requires a WindowGpuSurface");
+        let output = surface.surface.get_current_texture()?;
         // Reinterpret as the non-sRGB sibling format when the adapter
         // supports it, matching `render_format` in pipeline creation.
         // `None` (the texture's own, sRGB, format) is the correct fallback on adapters
@@ -175,7 +243,7 @@ impl WebGpuState {
             .flags
             .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS)
         {
-            Some(self.surface.config.lock().format.remove_srgb_suffix())
+            Some(surface.config.lock().format.remove_srgb_suffix())
         } else {
             None
         };
@@ -328,12 +396,21 @@ impl WebGpuState {
     pub fn resize(&self, mut dims: Dimensions) {
         use super::state_impl::clamp_surface_dimensions;
 
+        // A device-only `WebGpuState` (see `WebGpuState::surface`'s doc
+        // comment) belongs to a window using `HostProcessBackend`, which
+        // routes resizes to its child process instead -- this is a no-op
+        // rather than a panic since, unlike `submit_frame`, nothing about
+        // "resize" is meaningless for a device-only state, just unnecessary.
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+
         // During a live resize on Windows, the Dimensions that we're processing may be
         // lagging behind the true client size. We have to take the very latest value
         // from the window or else the underlying driver will raise an error about
         // the mismatch, so we need to sneakily read through the handle
         #[cfg(windows)]
-        if let Some(hwnd) = self.surface.client_hwnd() {
+        if let Some(hwnd) = surface.client_hwnd() {
             // SAFETY: `RECT` is a POD with no validity invariants, so
             // `mem::zeroed()` yields a valid all-zero value as an out-param.
             let mut rect = unsafe { std::mem::zeroed() };
@@ -346,14 +423,14 @@ impl WebGpuState {
             dims.pixel_height = (rect.bottom - rect.top) as usize;
         }
 
-        if dims == *self.surface.dimensions.lock() {
+        if dims == *surface.dimensions.lock() {
             return;
         }
         // Store the unclamped dims: this field is only used to dedup resize
         // events against the size the window actually requested. Clamping is
         // applied below, only to the values handed to Surface::configure.
-        *self.surface.dimensions.lock() = dims;
-        let mut config = self.surface.config.lock();
+        *surface.dimensions.lock() = dims;
+        let mut config = surface.config.lock();
         let max = self.device().limits().max_texture_dimension_2d;
         let (clamped_width, clamped_height) =
             clamp_surface_dimensions(dims.pixel_width as u32, dims.pixel_height as u32, max);
@@ -363,7 +440,7 @@ impl WebGpuState {
             // Avoid reconfiguring with a 0 sized surface, as webgpu will
             // panic in that case
             // <https://github.com/wezterm/wezterm/issues/2881>
-            self.surface.surface.configure(self.device(), &config);
+            surface.surface.configure(self.device(), &config);
         }
     }
 
@@ -371,11 +448,15 @@ impl WebGpuState {
     /// unconditionally -- bypasses `resize`'s dedup-against-previous-size
     /// check. Used to recover from `SurfaceError::Lost`/`Outdated`, where the
     /// swapchain needs to be recreated even though the requested size hasn't
-    /// changed.
+    /// changed. A no-op for a device-only `WebGpuState` (see `resize`'s
+    /// comment -- the same reasoning applies).
     pub fn reconfigure(&self) {
-        let config = self.surface.config.lock();
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let config = surface.config.lock();
         if config.width > 0 && config.height > 0 {
-            self.surface.surface.configure(self.device(), &config);
+            surface.surface.configure(self.device(), &config);
         }
     }
 }

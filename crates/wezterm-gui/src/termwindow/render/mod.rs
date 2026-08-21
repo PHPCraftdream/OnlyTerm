@@ -1056,10 +1056,33 @@ impl crate::TermWindow {
 
     pub fn recreate_texture_atlas(&mut self, size: Option<usize>) -> anyhow::Result<()> {
         self.invalidate_atlas_dependent_caches();
+        let mirror_atlas = self.wants_gpu_atlas_mirroring();
         if let Some(render_state) = self.render_state.as_mut() {
-            render_state.recreate_texture_atlas(&self.fonts, &self.render_metrics, size)?;
+            render_state.recreate_texture_atlas(
+                &self.fonts,
+                &self.render_metrics,
+                size,
+                mirror_atlas,
+            )?;
         }
         Ok(())
+    }
+
+    /// Whether this window's atlas writes should be mirrored
+    /// (`WebGpuTexture::enable_mirroring`) for this window's render backend
+    /// to consume: true exactly when that backend renders in another
+    /// process and therefore keeps its own copy of the atlas
+    /// (`HostProcessBackend`), false for the in-process render thread, which
+    /// draws from the very `wgpu::Texture` these writes land in.
+    ///
+    /// `self.render_thread` must already be installed by the time this is
+    /// asked, which is why `new_window` sets it *before* calling `created()`
+    /// -- see `RenderBackend::wants_atlas_mirroring`'s doc comment for what
+    /// answering `false` here by mistake looks like on screen.
+    pub(crate) fn wants_gpu_atlas_mirroring(&self) -> bool {
+        self.render_thread
+            .as_ref()
+            .is_some_and(|backend| backend.wants_atlas_mirroring())
     }
 
     /// Task #439: Core cache lookup logic extracted for testability.

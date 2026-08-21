@@ -63,7 +63,14 @@ impl TermWindow {
         let render_info = ctx.renderer_info();
         self.renderer_info.replace(render_info.clone());
 
-        match RenderState::new(ctx, &self.fonts, &self.render_metrics, ATLAS_SIZE) {
+        let mirror_atlas = self.wants_gpu_atlas_mirroring();
+        match RenderState::new(
+            ctx,
+            &self.fonts,
+            &self.render_metrics,
+            ATLAS_SIZE,
+            mirror_atlas,
+        ) {
             Ok(render_state) => {
                 log::debug!(
                     "Renderer initialized! {} wezterm version: {}",

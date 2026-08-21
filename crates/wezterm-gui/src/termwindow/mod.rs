@@ -57,6 +57,7 @@ pub mod paneselect;
 mod prevcursor;
 pub mod render;
 mod render_pipeline;
+pub(crate) use render_pipeline::rebuild_backoff_for_attempt;
 pub mod resize;
 mod selection;
 pub mod spawn;
@@ -478,7 +479,10 @@ pub struct TermWindow {
     connection_name: String,
 
     webgpu: Option<Arc<WebGpuState>>,
-    render_thread: Option<crate::renderthread::RenderThreadHandle>,
+    // `Box<dyn RenderBackend>`, not the concrete `RenderThreadHandle`: see
+    // that trait's doc comment for why every call site here goes through it
+    // instead of the concrete type.
+    render_thread: Option<Box<dyn crate::renderthread::RenderBackend>>,
     /// One-shot guard for the render-thread hang supervisor (see
     /// `schedule_render_thread_hang_check`): set to `true` the moment this
     /// window has been torn down for an observed render-thread hang, so a
@@ -532,6 +536,13 @@ pub struct TermWindow {
     /// reset on window creation, resize, renderer rebuild, or atlas resize,
     /// since these events can change what "identical" even means.
     last_frame_signature: Option<u64>,
+    /// Address identity of the glyph-cache atlas `build_wire_frame` last saw,
+    /// so it can tell "the atlas was recreated since last frame" (glyph
+    /// cache ran out of room, `recreate_texture_atlas_impl` always builds a
+    /// brand new one) apart from "same atlas, just more writes" without
+    /// holding a strong `Rc` alive purely for comparison. Unused (stays
+    /// `None`) for any window not using the `HostProcess` backend.
+    last_wire_atlas_ptr: std::cell::Cell<Option<usize>>,
 }
 
 impl Drop for TermWindow {

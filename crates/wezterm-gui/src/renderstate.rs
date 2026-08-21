@@ -549,15 +549,46 @@ pub struct RenderState {
     pub layers: RefCell<Vec<Rc<RenderLayer>>>,
 }
 
+/// Turns on atlas-write mirroring (`WebGpuTexture::enable_mirroring`) for a
+/// freshly-created glyph cache's atlas, if `mirror` is set -- called at the
+/// exact moment the atlas is known to be empty (immediately after
+/// construction, before the caller does anything else with it), so a
+/// `HostProcess`-backend child's mirror never misses a glyph written between
+/// atlas creation and whenever mirroring would otherwise have been noticed
+/// and turned on (e.g. by comparing atlas identity across frames, which is
+/// too late: glyphs from the very paint pass that triggered an atlas regrow
+/// are written before that comparison ever runs). A no-op if this isn't a
+/// `WebGpuTexture`-backed atlas (downcast fails) or `mirror` is false.
+fn enable_atlas_mirroring_if_needed(glyph_cache: &GlyphCache, mirror: bool) {
+    if !mirror {
+        return;
+    }
+    let tex = glyph_cache.atlas.texture();
+    if let Some(tex) = tex.downcast_ref::<WebGpuTexture>() {
+        tex.enable_mirroring();
+    }
+}
+
 impl RenderState {
     pub fn new(
         context: RenderContext,
         fonts: &Rc<FontConfiguration>,
         metrics: &RenderMetrics,
         mut atlas_size: usize,
+        mirror_atlas: bool,
     ) -> anyhow::Result<Self> {
         loop {
             let glyph_cache = RefCell::new(GlyphCache::new_gl(&context, fonts, atlas_size)?);
+            // Strictly before `UtilSprites::new`: that is what writes
+            // `white_space` (and the underline/cursor sprites) into the
+            // brand-new atlas, and those writes have to be recorded too --
+            // `white_space` is the texel every glyph, underline and cursor
+            // quad samples, so a mirror missing it draws all of them with
+            // alpha 0. `GlyphCache::new_gl` above is deliberately still
+            // outside: `Atlas::new` blanks the whole texture, and there is
+            // nothing to replay about a blank that the mirror already starts
+            // out as.
+            enable_atlas_mirroring_if_needed(&glyph_cache.borrow(), mirror_atlas);
             let result = UtilSprites::new(&mut glyph_cache.borrow_mut(), metrics);
             match result {
                 Ok(util_sprites) => {
@@ -613,6 +644,7 @@ impl RenderState {
         fonts: &Rc<FontConfiguration>,
         metrics: &RenderMetrics,
         size: Option<usize>,
+        mirror_atlas: bool,
     ) -> anyhow::Result<()> {
         // We make a a couple of passes at resizing; if the user has selected a large
         // font size (or a large scaling factor) then the `size==None` case will not
@@ -623,7 +655,7 @@ impl RenderState {
         let mut size = size;
         let mut attempt = 10;
         loop {
-            match self.recreate_texture_atlas_impl(fonts, metrics, size) {
+            match self.recreate_texture_atlas_impl(fonts, metrics, size, mirror_atlas) {
                 Ok(_) => return Ok(()),
                 Err(err) => {
                     attempt -= 1;
@@ -651,9 +683,13 @@ impl RenderState {
         fonts: &Rc<FontConfiguration>,
         metrics: &RenderMetrics,
         size: Option<usize>,
+        mirror_atlas: bool,
     ) -> anyhow::Result<()> {
         let size = size.unwrap_or_else(|| self.glyph_cache.borrow().atlas.size());
         let mut new_glyph_cache = GlyphCache::new_gl(&self.context, fonts, size)?;
+        // Before `UtilSprites::new`, for the reason spelled out in
+        // `RenderState::new`.
+        enable_atlas_mirroring_if_needed(&new_glyph_cache, mirror_atlas);
         self.util_sprites = UtilSprites::new(&mut new_glyph_cache, metrics)?;
 
         let mut glyph_cache = self.glyph_cache.borrow_mut();

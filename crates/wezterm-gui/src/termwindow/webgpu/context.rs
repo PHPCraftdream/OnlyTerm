@@ -722,9 +722,6 @@ impl WindowGpuSurface {
         dimensions: Dimensions,
         config: &ConfigHandle,
     ) -> anyhow::Result<Self> {
-        use super::clamp_surface_dimensions;
-        use super::state_impl::compute_compatibility_list;
-
         // SAFETY: `create_surface_unsafe` is the only way to build a surface
         // from a raw window handle. `handle` is a `RawHandlePair` whose owned
         // handles are valid (obtained from a live window in `RawHandlePair::new`)
@@ -741,6 +738,51 @@ impl WindowGpuSurface {
             RawWindowHandle::Win32(h) => Some(h.hwnd.get()),
             _ => None,
         };
+        #[cfg(not(windows))]
+        let client_hwnd: Option<isize> = None;
+
+        Self::from_surface(context, surface, client_hwnd, dimensions, config).await
+    }
+
+    /// Builds a surface targeting an existing DirectComposition
+    /// composition-surface handle instead of a window -- used by the
+    /// `webgpu_engine: PerTabProcess` GPU-host child process (task #650),
+    /// which has no window of its own and renders directly into a
+    /// composition surface the parent process created and duplicated to it
+    /// (see docs/plans/2026-08-21-per-tab-gpu-process-isolation.md).
+    ///
+    /// # Safety
+    ///
+    /// `surface_handle` must be a valid, still-open composition-surface
+    /// handle (created via `DCompositionCreateSurfaceHandle` and duplicated
+    /// into this process) for as long as the returned `WindowGpuSurface`
+    /// lives.
+    pub async unsafe fn new_from_composition_surface_handle(
+        context: &Arc<ProcessGpuContext>,
+        surface_handle: *mut core::ffi::c_void,
+        dimensions: Dimensions,
+        config: &ConfigHandle,
+    ) -> anyhow::Result<Self> {
+        // SAFETY: forwarded from this function's own contract -- `surface_handle`
+        // is a valid, still-open composition-surface handle for as long as the
+        // `WindowGpuSurface` returned by `from_surface` below lives.
+        let surface = unsafe {
+            context
+                .instance
+                .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::SurfaceHandle(surface_handle))?
+        };
+        Self::from_surface(context, surface, None, dimensions, config).await
+    }
+
+    async fn from_surface(
+        context: &Arc<ProcessGpuContext>,
+        surface: wgpu::Surface<'static>,
+        #[cfg_attr(not(windows), allow(unused_variables))] client_hwnd: Option<isize>,
+        dimensions: Dimensions,
+        config: &ConfigHandle,
+    ) -> anyhow::Result<Self> {
+        use super::clamp_surface_dimensions;
+        use super::state_impl::compute_compatibility_list;
 
         // The adapter was chosen without knowledge of this surface.
         // Confirm it's actually compatible; if not, this is an error since

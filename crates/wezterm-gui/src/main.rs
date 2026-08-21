@@ -41,7 +41,9 @@ mod download;
 mod elevate;
 mod frontend;
 mod glyphcache;
+mod gpu_tab_host;
 mod gui_api;
+mod host_process_backend;
 mod inputmap;
 mod overlay;
 mod quad;
@@ -130,6 +132,19 @@ enum SubCommand {
 
     #[command(name = "show-keys", about = "Show key assignments")]
     ShowKeys(ShowKeysCommand),
+
+    /// Hosts one tab's GPU rendering in its own process (task #650, see
+    /// docs/plans/2026-08-21-per-tab-gpu-process-isolation.md). Spawned only
+    /// by `PerTabProcessBackend` (task #651) itself -- never meant to be
+    /// typed by a user, hence `hide = true`.
+    #[command(name = "gpu-tab-host", hide = true)]
+    GpuTabHost(GpuTabHostCommand),
+}
+
+#[derive(Debug, Parser, Clone)]
+struct GpuTabHostCommand {
+    #[arg(long = "supervise-pid", value_parser)]
+    supervise_pid: u32,
 }
 
 async fn async_run_serial(opts: SerialCommand) -> anyhow::Result<()> {
@@ -1292,5 +1307,11 @@ fn run() -> anyhow::Result<()> {
         ),
         SubCommand::LsFonts(cmd) => run_ls_fonts(config, &cmd),
         SubCommand::ShowKeys(cmd) => run_show_keys(config, &cmd),
+        SubCommand::GpuTabHost(cmd) => crate::gpu_tab_host::run(
+            crate::gpu_tab_host::GpuTabHostArgs {
+                supervise_pid: cmd.supervise_pid,
+            },
+            config,
+        ),
     }
 }

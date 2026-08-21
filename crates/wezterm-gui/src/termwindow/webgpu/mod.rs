@@ -52,8 +52,15 @@ pub struct GpuFrame {
 pub struct WebGpuState {
     /// Shared process-wide GPU context
     pub context: Arc<ProcessGpuContext>,
-    /// Per-window surface state
-    pub surface: WindowGpuSurface,
+    /// Per-window surface state. `None` for a window using the
+    /// `HostProcessBackend` render backend: that backend's whole point is
+    /// that the *parent* process never creates a swapchain or calls
+    /// `Surface::configure`/`Surface::present` for this window at all (those
+    /// are exactly where every GPU crash diagnosed this session happened) --
+    /// the parent still needs a `WebGpuState` for CPU-side work that's
+    /// backend-agnostic (`RenderState`/`GlyphCache`'s atlas texture), just
+    /// not a real surface. See `new_device_only`.
+    pub surface: Option<WindowGpuSurface>,
     /// Liveness flag for this specific window's WebGpuState, checked by the
     /// device-lost callback registered in `new`.
     ///
@@ -106,16 +113,28 @@ impl WebGpuState {
         &self.context.texture_linear_sampler
     }
 
-    /// Get the HWND for this surface (Windows only)
+    /// Get the HWND for this surface (Windows only). `None` for a
+    /// device-only `WebGpuState` (see `surface`'s doc comment) as well as
+    /// for a surface with no dedicated child HWND.
     #[cfg(windows)]
     pub fn client_hwnd(&self) -> Option<isize> {
-        self.surface.client_hwnd()
+        self.surface.as_ref().and_then(|s| s.client_hwnd())
     }
 
     /// Get the render pipeline for this window's surface format.
     /// The pipeline is cached in the shared context, keyed by format.
+    ///
+    /// Only ever called from `submit_frame`, which a device-only
+    /// `WebGpuState` (see `surface`'s doc comment) never runs -- its window
+    /// uses `HostProcessBackend`, which submits frames in a child process
+    /// instead.
     fn get_render_pipeline(&self) -> wgpu::RenderPipeline {
-        let config = self.surface.config.lock();
+        let config = self
+            .surface
+            .as_ref()
+            .expect("get_render_pipeline requires a WindowGpuSurface")
+            .config
+            .lock();
         let supports_reinterpret_view = self
             .context
             .downlevel_caps
@@ -210,6 +229,72 @@ pub struct WebGpuTexture {
     width: u32,
     height: u32,
     queue: Arc<wgpu::Queue>,
+    /// Whether `write()` should also record into `dirty_updates`, for a
+    /// window using `webgpu_engine: HostProcess` to mirror this atlas in a
+    /// child process without ever sharing the GPU resource itself -- see
+    /// `termwindow::webgpu::wire`. `false` for every other window, at the
+    /// cost of one relaxed atomic load per `write()` and no allocation.
+    ///
+    /// Present as an always-there `AtomicBool` (toggled via `&self`) rather
+    /// than an `Option` set once via `&mut self`: an atlas texture is only
+    /// ever reachable through `Rc<dyn Texture2d>` (`Atlas::texture()`),
+    /// which never grants exclusive access, so a toggle requiring `&mut
+    /// self` could never actually be reached through the glyph cache's
+    /// normal API (found while wiring up the caller in `renderstate.rs`).
+    mirroring_enabled: std::sync::atomic::AtomicBool,
+    mirror: parking_lot::Mutex<AtlasMirrorLog>,
+}
+
+/// `(x, y, width, height)` of one atlas write, in texels.
+type AtlasRect = (u32, u32, u32, u32);
+
+/// The record `WebGpuTexture::write` keeps while mirroring is enabled.
+///
+/// Two levels, because a mirror needs both:
+/// * `pending` -- what changed since the last frame was shipped, which is
+///   all a child that is already up to date needs.
+/// * `written` -- the whole atlas as a replayable set of writes, which is
+///   what a *freshly spawned* child needs: its mirror texture is brand new
+///   and blank, while this process's atlas has been accumulating sprites
+///   since the window opened. Without this, every respawn produced a child
+///   that could only ever learn about glyphs rasterized *after* it started,
+///   i.e. a window that lost all its text the moment its GPU-host child was
+///   replaced.
+///
+/// Keyed by rect so that repeatedly rewriting the same region (animated
+/// images, the cursor sprite) replaces rather than accumulates, which bounds
+/// this by the atlas's occupancy instead of by how long the window has been
+/// open. Replay order is the map's key order rather than write order; atlas
+/// allocations never overlap (`guillotiere` hands out disjoint rectangles,
+/// and a regrow builds a whole new texture with its own fresh log), so the
+/// only rects that can collide are identical ones, which are collapsed here
+/// to their latest content anyway.
+#[derive(Default)]
+struct AtlasMirrorLog {
+    written: std::collections::BTreeMap<AtlasRect, Vec<u8>>,
+    pending: Vec<AtlasRect>,
+}
+
+impl AtlasMirrorLog {
+    fn record(&mut self, rect: AtlasRect, pixels: &[u8]) {
+        self.written.insert(rect, pixels.to_vec());
+        if !self.pending.contains(&rect) {
+            self.pending.push(rect);
+        }
+    }
+
+    fn updates_for(
+        written: &std::collections::BTreeMap<AtlasRect, Vec<u8>>,
+        rect: AtlasRect,
+    ) -> Option<wire::AtlasUpdate> {
+        written.get(&rect).map(|pixels| wire::AtlasUpdate {
+            x: rect.0,
+            y: rect.1,
+            width: rect.2,
+            height: rect.3,
+            pixels: pixels.clone(),
+        })
+    }
 }
 
 impl std::ops::Deref for WebGpuTexture {
@@ -246,6 +331,21 @@ impl Texture2d for WebGpuTexture {
                 depth_or_array_layers: 1,
             },
         );
+
+        if self
+            .mirroring_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            self.mirror.lock().record(
+                (
+                    rect.min_x() as u32,
+                    rect.min_y() as u32,
+                    im_width as u32,
+                    im_height as u32,
+                ),
+                im.pixel_data_slice(),
+            );
+        }
     }
 
     fn read(&self, _rect: Rect, _im: &mut dyn BitmapImage) {
@@ -310,7 +410,57 @@ impl WebGpuTexture {
             width,
             height,
             queue: Arc::clone(state.queue()),
+            mirroring_enabled: std::sync::atomic::AtomicBool::new(false),
+            mirror: parking_lot::Mutex::new(AtlasMirrorLog::default()),
         })
+    }
+
+    /// Turns on atlas-write mirroring for a `HostProcess` backend: every
+    /// subsequent `write()` also appends its `(rect, pixel bytes)` to the
+    /// internal log, which `drain_dirty_updates` hands to the caller (e.g.
+    /// once per frame, before shipping a `wire::WireFrame` to the child
+    /// process). Idempotent. Must be called before this atlas texture is
+    /// written to for the first time (typically: immediately after
+    /// construction, see `renderstate.rs`'s `enable_atlas_mirroring_if_needed`)
+    /// -- turning it on any later would miss whatever was already written.
+    pub fn enable_mirroring(&self) {
+        self.mirroring_enabled
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Takes everything recorded since the last call (or since
+    /// `enable_mirroring`, if this is the first). Returns an empty `Vec` if
+    /// mirroring was never enabled.
+    pub fn drain_dirty_updates(&self) -> Vec<wire::AtlasUpdate> {
+        let mut mirror = self.mirror.lock();
+        let mirror = &mut *mirror;
+        let pending = std::mem::take(&mut mirror.pending);
+        pending
+            .into_iter()
+            .filter_map(|rect| AtlasMirrorLog::updates_for(&mirror.written, rect))
+            .collect()
+    }
+
+    /// Every write recorded since `enable_mirroring`, not just the ones
+    /// since the last drain -- what a mirror that is starting from a blank
+    /// texture needs in order to catch up in a single frame (a first attach,
+    /// or a reattach after the GPU-host child process was respawned; see
+    /// `FrameForm::Wire`'s `full_resync`). Also clears the pending delta,
+    /// since everything in it is included here.
+    pub fn full_atlas_updates(&self) -> Vec<wire::AtlasUpdate> {
+        let mut mirror = self.mirror.lock();
+        mirror.pending.clear();
+        mirror
+            .written
+            .iter()
+            .map(|(rect, pixels)| wire::AtlasUpdate {
+                x: rect.0,
+                y: rect.1,
+                width: rect.2,
+                height: rect.3,
+                pixels: pixels.clone(),
+            })
+            .collect()
     }
 }
 
@@ -492,3 +642,4 @@ mod tests {
 pub use self::context::{ProcessGpuContext, WindowGpuSurface};
 mod context;
 mod state_impl;
+pub mod wire;

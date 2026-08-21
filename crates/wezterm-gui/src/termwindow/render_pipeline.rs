@@ -267,6 +267,7 @@ impl TermWindow {
             modal: RefCell::new(None),
             renderer_info: None,
             last_frame_signature: None,
+            last_wire_atlas_ptr: std::cell::Cell::new(None),
         };
 
         let tw = Rc::new(RefCell::new(myself));
@@ -355,7 +356,32 @@ impl TermWindow {
         // that invariant, kept so a future new `FrontEndSelection` variant
         // doesn't silently fall through here unhandled.
         debug_assert_eq!(config.front_end, FrontEndSelection::WebGpu);
-        let webgpu = match WebGpuState::new(&window, dimensions, &config).await {
+
+        // Every window's GPU rendering is hosted in its own `--gpu-tab-host`
+        // child process (`HostProcessBackend`, task #651) -- unconditional,
+        // no config lever, per the decision that a proven, self-healing
+        // respawn (killing the child never takes the parent down, and a
+        // dead child's last frame keeps showing on screen while a
+        // replacement spawns) makes an opt-in toggle pointless. Falling back
+        // to the in-process `RenderThreadHandle` only happens if
+        // `HostProcessBackend::spawn` itself fails outright (no
+        // DirectComposition, spawn failure) -- exactly like falling back to
+        // it used to be the *only* option.
+        let host_process_backend =
+            crate::host_process_backend::HostProcessBackend::spawn(&window, dimensions);
+        if host_process_backend.is_none() {
+            log::warn!(
+                "HostProcessBackend::spawn failed; falling back to in-process GPU rendering \
+                 for this window (see preceding log lines for the specific failure)"
+            );
+        }
+
+        let webgpu = if host_process_backend.is_some() {
+            WebGpuState::new_device_only(&window, &config).await
+        } else {
+            WebGpuState::new(&window, dimensions, &config).await
+        };
+        let webgpu = match webgpu {
             Ok(state) => Arc::new(state),
             Err(err) => {
                 // WebGpu adapter/device creation can fail in RDP sessions, on
@@ -464,9 +490,24 @@ impl TermWindow {
             }
 
             myself.webgpu.replace(Arc::clone(&webgpu));
-            myself.created(RenderContext(Arc::clone(&webgpu)))?;
 
-            if config.webgpu_render_thread {
+            // The render backend has to be installed *before* `created()`,
+            // which is what builds this window's `RenderState` and with it
+            // its glyph atlas: `RenderState::new` asks
+            // `wants_gpu_atlas_mirroring()` (i.e. this backend) whether
+            // atlas writes must be recorded, and has to switch recording on
+            // before `UtilSprites::new` writes the first sprites into that
+            // atlas. Installing the backend afterwards left the answer stuck
+            // at "no" for the whole life of the window, so a
+            // `HostProcessBackend` child was fed a permanently blank mirror
+            // of the atlas and drew every glyph with alpha 0 -- a window
+            // with correct background colors and no text whatsoever.
+            let mut installed_render_thread = false;
+            if let Some(backend) = host_process_backend {
+                myself.render_thread =
+                    Some(Box::new(backend) as Box<dyn crate::renderthread::RenderBackend>);
+                installed_render_thread = true;
+            } else if config.webgpu_render_thread {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let in_flight = Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let repaint_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -482,10 +523,17 @@ impl TermWindow {
                     submit_started_at,
                 };
                 myself.render_thread =
-                    crate::renderthread::RenderThreadHandle::spawn(seed, tx, myself.mux_window_id);
-                if myself.render_thread.is_some() {
-                    myself.schedule_render_thread_hang_check(&window);
-                }
+                    crate::renderthread::RenderThreadHandle::spawn(seed, tx, myself.mux_window_id)
+                        .map(|handle| {
+                            Box::new(handle) as Box<dyn crate::renderthread::RenderBackend>
+                        });
+                installed_render_thread = myself.render_thread.is_some();
+            }
+
+            myself.created(RenderContext(Arc::clone(&webgpu)))?;
+
+            if installed_render_thread {
+                myself.schedule_render_thread_hang_check(&window);
             }
             myself.load_os_parameters();
             myself.subscribe_to_pane_updates();
@@ -1110,7 +1158,8 @@ impl TermWindow {
                 submit_started_at,
             };
             self.render_thread =
-                crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id);
+                crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id)
+                    .map(|handle| Box::new(handle) as Box<dyn crate::renderthread::RenderBackend>);
             if self.render_thread.is_some() {
                 self.schedule_render_thread_hang_check(window);
             }
@@ -1928,8 +1977,12 @@ impl TermWindow {
 /// hand a driver in that state the one call it is worst at.
 ///
 /// Kept as a free function so the schedule can be asserted without a
-/// `TermWindow`, a GPU or a window.
-fn rebuild_backoff_for_attempt(attempt: usize) -> Option<Duration> {
+/// `TermWindow`, a GPU or a window. `pub(crate)` so `HostProcessBackend`
+/// (task #651) can reuse the exact same schedule for its own child-process
+/// respawns -- the reasoning transfers unchanged, and if anything applies
+/// more strongly there (a whole process's device creation, not just a
+/// surface reconfigure).
+pub(crate) fn rebuild_backoff_for_attempt(attempt: usize) -> Option<Duration> {
     match attempt {
         0 | 1 => None,
         2 => Some(Duration::from_millis(250)),
