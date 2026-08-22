@@ -3,14 +3,10 @@ set -x
 name="$1"
 
 notes=$(cat <<EOT
-See https://wezterm.org/changelog.html#$name for the changelog
+OnlyTerm $name -- a Windows-only fork of [WezTerm](https://github.com/wezterm/wezterm).
 
-If you're looking for nightly downloads or more detailed installation instructions:
-
-[Windows](https://wezterm.org/install/windows.html)
-[macOS](https://wezterm.org/install/macos.html)
-[Linux](https://wezterm.org/install/linux.html)
-[FreeBSD](https://wezterm.org/install/freebsd.html)
+Download the \`.zip\` (portable) or the \`.exe\` (installer) below; each is
+published alongside a \`.sha256\` you can verify it against.
 EOT
 )
 

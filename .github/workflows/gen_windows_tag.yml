@@ -3,7 +3,11 @@ name: windows_tag
 on:
   push:
     tags:
+      # Upstream uses date-based tags (20240203-...); this fork tags
+      # releases as v0.0.N-alpha, so both patterns have to match or a
+      # fork release never builds.
       - "20*"
+      - "v*"
 
 jobs:
   build:
@@ -90,12 +94,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: "bash ci/retry.sh bash ci/create-release.sh $(ci/tag-name.sh)"
+        run: "bash ci/retry.sh bash ci/create-release.sh ${{ github.ref_name }}"
       - name: "Upload to Tagged Release"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: "bash ci/retry.sh gh release upload --clobber $(ci/tag-name.sh) OnlyTerm-*.zip OnlyTerm-*.exe *.sha256"
+        run: "bash ci/retry.sh gh release upload --clobber ${{ github.ref_name }} OnlyTerm-*.zip OnlyTerm-*.exe *.sha256"
       - name: "Checkout winget-pkgs"
         uses: actions/checkout@v5
         with:

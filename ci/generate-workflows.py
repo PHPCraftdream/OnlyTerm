@@ -517,14 +517,14 @@ rustup default {toolchain}
             checksum,
             RunStep(
                 "Create pre-release",
-                "bash ci/retry.sh bash ci/create-release.sh $(ci/tag-name.sh)",
+                "bash ci/retry.sh bash ci/create-release.sh ${{ github.ref_name }}",
                 env={
                     "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
                 },
             ),
             RunStep(
                 "Upload to Tagged Release",
-                f"bash ci/retry.sh gh release upload --clobber $(ci/tag-name.sh) {glob}",
+                f"bash ci/retry.sh gh release upload --clobber ${{{{ github.ref_name }}}} {glob}",
                 env={
                     "GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
                 },
@@ -872,7 +872,11 @@ def tag_actions():
 on:
   push:
     tags:
+      # Upstream uses date-based tags (20240203-...); this fork tags
+      # releases as v0.0.N-alpha, so both patterns have to match or a
+      # fork release never builds.
       - "20*"
+      - "v*"
 """,
         is_continuous=True,
         is_tag=True,
