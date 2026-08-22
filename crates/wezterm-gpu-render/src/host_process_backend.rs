@@ -427,6 +427,13 @@ fn spawn_writer_thread(
     std::thread::Builder::new()
         .name(format!("gpu-host-writer-{generation}"))
         .spawn(move || {
+            // Reuse the serialized wire body across frames.  The draw
+            // buffers have their own pool; this second buffer is the byte
+            // representation produced after the draw buffers are borrowed.
+            // Keeping both allocations alive across frames prevents the
+            // custom allocator from retaining a fresh large arena for every
+            // slightly-different terminal frame.
+            let mut frame_body = Vec::new();
             for msg in rx {
                 let result = match msg {
                     HostToChildMsg::AttachSurface {
@@ -435,7 +442,8 @@ fn spawn_writer_thread(
                         height,
                     } => wire::write_attach_surface(&mut stdin, surface_handle, width, height),
                     HostToChildMsg::Frame(mut frame) => {
-                        let res = wire::write_frame(&mut stdin, &frame);
+                        let res =
+                            wire::write_frame_with_buffer(&mut stdin, &frame, &mut frame_body);
                         // Return draw buffers to the pool now that their
                         // contents have been serialized onto the wire.
                         // This is the return half of the pool contract:

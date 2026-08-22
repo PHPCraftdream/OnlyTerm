@@ -235,6 +235,22 @@ fn write_message(w: &mut impl Write, kind: WireMessageKind, body: &[u8]) -> io::
 
 pub fn write_frame(w: &mut impl Write, frame: &WireFrame) -> io::Result<()> {
     let mut body = Vec::new();
+    write_frame_with_buffer(w, frame, &mut body)
+}
+
+/// Serializes a frame using caller-owned storage for the message body.
+///
+/// The host-process writer calls this with one buffer that lives for the
+/// writer thread's lifetime.  Keeping the capacity between frames is
+/// essential for the custom allocator used by the GUI: a fresh 300--435 KB
+/// body allocation per frame otherwise becomes a steady stream of retained
+/// arenas even though the wire body is dropped after each write.
+pub fn write_frame_with_buffer(
+    w: &mut impl Write,
+    frame: &WireFrame,
+    body: &mut Vec<u8>,
+) -> io::Result<()> {
+    body.clear();
     let (atlas_reset, atlas_width, atlas_height) = match frame.atlas_reset {
         Some((w, h)) => (1u32, w, h),
         None => (0u32, 0u32, 0u32),
@@ -266,7 +282,7 @@ pub fn write_frame(w: &mut impl Write, frame: &WireFrame) -> io::Result<()> {
         body.extend_from_slice(bytemuck::bytes_of(&update_header));
         body.extend_from_slice(update.pixels.as_ref());
     }
-    write_message(w, WireMessageKind::Frame, &body)
+    write_message(w, WireMessageKind::Frame, body)
 }
 
 pub fn write_resize(w: &mut impl Write, width: u32, height: u32) -> io::Result<()> {
@@ -468,6 +484,43 @@ mod tests {
         assert_eq!(decoded.atlas_updates.len(), 1);
         assert_eq!(decoded.atlas_updates[0].pixels.len(), 3 * 4 * 4);
         assert_eq!(decoded.atlas_updates[0].pixels[0], 9);
+    }
+
+    #[test]
+    fn frame_body_buffer_is_reused_across_serializations() {
+        struct Sink;
+
+        impl Write for Sink {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let frame = sample_frame();
+        let mut body = Vec::new();
+        let mut sink = Sink;
+
+        write_frame_with_buffer(&mut sink, &frame, &mut body).unwrap();
+        let first_ptr = body.as_ptr();
+        let first_capacity = body.capacity();
+        assert!(!body.is_empty());
+
+        write_frame_with_buffer(&mut sink, &frame, &mut body).unwrap();
+
+        assert_eq!(
+            body.as_ptr(),
+            first_ptr,
+            "serializing another frame must reuse the existing body allocation"
+        );
+        assert_eq!(
+            body.capacity(),
+            first_capacity,
+            "serializing another frame must not shrink the retained body capacity"
+        );
     }
 
     #[test]
