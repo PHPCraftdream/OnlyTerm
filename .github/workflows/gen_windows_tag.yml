@@ -61,6 +61,8 @@ jobs:
         shell: cmd
         run: "cargo nextest run --all --no-fail-fast"
       - name: "Package"
+        env:
+          TAG_NAME: ${{ github.ref_name }}
         shell: bash
         run: "bash ci/deploy.sh"
       - name: "Upload artifact"
@@ -74,7 +76,7 @@ jobs:
   upload:
     runs-on: ubuntu-latest
     needs: build
-    if: github.repository == 'wezterm/wezterm'
+    if: github.repository == 'PHPCraftdream/OnlyTerm'
     permissions:
       contents: write
       pages: write
@@ -100,23 +102,3 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: "bash ci/retry.sh gh release upload --clobber ${{ github.ref_name }} OnlyTerm-*.zip OnlyTerm-*.exe *.sha256"
-      - name: "Checkout winget-pkgs"
-        uses: actions/checkout@v5
-        with:
-          repository: "wez/winget-pkgs"
-          path: "winget-pkgs"
-          token: "${{ secrets.GH_PAT }}"
-      - name: "Setup email for winget repo"
-        shell: bash
-        run: "cd winget-pkgs && git config user.email wez@wezfurlong.org"
-      - name: "Setup name for winget repo"
-        shell: bash
-        run: "cd winget-pkgs && git config user.name 'Wez Furlong'"
-      - name: "Create winget manifest and push to fork"
-        shell: bash
-        run: "bash ci/make-winget-pr.sh winget-pkgs WezTerm-*.exe"
-      - name: "Submit PR"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
-        shell: bash
-        run: 'cd winget-pkgs && gh pr create --fill --body "PR automatically created by release automation in the wezterm repo"'

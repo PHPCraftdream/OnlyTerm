@@ -19,8 +19,7 @@ if ! check_rust_version ; then
   echo "use rustup to manage installed versions of Rust"
   echo "https://www.rust-lang.org/en-US/install.html"
   echo
-  echo "See https://wezterm.org/install/source.html for complete"
-  echo "installation instructions for wezterm"
+  echo "See the README for complete build instructions"
   exit 1
 fi
 

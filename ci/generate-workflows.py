@@ -406,8 +406,14 @@ rustup default {toolchain}
             RunStep(name="Test", run=run, shell="cmd")
         ]
 
-    def package(self, trusted=False):
-        steps = [RunStep("Package", "bash ci/deploy.sh")]
+    def package(self, trusted=False, from_tag=False):
+        # ci/deploy.sh names the zip and the Inno Setup installer after
+        # TAG_NAME, falling back to a commit-date string when it is unset.
+        # That fallback is right for nightlies but wrong for a tagged build:
+        # the release is named after the tag, so the artifacts inside it have
+        # to be too, or v0.0.15-alpha ships files called OnlyTerm-20260823-...
+        env = {"TAG_NAME": "${{ github.ref_name }}"} if from_tag else None
+        steps = [RunStep("Package", "bash ci/deploy.sh", env=env)]
         return steps
 
     def upload_artifact(self):
@@ -530,42 +536,6 @@ rustup default {toolchain}
                 },
             ),
         ]
-
-    def create_winget_pr(self):
-        steps = []
-        if "windows" in self.name:
-            steps += [
-                ActionStep(
-                    "Checkout winget-pkgs",
-                    action="actions/checkout@v5",
-                    params={
-                        "repository": "wez/winget-pkgs",
-                        "path": "winget-pkgs",
-                        "token": "${{ secrets.GH_PAT }}",
-                    },
-                ),
-                RunStep(
-                    "Setup email for winget repo",
-                    "cd winget-pkgs && git config user.email wez@wezfurlong.org",
-                ),
-                RunStep(
-                    "Setup name for winget repo",
-                    "cd winget-pkgs && git config user.name 'Wez Furlong'",
-                ),
-                RunStep(
-                    "Create winget manifest and push to fork",
-                    "bash ci/make-winget-pr.sh winget-pkgs WezTerm-*.exe",
-                ),
-                RunStep(
-                    "Submit PR",
-                    'cd winget-pkgs && gh pr create --fill --body "PR automatically created by release automation in the wezterm repo"',
-                    env={
-                        "GITHUB_TOKEN": "${{ secrets.GH_PAT }}",
-                    },
-                ),
-            ]
-
-        return steps
 
     def global_env(self):
         self.env["CARGO_INCREMENTAL"] = "0"
@@ -727,12 +697,12 @@ rustup default {toolchain}
         steps = self.prep_environment()
         steps += self.build_all_release()
         steps += self.test_all()
-        steps += self.package(trusted=True)
+        steps += self.package(trusted=True, from_tag=True)
         steps += self.upload_artifact()
 
         uploader = Job(
             runs_on="ubuntu-latest",
-            steps=self.checkout() + self.upload_asset_tag() + self.create_winget_pr(),
+            steps=self.checkout() + self.upload_asset_tag(),
         )
 
         return (
@@ -811,7 +781,7 @@ jobs:
   upload:
     runs-on: ubuntu-latest
     needs: build
-    if: github.repository == 'wezterm/wezterm'
+    if: github.repository == 'PHPCraftdream/OnlyTerm'
     permissions:
       contents: write
       pages: write

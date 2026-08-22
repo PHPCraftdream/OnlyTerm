@@ -19,8 +19,7 @@ assignees: ''
 No additional dependencies are required beyond Rust and a recent MSVC compiler.
 
 If building from the git repo, did you update the submodules? Not doing this
-is a common source of problems; see the information at
-<https://wezfurlong.org/wezterm/install/source.html> for more information.
+is a common source of problems: run `git submodule update --init --recursive`.
 
 ## The build output
 

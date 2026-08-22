@@ -85,7 +85,7 @@ jobs:
   upload:
     runs-on: ubuntu-latest
     needs: build
-    if: github.repository == 'wezterm/wezterm'
+    if: github.repository == 'PHPCraftdream/OnlyTerm'
     permissions:
       contents: write
       pages: write
