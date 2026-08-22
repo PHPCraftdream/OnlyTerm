@@ -132,6 +132,12 @@ struct Shared {
     /// under `cargo test` that would resolve to the test harness binary
     /// instead of the real GUI executable (see `spawn_for_hwnd_with_exe`).
     child_exe: std::path::PathBuf,
+    /// Shared pool of reusable `Vec<QuadInstance>` draw buffers.
+    /// `build_wire_frame` (GUI thread) takes buffers from this pool instead
+    /// of cloning fresh allocations; the writer thread returns them after
+    /// `write_frame` has serialized their contents onto the wire. See
+    /// `wire::WireDrawPool`'s doc comment for the full rationale.
+    draw_pool: wire::WireDrawPool,
 }
 
 // SAFETY: `HANDLE` is an opaque kernel object identifier (an index into a
@@ -260,6 +266,7 @@ impl HostProcessBackend {
             teardown_sentinel_strong: Arc::new(()),
             pending_surface_handles: Mutex::new(std::collections::HashMap::new()),
             child_exe,
+            draw_pool: wire::new_draw_pool(),
         });
 
         if !spawn_generation(&shared) {
@@ -346,7 +353,7 @@ fn spawn_generation(shared: &Arc<Shared>) -> bool {
     let stdin = child.stdin.take().expect("stdin was piped");
     let stdout = child.stdout.take().expect("stdout was piped");
 
-    spawn_writer_thread(generation, stdin, writer_rx);
+    spawn_writer_thread(generation, stdin, writer_rx, Arc::clone(&shared.draw_pool));
     spawn_reader_thread_with_death_handling(Arc::clone(shared), generation, stdout);
 
     writer_tx
@@ -415,6 +422,7 @@ fn spawn_writer_thread(
     generation: u64,
     mut stdin: std::process::ChildStdin,
     rx: Receiver<HostToChildMsg>,
+    draw_pool: wire::WireDrawPool,
 ) {
     std::thread::Builder::new()
         .name(format!("gpu-host-writer-{generation}"))
@@ -426,7 +434,15 @@ fn spawn_writer_thread(
                         width,
                         height,
                     } => wire::write_attach_surface(&mut stdin, surface_handle, width, height),
-                    HostToChildMsg::Frame(frame) => wire::write_frame(&mut stdin, &frame),
+                    HostToChildMsg::Frame(mut frame) => {
+                        let res = wire::write_frame(&mut stdin, &frame);
+                        // Return draw buffers to the pool now that their
+                        // contents have been serialized onto the wire.
+                        // This is the return half of the pool contract:
+                        // `build_wire_frame` took them, we give them back.
+                        wire::pool_return_draws(&draw_pool, &mut frame.draws);
+                        res
+                    }
                     HostToChildMsg::Resize { width, height } => {
                         wire::write_resize(&mut stdin, width, height)
                     }
@@ -704,6 +720,10 @@ impl RenderBackend for HostProcessBackend {
     fn teardown_sentinel(&self) -> Weak<dyn std::any::Any + Send + Sync> {
         Arc::downgrade(&self.shared.teardown_sentinel_strong)
             as Weak<dyn std::any::Any + Send + Sync>
+    }
+
+    fn wire_draw_pool(&self) -> Option<wire::WireDrawPool> {
+        Some(Arc::clone(&self.shared.draw_pool))
     }
 }
 

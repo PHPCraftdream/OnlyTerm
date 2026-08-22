@@ -35,8 +35,64 @@
 
 use crate::quad::QuadInstance;
 use crate::ShaderUniform;
+use parking_lot::Mutex;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
+
+/// A thread-safe pool of reusable `Vec<QuadInstance>` buffers, shared between
+/// the GUI thread (which fills them in `build_wire_frame`) and the writer
+/// thread (which returns them after `write_frame` has serialized their
+/// contents onto the wire).
+///
+/// Without this pool, every frame clones each layer's `instances` Vec into a
+/// fresh heap allocation (~300-435 KB per frame, sized to the current quad
+/// count). Because the size drifts slightly frame-to-frame (terminal content
+/// changes), the allocator sees a relentless stream of large, never-identical
+/// allocations that it retains as unreusable arenas -- the root cause of the
+/// OOM crash diagnosed from the PID 64440 dump (see
+/// docs/investigations/2026-08-21-hostprocess-oom-crash-ktav-lang.md).
+///
+/// With the pool, the same buffers are reused across frames: the GUI thread
+/// takes a buffer from the pool (or allocates fresh on the very first frame),
+/// fills it via `extend_from_slice`, sends it inside a `WireFrame`, and the
+/// writer thread pushes it back after serialization. Since `in_flight` limits
+/// the pipeline to one frame, the pool stays at its steady-state size
+/// (typically one buffer per draw) and the allocator never sees the unbounded
+/// stream of large allocations that killed the process.
+///
+/// Mirrors the `TripleVertexBuffer::scratch_pool` idiom already established
+/// in `renderstate.rs`.
+pub type WireDrawPool = Arc<Mutex<Vec<Vec<QuadInstance>>>>;
+
+/// Creates a new, empty draw-buffer pool.
+pub fn new_draw_pool() -> WireDrawPool {
+    Arc::new(Mutex::new(Vec::new()))
+}
+
+/// Takes a buffer from the pool (preserving its capacity from a previous
+/// frame) or allocates a fresh one if the pool is empty.
+pub fn pool_take(pool: &WireDrawPool) -> Vec<QuadInstance> {
+    pool.lock().pop().unwrap_or_default()
+}
+
+/// Returns a buffer to the pool after the writer thread has finished
+/// serializing it. The buffer is cleared (preserving capacity) before being
+/// pushed back, so the next `pool_take` gets a ready-to-fill buffer.
+pub fn pool_return(pool: &WireDrawPool, mut buf: Vec<QuadInstance>) {
+    buf.clear();
+    pool.lock().push(buf);
+}
+
+/// Returns all draw buffers from a `WireFrame` to the pool at once. Called
+/// by the writer thread after `write_frame` has serialized the frame's
+/// contents.
+pub fn pool_return_draws(pool: &WireDrawPool, draws: &mut Vec<Vec<QuadInstance>>) {
+    let mut guard = pool.lock();
+    for mut buf in draws.drain(..) {
+        buf.clear();
+        guard.push(buf);
+    }
+}
 
 #[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -517,5 +573,152 @@ mod tests {
         assert!(matches!(second, WireMessage::Shutdown));
         let third = read_message(&mut cursor).unwrap();
         assert!(third.is_none());
+    }
+
+    /// Regression test for the wire-frame draw-buffer pool: simulates the
+    /// exact take-fill-serialize-return cycle that `build_wire_frame` (GUI
+    /// thread) and `spawn_writer_thread` (writer thread) perform, and
+    /// asserts that the pool reuses buffers across frames rather than
+    /// allocating fresh ones every time.
+    ///
+    /// Without the pool fix (i.e. the old `vb.instances.borrow().clone()`
+    /// path), each frame allocated a fresh ~300-435 KB `Vec<QuadInstance>`
+    /// that was never returned to any pool and whose slightly-varying size
+    /// prevented the allocator from reusing its arena -- the root cause of
+    /// the OOM crash diagnosed from the PID 64440 dump (see
+    /// docs/investigations/2026-08-21-hostprocess-oom-crash-ktav-lang.md).
+    ///
+    /// Scope, stated honestly: this pins the take/serialize/return contract
+    /// of the pool itself -- that a returned buffer really is handed back
+    /// out rather than reallocated. It does NOT observe `build_wire_frame`,
+    /// which has no test harness (it needs a live `TermWindow`), so a
+    /// regression that reverted *that* call site to `.clone()` while leaving
+    /// these helpers intact would still pass. That wiring is verified by
+    /// reading, the same tradeoff `test_scratch_pool_reuses_capacity` in
+    /// `renderstate.rs` makes for the identical idiom.
+    ///
+    /// Modeled on `test_scratch_pool_reuses_capacity` in `renderstate.rs`.
+    #[test]
+    fn wire_draw_pool_reuses_buffers_across_frames() {
+        let pool = new_draw_pool();
+
+        // --- Frame 1: pool is empty, so pool_take allocates fresh ---
+        let mut buf1 = pool_take(&pool);
+        // Simulate filling the buffer with quad data (like build_wire_frame
+        // does with extend_from_slice from the layer's instances).
+        for i in 0..1000 {
+            buf1.push(QuadInstance {
+                position: [i as f32, 0.0, 0.0, 0.0],
+                ..Default::default()
+            });
+        }
+        let ptr1 = buf1.as_ptr();
+        let cap1 = buf1.capacity();
+
+        // Build a WireFrame carrying this buffer (simulates what
+        // build_wire_frame returns).
+        let mut frame = WireFrame {
+            uniform: ShaderUniform::default(),
+            draws: vec![buf1],
+            atlas_reset: None,
+            atlas_updates: vec![],
+        };
+
+        // Simulate the writer thread: serialize, then return buffers.
+        let mut wire_bytes = Vec::new();
+        write_frame(&mut wire_bytes, &frame).unwrap();
+        pool_return_draws(&pool, &mut frame.draws);
+
+        // The frame's draws should be drained.
+        assert!(
+            frame.draws.is_empty(),
+            "pool_return_draws must drain the frame's draws Vec"
+        );
+        // The pool should now hold the buffer.
+        assert_eq!(
+            pool.lock().len(),
+            1,
+            "pool should hold exactly one returned buffer"
+        );
+
+        // --- Frame 2: pool_take should return the SAME buffer ---
+        let mut buf2 = pool_take(&pool);
+        let ptr2 = buf2.as_ptr();
+        let cap2 = buf2.capacity();
+
+        assert_eq!(
+            ptr1, ptr2,
+            "second pool_take must reuse the same heap allocation (pointer identity), \
+             not allocate fresh -- this is the property that prevents OOM"
+        );
+        assert_eq!(
+            cap1, cap2,
+            "reused buffer must preserve its capacity from the previous frame"
+        );
+        assert_eq!(
+            buf2.len(),
+            0,
+            "reused buffer must be cleared (length 0) so the caller can fill it fresh"
+        );
+
+        // Fill it with a slightly different count (simulates the terminal
+        // content changing between frames -- the exact trigger for the OOM,
+        // since the old clone path produced slightly-different-sized
+        // allocations that the allocator could never reuse).
+        for i in 0..1050 {
+            buf2.push(QuadInstance {
+                position: [i as f32, 1.0, 0.0, 0.0],
+                ..Default::default()
+            });
+        }
+
+        // Verify the serialized content is correct (same bytes as a fresh
+        // allocation would produce -- the pool must not corrupt data).
+        let mut frame2 = WireFrame {
+            uniform: ShaderUniform::default(),
+            draws: vec![buf2],
+            atlas_reset: None,
+            atlas_updates: vec![],
+        };
+        let mut wire_bytes2 = Vec::new();
+        write_frame(&mut wire_bytes2, &frame2).unwrap();
+        pool_return_draws(&pool, &mut frame2.draws);
+
+        // Decode and verify frame 2's content survived the pool round-trip.
+        let mut cursor = std::io::Cursor::new(wire_bytes2);
+        let decoded = read_message(&mut cursor).unwrap().expect("a frame");
+        let WireMessage::Frame(decoded) = decoded else {
+            panic!("expected a Frame message");
+        };
+        assert_eq!(decoded.draws.len(), 1);
+        assert_eq!(decoded.draws[0].len(), 1050);
+        assert_eq!(
+            decoded.draws[0][0].position,
+            [0.0, 1.0, 0.0, 0.0],
+            "first quad of frame 2 should carry the frame-2 data"
+        );
+    }
+
+    /// Verifies that `pool_return` preserves capacity but clears content.
+    #[test]
+    fn pool_return_clears_but_preserves_capacity() {
+        let pool = new_draw_pool();
+        let mut buf = Vec::with_capacity(500);
+        for i in 0..100 {
+            buf.push(QuadInstance {
+                position: [i as f32; 4],
+                ..Default::default()
+            });
+        }
+        let cap = buf.capacity();
+        pool_return(&pool, buf);
+
+        let recycled = pool_take(&pool);
+        assert_eq!(recycled.len(), 0, "returned buffer must be empty");
+        assert_eq!(
+            recycled.capacity(),
+            cap,
+            "returned buffer must preserve its capacity"
+        );
     }
 }

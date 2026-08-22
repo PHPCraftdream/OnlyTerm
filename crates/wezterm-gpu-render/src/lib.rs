@@ -149,6 +149,17 @@ pub trait RenderBackend {
     /// Type-erased teardown signal for `Window::recreate_webgpu_child_window`/
     /// `sweep_retired_webgpu_children`. See `RenderThreadHandle::teardown_sentinel`.
     fn teardown_sentinel(&self) -> std::sync::Weak<dyn std::any::Any + Send + Sync>;
+    /// Returns the shared draw-buffer pool for wire-frame construction, if
+    /// this backend uses one. `build_wire_frame` takes buffers from this pool
+    /// (instead of cloning fresh allocations every frame), and the backend's
+    /// writer thread returns them after serialization -- eliminating the
+    /// unbounded per-frame allocation stream that caused the 4 GB OOM.
+    ///
+    /// Only `HostProcessBackend` returns `Some`; in-process backends never
+    /// build wire frames and return `None`.
+    fn wire_draw_pool(&self) -> Option<wire::WireDrawPool> {
+        None
+    }
 }
 
 use std::time::Duration;
