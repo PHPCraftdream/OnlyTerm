@@ -1,0 +1,15 @@
+[package]
+name = "wezterm-gui-render-thread"
+version = "0.1.0"
+authors = ["Wez Furlong <wez@wezfurlong.org>"]
+edition = "2018"
+publish = false
+
+[dependencies]
+config.workspace = true
+log.workspace = true
+metrics.workspace = true
+parking_lot.workspace = true
+wgpu.workspace = true
+wezterm-gpu-render.workspace = true
+window.workspace = true

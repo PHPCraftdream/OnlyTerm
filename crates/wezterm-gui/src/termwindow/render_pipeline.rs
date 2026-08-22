@@ -538,6 +538,14 @@ impl TermWindow {
                     repaint_pending,
                     window_destroyed,
                     submit_started_at,
+                    on_renderer_error: Box::new(|win, reason| {
+                        let recovery_window = win.clone();
+                        win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                            move |tw| {
+                                tw.handle_render_error_recovery(&recovery_window, &reason);
+                            },
+                        )));
+                    }),
                 };
                 myself.render_thread =
                     crate::renderthread::RenderThreadHandle::spawn(seed, tx, myself.mux_window_id)
@@ -1179,6 +1187,14 @@ impl TermWindow {
                 repaint_pending,
                 window_destroyed,
                 submit_started_at,
+                on_renderer_error: Box::new(|win, reason| {
+                    let recovery_window = win.clone();
+                    win.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
+                        move |tw| {
+                            tw.handle_render_error_recovery(&recovery_window, &reason);
+                        },
+                    )));
+                }),
             };
             self.render_thread =
                 crate::renderthread::RenderThreadHandle::spawn(seed, tx, self.mux_window_id)

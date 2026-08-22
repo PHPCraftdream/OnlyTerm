@@ -80,6 +80,10 @@ pub struct RenderThreadSeed {
     /// per-window supervisor (task #223) whether this window's render
     /// thread is currently stuck.
     pub submit_started_at: Arc<Mutex<Option<Instant>>>,
+    /// Invoked on the render thread when a non-transient surface error needs
+    /// GUI-thread renderer recovery. The GUI supplies this callback so this
+    /// crate does not depend on `TermWindow`.
+    pub on_renderer_error: Box<dyn Fn(::window::Window, String) + Send + Sync>,
 }
 
 impl RenderBackend for RenderThreadHandle {
@@ -505,6 +509,7 @@ fn render_thread_loop(seed: RenderThreadSeed) {
     let window = seed.window.clone();
     let resize_webgpu = Arc::clone(&seed.webgpu);
     let resize_window_destroyed = Arc::clone(&seed.window_destroyed);
+    let on_renderer_error = seed.on_renderer_error;
     // Task #407: local (not `Arc`/atomic -- this closure only ever runs on
     // this single render thread, one message at a time) one-shot guard so
     // `submit_one_frame`'s `Window::clear_placeholder_background` call below
@@ -527,6 +532,7 @@ fn render_thread_loop(seed: RenderThreadSeed) {
                     submit_started_at: &submit_started_at,
                 },
                 &mut placeholder_cleared,
+                &*on_renderer_error,
             );
         },
         &mut |dims| {
@@ -619,6 +625,7 @@ fn submit_one_frame(
     frame: GpuFrame,
     state: SubmitState<'_>,
     placeholder_cleared: &mut bool,
+    on_renderer_error: &dyn Fn(::window::Window, String),
 ) {
     let SubmitState {
         in_flight,
@@ -803,11 +810,7 @@ fn submit_one_frame(
                              other than the transient Lost/Outdated case",
                             other
                         );
-                        window.notify(crate::termwindow::TermWindowNotif::Apply(Box::new(
-                            move |tw| {
-                                tw.handle_render_error_recovery(&win, &reason);
-                            },
-                        )));
+                        on_renderer_error(win, reason);
                     }
                 }
             }

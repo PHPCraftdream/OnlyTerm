@@ -7,12 +7,14 @@ members = [
   "crates/wezterm",
   "crates/wezterm-blob-leases",
   "crates/wezterm-cell",
+  "crates/wezterm-color-schemes-data",
   "crates/wezterm-escape-parser",
   "crates/wezterm-dynamic",
   "crates/wezterm-elevated-transport",
   "crates/wezterm-gpu-render",
   "crates/wezterm-gpu-protocol",
   "crates/wezterm-gui",
+  "crates/wezterm-gui-render-thread",
   "crates/wezterm-mux-server",
   "crates/wezterm-open-url",
   "crates/wezterm-surface",
@@ -217,6 +219,7 @@ wezterm-bidi = { version="0.2.3", path = "crates/bidi", default-features=false}
 wezterm-blob-leases = { version="0.1.1", path = "crates/wezterm-blob-leases"}
 wezterm-cell = { path = "crates/wezterm-cell"}
 wezterm-char-props = { path = "crates/wezterm-char-props", default-features=false }
+wezterm-color-schemes-data = { path = "crates/wezterm-color-schemes-data" }
 wezterm-client = { path = "crates/wezterm-client" }
 wezterm-color-types = { version="0.3", path = "crates/color-types", default-features=false }
 wezterm-config-derive = { version="0.1", path="crates/config/derive" }
@@ -227,6 +230,7 @@ wezterm-escape-parser = { version="0.1.0", path="crates/wezterm-escape-parser" }
 wezterm-font = { path = "crates/wezterm-font" }
 wezterm-gpu-render = { path = "crates/wezterm-gpu-render" }
 wezterm-gpu-protocol = { path = "crates/wezterm-gpu-protocol" }
+wezterm-gui-render-thread = { path = "crates/wezterm-gui-render-thread" }
 wezterm-gui-subcommands = { path = "crates/wezterm-gui-subcommands" }
 wezterm-input-types = { version="0.1", path = "crates/wezterm-input-types", default-features=false }
 wezterm-mux-server-impl = { path = "crates/wezterm-mux-server-impl" }

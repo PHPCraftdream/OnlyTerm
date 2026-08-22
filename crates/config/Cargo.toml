@@ -38,6 +38,7 @@ toml.workspace = true
 umask.workspace = true
 wezterm-bidi.workspace = true
 wezterm-config-derive.workspace = true
+wezterm-color-schemes-data.workspace = true
 wezterm-dynamic.workspace = true
 wezterm-input-types.workspace = true
 wezterm-term = { workspace = true, features=["use_serde"] }

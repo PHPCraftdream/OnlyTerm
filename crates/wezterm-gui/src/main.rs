@@ -46,7 +46,6 @@ mod inputmap;
 mod overlay;
 mod quad;
 mod renderstate;
-mod renderthread;
 mod resize_increment_calculator;
 mod scrollbar;
 mod selection;
@@ -58,6 +57,8 @@ mod tabbar;
 mod termwindow;
 mod update;
 mod utilsprites;
+
+pub use wezterm_gui_render_thread as renderthread;
 
 #[cfg(feature = "dhat-heap")]
 #[global_allocator]

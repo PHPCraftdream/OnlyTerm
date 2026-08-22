@@ -109,6 +109,7 @@ wezterm-dynamic.workspace = true
 wezterm-elevated-transport.workspace = true
 wezterm-font.workspace = true
 wezterm-gpu-render.workspace = true
+wezterm-gui-render-thread.workspace = true
 wezterm-gui-subcommands.workspace = true
 wezterm-mux-server-impl.workspace = true
 wezterm-open-url.workspace = true

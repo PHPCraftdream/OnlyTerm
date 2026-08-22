@@ -871,6 +871,7 @@ dependencies = [
  "toml 0.8.23",
  "umask",
  "wezterm-bidi",
+ "wezterm-color-schemes-data",
  "wezterm-config-derive",
  "wezterm-dynamic",
  "wezterm-input-types",
@@ -5719,6 +5720,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wezterm-color-schemes-data"
+version = "0.1.0"
+
+[[package]]
 name = "wezterm-color-types"
 version = "0.3.0"
 dependencies = [
@@ -5947,6 +5952,7 @@ dependencies = [
  "wezterm-elevated-transport",
  "wezterm-font",
  "wezterm-gpu-render",
+ "wezterm-gui-render-thread",
  "wezterm-gui-subcommands",
  "wezterm-mux-server-impl",
  "wezterm-open-url",
@@ -5958,6 +5964,19 @@ dependencies = [
  "winapi",
  "window",
  "windows",
+]
+
+[[package]]
+name = "wezterm-gui-render-thread"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "log",
+ "metrics",
+ "parking_lot",
+ "wezterm-gpu-render",
+ "wgpu",
+ "window",
 ]
 
 [[package]]
