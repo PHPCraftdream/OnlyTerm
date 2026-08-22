@@ -209,6 +209,35 @@ pub struct AtlasUpdate {
     pub pixels: Arc<[u8]>,
 }
 
+/// A borrowed view of one atlas update, pointing straight into the caller's
+/// message-body buffer instead of owning a copy of the pixels.
+pub struct AtlasUpdateRef<'a> {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: &'a [u8],
+}
+
+/// A borrowed view of a frame, parsed in place from a caller-owned body
+/// buffer (see [`read_message_into`]).
+///
+/// The receiving side of the wire never needs to own this data: every draw
+/// goes straight into a `wgpu` vertex buffer and every atlas update straight
+/// into a texture write, both of which copy into GPU-owned storage. Handing
+/// it owned `Vec`s instead meant allocating (and immediately freeing) the
+/// whole frame -- hundreds of KB, at a size that drifts frame to frame --
+/// on every single frame, which is exactly the allocation pattern that
+/// exhausted memory on the sending side (see
+/// docs/investigations/2026-08-21-hostprocess-oom-crash-ktav-lang.md). The
+/// only allocations left here are the two small `Vec`s of references.
+pub struct WireFrameRef<'a> {
+    pub uniform: ShaderUniform,
+    pub draws: Vec<&'a [QuadInstance]>,
+    pub atlas_reset: Option<(u32, u32)>,
+    pub atlas_updates: Vec<AtlasUpdateRef<'a>>,
+}
+
 /// A `GpuFrame`'s worth of data that can cross a process boundary. See the
 /// module doc comment for why this exists instead of reusing `GpuFrame`.
 pub struct WireFrame {
@@ -333,17 +362,27 @@ pub enum WireMessage {
     Fatal(WireFatal),
 }
 
+/// Borrowed counterpart of [`WireMessage`], produced by
+/// [`read_message_into`]. Only `Frame` actually borrows; the rest are small
+/// `Pod` payloads carried by value, exactly as in the owned enum.
+pub enum WireMessageRef<'a> {
+    Frame(WireFrameRef<'a>),
+    Resize(WireResize),
+    Shutdown,
+    AttachSurface(WireAttachSurface),
+    Presented(WirePresented),
+    Fatal(WireFatal),
+}
+
 fn read_exact_vec(r: &mut impl Read, len: usize) -> io::Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
     Ok(buf)
 }
 
-/// Reads one message from the wire. Returns `Ok(None)` on a clean EOF
-/// (the writer end closed without a `Shutdown` message, e.g. the child
-/// process died) rather than an error, so callers can tell that apart from
-/// a real I/O failure.
-pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
+/// Reads the fixed-size length+kind prefix. `Ok(None)` on a clean EOF, with
+/// the same meaning as [`read_message`]'s.
+fn read_header(r: &mut impl Read) -> io::Result<Option<(usize, WireMessageKind)>> {
     let mut len_buf = [0u8; 4];
     match r.read_exact(&mut len_buf) {
         Ok(()) => {}
@@ -356,6 +395,52 @@ pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
     r.read_exact(&mut kind_buf)?;
     let kind = WireMessageKind::from_u32(u32::from_le_bytes(kind_buf))
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unknown wire message kind"))?;
+    Ok(Some((len, kind)))
+}
+
+/// Reads one message using caller-owned storage for the body, returning a
+/// view that borrows it.
+///
+/// This is the read-side counterpart of [`write_frame_with_buffer`], and the
+/// form the `gpu-tab-host` child's message loop uses: one buffer serves every
+/// frame for the process's lifetime, and no part of a frame is ever copied
+/// out of it -- draws go straight into a `wgpu` vertex buffer, atlas pixels
+/// straight into a texture write. [`read_message`] allocates a fresh body
+/// (and then a second set of owned copies inside it) per call, which for a
+/// stream of multi-hundred-KB frames is the very allocation pattern that
+/// exhausted memory on the sending side.
+pub fn read_message_into<'a>(
+    r: &mut impl Read,
+    body: &'a mut Vec<u8>,
+) -> io::Result<Option<WireMessageRef<'a>>> {
+    let Some((len, kind)) = read_header(r)? else {
+        return Ok(None);
+    };
+
+    body.clear();
+    body.resize(len, 0);
+    r.read_exact(body)?;
+
+    Ok(Some(match kind {
+        WireMessageKind::Shutdown => WireMessageRef::Shutdown,
+        WireMessageKind::Resize => WireMessageRef::Resize(*bytemuck::from_bytes(body)),
+        WireMessageKind::Frame => WireMessageRef::Frame(parse_frame_ref(body)?),
+        WireMessageKind::AttachSurface => {
+            WireMessageRef::AttachSurface(*bytemuck::from_bytes(body))
+        }
+        WireMessageKind::Presented => WireMessageRef::Presented(*bytemuck::from_bytes(body)),
+        WireMessageKind::Fatal => WireMessageRef::Fatal(*bytemuck::from_bytes(body)),
+    }))
+}
+
+/// Reads one message from the wire. Returns `Ok(None)` on a clean EOF
+/// (the writer end closed without a `Shutdown` message, e.g. the child
+/// process died) rather than an error, so callers can tell that apart from
+/// a real I/O failure.
+pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
+    let Some((len, kind)) = read_header(r)? else {
+        return Ok(None);
+    };
 
     let body = read_exact_vec(r, len)?;
 
@@ -381,7 +466,10 @@ pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
     }
 }
 
-fn parse_frame(body: &[u8]) -> io::Result<WireFrame> {
+/// Parses a frame body into borrowed views over that same buffer, without
+/// copying any of the bulk payload. See [`WireFrameRef`] for why the reading
+/// side wants this rather than owned `Vec`s.
+fn parse_frame_ref(body: &[u8]) -> io::Result<WireFrameRef<'_>> {
     let header_size = std::mem::size_of::<WireFrameHeader>();
     if body.len() < header_size {
         return Err(io::Error::new(
@@ -401,7 +489,7 @@ fn parse_frame(body: &[u8]) -> io::Result<WireFrame> {
 
         let byte_len = draw_header.instance_count as usize * std::mem::size_of::<QuadInstance>();
         let instances: &[QuadInstance] = bytemuck::cast_slice(&body[cursor..cursor + byte_len]);
-        draws.push(instances.to_vec());
+        draws.push(instances);
         cursor += byte_len;
     }
 
@@ -413,19 +501,19 @@ fn parse_frame(body: &[u8]) -> io::Result<WireFrame> {
         cursor += update_header_size;
 
         let byte_len = update_header.byte_len as usize;
-        let pixels = body[cursor..cursor + byte_len].to_vec();
+        let pixels = &body[cursor..cursor + byte_len];
         cursor += byte_len;
 
-        atlas_updates.push(AtlasUpdate {
+        atlas_updates.push(AtlasUpdateRef {
             x: update_header.x,
             y: update_header.y,
             width: update_header.width,
             height: update_header.height,
-            pixels: Arc::from(pixels),
+            pixels,
         });
     }
 
-    Ok(WireFrame {
+    Ok(WireFrameRef {
         uniform: header.uniform,
         draws,
         atlas_reset: if header.atlas_reset != 0 {
@@ -434,6 +522,29 @@ fn parse_frame(body: &[u8]) -> io::Result<WireFrame> {
             None
         },
         atlas_updates,
+    })
+}
+
+/// Owned form of [`parse_frame_ref`], for callers that need the frame to
+/// outlive the buffer it was read into (the round-trip tests, and any future
+/// consumer that isn't uploading straight to the GPU).
+fn parse_frame(body: &[u8]) -> io::Result<WireFrame> {
+    let borrowed = parse_frame_ref(body)?;
+    Ok(WireFrame {
+        uniform: borrowed.uniform,
+        draws: borrowed.draws.iter().map(|d| d.to_vec()).collect(),
+        atlas_reset: borrowed.atlas_reset,
+        atlas_updates: borrowed
+            .atlas_updates
+            .iter()
+            .map(|u| AtlasUpdate {
+                x: u.x,
+                y: u.y,
+                width: u.width,
+                height: u.height,
+                pixels: Arc::from(u.pixels),
+            })
+            .collect(),
     })
 }
 
@@ -519,6 +630,69 @@ mod tests {
             body.capacity(),
             first_capacity,
             "serializing another frame must not shrink the retained body capacity"
+        );
+    }
+
+    /// The read-side counterpart of
+    /// `frame_body_buffer_is_reused_across_serializations`: the child's
+    /// message loop reads every frame into one buffer for the life of the
+    /// process, and consumes it as borrowed views rather than copying the
+    /// draws and atlas pixels back out. Both halves matter -- reading into a
+    /// fresh allocation per frame is the same never-reused large-allocation
+    /// pattern that exhausted memory on the sending side.
+    #[test]
+    fn read_body_buffer_is_reused_and_frames_borrow_from_it() {
+        let mut encoded = Vec::new();
+        let frame = sample_frame();
+        write_frame(&mut encoded, &frame).unwrap();
+        write_frame(&mut encoded, &frame).unwrap();
+
+        let mut reader = encoded.as_slice();
+        let mut body = Vec::new();
+
+        // Addresses are copied out as plain integers so the borrow of `body`
+        // ends with the message, leaving `body` inspectable afterwards.
+        let (draw_ptr, pixels_ptr) = {
+            let message = read_message_into(&mut reader, &mut body).unwrap().unwrap();
+            let WireMessageRef::Frame(decoded) = message else {
+                panic!("expected a Frame");
+            };
+            assert_eq!(decoded.draws[0].len(), 2);
+            (
+                decoded.draws[0].as_ptr() as usize,
+                decoded.atlas_updates[0].pixels.as_ptr() as usize,
+            )
+        };
+
+        let first_ptr = body.as_ptr();
+        let first_capacity = body.capacity();
+        let body_range = first_ptr as usize..first_ptr as usize + body.len();
+        assert!(
+            body_range.contains(&draw_ptr),
+            "draw instances must borrow from the read buffer, not a copy"
+        );
+        assert!(
+            body_range.contains(&pixels_ptr),
+            "atlas pixels must borrow from the read buffer, not a copy"
+        );
+
+        {
+            let message = read_message_into(&mut reader, &mut body).unwrap().unwrap();
+            let WireMessageRef::Frame(decoded) = message else {
+                panic!("expected a Frame");
+            };
+            assert_eq!(decoded.draws[0].len(), 2);
+        }
+
+        assert_eq!(
+            body.as_ptr(),
+            first_ptr,
+            "reading another frame must reuse the existing body allocation"
+        );
+        assert_eq!(
+            body.capacity(),
+            first_capacity,
+            "reading another frame must not shrink the retained body capacity"
         );
     }
 

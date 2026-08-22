@@ -40,8 +40,8 @@
 use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
 use config::ConfigHandle;
 use std::io::{self, Write};
-use window::bitmaps::Texture2d;
-use window::{Dimensions, Image, Point, Rect, Size};
+use window::bitmaps::{BitmapImage, Texture2d};
+use window::{Dimensions, Point, Rect, Size};
 
 pub struct GpuTabHostArgs {
     pub supervise_pid: u32,
@@ -63,26 +63,58 @@ impl MirroredAtlas {
         })
     }
 
-    fn apply_updates(&self, updates: Vec<wire::AtlasUpdate>) {
+    fn apply_updates(&self, updates: &[wire::AtlasUpdateRef<'_>]) {
         for update in updates {
             let rect = Rect::new(
                 Point::new(update.x as isize, update.y as isize),
                 Size::new(update.width as isize, update.height as isize),
             );
-            let image = Image::from_raw(
-                update.width as usize,
-                update.height as usize,
-                update.pixels.to_vec(),
-            );
+            let image = BorrowedAtlasImage {
+                pixels: update.pixels,
+                width: update.width as usize,
+                height: update.height as usize,
+            };
             self.texture.write(rect, &image);
         }
+    }
+}
+
+/// A read-only [`BitmapImage`] over pixels that still live in the wire read
+/// buffer.
+///
+/// `Image::from_raw` takes ownership, which would mean copying every atlas
+/// update straight back out of the buffer it was just read into.
+/// `WebGpuTexture::write` only ever *reads* (through `pixel_data_slice`)
+/// before handing the bytes to `Queue::write_texture`, so borrowing is
+/// enough and that copy is avoidable.
+struct BorrowedAtlasImage<'a> {
+    pixels: &'a [u8],
+    width: usize,
+    height: usize,
+}
+
+impl BitmapImage for BorrowedAtlasImage<'_> {
+    unsafe fn pixel_data(&self) -> *const u8 {
+        self.pixels.as_ptr()
+    }
+
+    unsafe fn pixel_data_mut(&mut self) -> *mut u8 {
+        // Deliberately unreachable: this adapter exists only to hand
+        // already-decoded pixels to `WebGpuTexture::write`, which is
+        // read-only, and a shared `&[u8]` could not honour a mutable
+        // request anyway.
+        unreachable!("BorrowedAtlasImage is read-only")
+    }
+
+    fn image_dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
     }
 }
 
 fn build_gpu_frame(
     state: &WebGpuState,
     atlas: &mut Option<MirroredAtlas>,
-    frame: wire::WireFrame,
+    frame: &wire::WireFrameRef<'_>,
 ) -> anyhow::Result<GpuFrame> {
     if let Some((width, height)) = frame.atlas_reset {
         *atlas = Some(MirroredAtlas::new(state, width, height)?);
@@ -90,11 +122,11 @@ fn build_gpu_frame(
     let mirrored = atlas.as_ref().ok_or_else(|| {
         anyhow::anyhow!("received a frame before any atlas_reset established a mirrored atlas size")
     })?;
-    mirrored.apply_updates(frame.atlas_updates);
+    mirrored.apply_updates(&frame.atlas_updates);
 
     let draws = frame
         .draws
-        .into_iter()
+        .iter()
         .map(|instances| {
             use wgpu::util::DeviceExt;
             let instance_count = instances.len() as u32;
@@ -104,7 +136,7 @@ fn build_gpu_frame(
                     .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("gpu-tab-host wire instance buffer"),
                         usage: wgpu::BufferUsages::VERTEX,
-                        contents: bytemuck::cast_slice(&instances),
+                        contents: bytemuck::cast_slice(instances),
                     });
             GpuDraw {
                 vertex_buffer,
@@ -166,9 +198,16 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
     };
     let mut atlas: Option<MirroredAtlas> = None;
     let mut presented_seq: u64 = 0;
+    // One buffer serves every message for this process's lifetime, and each
+    // frame is consumed as borrowed views straight out of it (see
+    // `wire::read_message_into`). Reading into a fresh allocation per frame
+    // -- and then copying the draws and atlas pixels back out into owned
+    // `Vec`s -- was the same never-reused large-allocation pattern that
+    // exhausted memory on the parent side.
+    let mut wire_body = Vec::new();
 
     loop {
-        let message = match wire::read_message(&mut reader) {
+        let message = match wire::read_message_into(&mut reader, &mut wire_body) {
             Ok(Some(m)) => m,
             Ok(None) => {
                 log::info!("gpu-tab-host: parent closed the control channel, exiting");
@@ -181,11 +220,11 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
         };
 
         match message {
-            wire::WireMessage::Shutdown => {
+            wire::WireMessageRef::Shutdown => {
                 log::info!("gpu-tab-host: received Shutdown, exiting");
                 break;
             }
-            wire::WireMessage::AttachSurface(attach) => {
+            wire::WireMessageRef::AttachSurface(attach) => {
                 atlas = None;
                 match attach_surface(&config, attach) {
                     Ok((new_state, new_dimensions)) => {
@@ -204,7 +243,7 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     }
                 }
             }
-            wire::WireMessage::Resize(resize) => {
+            wire::WireMessageRef::Resize(resize) => {
                 if let Some(state) = &state {
                     dimensions.pixel_width = resize.width as usize;
                     dimensions.pixel_height = resize.height as usize;
@@ -222,12 +261,12 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     log::warn!("gpu-tab-host: ignoring Resize before any AttachSurface");
                 }
             }
-            wire::WireMessage::Frame(frame) => {
+            wire::WireMessageRef::Frame(frame) => {
                 let Some(state) = &state else {
                     log::warn!("gpu-tab-host: ignoring Frame before any AttachSurface");
                     continue;
                 };
-                let gpu_frame = match build_gpu_frame(state, &mut atlas, frame) {
+                let gpu_frame = match build_gpu_frame(state, &mut atlas, &frame) {
                     Ok(gpu_frame) => gpu_frame,
                     Err(err) => {
                         log::error!("gpu-tab-host: failed to build a frame from the wire: {err:#}");
@@ -272,7 +311,7 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     }
                 }
             }
-            wire::WireMessage::Presented(_) | wire::WireMessage::Fatal(_) => {
+            wire::WireMessageRef::Presented(_) | wire::WireMessageRef::Fatal(_) => {
                 // These only ever flow child->parent; seeing one here would
                 // mean the parent's writer and this child's reader got
                 // wired to the wrong pipes.
