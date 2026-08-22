@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: "checkout repo"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: "Install Rust"
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: "checkout repo"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: "Download artifact"
         uses: actions/download-artifact@v8
         with:
