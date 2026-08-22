@@ -27,9 +27,7 @@
 //! rebuild via a plain in-process `RenderThreadHandle` instead -- demotion
 //! is a side effect of the existing rebuild path, not new machinery.
 
-use crate::rebuild_backoff_for_attempt;
-use crate::wire;
-use crate::{FrameForm, RenderBackend, SubmittableFrame};
+use crate::{rebuild_backoff_for_attempt, wire, FrameForm, RenderBackend, SubmittableFrame};
 use parking_lot::Mutex;
 use std::io::Write;
 use std::os::windows::io::AsRawHandle;
