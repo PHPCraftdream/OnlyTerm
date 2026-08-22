@@ -1,7 +1,10 @@
-//! GPU vertex/instance layout types shared by the in-process renderer and the
-//! `--gpu-tab-host` child process -- `QuadInstance` is also the wire format for
-//! instance data (see `webgpu::wire`), so it lives in this crate rather than in
-//! the GUI crate. Extracted verbatim from `wezterm-gui/src/quad.rs`.
+//! GPU vertex/instance layout types used by the in-process renderer.
+//!
+//! The plain `QuadInstance` ABI type is shared with the wire protocol crate;
+//! this module keeps the WebGPU-specific vertex-layout adapter alongside the
+//! renderer.
+
+pub use wezterm_gpu_protocol::QuadInstance;
 
 /// Each cell is composed of two triangles built from 4 vertices.
 /// The buffer is organized row by row.
@@ -11,62 +14,38 @@ pub const V_TOP_RIGHT: usize = 1;
 pub const V_BOT_LEFT: usize = 2;
 pub const V_BOT_RIGHT: usize = 3;
 
-/// GPU instance data for a single quad.
-/// This contains all per-quad-unique data; the 4 corners are shared across all quads.
-/// This is the instanced rendering wire format, ~84 bytes per quad (vs 272 for 4 full vertices).
-#[repr(C)]
-#[derive(Copy, Clone, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct QuadInstance {
-    /// Position rect as [left, top, right, bottom]
-    pub position: [f32; 4],
-    /// FG color as [r, g, b, a]
-    pub fg_color: [f32; 4],
-    /// Alt color as [r, g, b, a]
-    pub alt_color: [f32; 4],
-    /// Texture rect as [x1, x2, y1, y2]
-    pub tex: [f32; 4],
-    /// HSV transform as [hue, saturation, brightness]
-    pub hsv: [f32; 3],
-    /// Quad type flag (IS_GLYPH, IS_COLOR_EMOJI, etc.)
-    pub has_color: f32,
-    /// Mix value for fg_color/alt_color blending
-    pub mix_value: f32,
-}
-
-impl QuadInstance {
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        // Locations start at 1, not 0: location 0 belongs to `CornerVertex`,
-        // the other vertex buffer bound into this same pipeline, and shader
-        // attribute locations must be unique across *all* of a pipeline's
-        // vertex buffers, not just within one. Numbering these from 0
-        // collides with the corner buffer, which wgpu rejects at
-        // `create_render_pipeline` time -- and since wgpu treats validation
-        // errors as fatal by default, that surfaces as a panic on the render
-        // thread, not a recoverable error: the window's renderer rebuild
-        // logic then retries, fails identically, and gives up by closing the
-        // window.
-        //
-        // `vertex_attr_array!` assigns byte offsets sequentially from the
-        // formats listed here, so this list's ORDER must match
-        // `QuadInstance`'s field declaration order (position, fg_color,
-        // alt_color, tex, hsv, has_color, mix_value), and shader.wgsl's
-        // `InstanceInput` must bind the same field to the same location.
-        // Getting the order wrong doesn't fail validation -- it silently
-        // feeds e.g. texture coordinates in as a color.
-        const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
-            1 => Float32x4, // position: [left, top, right, bottom]
-            2 => Float32x4, // fg_color
-            3 => Float32x4, // alt_color
-            4 => Float32x4, // tex: [x1, x2, y1, y2]
-            5 => Float32x3, // hsv
-            6 => Float32,   // has_color
-            7 => Float32,   // mix_value
-        ];
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &ATTRIBS,
-        }
+pub(crate) fn quad_instance_desc() -> wgpu::VertexBufferLayout<'static> {
+    // Locations start at 1, not 0: location 0 belongs to `CornerVertex`,
+    // the other vertex buffer bound into this same pipeline, and shader
+    // attribute locations must be unique across *all* of a pipeline's
+    // vertex buffers, not just within one. Numbering these from 0
+    // collides with the corner buffer, which wgpu rejects at
+    // `create_render_pipeline` time -- and since wgpu treats validation
+    // errors as fatal by default, that surfaces as a panic on the render
+    // thread, not a recoverable error: the window's renderer rebuild
+    // logic then retries, fails identically, and gives up by closing the
+    // window.
+    //
+    // `vertex_attr_array!` assigns byte offsets sequentially from the
+    // formats listed here, so this list's ORDER must match
+    // `QuadInstance`'s field declaration order (position, fg_color,
+    // alt_color, tex, hsv, has_color, mix_value), and shader.wgsl's
+    // `InstanceInput` must bind the same field to the same location.
+    // Getting the order wrong doesn't fail validation -- it silently
+    // feeds e.g. texture coordinates in as a color.
+    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+        1 => Float32x4, // position: [left, top, right, bottom]
+        2 => Float32x4, // fg_color
+        3 => Float32x4, // alt_color
+        4 => Float32x4, // tex: [x1, x2, y1, y2]
+        5 => Float32x3, // hsv
+        6 => Float32,   // has_color
+        7 => Float32,   // mix_value
+    ];
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<QuadInstance>() as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &ATTRIBS,
     }
 }
 
@@ -269,7 +248,7 @@ mod pipeline_layout {
     /// `QuadInstance`, at the offsets those fields actually occupy.
     #[test]
     fn quad_instance_desc_matches_struct_layout() {
-        let desc = QuadInstance::desc();
+        let desc = quad_instance_desc();
         let spec = instance_spec();
 
         assert_eq!(
@@ -337,7 +316,7 @@ mod pipeline_layout {
         for attr in CornerVertex::desc().attributes {
             seen.push((attr.shader_location, "CornerVertex"));
         }
-        for attr in QuadInstance::desc().attributes {
+        for attr in quad_instance_desc().attributes {
             seen.push((attr.shader_location, "QuadInstance"));
         }
 

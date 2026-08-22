@@ -33,8 +33,7 @@
 //! CLI args), it can be sent again over the wire whenever the parent needs
 //! this child (or its replacement) to attach to a new surface generation.
 
-use crate::quad::QuadInstance;
-use crate::ShaderUniform;
+use crate::{QuadInstance, ShaderUniform};
 use parking_lot::Mutex;
 use std::io::{self, Read, Write};
 use std::sync::Arc;

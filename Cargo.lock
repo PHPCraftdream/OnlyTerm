@@ -5841,6 +5841,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "wezterm-gpu-protocol"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "parking_lot",
+]
+
+[[package]]
 name = "wezterm-gpu-render"
 version = "0.1.0"
 dependencies = [
@@ -5855,6 +5863,7 @@ dependencies = [
  "promise",
  "smol",
  "wezterm-client",
+ "wezterm-gpu-protocol",
  "wgpu",
  "winapi",
  "window",

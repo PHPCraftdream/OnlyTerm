@@ -17,9 +17,10 @@ pub use quad::{
     CornerVertex, QuadInstance, VERTICES_PER_CELL, V_BOT_LEFT, V_BOT_RIGHT, V_TOP_LEFT, V_TOP_RIGHT,
 };
 pub use webgpu::{
-    adapter_info_to_gpu_info, wire, GpuDraw, GpuFrame, ProcessGpuContext, ShaderUniform,
-    WebGpuState, WebGpuTexture, WindowGpuSurface,
+    adapter_info_to_gpu_info, GpuDraw, GpuFrame, ProcessGpuContext, WebGpuState, WebGpuTexture,
+    WindowGpuSurface,
 };
+pub use wezterm_gpu_protocol::{wire, ShaderUniform};
 
 /// A callback the embedder (wezterm-gui) supplies when registering a window
 /// for GPU error recovery, so this crate never needs to know about

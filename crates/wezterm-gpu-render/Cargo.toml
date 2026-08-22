@@ -18,6 +18,7 @@ metrics.workspace = true
 parking_lot.workspace = true
 promise.workspace = true
 smol.workspace = true
+wezterm-gpu-protocol.workspace = true
 wezterm-client.workspace = true
 wgpu.workspace = true
 window.workspace = true

@@ -654,7 +654,7 @@ impl ProcessGpuContext {
                     entry_point: Some("vs_main"),
                     buffers: &[
                         crate::quad::CornerVertex::desc(),
-                        crate::quad::QuadInstance::desc(),
+                        crate::quad::quad_instance_desc(),
                     ],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },

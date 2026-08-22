@@ -1,5 +1,6 @@
 use config::GpuInfo;
 use std::sync::Arc;
+pub use wezterm_gpu_protocol::{wire, ShaderUniform};
 use window::bitmaps::Texture2d;
 #[cfg(windows)]
 use window::raw_window_handle::Win32WindowHandle;
@@ -8,16 +9,6 @@ use window::raw_window_handle::{
     RawWindowHandle, WindowHandle,
 };
 use window::{BitmapImage, Rect, Window};
-
-#[repr(C)]
-#[derive(Copy, Clone, Default, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ShaderUniform {
-    pub foreground_text_hsb: [f32; 3],
-    pub milliseconds: u32,
-    pub projection: [[f32; 4]; 4],
-    // sampler2D atlas_nearest_sampler;
-    // sampler2D atlas_linear_sampler;
-}
 
 /// A single draw call's worth of GPU state, already fully detached from
 /// `TermWindow`/`RenderState`: the vertex buffer returned by
@@ -746,4 +737,3 @@ mod tests {
 pub use self::context::{ProcessGpuContext, WindowGpuSurface};
 mod context;
 mod state_impl;
-pub mod wire;
