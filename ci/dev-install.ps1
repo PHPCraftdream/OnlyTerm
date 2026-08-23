@@ -1,12 +1,17 @@
 <#
 .SYNOPSIS
-  Build OnlyTerm in release mode and install/update it, including Explorer context
-  menu entries, without the full Inno Setup packaging pipeline -- for local dev
-  iteration only.
+  Build OnlyTerm in the dev-install profile and install/update it, including
+  Explorer context menu entries, without the full Inno Setup packaging
+  pipeline -- for local dev iteration only.
 
 .DESCRIPTION
-  Builds onlyterm / onlyterm-gui / onlyterm-mux-server in --release mode,
-  then hot-swaps the fresh binaries plus their runtime dependencies
+  Builds onlyterm / onlyterm-gui / onlyterm-mux-server with `--profile
+  dev-install` (Cargo.toml: same opt-level/debug info as release, but without
+  release's thin-LTO + codegen-units=1, which cost several extra
+  single-threaded minutes per build for runtime perf this local loop doesn't
+  need -- real releases still build with plain --release, see
+  ci/generate-workflows.py), then hot-swaps the fresh binaries plus their
+  runtime dependencies
   (conpty.dll, OpenConsole.exe, strip-ansi-escapes.exe) and .pdb files into
   the install directory, configures Windows Error Reporting for full crash
   dumps, and registers Explorer context menu entries ("Open OnlyTerm here" and
@@ -31,8 +36,9 @@
   Inno Setup installer uses: "$Env:ProgramFiles\OnlyTerm".
 
 .PARAMETER SkipBuild
-  Skip `cargo build --release` and just (re)install whatever is already in
-  target\release. Useful if you just built it yourself a moment ago.
+  Skip `cargo build --profile dev-install` and just (re)install whatever is
+  already in target\dev-install. Useful if you just built it yourself a
+  moment ago.
 
 .EXAMPLE
   # from the repo root
@@ -121,7 +127,7 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 if (-not $ReleaseDir) {
     $TargetDir = if ($Env:CARGO_TARGET_DIR) { $Env:CARGO_TARGET_DIR } else { Join-Path $RepoRoot "target" }
-    $ReleaseDir = Join-Path $TargetDir "release"
+    $ReleaseDir = Join-Path $TargetDir "dev-install"
 }
 
 Write-Host "Repo root:    $RepoRoot"
@@ -139,10 +145,15 @@ if (-not $SkipBuild) {
     # CARGO_TARGET_DIR it wasn't there, and step 3 below failed on a missing
     # required file after a successful 14-minute build. Building it
     # explicitly removes that dependency on leftover state.
-    Write-Host "`n==> cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes" -ForegroundColor Cyan
+    # `--profile dev-install` (Cargo.toml), not `--release`: same opt-level/debug
+    # info, but without release's thin-LTO + codegen-units=1, which cost several
+    # extra single-threaded minutes on every build for runtime perf this local
+    # loop doesn't need. Real releases (ci/generate-workflows.py) still build
+    # with plain `--release`.
+    Write-Host "`n==> cargo build --profile dev-install -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes" -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
-        & cargo build --release -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+        & cargo build --profile dev-install -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
         if ($LASTEXITCODE -ne 0) {
             throw "cargo build failed with exit code $LASTEXITCODE"
         }

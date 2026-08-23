@@ -40,6 +40,19 @@ debug = 2
 lto = "thin"
 codegen-units = 1
 
+# For ci/dev-install.ps1 only -- real releases (tagged and nightly CI builds)
+# must keep [profile.release] as-is. `codegen-units = 1` + thin LTO make every
+# release build re-run a single-threaded, uncacheable link/codegen pass over
+# each top-level binary regardless of what changed, which is the right
+# tradeoff for a shipped build but not for "rebuild and hot-swap the local
+# install to try something out". This profile keeps opt-level/debug info
+# identical (so it's still representative and .pdb hot-swap still works) and
+# only drops the two settings that are expensive purely for compile time.
+[profile.dev-install]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [profile.dev]
 # https://jakedeichert.com/blog/reducing-rust-incremental-compilation-times-on-macos-by-70-percent/
 # Disabled because it breaks builds on Windows
