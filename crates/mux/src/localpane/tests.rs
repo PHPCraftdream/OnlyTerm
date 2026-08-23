@@ -1076,3 +1076,78 @@ fn cold_cache_allow_stale_is_non_blocking() {
         "a freshly-populated cache entry must not itself be mid-refresh"
     );
 }
+
+/// A coding agent (Claude Code, Codex, etc.) running in a pane keeps its
+/// own persistent subshell alive for tool calls and `cd`s it around
+/// internally as it navigates a repo. That subshell is always younger
+/// than the agent, so it -- not the user's real shell -- would win the
+/// `foreground` ("youngest process anywhere in the tree") pick. Before
+/// this fix, `get_current_working_dir` used that pick directly, so the
+/// tab title followed the agent's internal navigation instead of the
+/// user's own shell. `divine_current_working_dir` must use `root` (the
+/// process the pty actually spawned) instead: seed a `CachedProcInfo`
+/// where `root` and `foreground` disagree, and confirm the pane reports
+/// `root`'s cwd.
+#[test]
+fn current_working_dir_tracks_root_process_not_foreground_pick() {
+    use std::path::PathBuf;
+
+    let pane = make_pane_with_real_pid();
+
+    let user_shell_dir = if cfg!(windows) {
+        PathBuf::from("C:\\Users\\test\\project")
+    } else {
+        PathBuf::from("/home/test/project")
+    };
+    let agent_subshell_dir = if cfg!(windows) {
+        PathBuf::from("C:\\Users\\test\\project\\some\\deeply\\nested\\dir")
+    } else {
+        PathBuf::from("/home/test/project/some/deeply/nested/dir")
+    };
+
+    let root = LocalProcessInfo {
+        pid: 1,
+        ppid: 0,
+        name: "pwsh".into(),
+        executable: PathBuf::from("pwsh.exe"),
+        argv: vec![],
+        cwd: user_shell_dir.clone(),
+        status: procinfo::LocalProcessStatus::Run,
+        start_time: 0,
+        #[cfg(windows)]
+        console: 0,
+        children: HashMap::new(),
+    };
+    let foreground = LocalProcessInfo {
+        pid: 2,
+        ppid: 1,
+        name: "bash".into(),
+        executable: PathBuf::from("bash.exe"),
+        argv: vec![],
+        cwd: agent_subshell_dir,
+        status: procinfo::LocalProcessStatus::Run,
+        start_time: 1,
+        #[cfg(windows)]
+        console: 0,
+        children: HashMap::new(),
+    };
+
+    *pane.proc_list.lock() = Some(CachedProcInfo {
+        root,
+        foreground,
+        updated: Instant::now(),
+        updating: false,
+    });
+
+    let cwd = pane
+        .get_current_working_dir(CachePolicy::AllowStale)
+        .expect("seeded cache must yield a cwd");
+    let expected = url::Url::from_directory_path(user_shell_dir)
+        .expect("test path must convert to a directory URL");
+    assert_eq!(
+        cwd, expected,
+        "tab cwd must track the pty's own root process, not whatever \
+         younger process (e.g. an agent's internal tool-call subshell) \
+         currently wins the foreground pick"
+    );
+}

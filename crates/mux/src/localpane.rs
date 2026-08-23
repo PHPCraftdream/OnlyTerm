@@ -970,16 +970,18 @@ impl Pane for LocalPane {
     }
 
     fn get_current_working_dir(&self, policy: CachePolicy) -> Option<Url> {
-        // Ask the OS for the foreground process's real cwd first: OSC 7 is
-        // just text the shell chooses to print, so a build script that
-        // cd's around internally and back (or a shell integration that
-        // fires it on every prompt render) can make the OSC-7-reported
-        // value flap independently of where the process tree actually is.
-        // `divine_current_working_dir()` reads the OS's own bookkeeping
-        // and can't be spoofed or skipped by whatever the pane is running.
-        // It also doesn't touch `self.terminal`, so this is cheaper than
-        // the OSC-7 path under the same contention task #246 was written
-        // for.
+        // Ask the OS for the pane's root (real interactive shell) process's
+        // real cwd first: OSC 7 is just text the shell chooses to print, so
+        // a build script that cd's around internally and back (or a shell
+        // integration that fires it on every prompt render) can make the
+        // OSC-7-reported value flap independently of where the process
+        // tree actually is. `divine_current_working_dir()` reads the OS's
+        // own bookkeeping for the root process specifically (not whatever
+        // deepest/youngest process happens to be running -- see that
+        // function's own comment) and can't be spoofed or skipped by
+        // whatever the pane is running. It also doesn't touch
+        // `self.terminal`, so this is cheaper than the OSC-7 path under the
+        // same contention task #246 was written for.
         if let Some(cwd) = self.divine_current_working_dir(policy) {
             self.last_known_good.lock().cwd = Some(cwd.clone());
             return Some(cwd);
@@ -1535,8 +1537,23 @@ impl LocalPane {
     }
 
     fn divine_current_working_dir(&self, policy: CachePolicy) -> Option<Url> {
-        if let Some(fg) = self.divine_foreground_process(policy) {
-            return Url::from_directory_path(fg.cwd.clone()).ok();
+        // Deliberately `root`, not `foreground`: `foreground` is "youngest
+        // process anywhere in the tree", which is exactly right for "what
+        // program is the user interacting with" (see
+        // `get_foreground_process_name`/`get_process_tree_exe_names`) but
+        // wrong for "what directory is the tab about". A coding agent
+        // running in this pane (Claude Code, Codex, etc.) keeps a
+        // persistent subshell alive for its own tool calls and `cd`s it
+        // around internally as it reads different parts of a repo; that
+        // subshell is always younger than the agent itself, so it would
+        // permanently win the `foreground` pick and its cwd would follow
+        // the agent's *internal* navigation, renaming the tab on every
+        // such move. `root` is the actual process the pty spawned (the
+        // user's real interactive shell) -- its own cwd only changes when
+        // the user runs `cd` at that shell's own prompt, which is exactly
+        // the tab-rename trigger the user actually wants.
+        if let Some(root) = self.divine_root_process(policy) {
+            return Url::from_directory_path(root.cwd.clone()).ok();
         }
 
         None
@@ -1735,6 +1752,15 @@ impl LocalPane {
     fn divine_foreground_process(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
         self.divine_process_list(policy)
             .map(|info| info.foreground.clone())
+    }
+
+    /// The process the pty itself spawned for this pane -- the user's
+    /// actual interactive shell -- as opposed to `divine_foreground_process`'s
+    /// "youngest process anywhere in the tree". See `divine_current_working_dir`
+    /// for why cwd tracking needs this one instead of the foreground pick.
+    fn divine_root_process(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
+        self.divine_process_list(policy)
+            .map(|info| info.root.clone())
     }
 
     /// Test-only escape hatch that measures `terminal.lock()` wait time
