@@ -7,6 +7,10 @@ use wezterm_gpu_render::{
 };
 use window::WindowOps;
 
+fn atlas_reset_needed(full_resync: bool, last_generation: Option<u64>, generation: u64) -> bool {
+    full_resync || last_generation != Some(generation)
+}
+
 /// Computes a frame signature from its constituent parts.
 /// This is a pure function suitable for unit testing, extracted from
 /// `TermWindow::compute_frame_signature` (which is a thin wrapper around this).
@@ -482,11 +486,19 @@ impl crate::TermWindow {
                 "GPU atlas mirror exceeded its memory budget; renderer demotion requested"
             );
         }
-        let atlas_ptr = std::rc::Rc::as_ptr(&atlas_rc) as *const () as usize;
-        let atlas_identity_changed = self.last_wire_atlas_ptr.get() != Some(atlas_ptr);
-        self.last_wire_atlas_ptr.set(Some(atlas_ptr));
+        // The atlas generation is explicit rather than derived from the Rc
+        // address: the allocator may reuse the same address after a
+        // same-sized atlas recreation, but the child still has to discard its
+        // old mirror and receive the new atlas contents in full.
+        let needs_atlas_reset = atlas_reset_needed(
+            full_resync,
+            self.last_wire_atlas_generation.get(),
+            self.atlas_generation,
+        );
+        self.last_wire_atlas_generation
+            .set(Some(self.atlas_generation));
 
-        let atlas_reset = if full_resync || atlas_identity_changed {
+        let atlas_reset = if needs_atlas_reset {
             // Idempotent, and should already be enabled from birth for a
             // HostProcess-engine window (see `renderstate.rs`'s
             // `enable_atlas_mirroring_if_needed`) -- this is a defensive
@@ -550,6 +562,15 @@ impl crate::TermWindow {
 mod tests {
     use super::*;
     use crate::quad::QuadInstance;
+
+    #[test]
+    fn atlas_generation_change_forces_wire_reset_even_if_allocation_is_reused() {
+        // The allocator may recycle an Rc allocation after a same-sized atlas
+        // recreation. The generation must still force a full mirror reset.
+        assert!(atlas_reset_needed(false, Some(7), 8));
+        assert!(!atlas_reset_needed(false, Some(7), 7));
+        assert!(atlas_reset_needed(true, Some(7), 7));
+    }
 
     #[test]
     fn test_signature_identical_frames() {

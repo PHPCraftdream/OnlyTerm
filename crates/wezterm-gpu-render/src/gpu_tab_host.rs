@@ -39,6 +39,7 @@
 
 use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
 use config::ConfigHandle;
+use std::convert::TryFrom;
 use std::io::{self, Write};
 use window::bitmaps::{BitmapImage, Texture2d};
 use window::{Dimensions, Point, Rect, Size};
@@ -63,8 +64,28 @@ impl MirroredAtlas {
         })
     }
 
-    fn apply_updates(&self, updates: &[wire::AtlasUpdateRef<'_>]) {
+    fn apply_updates(&self, updates: &[wire::AtlasUpdateRef<'_>]) -> anyhow::Result<()> {
         for update in updates {
+            if !atlas_update_fits(
+                self.texture.width(),
+                self.texture.height(),
+                update.x,
+                update.y,
+                update.width,
+                update.height,
+                update.pixels.len(),
+            ) {
+                anyhow::bail!(
+                    "atlas update at ({}, {}) size {}x{} does not fit {}x{} mirror ({} bytes)",
+                    update.x,
+                    update.y,
+                    update.width,
+                    update.height,
+                    self.texture.width(),
+                    self.texture.height(),
+                    update.pixels.len(),
+                );
+            }
             let rect = Rect::new(
                 Point::new(update.x as isize, update.y as isize),
                 Size::new(update.width as isize, update.height as isize),
@@ -76,7 +97,44 @@ impl MirroredAtlas {
             };
             self.texture.write(rect, &image);
         }
+        Ok(())
     }
+}
+
+fn atlas_update_fits(
+    atlas_width: usize,
+    atlas_height: usize,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    pixel_len: usize,
+) -> bool {
+    let Some(x) = usize::try_from(x).ok() else {
+        return false;
+    };
+    let Some(y) = usize::try_from(y).ok() else {
+        return false;
+    };
+    let Some(width) = usize::try_from(width).ok() else {
+        return false;
+    };
+    let Some(height) = usize::try_from(height).ok() else {
+        return false;
+    };
+    let Some(x_end) = x.checked_add(width) else {
+        return false;
+    };
+    let Some(y_end) = y.checked_add(height) else {
+        return false;
+    };
+    let Some(expected_pixels) = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return false;
+    };
+    x_end <= atlas_width && y_end <= atlas_height && pixel_len == expected_pixels
 }
 
 /// A read-only [`BitmapImage`] over pixels that still live in the wire read
@@ -122,7 +180,7 @@ fn build_gpu_frame(
     let mirrored = atlas.as_ref().ok_or_else(|| {
         anyhow::anyhow!("received a frame before any atlas_reset established a mirrored atlas size")
     })?;
-    mirrored.apply_updates(&frame.atlas_updates);
+    mirrored.apply_updates(&frame.atlas_updates)?;
 
     let draws = frame
         .draws
@@ -270,7 +328,14 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     Ok(gpu_frame) => gpu_frame,
                     Err(err) => {
                         log::error!("gpu-tab-host: failed to build a frame from the wire: {err:#}");
-                        continue;
+                        // Continuing would leave the child rendering against
+                        // a stale/partial atlas and would repeat the same
+                        // validation failure on every frame. Exit cleanly so
+                        // the parent can respawn us and force a full atlas
+                        // resync instead.
+                        let _ = wire::write_fatal(&mut writer, 4);
+                        let _ = writer.flush();
+                        break;
                     }
                 };
 
@@ -323,4 +388,26 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::atlas_update_fits;
+
+    #[test]
+    fn atlas_update_accepts_exactly_in_bounds_pixels() {
+        assert!(atlas_update_fits(128, 128, 120, 120, 8, 8, 8 * 8 * 4));
+    }
+
+    #[test]
+    fn atlas_update_rejects_out_of_bounds_rectangles() {
+        assert!(!atlas_update_fits(128, 128, 127, 0, 2, 1, 8));
+        assert!(!atlas_update_fits(128, 128, 0, 127, 1, 2, 8));
+    }
+
+    #[test]
+    fn atlas_update_rejects_overflow_and_wrong_pixel_lengths() {
+        assert!(!atlas_update_fits(128, 128, u32::MAX, 0, 1, 1, 4));
+        assert!(!atlas_update_fits(128, 128, 0, 0, 2, 2, 3));
+    }
 }

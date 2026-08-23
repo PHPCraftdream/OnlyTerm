@@ -1066,6 +1066,10 @@ impl crate::TermWindow {
                 size,
                 mirror_atlas,
             )?;
+            // Do not use the Rc allocation address as the identity here:
+            // recreating an atlas with the same dimensions can reuse that
+            // address, while the child still needs a full mirror reset.
+            self.atlas_generation = self.atlas_generation.wrapping_add(1);
         }
         Ok(())
     }

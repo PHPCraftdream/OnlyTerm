@@ -284,7 +284,8 @@ impl TermWindow {
             modal: RefCell::new(None),
             renderer_info: None,
             last_frame_signature: None,
-            last_wire_atlas_ptr: std::cell::Cell::new(None),
+            last_wire_atlas_generation: std::cell::Cell::new(None),
+            atlas_generation: 0,
         };
 
         let tw = Rc::new(RefCell::new(myself));

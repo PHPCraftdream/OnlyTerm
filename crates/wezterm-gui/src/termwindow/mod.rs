@@ -534,13 +534,18 @@ pub struct TermWindow {
     /// reset on window creation, resize, renderer rebuild, or atlas resize,
     /// since these events can change what "identical" even means.
     last_frame_signature: Option<u64>,
-    /// Address identity of the glyph-cache atlas `build_wire_frame` last saw,
-    /// so it can tell "the atlas was recreated since last frame" (glyph
-    /// cache ran out of room, `recreate_texture_atlas_impl` always builds a
-    /// brand new one) apart from "same atlas, just more writes" without
-    /// holding a strong `Rc` alive purely for comparison. Unused (stays
-    /// `None`) for any window not using the `HostProcess` backend.
-    last_wire_atlas_ptr: std::cell::Cell<Option<usize>>,
+    /// Generation of the glyph-cache atlas that `build_wire_frame` last saw.
+    /// A generation is used instead of an allocation address: replacing an
+    /// atlas can release the old `Rc` and let the allocator reuse exactly the
+    /// same address, which would make an address-only comparison miss the
+    /// replacement and leave the child with an undersized/stale mirror.
+    /// Unused (stays `None`) for any window not using the `HostProcess`
+    /// backend.
+    last_wire_atlas_generation: std::cell::Cell<Option<u64>>,
+    /// Monotonically increasing identity for the currently installed glyph
+    /// atlas. It changes whenever a new `RenderState`/atlas is installed,
+    /// including a same-sized recreation after `OutOfTextureSpace`.
+    atlas_generation: u64,
 }
 
 impl Drop for TermWindow {

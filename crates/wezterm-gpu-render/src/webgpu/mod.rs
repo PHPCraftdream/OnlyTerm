@@ -268,10 +268,16 @@ const MAX_ATLAS_MIRROR_BYTES: usize = 128 * 1024 * 1024;
 /// rectangles, and a regrow builds a whole new texture with its own fresh
 /// log), so the only rects that can collide are identical ones, which are
 /// collapsed here to their latest content anyway.
+// Rects come from our own `guillotiere` atlas allocator, not remote/attacker
+// input, so ahash's faster (non-cryptographic) hashing is the right
+// trade-off here -- same reasoning as the GUI's glyph caches.
+type AtlasRectMap = std::collections::HashMap<AtlasRect, std::sync::Arc<[u8]>, ahash::RandomState>;
+type AtlasRectSet = std::collections::HashSet<AtlasRect, ahash::RandomState>;
+
 struct AtlasMirrorLog {
-    written: std::collections::HashMap<AtlasRect, std::sync::Arc<[u8]>>,
+    written: AtlasRectMap,
     pending: Vec<AtlasRect>,
-    pending_set: std::collections::HashSet<AtlasRect>,
+    pending_set: AtlasRectSet,
     bytes: usize,
     max_bytes: usize,
     over_budget: bool,
@@ -286,9 +292,9 @@ impl Default for AtlasMirrorLog {
 impl AtlasMirrorLog {
     fn with_limit(max_bytes: usize) -> Self {
         Self {
-            written: std::collections::HashMap::new(),
+            written: AtlasRectMap::default(),
             pending: Vec::new(),
-            pending_set: std::collections::HashSet::new(),
+            pending_set: AtlasRectSet::default(),
             bytes: 0,
             max_bytes,
             over_budget: false,
@@ -324,10 +330,7 @@ impl AtlasMirrorLog {
         }
     }
 
-    fn updates_for(
-        written: &std::collections::HashMap<AtlasRect, std::sync::Arc<[u8]>>,
-        rect: AtlasRect,
-    ) -> Option<wire::AtlasUpdate> {
+    fn updates_for(written: &AtlasRectMap, rect: AtlasRect) -> Option<wire::AtlasUpdate> {
         written.get(&rect).map(|pixels| wire::AtlasUpdate {
             x: rect.0,
             y: rect.1,

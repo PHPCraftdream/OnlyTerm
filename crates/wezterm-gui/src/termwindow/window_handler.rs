@@ -85,6 +85,10 @@ impl TermWindow {
                     config::wezterm_version(),
                 );
                 self.render_state.replace(render_state);
+                // The atlas inside the newly installed RenderState is a
+                // distinct mirror source even if the allocator reuses the
+                // previous texture's address and dimensions.
+                self.atlas_generation = self.atlas_generation.wrapping_add(1);
 
                 // The atlas this window's cached sprites were allocated
                 // from has just been replaced by the empty one that came
