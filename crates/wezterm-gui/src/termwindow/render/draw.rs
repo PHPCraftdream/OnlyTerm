@@ -33,6 +33,7 @@ use window::WindowOps;
 ///   This would defeat frame-to-frame comparison entirely.
 /// - `ahash::RandomState::with_seeds(k0, k1, k2, k3)` is "Fixed" - deterministic,
 ///   identical calls produce identical hashers. This is the correct choice here.
+#[cfg(test)]
 pub fn compute_frame_signature_from_parts(
     pixel_width: usize,
     pixel_height: usize,
@@ -40,37 +41,79 @@ pub fn compute_frame_signature_from_parts(
     projection: &[[f32; 4]; 4],
     layer_instances: &[&[QuadInstance]],
 ) -> u64 {
-    // Use fixed/deterministic seeds so identical frames across calls produce identical signatures.
-    // These constants are arbitrary but must be fixed/literal for determinism.
-    const SIGNATURE_SEED_K0: u64 = 0x517cc1b727220a95;
-    const SIGNATURE_SEED_K1: u64 = 0x8123456789abcdef;
-    const SIGNATURE_SEED_K2: u64 = 0x0fedcba987654321;
-    const SIGNATURE_SEED_K3: u64 = 0x1a2b3c4d5e6f7890;
-
-    let state = ahash::RandomState::with_seeds(
-        SIGNATURE_SEED_K0,
-        SIGNATURE_SEED_K1,
-        SIGNATURE_SEED_K2,
-        SIGNATURE_SEED_K3,
+    let mut hasher = signature_hasher();
+    hash_signature_header(
+        &mut hasher,
+        pixel_width,
+        pixel_height,
+        foreground_text_hsb,
+        projection,
     );
-    let mut hasher = state.build_hasher();
-
-    // Hash window/surface dimensions
-    pixel_width.hash(&mut hasher);
-    pixel_height.hash(&mut hasher);
-
-    // Hash uniform fields that affect rendering (note: no milliseconds parameter)
-    let hsb_bytes = bytemuck::cast_slice::<f32, u8>(foreground_text_hsb);
-    hasher.write(hsb_bytes);
-
-    // Hash the projection matrix
-    let proj_bytes = bytemuck::cast_slice::<f32, u8>(projection.as_flattened());
-    hasher.write(proj_bytes);
 
     // Hash each layer's QuadInstance data
     for instances in layer_instances {
         let bytes = bytemuck::cast_slice::<QuadInstance, u8>(instances);
         hasher.write(bytes);
+    }
+
+    hasher.finish()
+}
+
+// Use fixed/deterministic seeds so identical frames across calls produce identical signatures.
+// These constants are arbitrary but must be fixed/literal for determinism.
+const SIGNATURE_SEED_K0: u64 = 0x517cc1b727220a95;
+const SIGNATURE_SEED_K1: u64 = 0x8123456789abcdef;
+const SIGNATURE_SEED_K2: u64 = 0x0fedcba987654321;
+const SIGNATURE_SEED_K3: u64 = 0x1a2b3c4d5e6f7890;
+
+fn signature_hasher() -> impl Hasher {
+    ahash::RandomState::with_seeds(
+        SIGNATURE_SEED_K0,
+        SIGNATURE_SEED_K1,
+        SIGNATURE_SEED_K2,
+        SIGNATURE_SEED_K3,
+    )
+    .build_hasher()
+}
+
+fn hash_signature_header<H: Hasher>(
+    hasher: &mut H,
+    pixel_width: usize,
+    pixel_height: usize,
+    foreground_text_hsb: &[f32; 3],
+    projection: &[[f32; 4]; 4],
+) {
+    pixel_width.hash(hasher);
+    pixel_height.hash(hasher);
+    hasher.write(bytemuck::cast_slice::<f32, u8>(foreground_text_hsb));
+    hasher.write(bytemuck::cast_slice::<f32, u8>(projection.as_flattened()));
+}
+
+fn compute_frame_signature_from_render_layers(
+    pixel_width: usize,
+    pixel_height: usize,
+    foreground_text_hsb: &[f32; 3],
+    projection: &[[f32; 4]; 4],
+    layers: &[std::rc::Rc<crate::renderstate::RenderLayer>],
+) -> u64 {
+    let mut hasher = signature_hasher();
+    hash_signature_header(
+        &mut hasher,
+        pixel_width,
+        pixel_height,
+        foreground_text_hsb,
+        projection,
+    );
+
+    // Hash retained instance buffers directly. The RefCell guards are
+    // scoped to this function, so no per-frame Vec of cloned Rc handles,
+    // borrow guards, or slice references is needed.
+    for layer in layers {
+        let vertex_buffers = layer.vb.borrow();
+        for vertex_buffer in vertex_buffers.iter() {
+            let instances = vertex_buffer.instances.borrow();
+            hasher.write(bytemuck::cast_slice::<QuadInstance, u8>(&instances));
+        }
     }
 
     hasher.finish()
@@ -242,52 +285,12 @@ impl crate::TermWindow {
             }
         }
 
-        // Borrow (not clone) each sub-layer's QuadInstance data to feed the
-        // signature hasher. `build_webgpu_frame` only *reads* `vb.instances`
-        // (via `write_instances_to_gpu`, itself just `instances.borrow()`)
-        // and rotates `vb.index`/`vb.bufs` -- it never mutates or clears
-        // `vb.instances`. Clearing only happens via `clear_quad_allocation`
-        // at the start of the *next* frame's paint (see `render/paint.rs`),
-        // so it's safe to hold these borrows across the `build_webgpu_frame`
-        // call below and hash straight from them afterwards, entirely
-        // avoiding a per-frame clone of every QuadInstance.
-        //
-        // Borrow-checker note: `render_state.layers` holds `Rc<RenderLayer>`,
-        // but `render_state` itself is reached through `&self`, so a
-        // `Ref<Vec<QuadInstance>>` borrowed from it would normally be tied
-        // to that `&self` borrow and couldn't survive the later
-        // `self.build_webgpu_frame()` call (which needs `&mut self`).
-        // Cloning the `Rc<RenderLayer>` handles first (a cheap refcount
-        // bump, not a data copy) breaks that dependency on `&self`, so the
-        // `Ref` guards taken from them afterwards are free to outlive it.
-        let layers: Vec<std::rc::Rc<crate::renderstate::RenderLayer>> = {
-            let render_state = self.render_state.as_ref().unwrap();
-            render_state.layers.borrow().iter().cloned().collect()
-        };
-        // Keep the outer `Ref<[TripleVertexBuffer; 3]>` guards alive
-        // alongside the inner `Ref<Vec<QuadInstance>>` guards they were
-        // borrowed from -- `vb.instances.borrow()` borrows a `RefCell`
-        // nested inside a slot of the array, so the array's own borrow
-        // guard (`vbs_guards`) must outlive it too.
-        let vbs_guards: Vec<std::cell::Ref<[crate::renderstate::TripleVertexBuffer; 3]>> =
-            layers.iter().map(|layer| layer.vb.borrow()).collect();
-        let mut instance_guards: Vec<std::cell::Ref<Vec<QuadInstance>>> = Vec::new();
-        for vbs in &vbs_guards {
-            for vb in vbs.iter() {
-                instance_guards.push(vb.instances.borrow());
-            }
-        }
-        let layer_instances: Vec<&[QuadInstance]> =
-            instance_guards.iter().map(|g| g.as_slice()).collect();
-
         // Computed once, shared by the signature check below and whichever
         // of `build_webgpu_frame`/`build_wire_frame` ends up running -- and
         // computed *before* either of them, so a duplicate frame (the common
         // case under a static screen) never pays for building either shape.
         let uniform = self.build_shader_uniform();
-        let signature = self.compute_frame_signature(&uniform, &layer_instances);
-        drop(instance_guards);
-        drop(vbs_guards);
+        let signature = self.compute_frame_signature(&uniform);
 
         // Compare with the previous frame signature and skip if identical
         if let Some(last_signature) = self.last_frame_signature {
@@ -341,17 +344,15 @@ impl crate::TermWindow {
     /// would prevent any frame from being judged identical. The shader never reads
     /// milliseconds (verified by grep in shader.wgsl), so excluding it cannot cause
     /// stale-pixel bugs.
-    fn compute_frame_signature(
-        &self,
-        uniform: &ShaderUniform,
-        layer_instances: &[&[QuadInstance]],
-    ) -> u64 {
-        compute_frame_signature_from_parts(
+    fn compute_frame_signature(&self, uniform: &ShaderUniform) -> u64 {
+        let render_state = self.render_state.as_ref().unwrap();
+        let layers = render_state.layers.borrow();
+        compute_frame_signature_from_render_layers(
             self.dimensions.pixel_width,
             self.dimensions.pixel_height,
             &uniform.foreground_text_hsb,
             &uniform.projection,
-            layer_instances,
+            &layers,
         )
     }
 
@@ -751,9 +752,10 @@ mod tests {
 
     /// This test confirms that `milliseconds` cannot affect the signature at the type level.
     ///
-    /// The real `TermWindow::compute_frame_signature` method extracts `frame.uniform.foreground_text_hsb`,
-    /// `frame.uniform.projection`, and `self.dimensions`, then delegates to `compute_frame_signature_from_parts`.
-    /// Critically, `compute_frame_signature_from_parts` does NOT accept a `milliseconds` parameter at all.
+    /// The real `TermWindow::compute_frame_signature` method extracts
+    /// `uniform.foreground_text_hsb`, `uniform.projection`, and `self.dimensions`,
+    /// then hashes the retained render-layer buffers directly. The test helper
+    /// `compute_frame_signature_from_parts` does NOT accept a `milliseconds` parameter.
     ///
     /// This type-level guarantee means:
     /// 1. The milliseconds field from `ShaderUniform` is never passed into the signature computation.
@@ -778,9 +780,9 @@ mod tests {
         //
         // Notably absent: a `milliseconds` parameter of any type.
         //
-        // The wrapper `TermWindow::compute_frame_signature(&self, frame: &GpuFrame, layer_instances: &[&[QuadInstance]])`
-        // extracts the above fields from `self.dimensions`, `frame.uniform.foreground_text_hsb`, and `frame.uniform.projection`,
-        // but never touches `frame.uniform.milliseconds`.
+        // The wrapper `TermWindow::compute_frame_signature(&self, uniform: &ShaderUniform)`
+        // extracts the above fields from `self.dimensions` and `uniform`, but
+        // never touches `uniform.milliseconds`.
         //
         // This test documents that design choice. If future code incorrectly adds milliseconds to the signature,
         // it would need to modify `compute_frame_signature_from_parts`'s signature, which is an obvious red flag.
