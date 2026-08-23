@@ -496,6 +496,11 @@ rustup default {toolchain}
             ),
             checksum,
             RunStep(
+                "Ensure nightly release exists",
+                "bash ci/retry.sh bash ci/create-release.sh nightly",
+                env={"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"},
+            ),
+            RunStep(
                 "Upload to Nightly Release",
                 f"bash ci/retry.sh gh release upload --clobber nightly {glob}",
                 env={"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"},
