@@ -328,7 +328,7 @@ pub struct ComputeCellFgBgResult {
 /// work for space separated clusters with the same style
 #[derive(Clone, Debug)]
 pub struct ClusterStyleCache<'a> {
-    attrs: &'a CellAttributes,
+    attrs: CellAttributes,
     style: &'a TextStyle,
     underline_tex_rect: TextureRect,
     fg_color: LinearRgba,

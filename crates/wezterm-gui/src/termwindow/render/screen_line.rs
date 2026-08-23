@@ -756,15 +756,15 @@ impl crate::TermWindow {
         };
 
         let gl_state = self.render_state.as_ref().unwrap();
-        let mut shaped = vec![];
+        let mut shaped = Vec::with_capacity(cell_clusters.len());
         let mut last_style = None;
         let mut x_pos = 0.;
         let mut visual_cell_idx = 0usize;
         let mut expires = None;
         let mut invalidate_on_hover_change = false;
 
-        for cluster in &cell_clusters {
-            if !matches!(last_style.as_ref(), Some(ClusterStyleCache{attrs,..}) if *attrs == &cluster.attrs)
+        for cluster in cell_clusters {
+            if !matches!(last_style.as_ref(), Some(ClusterStyleCache{attrs,..}) if *attrs == cluster.attrs)
             {
                 let attrs = &cluster.attrs;
                 let style = self.fonts.match_style(params.config, attrs);
@@ -861,7 +861,7 @@ impl crate::TermWindow {
                 );
 
                 last_style.replace(ClusterStyleCache {
-                    attrs,
+                    attrs: cluster.attrs.clone(),
                     style,
                     underline_tex_rect,
                     bg_color,
@@ -874,7 +874,7 @@ impl crate::TermWindow {
 
             let glyph_info = self.cached_cluster_shape(
                 style_params.style,
-                cluster,
+                &cluster,
                 gl_state,
                 None,
                 &self.render_metrics,
@@ -883,6 +883,7 @@ impl crate::TermWindow {
                 .iter()
                 .map(|info| info.glyph.x_advance.get() as f32)
                 .sum();
+            let cluster_width = cluster.width;
 
             shaped.push(LineToElementShape {
                 underline_tex_rect: style_params.underline_tex_rect,
@@ -890,14 +891,14 @@ impl crate::TermWindow {
                 fg_color: style_params.fg_color,
                 underline_color: style_params.underline_color,
                 pixel_width,
-                cluster: cluster.clone(),
+                cluster,
                 glyph_info,
                 x_pos,
                 first_visual_cell_idx: visual_cell_idx,
             });
 
             x_pos += pixel_width;
-            visual_cell_idx += cluster.width;
+            visual_cell_idx += cluster_width;
         }
 
         let shaped = Rc::new(shaped);
