@@ -263,14 +263,15 @@ const MAX_ATLAS_MIRROR_BYTES: usize = 128 * 1024 * 1024;
 /// Keyed by rect so that repeatedly rewriting the same region (animated
 /// images, the cursor sprite) replaces rather than accumulates, which bounds
 /// this by the atlas's occupancy instead of by how long the window has been
-/// open. Replay order is the map's key order rather than write order; atlas
-/// allocations never overlap (`guillotiere` hands out disjoint rectangles,
-/// and a regrow builds a whole new texture with its own fresh log), so the
-/// only rects that can collide are identical ones, which are collapsed here
-/// to their latest content anyway.
+/// open. Full replay is sorted by rect and pending deltas retain first-write
+/// order. Atlas allocations never overlap (`guillotiere` hands out disjoint
+/// rectangles, and a regrow builds a whole new texture with its own fresh
+/// log), so the only rects that can collide are identical ones, which are
+/// collapsed here to their latest content anyway.
 struct AtlasMirrorLog {
-    written: std::collections::BTreeMap<AtlasRect, std::sync::Arc<[u8]>>,
+    written: std::collections::HashMap<AtlasRect, std::sync::Arc<[u8]>>,
     pending: Vec<AtlasRect>,
+    pending_set: std::collections::HashSet<AtlasRect>,
     bytes: usize,
     max_bytes: usize,
     over_budget: bool,
@@ -285,8 +286,9 @@ impl Default for AtlasMirrorLog {
 impl AtlasMirrorLog {
     fn with_limit(max_bytes: usize) -> Self {
         Self {
-            written: std::collections::BTreeMap::new(),
+            written: std::collections::HashMap::new(),
             pending: Vec::new(),
+            pending_set: std::collections::HashSet::new(),
             bytes: 0,
             max_bytes,
             over_budget: false,
@@ -317,13 +319,13 @@ impl AtlasMirrorLog {
 
         self.written.insert(rect, std::sync::Arc::from(pixels));
         self.bytes = bytes;
-        if !self.pending.contains(&rect) {
+        if self.pending_set.insert(rect) {
             self.pending.push(rect);
         }
     }
 
     fn updates_for(
-        written: &std::collections::BTreeMap<AtlasRect, std::sync::Arc<[u8]>>,
+        written: &std::collections::HashMap<AtlasRect, std::sync::Arc<[u8]>>,
         rect: AtlasRect,
     ) -> Option<wire::AtlasUpdate> {
         written.get(&rect).map(|pixels| wire::AtlasUpdate {
@@ -481,6 +483,7 @@ impl WebGpuTexture {
             return vec![];
         }
         let pending = std::mem::take(&mut mirror.pending);
+        mirror.pending_set.clear();
         pending
             .into_iter()
             .filter_map(|rect| AtlasMirrorLog::updates_for(&mirror.written, rect))
@@ -499,7 +502,8 @@ impl WebGpuTexture {
             return vec![];
         }
         mirror.pending.clear();
-        mirror
+        mirror.pending_set.clear();
+        let mut updates: Vec<_> = mirror
             .written
             .iter()
             .map(|(rect, pixels)| wire::AtlasUpdate {
@@ -509,7 +513,11 @@ impl WebGpuTexture {
                 height: rect.3,
                 pixels: std::sync::Arc::clone(pixels),
             })
-            .collect()
+            .collect();
+        // Keep full resyncs deterministic, matching the former BTreeMap
+        // iteration order. Delta updates retain first-write order in `pending`.
+        updates.sort_unstable_by_key(|update| (update.x, update.y, update.width, update.height));
+        updates
     }
 
     /// Whether the replay log has stopped accepting writes because retaining
@@ -703,6 +711,8 @@ mod tests {
 
         assert_eq!(mirror.bytes, 2);
         assert_eq!(mirror.written.len(), 1);
+        assert_eq!(mirror.pending.len(), 1);
+        assert_eq!(mirror.pending_set.len(), 1);
         assert!(!mirror.is_over_budget());
     }
 
