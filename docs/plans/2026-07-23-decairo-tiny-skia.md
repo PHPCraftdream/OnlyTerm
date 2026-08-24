@@ -1,12 +1,12 @@
 # План: выпилить cairo/pixman (C + asm) → tiny-skia (чистый Rust)
 
-Дата: 2026-07-23. Репо: форк `PHPCraftdream/wezterm`, ветка от `main` (76b606ec5).
+Дата: 2026-07-23. Репо: форк `PHPCraftdream/onlyterm`, ветка от `main` (76b606ec5).
 
 ## Цель
 
 Удалить `deps/cairo` целиком (~170k строк C cairo + ~52k строк C/asm pixman, из них
 151 `.c`-файл реально компилируется через `build.rs` + `cc`), заменив единственного
-потребителя — рендер цветных COLR/COLRv1-глифов в `wezterm-font` — на `tiny-skia`
+потребителя — рендер цветных COLR/COLRv1-глифов в `onlyterm-font` — на `tiny-skia`
 (чистый Rust). После этого в проекте не останется вендоренного C-кода cairo/pixman
 и ассемблера (ARM/MIPS `.S`-файлы и так не компилировались на нашем таргете).
 
@@ -14,7 +14,7 @@
 
 ### Потребители cairo (весь workspace, вне deps/)
 
-Только 5 файлов, все в `wezterm-font`:
+Только 5 файлов, все в `onlyterm-font`:
 
 | Файл | Что использует |
 |---|---|
@@ -81,7 +81,7 @@
 
 ### Инструменты для безручной (agent-driven) верификации
 
-Задача полностью изолирована в `wezterm-font` и не трогает GUI/рендер терминала —
+Задача полностью изолирована в `onlyterm-font` и не трогает GUI/рендер терминала —
 поэтому никакого управления живым UI/скриншотов окна не требуется вообще. Нужны
 только headless-инструменты уровня крейта, чтобы agent мог сам снять и сравнить
 результат растеризации без участия пользователя:
@@ -93,14 +93,14 @@
   не нужно.
 - **Сабмодули не инициализированы** (`deps/freetype/freetype2`, `deps/freetype/libpng`,
   `deps/freetype/zlib`, `deps/harfbuzz/harfbuzz`) — это блокирует вообще любую сборку
-  `wezterm-font`, значит `git submodule update --init --recursive` должен быть сделан
+  `onlyterm-font`, значит `git submodule update --init --recursive` должен быть сделан
   раньше даже задачи A.
-- **`wezterm-font/examples/dump_glyph.rs`** (новый) — headless-бинарник: путь к шрифту
+- **`onlyterm-font/examples/dump_glyph.rs`** (новый) — headless-бинарник: путь к шрифту
   + codepoint/glyph-id + size/dpi + выбор растеризатора (freetype/harfbuzz/оба) →
   вызывает `rasterize_glyph`, пишет PNG (`image` crate уже есть в зависимостях) плюс
   JSON-сайдкар с width/height/bearing_x/bearing_y/has_color. Один и тот же бинарник
   используется и в фазе A (эталон на cairo), и в фазе G (результат на tiny-skia).
-- **`wezterm-font/examples/diff_glyph.rs`** (новый) — headless сравнение двух PNG:
+- **`onlyterm-font/examples/diff_glyph.rs`** (новый) — headless сравнение двух PNG:
   per-pixel/per-channel diff, доля различающихся пикселей выше порога, exit-code
   ненулевой при превышении допуска. Позволяет G пройти полностью автоматически
   (скрипт/agent), без визуального разглядывания человеком.
@@ -118,7 +118,7 @@
 - **A. Baseline (до любых изменений).** `dump_glyph` по референсным глифам
   (эмодзи/COLRv1-градиенты из `NotoColorEmoji.ttf`, оба растеризатора) → PNG-файлы —
   эталон для сравнения после миграции.
-- **B. Каркас painter-модуля.** Новый `wezterm-font/src/rasterizer/paint.rs`:
+- **B. Каркас painter-модуля.** Новый `onlyterm-font/src/rasterizer/paint.rs`:
   структура `Recorder`/`Painter` на tiny-skia — стек состояний (Transform + Mask),
   группы (Pixmap + BlendMode), двухпроходный bbox+растр, конверсия в RasterizedGlyph.
   Юнит-тесты на bbox и стек.
@@ -130,13 +130,13 @@
   BlendMode).
 - **E. Порт `freetype.rs` растеризатора** на painter из B. Обновить `ftwrap.rs`
   (composite_mode_to_operator → BlendMode).
-- **F. Вычистка.** Убрать `cairo-rs` из `wezterm-font/Cargo.toml`, `cairo-rs`/
+- **F. Вычистка.** Убрать `cairo-rs` из `onlyterm-font/Cargo.toml`, `cairo-rs`/
   `cairo-sys-rs`/patch-секцию из корневого `Cargo.toml`, `deps/cairo` из
   `workspace.members`, удалить каталог `deps/cairo/`. Добавить `tiny-skia` в
   workspace-зависимости. `cargo build` всего workspace на Windows.
 - **G. Верификация.** Сравнить рендер референсных глифов с эталоном из A
-  (допуск на субпиксельные отличия анти-алиасинга), `wezterm ls-fonts`,
-  визуальная проверка эмодзи в живом терминале. `cargo test -p wezterm-font`.
+  (допуск на субпиксельные отличия анти-алиасинга), `onlyterm ls-fonts`,
+  визуальная проверка эмодзи в живом терминале. `cargo test -p onlyterm-font`.
 
 ## Риски
 

@@ -1,11 +1,11 @@
-# `wezterm cli zoom-pane`
+# `onlyterm cli zoom-pane`
 
 {{since('20240127-113634-bbcac864')}}
 
-*Run `wezterm cli zoom-pane --help` to see more help*
+*Run `onlyterm cli zoom-pane --help` to see more help*
 
 ## Synopsis
 
 ```console
-{% include "../../examples/cmd-synopsis-wezterm-cli-zoom-pane--help.txt" %}
+{% include "../../examples/cmd-synopsis-onlyterm-cli-zoom-pane--help.txt" %}
 ```

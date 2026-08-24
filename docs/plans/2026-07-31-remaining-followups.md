@@ -18,8 +18,8 @@ smaller than it sounds (and the interesting part of it is not what was flagged),
 ### What the code actually does
 
 The call in question is `WebGpuVertexBuffer::recreate()`
-(`crates/wezterm-gui/src/renderstate.rs:241-253`), invoked from
-`TermWindow::build_webgpu_frame` at `crates/wezterm-gui/src/termwindow/render/draw.rs:71`,
+(`crates/onlyterm-gui/src/renderstate.rs:241-253`), invoked from
+`TermWindow::build_webgpu_frame` at `crates/onlyterm-gui/src/termwindow/render/draw.rs:71`,
 which runs on the GUI thread once per painted frame:
 
 ```
@@ -38,7 +38,7 @@ created for the fancy tab bar / modal. Realistically 2-5 per frame.
 
 Buffer size is the **layer capacity**, not the used quad count:
 `recreate()` re-creates at `self.num_vertices`, which is `capacity * VERTICES_PER_CELL`.
-`Vertex` (`crates/wezterm-gui/src/quad.rs:33-43`) is 17 `f32` = 68 bytes, so a quad is 272
+`Vertex` (`crates/onlyterm-gui/src/quad.rs:33-43`) is 17 `f32` = 68 bytes, so a quad is 272
 bytes. The main layer's glyph sub-layer starts at 1024 quads (`renderstate.rs`,
 `RenderLayer::new(&context, 1024, 0)`) and grows in multiples of 128 via
 `allocated_more_quads` (`renderstate.rs:598-604`). A 200x60 dense text window needs on the
@@ -68,7 +68,7 @@ So per frame per non-empty sub-layer: 2 buffer allocations, 1 full-capacity mems
 memory, and 1 full-capacity GPU-side copy.
 
 **Estimated, not measured** (no profiling run was performed; the checked-in
-`target/*/wezterm-gui.exe` binaries predate this work and a fresh build was out of scope):
+`target/*/onlyterm-gui.exe` binaries predate this work and a fresh build was out of scope):
 at ~4 GB/s for a WC memset, a 3.3 MB glyph sub-layer costs ~0.8 ms of GUI-thread time per
 frame; an 80x24 window (~2k quads, 544 KB) costs ~0.14 ms. Against the existing
 `tab_frame_build_budget_ms` default of 40 ms, that is 2-3% at the large end and noise at
@@ -89,7 +89,7 @@ one thing that would make the pooling work worth doing for reasons other than th
 
 **(a) `create_uniform` is called inside the per-draw loop.**
 `WebGpuState::submit_frame` builds the uniform buffer + bind group once *per draw call*
-(`crates/wezterm-gui/src/termwindow/webgpu.rs:841`, inside the
+(`crates/onlyterm-gui/src/termwindow/webgpu.rs:841`, inside the
 `for draw in &frame.draws` loop at line 815) from `frame.uniform`, which is a `Copy`
 struct that is identical for every draw in the frame. This is a redundant
 `create_buffer_init` + `create_bind_group` per draw. It is on the render thread rather
@@ -134,7 +134,7 @@ glyph sub-layer alone).
 
 The note said `spawn-funcs::register_rhai` is never wired into the GUI's rhai engine. That
 is true, but it dramatically understates the problem. **None of the `lua-api-crates` are
-wired in.** The only `register_rhai` functions that reach a live engine are `wezterm-gui`'s
+wired in.** The only `register_rhai` functions that reach a live engine are `onlyterm-gui`'s
 own two.
 
 Evidence:
@@ -146,17 +146,17 @@ Evidence:
   everything in `RHAI_SETUP_FUNCS`.
 * `RHAI_SETUP_FUNCS` is populated only by `config::rhai_engine::add_rhai_setup_func`
   (`crates/config/src/rhai_engine.rs:399`). A repo-wide search finds exactly two call
-  sites, both in `crates/wezterm-gui/src/main.rs:1173-1174`:
+  sites, both in `crates/onlyterm-gui/src/main.rs:1173-1174`:
   `crate::scripting::register_rhai` (GuiWin) and `crate::termwindow::register_rhai`
   (TabInformation/PaneInformation).
 * Every `lua-api-crates/*/src/lib.rs::register_rhai` is referenced *only* from that
   crate's own `tests/rhai_smoke.rs`. Nothing in `env-bootstrap`, `config`, `mux`,
-  `wezterm-gui`, `wezterm`, or `wezterm-mux-server` calls any of them.
+  `onlyterm-gui`, `onlyterm`, or `onlyterm-mux-server` calls any of them.
 
 ### Why: it was dropped during L5, not "never finished"
 
 `env-bootstrap` was the central wiring point. `git show 48e38e224 -- env-bootstrap/src/lib.rs`
-("config, lua-api-crates, mux, wezterm-gui: remove mlua and luahelper from workspace (L5)")
+("config, lua-api-crates, mux, onlyterm-gui: remove mlua and luahelper from workspace (L5)")
 deleted this function outright and added no rhai replacement:
 
 ```rust
@@ -172,8 +172,8 @@ fn register_lua_modules() {
 ```
 
 It was called from `bootstrap()`, which all three binaries still call
-(`crates/wezterm/src/main.rs:735`, `crates/wezterm-gui/src/main.rs:1168`,
-`crates/wezterm-mux-server/src/main.rs:80`). The L5 commit message asserts rhai "is the
+(`crates/onlyterm/src/main.rs:735`, `crates/onlyterm-gui/src/main.rs:1168`,
+`crates/onlyterm-mux-server/src/main.rs:80`). The L5 commit message asserts rhai "is the
 only registered/reachable scripting path" — that assertion was wrong for the API crates.
 
 `crates/env-bootstrap/Cargo.toml` **still declares dependencies on all 13 crates** and
@@ -185,11 +185,11 @@ Everything except the nine built-ins listed above plus `GuiWin`/`TabInformation`
 `PaneInformation`. Concretely, and including things the shipped docs promise:
 
 * `format(...)` (`crates/lua-api-crates/termwiz-funcs/src/lib.rs:241`) — the single most
-  common wezterm config idiom, used by every `format-tab-title` / `update-status`
+  common onlyterm config idiom, used by every `format-tab-title` / `update-status`
   recipe. `docs/migration-lua-to-rhai.md:339` documents it as available.
 * `run_child_process` / `background_child_process` / `open_with`
   (`crates/lua-api-crates/spawn-funcs/src/lib.rs:27-32`). Documented with a rhai call site
-  at `docs/config/reference/wezterm/run_child_process.md:17`.
+  at `docs/config/reference/onlyterm/run_child_process.md:17`.
 * `serde::json_encode` etc. and `plugin::require` — documented at
   `docs/migration-lua-to-rhai.md:286-288`.
 * The whole `mux` module (`crates/lua-api-crates/mux/src/lib.rs:53`), plus `color_funcs`,
@@ -202,12 +202,12 @@ A `.rhai` config that calls any of these fails at evaluation time with rhai's
 
 Two related inaccuracies fall out of this:
 
-* `crates/wezterm-gui/src/overlay/debug.rs:33-35` claims the REPL engine exposes
-  "every `register_rhai` binding (`wezterm.mux.*`, `GuiWin`, `TabInformation`, ...)".
+* `crates/onlyterm-gui/src/overlay/debug.rs:33-35` claims the REPL engine exposes
+  "every `register_rhai` binding (`onlyterm.mux.*`, `GuiWin`, `TabInformation`, ...)".
   Only the last two are true today.
 * `time-funcs`, `url-funcs` and `window-funcs` have **no** `register_rhai` at all.
   `crates/lua-api-crates/time-funcs/src/lib.rs:13-18` documents this explicitly
-  (`wezterm.time.call_after` has no rhai port; `schedule_all` is a no-op skeleton).
+  (`onlyterm.time.call_after` has no rhai port; `schedule_all` is a no-op skeleton).
   `url-funcs` and `window-funcs` are now plain data-type crates consumed by other crates,
   which is fine and needs no wiring.
 
@@ -225,13 +225,13 @@ care:
 
 1. Registration must happen before the first `Config::load()`; `bootstrap()` is already
    the first thing every binary does, and `add_rhai_setup_func` is already used from
-   `wezterm-gui/src/main.rs` immediately after it, so restoring the call inside
+   `onlyterm-gui/src/main.rs` immediately after it, so restoring the call inside
    `bootstrap()` is the right place.
-2. Registering in `wezterm` (CLI) and `wezterm-mux-server` as well as the GUI matches the
+2. Registering in `onlyterm` (CLI) and `onlyterm-mux-server` as well as the GUI matches the
    pre-L5 behavior and is safe — `mux_lua`'s functions resolve the `Mux` lazily inside
    each native fn (`get_mux_rhai()`), not at registration time.
 3. Name collisions: I checked every `register_fn`/`set_native_fn`/`register_static_module`
-   name across `lua-api-crates`, `config/src/rhai_engine.rs` and `wezterm-gui`'s two setup
+   name across `lua-api-crates`, `config/src/rhai_engine.rs` and `onlyterm-gui`'s two setup
    funcs. The only repeats are deliberate arity overloads (`open_with` x2, `glob` x2) and
    per-type `to_string` methods. No crate shadows a `make_rhai_engine` built-in. Note that
    `RHAI_SETUP_FUNCS` runs *last*, so a future collision would silently shadow a built-in
@@ -249,7 +249,7 @@ care:
 I re-checked all of these against current `main`. **None of them were incidentally fixed by
 the #265-#273 commits.** `crates/window/src/os/windows/window.rs` was not touched by any of
 those eight commits at all (verified via `git show --stat` on each), and the parts of
-`crates/wezterm-gui/src/termwindow/mod.rs` they did rewrite were the OpenGL-fallback relay
+`crates/onlyterm-gui/src/termwindow/mod.rs` they did rewrite were the OpenGL-fallback relay
 (#265), `created()`'s error return (#266), device-lost staleness (#267), the unresponsive
 flag split (#269) and the `RenderState`-build retry (#272) — none of which intersect the
 hang-check scheduling. If anything #267 *widened* the surface for finding 3.3 by adding a
@@ -257,9 +257,9 @@ second way to reach `handle_render_error_recovery`.
 
 ### 3.1 Destroying the WebGpu child HWND while a live surface may still be bound — STILL LIVE
 
-`TermWindow::begin_renderer_rebuild` (`crates/wezterm-gui/src/termwindow/mod.rs:1502`)
+`TermWindow::begin_renderer_rebuild` (`crates/onlyterm-gui/src/termwindow/mod.rs:1502`)
 calls `rt.shutdown()` (line 1512), which by design **does not join** the render thread
-(`crates/wezterm-gui/src/renderthread.rs:84-93, 246-249`). It then drops its own
+(`crates/onlyterm-gui/src/renderthread.rs:84-93, 246-249`). It then drops its own
 `Arc<WebGpuState>` (line 1535) — but the render thread holds a second `Arc` via
 `RenderThreadSeed::webgpu`, and if it is wedged inside `submit_frame`/`present()` (which is
 the whole reason we are rebuilding) that `Arc` — and therefore the `wgpu::Surface` and its
@@ -306,7 +306,7 @@ destroyed at line 862. Windows recycles HWND values, so the subsequent
 (`window.rs:378-395`) targets a dead — and possibly reassigned — window. It also makes
 `webgpu_child_hwnd()` (`window.rs:807-816`) return `Some(dead_hwnd)` instead of `None`, so
 the next `WebGpuState::new` builds its surface against it
-(`crates/wezterm-gui/src/termwindow/webgpu.rs:343`) rather than taking the documented
+(`crates/onlyterm-gui/src/termwindow/webgpu.rs:343`) rather than taking the documented
 "fall back to the top-level window" path.
 
 **Recommendation: do it.** This is a genuine bug with a three-line fix (null the field
@@ -315,7 +315,7 @@ into 3.1 since 3.1 rewrites the same function.
 
 ### 3.3 The hang-supervisor timer chain can fork into two chains — STILL LIVE (narrow)
 
-`schedule_render_thread_hang_check` (`crates/wezterm-gui/src/termwindow/mod.rs:1110`)
+`schedule_render_thread_hang_check` (`crates/onlyterm-gui/src/termwindow/mod.rs:1110`)
 arms a `Timer` -> `notify` -> `check_render_thread_hang_tick` (line 1154), which re-arms
 itself. The chain terminates when a tick sees `render_thread_hang_handled == true`
 (line 1155) or `render_thread == None` (line 1164).
@@ -442,10 +442,10 @@ independent.
 
 3. **Audit and correct the rhai API documentation against what is actually registered**
    Depends on task 1. Once the wiring lands, reconcile the docs with reality: fix
-   `crates/wezterm-gui/src/overlay/debug.rs:33-35`, which claims the REPL exposes
-   "`wezterm.mux.*`, `GuiWin`, `TabInformation`" when only the latter two were ever true;
-   and document the genuinely-missing surface — `wezterm.time.call_after` has no rhai port
-   at all (`crates/lua-api-crates/time-funcs/src/lib.rs:13-18`), and `wezterm.emit` is
+   `crates/onlyterm-gui/src/overlay/debug.rs:33-35`, which claims the REPL exposes
+   "`onlyterm.mux.*`, `GuiWin`, `TabInformation`" when only the latter two were ever true;
+   and document the genuinely-missing surface — `onlyterm.time.call_after` has no rhai port
+   at all (`crates/lua-api-crates/time-funcs/src/lib.rs:13-18`), and `onlyterm.emit` is
    deliberately not script-visible (`crates/config/src/rhai_engine.rs:358-372`) — in
    `docs/migration-lua-to-rhai.md` so users are not left guessing.
 
@@ -460,7 +460,7 @@ independent.
 
 5. **Defer destruction of a retired WebGpu child HWND until the old `WebGpuState` is dropped**
    Should land after task 4 (same function). `begin_renderer_rebuild`
-   (`crates/wezterm-gui/src/termwindow/mod.rs:1502-1583`) deliberately does not join the render
+   (`crates/onlyterm-gui/src/termwindow/mod.rs:1502-1583`) deliberately does not join the render
    thread, so that thread's `Arc<WebGpuState>` — and its live DXGI swapchain — can still be
    alive, possibly mid-`present()`, when `recreate_webgpu_child_window` destroys the child HWND
    the swapchain targets. Change the rebuild to *retire* the old child window (`SW_HIDE` + stash)
@@ -471,7 +471,7 @@ independent.
    parent, so there is no leak.
 
 6. **Hoist `create_uniform` out of the per-draw loop in `WebGpuState::submit_frame`**
-   `crates/wezterm-gui/src/termwindow/webgpu.rs:841` builds a fresh uniform buffer and bind
+   `crates/onlyterm-gui/src/termwindow/webgpu.rs:841` builds a fresh uniform buffer and bind
    group inside the `for draw in &frame.draws` loop (line 815), even though `frame.uniform` is
    a `Copy` value identical for every draw in the frame. Build it once before the loop and
    reuse the resulting `wgpu::BindGroup`. Saves one `create_buffer_init` plus one
@@ -480,9 +480,9 @@ independent.
 
 7. **Instrument the per-frame WebGpu vertex-buffer churn**
    Add `metrics` histograms around the `recreate()`/`unmap()` step in
-   `TermWindow::build_webgpu_frame` (`crates/wezterm-gui/src/termwindow/render/draw.rs:65-82`):
+   `TermWindow::build_webgpu_frame` (`crates/onlyterm-gui/src/termwindow/render/draw.rs:65-82`):
    one latency histogram for the whole loop and one `*.size`-suffixed histogram (see the
-   `.size` special case in `crates/wezterm-gui/src/stats.rs`) for total bytes re-created per
+   `.size` special case in `crates/onlyterm-gui/src/stats.rs`) for total bytes re-created per
    frame, i.e. the sum of each recreated buffer's capacity. This is the measurement that
    "221.9 pending measurement" was actually waiting on; it is readable via the existing
    `periodic_stat_logging` config knob with no new tooling. The decision rule: pursue the
@@ -490,9 +490,9 @@ independent.
    recreate+unmap step regularly exceeds ~2 ms on a real workload.
 
 8. **Collapse the vestigial 3-slot vertex-buffer rotation in the WebGpu path**
-   `TripleVertexBuffer::bufs` (`crates/wezterm-gui/src/renderstate.rs:321-327`) keeps three
+   `TripleVertexBuffer::bufs` (`crates/onlyterm-gui/src/renderstate.rs:321-327`) keeps three
    buffers per sub-layer and `next_index()` rotates them once per frame
-   (`crates/wezterm-gui/src/termwindow/render/draw.rs:81`). That rotation is meaningful only for
+   (`crates/onlyterm-gui/src/termwindow/render/draw.rs:81`). That rotation is meaningful only for
    Glium; in the WebGpu path `recreate()` swaps a brand-new buffer into the current slot every
    frame and hands the filled one to the render thread, so a rotated-to slot never holds a
    buffer the GPU has seen and one slot behaves identically to three. Make the slot count
@@ -503,7 +503,7 @@ independent.
 
 9. **Make the render-thread hang-check timer chain single-instance**
    `schedule_render_thread_hang_check`/`check_render_thread_hang_tick`
-   (`crates/wezterm-gui/src/termwindow/mod.rs:1110-1182`) rely on timing alone to stay
+   (`crates/onlyterm-gui/src/termwindow/mod.rs:1110-1182`) rely on timing alone to stay
    single-chained: a rebuild started from `handle_render_error_recovery` (line 1209) resets
    `render_thread_hang_handled` to `false` and arms a fresh chain (lines 1698-1705) while the
    previous chain's timer may still be pending, so a tick landing after the reset re-arms and

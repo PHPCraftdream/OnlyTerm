@@ -2,16 +2,16 @@ use crate::keyassignment::ProcessPriority;
 use crate::ktav_value::ktav_value_to_dynamic;
 use crate::shell::Shell;
 use ktav::value::Value as KtavValue;
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, UnknownFieldAction};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, UnknownFieldAction};
 
 /// A single tab entry inside a `--start-conf` startup layout document; see
 /// `StartupLayout` for the shape of the containing document.
 #[derive(Debug, Clone, Default, FromDynamic, ToDynamic)]
 pub struct StartupTab {
     /// Sets the tab's title immediately after it is spawned (the same
-    /// effect as `wezterm cli set-tab-title`, just applied at startup).
+    /// effect as `onlyterm cli set-tab-title`, just applied at startup).
     /// The user is still free to rename the tab afterwards.
     pub title: Option<String>,
 
@@ -124,7 +124,7 @@ impl StartupLayout {
 
     /// Loads and parses a `--start-conf` file. Deliberately standalone
     /// from `Config::load_with_overrides` (`crates/config/src/config_impl.rs`)
-    /// -- same ktav-to-`wezterm_dynamic`-to-struct pipeline, but this
+    /// -- same ktav-to-`onlyterm_dynamic`-to-struct pipeline, but this
     /// document has its own, much smaller shape and isn't a config
     /// override source.
     pub fn load(path: &Path) -> anyhow::Result<Self> {

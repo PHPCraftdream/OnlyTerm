@@ -8,7 +8,7 @@ use std::any::Any;
 use std::path::PathBuf;
 use url::Url;
 pub mod bitmaps;
-pub use wezterm_color_types as color;
+pub use onlyterm_color_types as color;
 pub mod connection;
 pub mod os;
 pub mod screen;
@@ -27,8 +27,8 @@ pub fn default_dpi() -> f64 {
 
 pub use bitmaps::{BitmapImage, Image};
 pub use connection::*;
+pub use onlyterm_input_types::*;
 pub use os::*;
-pub use wezterm_input_types::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Clipboard {
@@ -272,7 +272,7 @@ pub trait WindowOps {
     /// comment for the full rationale). Called the first time a real frame
     /// has actually been *presented* (task #425, hardened by task #407),
     /// not merely once a renderer object exists or a frame has merely been
-    /// handed off for presentation -- the caller is `wezterm-gui`'s
+    /// handed off for presentation -- the caller is `onlyterm-gui`'s
     /// `TermWindow::paint_impl` on the synchronous (no dedicated render
     /// thread) path, or its `renderthread.rs`'s `submit_one_frame` after
     /// its first successful `submit_frame` when a render thread is active
@@ -288,7 +288,7 @@ pub trait WindowOps {
     /// its first output, used as a practical proxy for "the shell is alive
     /// and likely ready to accept input" (task #385 -- there is no harder
     /// "ready for input" handshake to wait for; see the call site in
-    /// `wezterm-gui`'s `TermWindow` for the exact trigger). Windows-only
+    /// `onlyterm-gui`'s `TermWindow` for the exact trigger). Windows-only
     /// concern, like `clear_placeholder_background`: it gates the placeholder
     /// spinner's cross-fade into the real terminal content
     /// (`os::windows::window::WindowInner::start_placeholder_fade`), which

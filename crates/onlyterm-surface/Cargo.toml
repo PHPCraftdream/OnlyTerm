@@ -1,0 +1,39 @@
+[package]
+authors = ["Wez Furlong"]
+name = "onlyterm-surface"
+version = "0.1.0"
+edition = "2018"
+repository = "https://github.com/wezterm/wezterm"
+description = "Surface and Line types for terminals"
+license = "MIT"
+documentation = "https://docs.rs/wezterm-surface"
+keywords = ["terminal", "surface", "line"]
+
+[dependencies]
+bitflags = "2.0"
+fancy-regex.workspace = true
+finl_unicode.workspace = true
+fixedbitset.workspace = true
+ordered-float.workspace = true
+serde = {workspace=true, optional=true}
+siphasher.workspace = true
+unicode-segmentation.workspace = true
+onlyterm-bidi.workspace = true
+onlyterm-blob-leases = {workspace=true, optional=true}
+onlyterm-cell = {workspace = true}
+onlyterm-char-props.workspace = true
+onlyterm-color-types = {workspace = true}
+onlyterm-dynamic = {workspace = true}
+onlyterm-escape-parser = {workspace = true}
+onlyterm-input-types.workspace = true
+
+[features]
+default = []
+std = ["fancy-regex/std", "onlyterm-cell/std", "onlyterm-dynamic/std", "onlyterm-escape-parser/std", "fixedbitset/std", "fancy-regex/perf", "fancy-regex/unicode"]
+appdata = ["std"]
+use_serde = ["serde"] #, "onlyterm-color-types/use_serde", "onlyterm-blob-leases/serde", "bitflags/serde", "onlyterm-input-types/serde", "onlyterm-escape-parser/use_serde", "onlyterm-cell/use_serde"]
+use_image = ["onlyterm-cell/use_image"] # "image", "dep:image", "onlyterm-escape-parser/use_image", "onlyterm-escape-parser/kitty-shm", "onlyterm-cell/use_image"]
+
+[dev-dependencies]
+k9.workspace = true
+

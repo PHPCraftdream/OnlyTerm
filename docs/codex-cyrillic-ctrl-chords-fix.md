@@ -119,7 +119,7 @@ rederived = ToUnicodeEx(vk, sc, state=[0;256], флаг 4, GetKeyboardLayout(0))
    тот же контракт, что у `KeyboardLayoutInfo`; `// SAFETY:`-комментарий
    обязателен. Вызывается из `encode_win32_input`, т.е. всегда на UI-потоке.
 
-2. **`crates/wezterm-input-types/src/key_event.rs`**, `encode_win32_input_mode`
+2. **`crates/onlyterm-input-types/src/key_event.rs`**, `encode_win32_input_mode`
    (строки ~146–274):
    - развернуть в пару: нульаргументная обёртка (все нынешние вызовы — тесты в
      `inputmap.rs`/`lib.rs` — не меняются) + `encode_win32_input_mode_with_ctrl_uni(
@@ -146,7 +146,7 @@ rederived = ToUnicodeEx(vk, sc, state=[0;256], флаг 4, GetKeyboardLayout(0))
    опрашивается. Метод под `#[cfg(windows)]` (поле `raw.scan_code` тоже
    `#[cfg(windows)]`, см. `raw_key_event.rs`).
 
-3. **`crates/wezterm-gui/src/termwindow/keyevent.rs`**, `encode_win32_input`
+3. **`crates/onlyterm-gui/src/termwindow/keyevent.rs`**, `encode_win32_input`
    (строка ~238) — единственный продакшн-вызов кодировщика:
 
    ```rust
@@ -172,7 +172,7 @@ rederived = ToUnicodeEx(vk, sc, state=[0;256], флаг 4, GetKeyboardLayout(0))
    `PhysKeyCode::to_win32_key_codes` (J = 0x4A/0x24, C = 0x43/0x2E), так что
    зеркалирование работает и для них.
 
-4. **Тесты** — в тестовый модуль `wezterm-input-types/src/lib.rs`, рядом с
+4. **Тесты** — в тестовый модуль `onlyterm-input-types/src/lib.rs`, рядом с
    существующим хелпером `win32_input_mode_uni_char` (стиль уже готов):
    - решение: `rederive → Some('о')` даёт `Some('j')`; `Some('j')` даёт `None`
      (латиница — байты не меняются); `None` даёт `Some('j')`; `Char('\r')+CTRL`
@@ -193,7 +193,7 @@ rederived = ToUnicodeEx(vk, sc, state=[0;256], флаг 4, GetKeyboardLayout(0))
 
 ## Проверка после правки
 
-1. `cargo build && cargo test -p wezterm-input-types`.
+1. `cargo build && cargo test -p onlyterm-input-types`.
 2. Живая: запустить codex, переключить раскладку на RU, нажать Ctrl+J /
    Ctrl+Enter / Ctrl+C — все три должны срабатывать. В журнале кодировка
    чорда должна показать `uni=106`/`99` (или отсутствие подстановки под EN —

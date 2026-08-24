@@ -1,7 +1,7 @@
 use crate::color::{RgbColor, RgbaColor};
 use crate::font::TextStyle;
 use crate::units::Dimension;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic)]
 pub struct WindowFrameConfig {

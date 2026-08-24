@@ -8,7 +8,7 @@ the search pattern editor.
 ```
 key_tables: {
   search_mode: [
-    ## This action is not bound by default in wezterm
+    ## This action is not bound by default in onlyterm
     { key: e, mods: CTRL, action: { CopyMode: EditPattern } }
   ]
 }

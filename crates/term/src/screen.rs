@@ -2,10 +2,10 @@
 use super::*;
 use crate::config::BidiMode;
 use log::debug;
+use onlyterm_surface::SequenceNo;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use termwiz::input::KeyboardEncoding;
-use wezterm_surface::SequenceNo;
 
 mod scroll;
 
@@ -826,8 +826,8 @@ fn phys_intersection(r1: &Range<PhysRowIndex>, r2: &Range<PhysRowIndex>) -> Rang
 mod test {
     use super::*;
     use crate::color::ColorPalette;
-    use wezterm_bidi::ParagraphDirectionHint;
-    use wezterm_surface::SEQ_ZERO;
+    use onlyterm_bidi::ParagraphDirectionHint;
+    use onlyterm_surface::SEQ_ZERO;
 
     #[derive(Debug)]
     struct TestConfig {

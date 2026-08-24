@@ -1,6 +1,6 @@
 //! Regression coverage for `Mux::domain_was_detached`.
 //!
-//! A sibling fork of wezterm (wakamex/wakterm) had a version of this
+//! A sibling fork of onlyterm (wakamex/wakterm) had a version of this
 //! function that held `windows.write()` for the duration of the call to
 //! `tab.kill_panes_in_domain(domain)`, and `kill_panes_in_domain` could
 //! transitively try to lock `windows` again (e.g. via a notification
@@ -43,10 +43,10 @@ use crate::pane::{CloseReason, Pane, PaneId};
 use crate::tab::{SplitDirection, SplitRequest, SplitSize};
 use crate::window::Window;
 use crate::{DomainId, Mux};
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 use parking_lot::MappedMutexGuard;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 
 /// Queues `Runnable`s instead of running them inline, so that
 /// `spawn_into_main_thread` behaves like the production GUI scheduler:

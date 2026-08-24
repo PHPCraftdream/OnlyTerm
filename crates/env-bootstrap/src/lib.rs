@@ -2,7 +2,7 @@
 pub mod ringlog;
 pub use ringlog::setup_logger;
 
-pub fn set_wezterm_executable() {
+pub fn set_onlyterm_executable() {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             std::env::set_var("ONLYTERM_EXECUTABLE_DIR", dir);
@@ -50,11 +50,11 @@ fn register_panic_hook() {
 
 pub fn bootstrap() {
     config::assign_version_info(
-        wezterm_version::wezterm_version(),
-        wezterm_version::wezterm_target_triple(),
-        wezterm_version::wezterm_commit_hash(),
-        wezterm_version::wezterm_commit_count(),
-        wezterm_version::wezterm_build_time(),
+        onlyterm_version::onlyterm_version(),
+        onlyterm_version::onlyterm_target_triple(),
+        onlyterm_version::onlyterm_commit_hash(),
+        onlyterm_version::onlyterm_commit_count(),
+        onlyterm_version::onlyterm_build_time(),
     );
     setup_logger();
     register_panic_hook();
@@ -68,21 +68,21 @@ pub fn bootstrap() {
     // as long as it's the very first thing written to it.
     log::info!(
         "OnlyTerm {} | commit #{} {} | built {} | {}",
-        wezterm_version::wezterm_version(),
-        wezterm_version::wezterm_commit_count(),
-        wezterm_version::wezterm_commit_hash(),
-        wezterm_version::wezterm_build_time(),
-        wezterm_version::wezterm_target_triple(),
+        onlyterm_version::onlyterm_version(),
+        onlyterm_version::onlyterm_commit_count(),
+        onlyterm_version::onlyterm_commit_hash(),
+        onlyterm_version::onlyterm_build_time(),
+        onlyterm_version::onlyterm_target_triple(),
     );
 
-    set_wezterm_executable();
+    set_onlyterm_executable();
 
     // Remove this env var to avoid weirdness with some vim configurations.
-    // wezterm never sets WINDOWID and we don't want to inherit it from a
+    // onlyterm never sets WINDOWID and we don't want to inherit it from a
     // parent process.
     std::env::remove_var("WINDOWID");
     // Avoid vte shell integration kicking in if someone started
-    // wezterm or the mux server from inside gnome terminal.
+    // onlyterm or the mux server from inside gnome terminal.
     // <https://github.com/wezterm/wezterm/issues/2237>
     std::env::remove_var("VTE_VERSION");
 

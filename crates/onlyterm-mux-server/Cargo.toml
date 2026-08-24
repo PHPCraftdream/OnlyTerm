@@ -1,0 +1,49 @@
+[package]
+name = "onlyterm-mux-server"
+version = "0.1.0"
+authors = ["Wez Furlong <wez@wezfurlong.org>"]
+edition = "2018"
+resolver = "2"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "onlyterm-mux-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+config.workspace = true
+env-bootstrap.workspace = true
+log.workspace = true
+mux.workspace = true
+portable-pty = { workspace=true, features = ["serde_support"]}
+promise.workspace = true
+sefer-alloc.workspace = true
+smol.workspace = true
+umask.workspace = true
+onlyterm-blob-leases = {workspace=true, features=["simple_tempdir"]}
+onlyterm-elevated-transport.workspace = true
+onlyterm-mux-server-impl.workspace = true
+onlyterm-gui-subcommands.workspace = true
+onlyterm-term.workspace = true
+onlyterm-uds.workspace = true
+
+[target."cfg(windows)".dependencies]
+winapi = { workspace=true, features = [
+    "winuser",
+    "winsock2",
+    "errhandlingapi",
+    "handleapi",
+    "processthreadsapi",
+    "synchapi",
+    "winbase",
+    "winnt",
+    "minwindef",
+]}
+
+[target.'cfg(windows)'.build-dependencies]
+embed-resource.workspace = true
+cc.workspace = true

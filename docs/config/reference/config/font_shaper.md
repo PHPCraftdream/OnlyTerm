@@ -18,6 +18,6 @@ The incomplete `Allsorts` shaper was removed.
 
 The default changed from `Harfbuzz` to `RustyBuzz`, a pure-Rust
 reimplementation of the same shaping algorithm, as part of an effort to
-remove C/C++ dependencies from wezterm. If you notice a shaping regression,
+remove C/C++ dependencies from onlyterm. If you notice a shaping regression,
 you can set `config.font_shaper = "Harfbuzz"` to restore the previous
 behavior and please file an issue.

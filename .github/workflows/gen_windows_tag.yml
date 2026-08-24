@@ -40,15 +40,15 @@ jobs:
         if: steps.cache-cargo-vendor.outputs.cache-hit != 'true'
         shell: bash
         run: "cargo vendor --locked --versioned-dirs >> .cargo/config"
-      - name: "Build wezterm (Release mode)"
+      - name: "Build onlyterm (Release mode)"
         shell: cmd
-        run: "cargo build -p wezterm --release"
-      - name: "Build wezterm-gui (Release mode)"
+        run: "cargo build -p onlyterm --release"
+      - name: "Build onlyterm-gui (Release mode)"
         shell: cmd
-        run: "cargo build -p wezterm-gui --release"
-      - name: "Build wezterm-mux-server (Release mode)"
+        run: "cargo build -p onlyterm-gui --release"
+      - name: "Build onlyterm-mux-server (Release mode)"
         shell: cmd
-        run: "cargo build -p wezterm-mux-server --release"
+        run: "cargo build -p onlyterm-mux-server --release"
       - name: "Build strip-ansi-escapes (Release mode)"
         shell: cmd
         run: "cargo build -p strip-ansi-escapes --release"

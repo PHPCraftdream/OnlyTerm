@@ -1,0 +1,55 @@
+[package]
+name = "onlyterm-font"
+version = "0.1.0"
+authors = ["Wez Furlong <wez@wezfurlong.org>"]
+edition = "2021"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+vendor-jetbrains = []
+vendor-roboto = []
+vendor-noto-emoji = []
+vendor-hebrew = []
+vendor-nerd-font-symbols = []
+vendor-noto-symbols = []
+
+[dependencies]
+anyhow.workspace = true
+config.workspace = true
+encoding_rs.workspace = true
+enum-display-derive.workspace = true
+euclid.workspace = true
+finl_unicode.workspace = true
+image.workspace = true
+lazy_static.workspace = true
+lfucache.workspace = true
+log.workspace = true
+memmap2.workspace = true
+metrics.workspace = true
+ordered-float.workspace = true
+rangeset.workspace = true
+rustybuzz = "0.20"
+swash = "0.2.10"
+ttf-parser = "0.25"
+termwiz.workspace = true
+thiserror.workspace = true
+tiny-skia.workspace = true
+walkdir.workspace = true
+onlyterm-bidi.workspace = true
+onlyterm-color-types.workspace = true
+onlyterm-input-types.workspace = true
+onlyterm-term = { workspace=true, features=["use_serde"] }
+onlyterm-toast-notification.workspace = true
+
+[target."cfg(windows)".dependencies]
+dwrote.workspace = true
+winapi.workspace = true
+
+[dev-dependencies]
+clap = { workspace = true }
+env_logger.workspace = true
+k9.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true

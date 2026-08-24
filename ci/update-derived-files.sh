@@ -26,10 +26,10 @@ trim_file() {
   perl -0777 -pe 's/^\n+|\n\K\n+$//g'
 }
 
-cargo run --example narrow -p portable-pty $TARGET_DIR/debug/onlyterm --help | $TARGET_DIR/debug/strip-ansi-escapes | trim_file > docs/examples/cmd-synopsis-wezterm--help.txt
+cargo run --example narrow -p portable-pty $TARGET_DIR/debug/onlyterm --help | $TARGET_DIR/debug/strip-ansi-escapes | trim_file > docs/examples/cmd-synopsis-onlyterm--help.txt
 
 for cmd in start serial connect ls-fonts show-keys imgcat set-working-directory record replay  ; do
-  fname="docs/examples/cmd-synopsis-wezterm-${cmd}--help.txt"
+  fname="docs/examples/cmd-synopsis-onlyterm-${cmd}--help.txt"
   cargo run --example narrow -p portable-pty $TARGET_DIR/debug/onlyterm $cmd --help | $TARGET_DIR/debug/strip-ansi-escapes | trim_file > $fname
 done
 
@@ -52,6 +52,6 @@ for cmd in \
     split-pane \
     zoom-pane \
     ; do
-  fname="docs/examples/cmd-synopsis-wezterm-cli-${cmd}--help.txt"
+  fname="docs/examples/cmd-synopsis-onlyterm-cli-${cmd}--help.txt"
   cargo run --example narrow -p portable-pty $TARGET_DIR/debug/onlyterm cli $cmd --help | $TARGET_DIR/debug/strip-ansi-escapes | trim_file > $fname
 done

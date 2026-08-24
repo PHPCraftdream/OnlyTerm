@@ -47,7 +47,7 @@ commits it cites:
 
 Config flag: `per_tab_process_isolation: bool`, `#[dynamic(default)]` →
 **defaults to `false`** (`crates/config/src/config.rs`). Gate:
-`crates/wezterm-gui/src/spawn.rs`:
+`crates/onlyterm-gui/src/spawn.rs`:
 ```rust
 let use_single_pane =
     config.per_tab_process_isolation && !matches!(spawn_where, SpawnWhere::SplitPane(_));
@@ -56,13 +56,13 @@ When enabled, a regular tab spawns `onlyterm-mux-server.exe --single-pane` as a
 genuinely separate OS process. That child:
 - owns the PTY and the shell process for **that one pane**,
 - talks back to the GUI over an inherited `socketpair()` (or, for elevated
-  tabs, a loopback WebSocket rendezvous — `crates/wezterm-elevated-transport`),
+  tabs, a loopback WebSocket rendezvous — `crates/onlyterm-elevated-transport`),
   relaying the mux **PDU protocol** (pane content, resize, input) — not pixels,
   not GPU state,
 - is bound to the GUI's lifetime via a per-child Windows Job Object with
-  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (`crates/wezterm-client/src/client/windows_job.rs`)
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` (`crates/onlyterm-client/src/client/windows_job.rs`)
   for ordinary children, or a `--supervise-pid` parent-watcher thread
-  (`crates/wezterm-mux-server/src/main.rs`, `spawn_parent_watcher`) for elevated
+  (`crates/onlyterm-mux-server/src/main.rs`, `spawn_parent_watcher`) for elevated
   children that Job Objects can't reach across the integrity boundary.
 
 What crosses the process boundary here: **pty bytes / mux PDUs**, nothing
@@ -93,7 +93,7 @@ There is also **window-level hang supervision** for GPU work specifically
 render thread runs a self-rescheduling timer that polls
 `render_thread_is_hung()` / `render_thread_has_died()`, and on a confirmed
 hang/death/repeated-error episode, `attempt_renderer_rebuild_or_close`
-(`crates/wezterm-gui/src/termwindow/render_pipeline.rs:715`) either rebuilds
+(`crates/onlyterm-gui/src/termwindow/render_pipeline.rs:715`) either rebuilds
 the renderer in place or, if a circuit breaker trips (`MAX_REBUILDS_PER_WINDOW`
 within `REBUILD_WINDOW`), closes **the whole window**:
 ```rust
@@ -128,7 +128,7 @@ different subsystems.
 
 ### 1.2 GPU state is confirmed process-wide, not just window-wide
 
-`crates/wezterm-gui/src/termwindow/webgpu/context.rs:214-219`:
+`crates/onlyterm-gui/src/termwindow/webgpu/context.rs:214-219`:
 ```rust
 /// Process-wide GPU context shared by all windows.
 /// Created once per process on first window creation and reused thereafter.
@@ -144,7 +144,7 @@ process-global `static CONTEXT_LOCK: smol::lock::Mutex<Option<Arc<ProcessGpuCont
 shared across every window. Per-window state is limited to `WindowGpuSurface`
 (`context.rs:702`, just the `wgpu::Surface` + its config + dimensions) and
 `RenderState`/`render_thread`, both fields of `TermWindow`
-(`crates/wezterm-gui/src/termwindow/mod.rs:315,481` —
+(`crates/onlyterm-gui/src/termwindow/mod.rs:315,481` —
 `render_state: Option<RenderState>`, `render_thread: Option<crate::renderthread::RenderThreadHandle>`).
 There is exactly one `RenderState` and one render thread **per window**, not
 per tab: `mux::Tab` (`crates/mux/src/tab.rs`) holds multiple `Pane`s (splits)
@@ -155,13 +155,13 @@ and `Tab`/`TabInner` in `mux/src/tab.rs` has no rendering fields at all — it's
 pane-tree bookkeeping only.
 
 New window creation (Ctrl+Shift+N, `SpawnWindow`) is confirmed
-same-process: `crates/wezterm-gui/src/termwindow/actions.rs:1159-1161`
+same-process: `crates/onlyterm-gui/src/termwindow/actions.rs:1159-1161`
 ```rust
 SpawnWindow => {
     self.spawn_command(&SpawnCommand::default(), SpawnWhere::NewWindow);
 }
 ```
-`self.spawn_command` (`crates/wezterm-gui/src/termwindow/spawn.rs:7`) runs on
+`self.spawn_command` (`crates/onlyterm-gui/src/termwindow/spawn.rs:7`) runs on
 the existing `TermWindow`/GUI process; it does not launch a new
 `onlyterm-gui.exe`. So even **window**-level isolation, let alone tab-level,
 does not currently exist for GPU rendering — every window in the process

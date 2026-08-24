@@ -12,8 +12,8 @@
     for the full rationale.
 
 Color objects could be created by calling
-[wezterm.color.parse()](../wezterm.color/parse.md) and may also be
-returned by various wezterm functions and methods.
+[onlyterm.color.parse()](../onlyterm.color/parse.md) and may also be
+returned by various onlyterm functions and methods.
 
 They represent a color that is internally stored in SRGBA.
 

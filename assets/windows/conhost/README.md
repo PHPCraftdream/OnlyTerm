@@ -7,7 +7,7 @@ of the MIT license.
 Why are they here?  At the time of writing, the conpty implementation
 that ships with windows is lacking support for mouse reporting but
 that support is available in the opensource project so it is desirable
-to point to that so that we can enable mouse reporting in wezterm.
+to point to that so that we can enable mouse reporting in onlyterm.
 
 It looks like we'll eventually be able to drop this once Windows
 and/or the build for the terminal project make some more progress.

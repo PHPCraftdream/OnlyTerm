@@ -10,7 +10,7 @@ Specifies which WebGpu adapter should be used.
 
 This option is only applicable when you have configured `front_end = "WebGpu"`.
 
-You can use the [wezterm.gui.enumerate_gpus()](../wezterm.gui/enumerate_gpus.md) function
+You can use the [onlyterm.gui.enumerate_gpus()](../onlyterm.gui/enumerate_gpus.md) function
 to return a list of GPUs.
 
 If you open the [Debug Overlay](../keyassignment/ShowDebugOverlay.md) (default:
@@ -18,7 +18,7 @@ If you open the [Debug Overlay](../keyassignment/ShowDebugOverlay.md) (default:
 the list:
 
 ```
-> wezterm.gui.enumerate_gpus()
+> onlyterm.gui.enumerate_gpus()
 [
     {
         "backend": "Vulkan",
@@ -67,9 +67,9 @@ front_end: WebGpu
 !!! note "Selecting a GPU programmatically is no longer possible"
 
     Earlier versions of this page also showed how to call
-    `wezterm.gui.enumerate_gpus()` from a config script to pick the first
+    `onlyterm.gui.enumerate_gpus()` from a config script to pick the first
     available GPU, or to loop over the list and pick the first Vulkan
-    integrated GPU. `wezterm.gui` was part of the scripting API and has been
+    integrated GPU. `onlyterm.gui` was part of the scripting API and has been
     removed along with the rest of the scripting engine — see the
     [changelog](../../../changelog.md#continuousnightly) — and ktav has no
     loops or function calls to replace that logic with. You can still find

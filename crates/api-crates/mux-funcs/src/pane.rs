@@ -21,5 +21,5 @@ impl MuxPane {
 // bindings) and this crate's own `get_mux()` (used only by that helper and
 // the other now-deleted `Spawn*::spawn` methods) were dead in turn and have
 // been removed too. `MuxPane`'s plain-Rust `resolve` above is unaffected and
-// continues to be used directly by `wezterm-gui` (see e.g.
-// `crates/wezterm-gui/src/termwindow/mod.rs`).
+// continues to be used directly by `onlyterm-gui` (see e.g.
+// `crates/onlyterm-gui/src/termwindow/mod.rs`).

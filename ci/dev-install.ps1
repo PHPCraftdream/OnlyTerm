@@ -150,10 +150,10 @@ if (-not $SkipBuild) {
     # extra single-threaded minutes on every build for runtime perf this local
     # loop doesn't need. Real releases (ci/generate-workflows.py) still build
     # with plain `--release`.
-    Write-Host "`n==> cargo build --profile dev-install -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes" -ForegroundColor Cyan
+    Write-Host "`n==> cargo build --profile dev-install -p onlyterm -p onlyterm-gui -p onlyterm-mux-server -p strip-ansi-escapes" -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
-        & cargo build --profile dev-install -p wezterm -p wezterm-gui -p wezterm-mux-server -p strip-ansi-escapes
+        & cargo build --profile dev-install -p onlyterm -p onlyterm-gui -p onlyterm-mux-server -p strip-ansi-escapes
         if ($LASTEXITCODE -ne 0) {
             throw "cargo build failed with exit code $LASTEXITCODE"
         }

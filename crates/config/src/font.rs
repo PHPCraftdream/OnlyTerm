@@ -1,8 +1,8 @@
 use bitflags::*;
 use enum_display_derive::Display;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::convert::TryFrom;
 use std::fmt::Display;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 pub use crate::font_weight::*;
 pub use crate::text_style::*;
@@ -233,17 +233,17 @@ pub struct StyleRule {
     /// If present, this rule matches when CellAttributes::intensity holds
     /// a value that matches this rule.  Valid values are "Bold", "Normal",
     /// "Half".
-    pub intensity: Option<wezterm_term::Intensity>,
+    pub intensity: Option<onlyterm_term::Intensity>,
     /// If present, this rule matches when CellAttributes::underline holds
     /// a value that matches this rule.  Valid values are "None", "Single",
     /// "Double".
-    pub underline: Option<wezterm_term::Underline>,
+    pub underline: Option<onlyterm_term::Underline>,
     /// If present, this rule matches when CellAttributes::italic holds
     /// a value that matches this rule.
     pub italic: Option<bool>,
     /// If present, this rule matches when CellAttributes::blink holds
     /// a value that matches this rule.
-    pub blink: Option<wezterm_term::Blink>,
+    pub blink: Option<onlyterm_term::Blink>,
     /// If present, this rule matches when CellAttributes::reverse holds
     /// a value that matches this rule.
     pub reverse: Option<bool>,
@@ -299,7 +299,7 @@ pub enum FontRasterizerSelection {
     /// COLR/COLRv1/CBDT/sbix color glyphs to
     /// `colr_paint::ColrRasterizer` (a pure-Rust COLR/COLRv1 paint-graph
     /// rasterizer built on `ttf_parser::colr`) -- see
-    /// `wezterm-font/src/rasterizer/swash.rs` module docs. Default as of
+    /// `onlyterm-font/src/rasterizer/swash.rs` module docs. Default as of
     /// phase H3.5 of the freetype+harfbuzz -> rustybuzz+swash migration.
     #[default]
     Swash,

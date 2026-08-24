@@ -1,4 +1,5 @@
 use finl_unicode::grapheme_clusters::Graphemes;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::str::FromStr;
 use termwiz::caps::{Capabilities, ColorLevel, ProbeHints};
 use termwiz::cell::{grapheme_column_width, unicode_column_width, AttributeChange, CellAttributes};
@@ -6,7 +7,6 @@ use termwiz::color::{AnsiColor, ColorAttribute, ColorSpec, SrgbaTuple};
 use termwiz::render::terminfo::TerminfoRenderer;
 use termwiz::surface::change::Change;
 use termwiz::surface::Line;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(Debug, FromDynamic, ToDynamic, Clone, PartialEq, Eq)]
 pub enum FormatColor {
@@ -82,7 +82,7 @@ impl termwiz::render::RenderTty for FormatTarget {
 pub fn format_as_escapes(items: Vec<FormatItem>) -> anyhow::Result<String> {
     let mut changes: Vec<Change> = items.into_iter().map(Into::into).collect();
     changes.push(Change::AllAttributes(CellAttributes::default()));
-    let mut renderer = new_wezterm_terminfo_renderer();
+    let mut renderer = new_onlyterm_terminfo_renderer();
     let mut target = FormatTarget { target: vec![] };
     renderer.render_to(&changes, &mut target)?;
     Ok(String::from_utf8(target.target)?)
@@ -151,13 +151,13 @@ lazy_static::lazy_static! {
                 .colorterm(None)
                 .colorterm_bce(None)
                 .term_program(Some("OnlyTerm".into()))
-                .term_program_version(Some(config::wezterm_version().into())),
+                .term_program_version(Some(config::onlyterm_version().into())),
         )
         .expect("cannot fail to make internal Capabilities")
     };
 }
 
-pub fn new_wezterm_terminfo_renderer() -> TerminfoRenderer {
+pub fn new_onlyterm_terminfo_renderer() -> TerminfoRenderer {
     TerminfoRenderer::new(CAPS.clone())
 }
 
@@ -172,7 +172,7 @@ pub fn lines_to_escapes(lines: Vec<Line>) -> anyhow::Result<String> {
         }
     }
     changes.push(Change::AllAttributes(CellAttributes::blank()));
-    let mut renderer = new_wezterm_terminfo_renderer();
+    let mut renderer = new_onlyterm_terminfo_renderer();
 
     struct Target {
         target: Vec<u8>,

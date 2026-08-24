@@ -2,12 +2,12 @@ use crate::{Position, StableRowIndex, TerminalState};
 use anyhow::Context;
 use humansize::{SizeFormatter, DECIMAL};
 use num_traits::{One, Zero};
+use onlyterm_cell::image::{ImageCell, ImageDataType};
+use onlyterm_cell::Cell;
+use onlyterm_surface::change::ImageData;
+use onlyterm_surface::TextureCoordinate;
 use ordered_float::NotNan;
 use std::sync::Arc;
-use wezterm_cell::image::{ImageCell, ImageDataType};
-use wezterm_cell::Cell;
-use wezterm_surface::change::ImageData;
-use wezterm_surface::TextureCoordinate;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlacementInfo {

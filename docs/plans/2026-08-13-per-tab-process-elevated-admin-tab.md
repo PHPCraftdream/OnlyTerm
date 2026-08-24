@@ -24,7 +24,7 @@ OnlyTerm живут в одном `onlyterm-gui.exe`. Именно это в
 
 Вторая часть — реальная, конкретная цель: админ-вкладка должна открываться
 **в существующем окне пользователя**, а не в отдельном окне (как сейчас,
-`crates/wezterm-gui/src/elevate.rs`, task #547).
+`crates/onlyterm-gui/src/elevate.rs`, task #547).
 
 ## 1. Жёсткий платформенный факт (не пересматривается)
 
@@ -44,17 +44,17 @@ Terminal с `elevate: true` решает это ровно так же, как �
 
 ## 2. Рекомендуемая архитектура: переиспользовать существующий mux-client/server, не изобретать заново
 
-Параллельное исследование (агент, 2026-08-13) подтвердило: `crates/wezterm-mux-server`,
-`wezterm-mux-server-impl`, `wezterm-client`, `codec` — не мёртвый код с апстрима,
+Параллельное исследование (агент, 2026-08-13) подтвердило: `crates/onlyterm-mux-server`,
+`onlyterm-mux-server-impl`, `onlyterm-client`, `codec` — не мёртвый код с апстрима,
 а **реально используемая сегодня** машинерия. GUI уже на каждом старте
 регистрирует `ClientDomain` для домена `"unix"`
-(`crates/wezterm-mux-server-impl/src/lib.rs:19-25`, вызывается из
-`wezterm-gui/src/main.rs:252,564`), команда `onlyterm-gui.exe connect` и
+(`crates/onlyterm-mux-server-impl/src/lib.rs:19-25`, вызывается из
+`onlyterm-gui/src/main.rs:252,564`), команда `onlyterm-gui.exe connect` и
 `KeyAssignment::AttachDomain` уже реально работают
 (`main.rs:124-125`, `termwindow/actions.rs:1484-1499`). `ClientDomain::spawn`
-(`crates/wezterm-client/src/domain/mod.rs:647-693`) шлёт `SpawnV2` по проводу
+(`crates/onlyterm-client/src/domain/mod.rs:647-693`) шлёт `SpawnV2` по проводу
 и заворачивает ответ в обычный `Tab`/`ClientPane`
-(`crates/wezterm-client/src/pane/clientpane.rs:34-52`) через ТЕ ЖЕ
+(`crates/onlyterm-client/src/pane/clientpane.rs:34-52`) через ТЕ ЖЕ
 `mux.add_tab_and_active_pane`/`add_tab_to_window`, что и у `LocalDomain` — то
 есть с точки зрения окна и вкладочной панели это неотличимо от обычной
 локальной вкладки уже сегодня.
@@ -84,7 +84,7 @@ UB, segfault и т.п. по-прежнему роняет весь процес�
 процесс» для настоящей изоляции крахов означает буквально **один хостящий
 процесс на вкладку/пейн**, а не один общий «local mux-server» для всех
 обычных вкладок разом (общий процесс воспроизвёл бы сегодняшний blast radius
-один в один, просто в другом процессе). Сегодняшний `wezterm-mux-server`
+один в один, просто в другом процессе). Сегодняшний `onlyterm-mux-server`
 (`--daemonize`) спроектирован как один долгоживущий демон, мультиплексирующий
 произвольное число пейнов — это модель, ПРОТИВОПОЛОЖНАЯ требуемой. Фаза A
 (раздел 4) поэтому теперь включает разработку "single-pane" режима хостинг-
@@ -103,7 +103,7 @@ explicitly.
 Честно, по находкам исследования — вот что реально отсутствует:
 
 1. **Elevation-триггер спавна mux-server.** Сегодняшний путь подключения
-   (`crates/wezterm-client/src/client/conn.rs:153-220`, `unix_connect` →
+   (`crates/onlyterm-client/src/client/conn.rs:153-220`, `unix_connect` →
    при неудаче `unix_dom.serve_command()` → retry) спавнит
    `onlyterm-mux-server.exe --daemonize` обычным `Command::spawn`, что не
    умеет UAC. Нужен elevation-вариант этого пути: `ShellExecuteExW("runas")`
@@ -111,7 +111,7 @@ explicitly.
    есть в `elevate.rs:162-176`.
 2. **ACL сокета — на сегодня отсутствует полностью.** Транспорт —
    unix-domain-socket-эмуляция на Windows через `uds_windows`
-   (`crates/wezterm-uds`), путь по умолчанию — файл в `RUNTIME_DIR`.
+   (`crates/onlyterm-uds`), путь по умолчанию — файл в `RUNTIME_DIR`.
    `create_user_owned_dirs` (`crates/config/src/lib.rs:134-139`) и
    `set_sticky_bit` (`crates/config/src/daemon.rs:17-21`) на Windows —
    **no-op**. Значит подключиться к сокету сегодня может ЛЮБОЙ процесс
@@ -142,7 +142,7 @@ explicitly.
    спавне, — штатно и разрешено; трогать любой ДРУГОЙ `onlyterm*.exe` —
    всё так же запрещено).
 5. **Проводка UI.** Выбор "Admin" в New Tab Options
-   (`crates/wezterm-gui/src/termwindow/newtab_options.rs`, task #548) должен
+   (`crates/onlyterm-gui/src/termwindow/newtab_options.rs`, task #548) должен
    не звать `elevate::spawn_elevated_window` (текущий путь — целое отдельное
    окно), а attach-or-spawn elevated mux-домен и затем `SpawnV2` в нём.
 
@@ -150,7 +150,7 @@ explicitly.
 
 - **Фаза A.** Single-pane режим хостинг-процесса: новый режим запуска
   `onlyterm-mux-server.exe` (или отдельный компактный бинарь на общем коде
-  `wezterm-mux-server-impl`) — один инстанс = один PTY/пейн, никакого
+  `onlyterm-mux-server-impl`) — один инстанс = один PTY/пейн, никакого
   мультиплексирования нескольких вкладок внутри одного процесса; процесс
   завершается вместе со своим пейном. ACL'd сокет (или, как менее
   ACL-чувствительная альтернатива — `proxy_command`/`socketpair()`-транспорт,
@@ -232,7 +232,7 @@ mux-client/server) не пересекается с gsudo и не требует
 - Need to implement Windows DACL setting (non-trivial — requires understanding Windows security descriptors, SIDs, ACLs)
 - Need to manage socket file lifecycle (creation, cleanup on exit, handling crashes, stale file cleanup)
 - Need to handle concurrent access (only one GUI should connect to a single-pane process)
-- Existing code in `crates/wezterm-uds/src/lib.rs` wraps `uds_windows` but has no ACL enforcement
+- Existing code in `crates/onlyterm-uds/src/lib.rs` wraps `uds_windows` but has no ACL enforcement
 - Client connection path already exists via `UnixStream::connect`
 
 **Pros:**
@@ -256,7 +256,7 @@ mux-client/server) не пересекается с gsudo и не требует
 - Process-based security rather than filesystem-based — the handle is exclusively owned
 
 **Implementation complexity:**
-- Already fully implemented in `crates/wezterm-client/src/client/conn.rs` lines 36-83
+- Already fully implemented in `crates/onlyterm-client/src/client/conn.rs` lines 36-83
 - Uses `filedescriptor::socketpair()` to create paired socket handles
 - Child process gets one handle via `cmd.stdin(b.as_stdio()?)` and `cmd.stdout(b.as_stdio()?)`
 - Parent keeps the other handle and returns it as `UnixStream::from_raw_socket(a.into_raw_socket())`
@@ -331,7 +331,7 @@ IPC path:
 
 1. **The mux protocol dispatcher was never actually driven.**
    `spawn_stdio_listener()`'s original form did
-   `let _ = wezterm_mux_server_impl::dispatch::process(stream);` inside a
+   `let _ = onlyterm_mux_server_impl::dispatch::process(stream);` inside a
    bare `thread::spawn` closure. `dispatch::process` is `async fn` --
    calling it only constructs a `Future`; nothing runs until something
    polls it. `let _ = <future>;` drops that future immediately, unpolled.
@@ -359,8 +359,8 @@ IPC path:
    which is private to that crate and not reusable directly), called
    before `spawn_stdio_listener()` wraps the inherited handle.
 
-After both fixes: `cargo build -p wezterm-mux-server`, `cargo clippy -p
-wezterm-mux-server --all-targets -- -D warnings` (no `#[allow(...)]`
+After both fixes: `cargo build -p onlyterm-mux-server`, `cargo clippy -p
+onlyterm-mux-server --all-targets -- -D warnings` (no `#[allow(...)]`
 needed this time) both clean. Manual end-to-end verification, actually
 performed:
 
@@ -394,7 +394,7 @@ end, not just compiled and linted. Phase B (generalizing ordinary
 
 ## 9. Phase B: implementation, review findings, and an honest verification gap (2026-08-13)
 
-Adds `spawn_single_pane_tab` (`crates/wezterm-gui/src/spawn.rs`): builds a
+Adds `spawn_single_pane_tab` (`crates/onlyterm-gui/src/spawn.rs`): builds a
 `UnixDomain` with `proxy_command` pointed at
 `onlyterm-mux-server.exe --single-pane` (resolved next to the running
 GUI's own exe path), registers it as a `ClientDomain` via `mux.add_domain`,
@@ -453,6 +453,6 @@ not present in the version crush reported "complete":
 
 Verified (mechanical/automated only, given the gap above):
 `cargo build --workspace`, `cargo clippy --workspace --all-targets -- -D
-warnings`, `cargo fmt --check`, `cargo test -p wezterm-gui -p
-wezterm-mux-server-impl -p wezterm-client -p wezterm-mux-server -p mux -p
+warnings`, `cargo fmt --check`, `cargo test -p onlyterm-gui -p
+onlyterm-mux-server-impl -p onlyterm-client -p onlyterm-mux-server -p mux -p
 config`, all clean.

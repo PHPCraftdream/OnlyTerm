@@ -3,7 +3,7 @@
 
 !!! danger "Removed: plugins required a scripting engine"
 
-    A WezTerm/OnlyTerm plugin was a package of rhai (and, before that, Lua)
+    A OnlyTerm/OnlyTerm plugin was a package of rhai (and, before that, Lua)
     files loaded via `plugin::require(path)`, evaluated by the config's
     scripting engine to produce configuration data or additional behavior.
     OnlyTerm's configuration format is now [ktav](../migration-to-ktav.md), a

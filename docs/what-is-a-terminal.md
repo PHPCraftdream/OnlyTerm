@@ -233,8 +233,8 @@ flowchart
     SHELL["Shell Program (e.g. zsh)"] <-- input/output --> PTYC
     SHELL -. "starts" .-> APP
     APP["Application\n(e.g. vim)"] <-- input/output --> PTYC
-    PTYM  <-- input/output -->  TE["Terminal Emulator\n(e.g. OnlyTerm)"]:::wezterm
-    classDef wezterm stroke:#00F,stroke-width:2px
+    PTYM  <-- input/output -->  TE["Terminal Emulator\n(e.g. OnlyTerm)"]:::onlyterm
+    classDef onlyterm stroke:#00F,stroke-width:2px
     end
 ```
 

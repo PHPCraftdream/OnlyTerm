@@ -2,7 +2,7 @@
 
 Closes the current pane.  If that was the last pane in the tab, closes the tab.
 If that was the last tab, closes that window.  If that was the last window,
-wezterm terminates.
+onlyterm terminates.
 
 The act of closing a pane shuts down the PTY associated with the pane and
 then kills the process associated with that pane.

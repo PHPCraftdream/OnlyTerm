@@ -9,8 +9,8 @@ pub use events::{InputEvent, KeyEvent, MouseEvent, PixelMouseEvent};
 pub use key_code::{KeyCode, KeyCodeEncodeModes, KeyboardEncoding, CSI, SS3};
 pub use parser::InputParser;
 
-pub use wezterm_escape_parser::csi::MouseButtons;
-pub use wezterm_input_types::Modifiers;
+pub use onlyterm_escape_parser::csi::MouseButtons;
+pub use onlyterm_input_types::Modifiers;
 
 #[cfg(test)]
 mod test;

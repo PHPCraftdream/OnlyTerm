@@ -4,11 +4,11 @@
 
 Activates the *nth* GUI window, zero-based.
 
-!!! note "`wezterm.gui.gui_windows()` no longer exists"
+!!! note "`onlyterm.gui.gui_windows()` no longer exists"
 
     Earlier versions of this page described this action as equivalent to
-    the scripting expression `wezterm.gui.gui_windows()[n + 1]:focus()`.
-    `wezterm.gui` was part of the scripting API and has been removed along
+    the scripting expression `onlyterm.gui.gui_windows()[n + 1]:focus()`.
+    `onlyterm.gui` was part of the scripting API and has been removed along
     with the rest of the scripting engine — see the
     [changelog](../../../changelog.md#continuousnightly). `ActivateWindow`
     itself is unaffected; only that illustrative scripting-equivalent

@@ -13,6 +13,9 @@ use anyhow::{bail, Context};
 use async_trait::async_trait;
 use config::{ConfigHandle, ImePreeditRendering, SystemBackdrop};
 use lazy_static::lazy_static;
+use onlyterm_color_types::LinearRgba;
+use onlyterm_font::FontConfiguration;
+use onlyterm_input_types::KeyboardLedStatus;
 use promise::Future;
 use raw_window_handle::{
     DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
@@ -31,9 +34,6 @@ use std::ptr::{null, null_mut};
 use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::Instant;
-use wezterm_color_types::LinearRgba;
-use wezterm_font::FontConfiguration;
-use wezterm_input_types::KeyboardLedStatus;
 use winapi::shared::minwindef::*;
 use winapi::shared::ntdef::*;
 use winapi::shared::windef::*;
@@ -303,11 +303,11 @@ pub(crate) struct WindowInner {
     /// Old WebGpu child HWNDs that have been superseded by a renderer
     /// rebuild (see `Window::recreate_webgpu_child_window`) but not yet
     /// `DestroyWindow`-ed, paired with a type-erased `Weak` handle to the
-    /// `WebGpuState` (owned by `wezterm-gui`, which this crate cannot name
+    /// `WebGpuState` (owned by `onlyterm-gui`, which this crate cannot name
     /// directly) whose `wgpu::Surface`/DXGI swapchain targets that HWND.
     ///
     /// Why defer the destroy at all: `begin_renderer_rebuild`
-    /// (`wezterm-gui`) only *signals* the old render thread to shut down
+    /// (`onlyterm-gui`) only *signals* the old render thread to shut down
     /// (`RenderThreadHandle::shutdown`, by design non-blocking -- joining
     /// would reintroduce the GUI-thread block this whole architecture
     /// exists to avoid) before starting the rebuild. If that thread is
@@ -745,7 +745,7 @@ impl Window {
             cbClsExtra: 0,
             cbWndExtra: 0,
             hInstance: h_inst,
-            // FIXME: this resource is specific to the wezterm build and this should
+            // FIXME: this resource is specific to the onlyterm build and this should
             // really be made generic for other sorts of windows.
             // The ID is defined in assets/windows/resource.rc
             // SAFETY: `h_inst` is a valid module handle and `MAKEINTRESOURCEW(0x101)`
@@ -1261,7 +1261,7 @@ impl Window {
     /// safe and fast.
     ///
     /// `old_webgpu_state` is a type-erased `Weak` handle (this crate cannot
-    /// name `wezterm_gui::termwindow::webgpu::WebGpuState` directly, hence
+    /// name `onlyterm_gui::termwindow::webgpu::WebGpuState` directly, hence
     /// `dyn Any`) to the `WebGpuState` whose surface targets the *old* child
     /// HWND, downgraded from the caller's `Arc` right before the caller
     /// drops its own strong reference (see `begin_renderer_rebuild`). We do
@@ -1435,7 +1435,7 @@ fn schedule_show_window(hwnd: HWindow, show: ShowWindowCommand) {
                 },
             );
             // Startup-latency diagnostics: see the "startup:" checkpoints in
-            // wezterm-gui's main.rs, which this crate's own checkpoints
+            // onlyterm-gui's main.rs, which this crate's own checkpoints
             // (here and in `clear_placeholder_background`) chain onto by
             // grep-matching prefix.
             if show == ShowWindowCommand::Normal {
@@ -1566,7 +1566,7 @@ impl WindowInner {
 
         if let Some(spinner) = self.placeholder_spinner.take() {
             // Startup-latency diagnostics: see the "startup:" checkpoints in
-            // wezterm-gui's main.rs. `placeholder_spinner` being `Some` here
+            // onlyterm-gui's main.rs. `placeholder_spinner` being `Some` here
             // is this method's own idempotency marker (see its doc comment),
             // so this only fires on the actual first-frame-presented call,
             // not the harmless repeat calls.
@@ -2354,7 +2354,7 @@ unsafe fn update_title_font(hwnd: HWND) {
 
     let mut font = TITLE_FONT.lock().expect("locking title_font");
     if let Some(lf) = get_title_log_font(hwnd, hdc) {
-        *font = wezterm_font::locator::gdi::parse_log_font(&lf, hdc).ok();
+        *font = onlyterm_font::locator::gdi::parse_log_font(&lf, hdc).ok();
     }
 
     ReleaseDC(hwnd, hdc);

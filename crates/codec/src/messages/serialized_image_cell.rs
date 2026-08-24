@@ -1,6 +1,6 @@
+use onlyterm_term::StableRowIndex;
 use serde::{Deserialize, Serialize};
 use termwiz::image::TextureCoordinate;
-use wezterm_term::StableRowIndex;
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct SerializedImageCell {

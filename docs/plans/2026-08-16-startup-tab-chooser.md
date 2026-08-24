@@ -57,7 +57,7 @@ even if there may be no windows present in the mux».
 
 ### 1. Флаг командной строки
 
-`crates/wezterm-gui-subcommands/src/lib.rs`, структура `GuiSubCommand`.
+`crates/onlyterm-gui-subcommands/src/lib.rs`, структура `GuiSubCommand`.
 
 ```rust
 /// Open the New Tab Options dialog instead of the initial tab: the tab is
@@ -73,7 +73,7 @@ pub choose_tab: bool,
 
 ### 2. Пропустить спавн первой вкладки
 
-`crates/wezterm-gui/src/main.rs`, `async_run_terminal_gui` (~строка 555). Ветка
+`crates/onlyterm-gui/src/main.rs`, `async_run_terminal_gui` (~строка 555). Ветка
 `--start-conf` уже показывает нужный шаблон: она возвращается раньше, минуя
 `spawn_tab_in_domain_if_mux_is_empty`.
 
@@ -93,7 +93,7 @@ pub choose_tab: bool,
 
 `TermWindow` создаётся позже и асинхронно (`frontend.rs:442`), доступа к `opts` у
 него нет. Нужен одноразовый слот на уровне процесса, например
-`crates/wezterm-gui/src/startup_chooser.rs`:
+`crates/onlyterm-gui/src/startup_chooser.rs`:
 
 ```rust
 static PENDING: Mutex<Option<Activity>> = Mutex::new(None);
@@ -187,9 +187,9 @@ mux пуст — тем более важно, чтобы `Activity` дожил 
 7. Run с `admin` → UAC, вкладка elevated; отказ от UAC → диалог вернулся,
    приложение живо.
 
-Штатные проверки: `cargo build -p wezterm-gui`,
-`cargo clippy -p wezterm-gui --all-targets -- -D warnings`, `cargo fmt --check`,
-`cargo test -p wezterm-gui`.
+Штатные проверки: `cargo build -p onlyterm-gui`,
+`cargo clippy -p onlyterm-gui --all-targets -- -D warnings`, `cargo fmt --check`,
+`cargo test -p onlyterm-gui`.
 
 ## Оценка
 

@@ -1,12 +1,12 @@
 use super::*;
 use crate::renderable::*;
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex};
 use parking_lot::{MappedMutexGuard, Mutex};
 use rangeset::RangeSet;
 use std::ops::Range;
 use termwiz::surface::SequenceNo;
 use url::Url;
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{KeyCode, KeyModifiers, Line, MouseEvent, StableRowIndex};
 
 // See `crate::test::MUX_TEST_GUARD`: the mux is a process-global
 // singleton, so tests that install one via `Mux::set_mux` must run

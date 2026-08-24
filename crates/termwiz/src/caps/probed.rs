@@ -163,7 +163,7 @@ impl<'a> ProbeCapabilities<'a> {
                 // print!("{action:?}\r\n");
                 match action {
                     // ConPTY appears to trigger 1 or more xtversion queries
-                    // to wezterm in response to this probe, so we need to
+                    // to onlyterm in response to this probe, so we need to
                     // prepared to accept and discard data of that shape
                     // here, so that we keep going until we get our reports
                     Action::DeviceControl(_) => {}

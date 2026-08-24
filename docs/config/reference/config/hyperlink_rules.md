@@ -37,7 +37,7 @@ The value is a list of rule entries. Each entry has the following fields:
 Assigning `hyperlink_rules` overrides the built-in default rules.
 
 The default value for `hyperlink_rules` can be retrieved using
-[wezterm.default_hyperlink_rules()](../wezterm/default_hyperlink_rules.md),
+[onlyterm.default_hyperlink_rules()](../onlyterm/default_hyperlink_rules.md),
 and is shown below:
 
 ```
@@ -95,7 +95,7 @@ hyperlink_rules: [
 !!! danger "No longer possible: extending the defaults from config"
 
     Earlier versions of this page showed calling the scripting function
-    `wezterm.default_hyperlink_rules()` to get the built-in rule list and
+    `onlyterm.default_hyperlink_rules()` to get the built-in rule list and
     then `.push(...)`-ing extra rules onto it (for example, to make task
     numbers or bare `owner/repo` paths clickable in addition to the
     defaults). `default_hyperlink_rules()` and `.push(...)` both required

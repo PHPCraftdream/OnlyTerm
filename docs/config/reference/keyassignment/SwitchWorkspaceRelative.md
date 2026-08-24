@@ -16,7 +16,7 @@ to create workspaces.
 !!! note "`update-right-status` no longer exists"
 
     The original version of this example also registered a
-    `wezterm.on('update-right-status', ...)` handler to show the active
+    `onlyterm.on('update-right-status', ...)` handler to show the active
     workspace name in the title bar. That event hook has been removed along
     with the rest of the scripting engine — see the
     [changelog](../../../changelog.md#continuousnightly). Only the key

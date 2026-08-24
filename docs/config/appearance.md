@@ -1,6 +1,6 @@
 ### Color Scheme
 
-WezTerm ships with over 700 color schemes available from
+OnlyTerm ships with over 700 color schemes available from
 [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes#screenshots),
 [base16](https://github.com/chriskempson/base16-schemes-source),
 [Gogh](https://gogh-co.github.io/Gogh/) and
@@ -17,7 +17,7 @@ in [The Color Schemes Section](../colorschemes/index.md).
 
 Automatically adjusting the color scheme based on the system dark mode or
 light mode appearance previously required a scripting callback (see
-[wezterm.gui.get_appearance()](reference/wezterm.gui/get_appearance.md),
+[onlyterm.gui.get_appearance()](reference/onlyterm.gui/get_appearance.md),
 which no longer works); there is currently no static-config equivalent.
 
 !!! note
@@ -31,7 +31,7 @@ which no longer works); there is currently no static-config equivalent.
 The `color_scheme` option takes precedence over the `colors` section below,
 and is mutually exclusive with it. Merging/overriding colors programmatically
 previously required calling
-[wezterm.color.get_default_colors()](reference/wezterm.color/get_default_colors.md)
+[onlyterm.color.get_default_colors()](reference/onlyterm.color/get_default_colors.md)
 from a scripting config, which no longer works; you can instead copy the
 specific color values you want to override directly into your `colors`
 section, since (per the note below) any colors you define there are merged
@@ -219,7 +219,7 @@ color_schemes: {
 }
 ```
 
-See also [wezterm.get_builtin_color_schemes()](reference/wezterm/get_builtin_color_schemes.md)
+See also [onlyterm.get_builtin_color_schemes()](reference/onlyterm/get_builtin_color_schemes.md)
 (a removed scripting function; see that page) for background on the full
 set of built-in schemes.
 
@@ -232,11 +232,11 @@ the available color schemes for an example](https://github.com/wezterm/wezterm/t
 It is recommended that you place your custom scheme in a directory
 named `$HOME/.onlyterm/colors` if you're on a POSIX system.
 
-On a Windows system, `wezterm` will search for schemes in a directory
-named `colors` that is in the same directory as the `wezterm.exe`.
+On a Windows system, `onlyterm` will search for schemes in a directory
+named `colors` that is in the same directory as the `onlyterm.exe`.
 
 If you wish to place your color scheme files in some other location, then you
-will need to instruct wezterm where to look for your scheme files; the
+will need to instruct onlyterm where to look for your scheme files; the
 `color_scheme_dirs` setting specifies a list of directories to be searched:
 
 ```
@@ -248,7 +248,7 @@ take precedence over the built-in color schemes.
 
 ### Dynamic Color Escape Sequences
 
-Wezterm supports dynamically changing its color palette via escape sequences.
+OnlyTerm supports dynamically changing its color palette via escape sequences.
 
 [The dynamic-colors directory](https://github.com/mbadolato/iTerm2-Color-Schemes/tree/master/dynamic-colors)
 of the color scheme repo contains shell scripts that can change the color
@@ -288,7 +288,7 @@ The following options affect the fancy tab bar:
 window_frame: {
   ## The font used in the tab bar.
   ## Roboto Bold is the default; this font is bundled
-  ## with wezterm.
+  ## with onlyterm.
   ## Whatever font is selected here, it will have the
   ## main font setting appended to it to pick up any
   ## fallback fonts you may have used there.
@@ -445,7 +445,7 @@ reduce it by half, and 2.0 will double the value.
 
 {{since('20201031-154415-9614e117')}}
 
-You can attach an image to the background of the wezterm window:
+You can attach an image to the background of the onlyterm window:
 
 ```
 window_background_image: /path/to/wallpaper.jpg
@@ -499,7 +499,7 @@ for configuration information on gradients.
 
 {{since('20201031-154415-9614e117')}}
 
-If your Operating System provides Compositing support then WezTerm is able to
+If your Operating System provides Compositing support then OnlyTerm is able to
 specify the alpha channel value for the background content, rendering the
 window background translucent (some refer to this as transparent rather than
 translucent) and causing the windows/desktop behind it to show through the

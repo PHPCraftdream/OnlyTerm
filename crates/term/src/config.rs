@@ -1,8 +1,8 @@
 use crate::color::ColorPalette;
 use downcast_rs::{impl_downcast, Downcast};
-use wezterm_bidi::ParagraphDirectionHint;
-use wezterm_cell::UnicodeVersion;
-use wezterm_surface::{Line, SequenceNo};
+use onlyterm_bidi::ParagraphDirectionHint;
+use onlyterm_cell::UnicodeVersion;
+use onlyterm_surface::{Line, SequenceNo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NewlineCanon {
@@ -106,7 +106,7 @@ impl Default for NewlineCanon {
         // Windows console programs requires CRLF otherwise there is no newline
         // at all, but when in WSL, pasting with CRLF gives excess blank lines.
         //
-        // To come to a compromise, if wezterm is running on Windows then we'll
+        // To come to a compromise, if onlyterm is running on Windows then we'll
         // use canonical CRLF unless the embedded application has enabled
         // bracketed paste: we can use bracketed paste mode as a signal that
         // the application will prefer newlines.

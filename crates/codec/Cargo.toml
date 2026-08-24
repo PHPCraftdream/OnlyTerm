@@ -21,9 +21,9 @@ smol.workspace = true
 termwiz.workspace = true
 thiserror.workspace = true
 varbincode.workspace = true
-wezterm-term = { workspace=true, features=["use_serde"] }
+onlyterm-term = { workspace=true, features=["use_serde"] }
 flate2.workspace = true
 
 [dev-dependencies]
 base91.workspace = true
-wezterm-uds.workspace = true
+onlyterm-uds.workspace = true

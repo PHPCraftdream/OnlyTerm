@@ -8,7 +8,7 @@ tags:
 
 The default key assignments are shown in the table below.
 
-You may also use `wezterm show-keys` to see the effective key and mouse
+You may also use `onlyterm show-keys` to see the effective key and mouse
 assignments.
 
 The Action column below shows each action in its ktav form — a bare string

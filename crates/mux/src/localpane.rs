@@ -11,6 +11,12 @@ use async_trait::async_trait;
 use config::keyassignment::ScrollbackEraseMode;
 use config::{configuration, ExitBehavior, ExitBehaviorMessaging};
 use fancy_regex::Regex;
+use onlyterm_dynamic::Value;
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{
+    Alert, AlertHandler, Clipboard, DownloadHandler, KeyCode, KeyModifiers, MouseEvent, Progress,
+    SemanticZone, StableRowIndex, Terminal, TerminalConfiguration, TerminalSize,
+};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use procinfo::LocalProcessInfo;
@@ -29,12 +35,6 @@ use termwiz::escape::{Action, DeviceControlMode};
 use termwiz::input::KeyboardEncoding;
 use termwiz::surface::{Line, SequenceNo};
 use url::Url;
-use wezterm_dynamic::Value;
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{
-    Alert, AlertHandler, Clipboard, DownloadHandler, KeyCode, KeyModifiers, MouseEvent, Progress,
-    SemanticZone, StableRowIndex, Terminal, TerminalConfiguration, TerminalSize,
-};
 
 const PROC_INFO_CACHE_TTL: Duration = Duration::from_millis(300);
 
@@ -132,7 +132,7 @@ fn lock_terminal_timed<R>(
 /// `get_current_working_dir()`) is willing to wait for `terminal.lock()`
 /// before giving up and falling back to the last known-good cached value.
 ///
-/// `get_tab_information()` (`wezterm-gui/src/termwindow/mod.rs`) calls
+/// `get_tab_information()` (`onlyterm-gui/src/termwindow/mod.rs`) calls
 /// these for the *active* pane of *every* tab in the window, and it's
 /// invoked from `update_title_impl` on essentially every key/mouse event
 /// on the GUI thread. That means a single background tab whose terminal
@@ -161,7 +161,7 @@ const TERMINAL_ACCESSOR_LOCK_TIMEOUT: Duration = Duration::from_millis(8);
 /// refreshed, before it's treated as stale and ignored.
 ///
 /// The producer of this signal (the render loop in
-/// `crates/wezterm-gui/src/termwindow/render/pane.rs`) only runs for
+/// `crates/onlyterm-gui/src/termwindow/render/pane.rs`) only runs for
 /// panes that are actually painted *this frame*, which for the active,
 /// focused window happens at up to the display's refresh rate --
 /// commonly 60Hz, i.e. a fresh observation (`true` or `false`) roughly
@@ -300,7 +300,7 @@ pub struct LocalPane {
     unresponsive: Arc<AtomicBool>,
     /// Task #269: companion to `unresponsive` above, written ONLY by the
     /// GUI's per-frame content-build budget (`set_render_budget_exceeded`,
-    /// task #251) in `crates/wezterm-gui/src/termwindow/render/pane.rs`.
+    /// task #251) in `crates/onlyterm-gui/src/termwindow/render/pane.rs`.
     /// Kept as a separate cell rather than sharing `unresponsive` so that
     /// this producer -- which legitimately writes both `true` and `false`
     /// every single frame for every painted pane -- can never race with
@@ -313,7 +313,7 @@ pub struct LocalPane {
     /// budget) rather than a plain sticky `bool`. A plain `bool` only gets
     /// cleared back to `false` by a subsequent `set_render_budget_exceeded
     /// (false)` call, and that call only ever happens from the render
-    /// loop in `crates/wezterm-gui/src/termwindow/render/pane.rs`, which
+    /// loop in `crates/onlyterm-gui/src/termwindow/render/pane.rs`, which
     /// only runs for panes that are actually painted this frame --
     /// panes belonging to a tab that isn't the active tab (e.g. after the
     /// user switches away) simply stop being painted at all, so a `bool`
@@ -461,7 +461,7 @@ impl Pane for LocalPane {
     /// "soft" interrupt: the same `\x03` byte that the user's physical
     /// Ctrl+C writes into the pane (see
     /// `crates/term/src/terminalstate/keyboard.rs` and
-    /// `CopySelectionOrInterrupt` in `wezterm-gui`). On Windows, ConPTY's
+    /// `CopySelectionOrInterrupt` in `onlyterm-gui`). On Windows, ConPTY's
     /// hosted conhost/OpenConsole reads that byte and raises
     /// `CTRL_C_EVENT` for every process attached to the pseudoconsole (the
     /// whole tree), giving well-behaved processes a chance to shut down
@@ -555,7 +555,7 @@ impl Pane for LocalPane {
                     //
                     // Detached, not joined -- mirrors
                     // `RenderThreadHandle::spawn` in
-                    // `wezterm-gui/src/renderthread.rs`. Moving
+                    // `onlyterm-gui/src/renderthread.rs`. Moving
                     // `taken_pty`/`taken_writer` into the closure and
                     // letting them fall out of scope at the end is what
                     // actually drops (and so tears down) them, just
@@ -848,7 +848,7 @@ impl Pane for LocalPane {
 
         // If the title is the default pane title, then try to spice
         // things up a bit by returning the process basename instead
-        if title == wezterm_term::DEFAULT_TERMINAL_TITLE {
+        if title == onlyterm_term::DEFAULT_TERMINAL_TITLE {
             if let Some(proc_name) = self.get_foreground_process_name(CachePolicy::AllowStale) {
                 let proc_name = std::path::Path::new(&proc_name);
                 if let Some(name) = proc_name.file_name() {
@@ -1296,7 +1296,7 @@ pub(crate) fn emit_output_for_pane(pane_id: PaneId, message: &str) {
     .detach();
 }
 
-impl wezterm_term::DeviceControlHandler for LocalPaneDCSHandler {
+impl onlyterm_term::DeviceControlHandler for LocalPaneDCSHandler {
     fn handle_device_control(&mut self, control: termwiz::escape::DeviceControlMode) {
         match control {
             DeviceControlMode::Enter(mode) => {
@@ -1579,7 +1579,7 @@ impl LocalPane {
         // than recursion: this tree is rebuilt from a live
         // system-wide process snapshot every time the cache
         // expires, and its depth is not bounded by anything
-        // wezterm controls, so a recursive walk here could in
+        // onlyterm controls, so a recursive walk here could in
         // principle overflow the stack for a sufficiently deep
         // process tree.
         let mut stack: Vec<&LocalProcessInfo> = vec![&root];
@@ -1617,7 +1617,7 @@ impl LocalPane {
     /// (`get_tab_information` -> `get_current_working_dir(AllowStale)` ->
     /// `divine_current_working_dir` -> `divine_foreground_process` on
     /// Windows), that inline snapshot -- whose cost scales with total
-    /// system process count, not anything wezterm controls -- could stall
+    /// system process count, not anything onlyterm controls -- could stall
     /// input/rendering on every cache expiry (every `PROC_INFO_CACHE_TTL`
     /// = 300ms).
     ///

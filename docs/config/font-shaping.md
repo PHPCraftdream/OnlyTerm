@@ -43,7 +43,7 @@ If you use the [Fira Code font](https://github.com/tonsky/FiraCode),
 it lists available stylistic sets here:
 <https://github.com/tonsky/FiraCode/wiki/How-to-enable-stylistic-sets>
 
-and you can set them in wezterm:
+and you can set them in onlyterm:
 
 ```
 ## Use this for a zero with a line through it rather than a dot

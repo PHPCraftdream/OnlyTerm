@@ -40,15 +40,15 @@ true:
 Note that PCF fonts are a legacy font format and you will be better
 served by OTF, TTF or OTB (open type binary) file formats.
 
-## Why doesn't wezterm use the distro FreeType or match its configuration?
+## Why doesn't onlyterm use the distro FreeType or match its configuration?
 
-For the sake of consistency, wezterm vendors in its own copy of
+For the sake of consistency, onlyterm vendors in its own copy of
 the latest version FreeType and builds that same version on all
 platforms.  The result is that font-related behaviors in a given
-version of wezterm are the same on all platforms regardless of
+version of onlyterm are the same on all platforms regardless of
 what (potentially old) version of FreeType may be provided by
 the distribution.
 
 Not only does this provide consistency at runtime, but it is much
 simpler to reason about at build time, making it simpler to build
-wezterm on all systems.
+onlyterm on all systems.

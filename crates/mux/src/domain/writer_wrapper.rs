@@ -7,7 +7,7 @@ use std::io::Write;
 /// awkward at the moment.
 ///
 /// This is a non-blocking, thread-backed wrapper over the real
-/// (blocking) pty writer, in the same spirit as `wezterm_term`'s private
+/// (blocking) pty writer, in the same spirit as `onlyterm_term`'s private
 /// `ThreadedWriter`: `write`/`flush` here just enqueue onto an unbounded
 /// channel and return immediately; a single detached background thread
 /// (one per pane, spawned in `WriterWrapper::new`) drains the channel and
@@ -15,7 +15,7 @@ use std::io::Write;
 ///
 /// Why this exists: `Pane::writer()` (`crates/mux/src/localpane.rs`) hands
 /// out a lock guard directly over a `WriterWrapper` clone, and roughly a
-/// dozen call sites across `wezterm-gui` (paste, `SendString`, IME
+/// dozen call sites across `onlyterm-gui` (paste, `SendString`, IME
 /// composition, character-picker insertion, quick-select, ...) call
 /// `pane.writer().write_all(...)` synchronously from the GUI thread. The
 /// old implementation here was a direct, blocking pass-through
@@ -31,7 +31,7 @@ use std::io::Write;
 /// `LocalDomain::spawn_pane` and `TmuxDomain`'s pane spawn (the two
 /// constructors of a `WriterWrapper`) both hand one clone to the `Pane`
 /// impl (`LocalPane.writer`) and a second clone into `Terminal::new`
-/// (wrapped in `wezterm_term`'s own internal writer machinery): keeping
+/// (wrapped in `onlyterm_term`'s own internal writer machinery): keeping
 /// them on one shared thread/queue preserves whatever relative ordering
 /// they already had (there was never a *strict* ordering guarantee
 /// between the two independent paths, and this change doesn't need to

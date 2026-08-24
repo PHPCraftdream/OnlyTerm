@@ -34,9 +34,9 @@ In this example, a key assignment (`CTRL-SHIFT-E`) is used to toggle the use of
 ligatures in the current window:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('toggle-ligature', function(window, pane)
+onlyterm.on('toggle-ligature', function(window, pane)
   local overrides = window:get_config_overrides() or {}
   if not overrides.harfbuzz_features then
     -- If we haven't overridden it yet, then override with ligatures disabled
@@ -53,7 +53,7 @@ return {
     {
       key = 'E',
       mods = 'CTRL',
-      action = wezterm.action.EmitEvent 'toggle-ligature',
+      action = onlyterm.action.EmitEvent 'toggle-ligature',
     },
   },
 }
@@ -63,9 +63,9 @@ In this example, a key assignment (`CTRL-SHIFT-B`) is used to toggle opacity
 for the window:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('toggle-opacity', function(window, pane)
+onlyterm.on('toggle-opacity', function(window, pane)
   local overrides = window:get_config_overrides() or {}
   if not overrides.window_background_opacity then
     overrides.window_background_opacity = 0.5
@@ -80,7 +80,7 @@ return {
     {
       key = 'B',
       mods = 'CTRL',
-      action = wezterm.action.EmitEvent 'toggle-opacity',
+      action = onlyterm.action.EmitEvent 'toggle-opacity',
     },
   },
 }

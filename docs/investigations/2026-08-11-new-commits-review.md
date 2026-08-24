@@ -11,7 +11,7 @@
 
 ### P1 — инициализация WebGPU всё ещё блокирует GUI-поток
 
-В `crates/wezterm-gui/src/termwindow/webgpu/context.rs:100` фоновая задача сразу ожидается через `futures::executor::block_on`. Запрос устройства аналогично блокируется в `context.rs:194`. Этот синхронный путь вызывается из `WebGpuState::new` через `get_or_init` в `state_impl.rs:125`.
+В `crates/onlyterm-gui/src/termwindow/webgpu/context.rs:100` фоновая задача сразу ожидается через `futures::executor::block_on`. Запрос устройства аналогично блокируется в `context.rs:194`. Этот синхронный путь вызывается из `WebGpuState::new` через `get_or_init` в `state_impl.rs:125`.
 
 Тяжёлая работа драйвера запускается не на GUI-потоке, но GUI-поток всё равно ждёт её завершения и в это время не обрабатывает оконные сообщения. Это хорошо согласуется с наблюдением: после появления окна всё работает быстро, но само окно долго не появляется.
 
@@ -69,17 +69,17 @@ Follow-up dispatch выполняется в `mux/src/lib.rs:549`, а уведо
 - Сигнатура кадра проверяется после `build_webgpu_frame`. Даже отброшенный кадр уже успевает обновить vertex buffers; это также участвует в гонке instance buffer.
 - `GpuDraw.index_buffer` и `GpuDraw.index_count` заполняются в `draw.rs:374`, но путь submit их не использует. Это либо незавершённая оптимизация, либо мёртвое состояние.
 - `bench_glyph_cache_hashmap_vs_ahashmap` и `bench_cache_comparison` оформлены как обычные `#[test]`, хотя выполняются примерно 157 и 16 секунд. Их лучше перенести в Criterion/`benches` или пометить `#[ignore]`.
-- Ошибки отправки startup-команд отбрасываются через `.ok()` в `wezterm-gui/src/main.rs:349`. Layout может завершиться успешно, хотя команда фактически не была отправлена.
+- Ошибки отправки startup-команд отбрасываются через `.ok()` в `onlyterm-gui/src/main.rs:349`. Layout может завершиться успешно, хотя команда фактически не была отправлена.
 
 ## Выполненные проверки
 
 - `cargo fmt --all -- --check` — успешно.
-- `cargo build -p wezterm-gui` — успешно.
-- `cargo clippy -p wezterm-gui --all-targets -- -D warnings` — успешно.
-- 113 обычных тестов `wezterm-gui` — успешно.
+- `cargo build -p onlyterm-gui` — успешно.
+- `cargo clippy -p onlyterm-gui --all-targets -- -D warnings` — успешно.
+- 113 обычных тестов `onlyterm-gui` — успешно.
 - Новый `bench_glyph_cache_hashmap_vs_ahashmap` — успешно, 157,32 с.
 - Новый `bench_cache_comparison` — успешно, 16,04 с.
-- Тесты `config`, `mux`, `wezterm-font`, `wezterm-surface` и `window` — 214 тестов, успешно.
+- Тесты `config`, `mux`, `onlyterm-font`, `onlyterm-surface` и `window` — 214 тестов, успешно.
 - `git diff --check d0d63d9e6..HEAD` — успешно.
 
 ## Приоритет исправлений

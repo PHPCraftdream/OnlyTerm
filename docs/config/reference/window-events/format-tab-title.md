@@ -23,7 +23,7 @@ quickly as possible in order to avoid blocking the GUI thread.
 
 The most notable consequence of this is that some functions that are
 asynchronous (such as
-[wezterm.run_child_process](../wezterm/run_child_process.md)) are not possible
+[onlyterm.run_child_process](../onlyterm/run_child_process.md)) are not possible
 to call from inside the event handler and will generate a `format-tab-title:
 runtime error: attempt to yield from outside a coroutine` error.
 
@@ -36,7 +36,7 @@ shown in the tab.
 ```lua
 -- This function returns the suggested title for a tab.
 -- It prefers the title that was set via `tab:set_title()`
--- or `wezterm cli set-tab-title`, but falls back to the
+-- or `onlyterm cli set-tab-title`, but falls back to the
 -- title of the active pane in that tab.
 function tab_title(tab_info)
   local title = tab_info.tab_title
@@ -49,7 +49,7 @@ function tab_title(tab_info)
   return tab_info.active_pane.title
 end
 
-wezterm.on(
+onlyterm.on(
   'format-tab-title',
   function(tab, tabs, panes, config, hover, max_width)
     local title = tab_title(tab)
@@ -83,7 +83,7 @@ The parameters to the event are:
 The return value of the event can be:
 
 * a string, holding the text to use for the tab title
-* a table holding `FormatItem`s as used in the [wezterm.format](../wezterm/format.md) function.  This allows formatting style and color information for individual elements within the tab.
+* a table holding `FormatItem`s as used in the [onlyterm.format](../onlyterm/format.md) function.  This allows formatting style and color information for individual elements within the tab.
 
 If the event encounters an error, or returns something that is not one of the
 types mentioned above, then the default tab title text will be computed and
@@ -91,29 +91,29 @@ used instead.
 
 When the tab bar is computed, this event is called twice for each tab;
 on the first pass, `hover` will be `false` and `max_width` will be set
-to [tab_max_width](../config/tab_max_width.md).  WezTerm will then compute
+to [tab_max_width](../config/tab_max_width.md).  OnlyTerm will then compute
 the tab widths that will fit in the tab bar, and then call the event again
 for the set of tabs, this time with appropriate `hover` and `max_width`
 values.
 
 Only the first `format-tab-title` event will be executed; it doesn't make
 sense to define multiple instances of the event with multiple
-`wezterm.on("format-tab-title", ...)` calls.
+`onlyterm.on("format-tab-title", ...)` calls.
 
 A more elaborate example:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
 -- The filled in variant of the < symbol
-local SOLID_LEFT_ARROW = wezterm.nerdfonts.pl_right_hard_divider
+local SOLID_LEFT_ARROW = onlyterm.nerdfonts.pl_right_hard_divider
 
 -- The filled in variant of the > symbol
-local SOLID_RIGHT_ARROW = wezterm.nerdfonts.pl_left_hard_divider
+local SOLID_RIGHT_ARROW = onlyterm.nerdfonts.pl_left_hard_divider
 
 -- This function returns the suggested title for a tab.
 -- It prefers the title that was set via `tab:set_title()`
--- or `wezterm cli set-tab-title`, but falls back to the
+-- or `onlyterm cli set-tab-title`, but falls back to the
 -- title of the active pane in that tab.
 function tab_title(tab_info)
   local title = tab_info.tab_title
@@ -126,7 +126,7 @@ function tab_title(tab_info)
   return tab_info.active_pane.title
 end
 
-wezterm.on(
+onlyterm.on(
   'format-tab-title',
   function(tab, tabs, panes, config, hover, max_width)
     local edge_background = '#0b0022'
@@ -147,7 +147,7 @@ wezterm.on(
 
     -- ensure that the titles fit in the available space,
     -- and that we have room for the edges.
-    title = wezterm.truncate_right(title, max_width - 2)
+    title = onlyterm.truncate_right(title, max_width - 2)
 
     return {
       { Background = { Color = edge_background } },

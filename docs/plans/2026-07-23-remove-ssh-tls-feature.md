@@ -11,47 +11,47 @@
 ## Scope (подтверждено пользователем)
 
 Удаляются **обе** сетевые фичи, использующие OpenSSL:
-1. **SSH-клиент** (`wezterm ssh`, SSH-domains в конфиге).
+1. **SSH-клиент** (`onlyterm ssh`, SSH-domains в конфиге).
 2. **TLS-mux** (`TlsDomainClient`/`TlsDomainServer` — подключение к удалённому
-   `wezterm-mux-server` по сети без SSH).
+   `onlyterm-mux-server` по сети без SSH).
 
 **Остаётся без изменений**: локальный мультиплексор через `UnixDomain`
-(юникс-сокет/named pipe на той же машине — detach/reattach, `wezterm-mux-server`
+(юникс-сокет/named pipe на той же машине — detach/reattach, `onlyterm-mux-server`
 локально) — он не использует OpenSSL и не зависит от удаляемого кода.
 
 ## Результаты исследования — периметр удаления
 
-### Кто зависит от wezterm-ssh (`Cargo.toml` во всех этих крейтах)
+### Кто зависит от onlyterm-ssh (`Cargo.toml` во всех этих крейтах)
 
-`config`, `mux`, `wezterm-client`, `wezterm-gui`, `lua-api-crates/ssh-funcs`,
+`config`, `mux`, `onlyterm-client`, `onlyterm-gui`, `lua-api-crates/ssh-funcs`,
 корневой workspace `Cargo.toml`.
 
 ### Кто зависит от async_ossl/openssl (шире, чем просто SSH — TLS-mux тоже)
 
-`wezterm-client` (`client.rs`, 1392 строк — судя по размеру, обрабатывает
+`onlyterm-client` (`client.rs`, 1392 строк — судя по размеру, обрабатывает
 и TLS-, и Unix-домены вперемешку, нужно аккуратно вычленить только Unix-путь),
-`wezterm-mux-server` (`ossl.rs`, 188 строк — вероятно, весь файл под удаление),
-`wezterm-mux-server-impl` (`dispatch.rs`, 213 строк — тоже смешанный код).
+`onlyterm-mux-server` (`ossl.rs`, 188 строк — вероятно, весь файл под удаление),
+`onlyterm-mux-server-impl` (`dispatch.rs`, 213 строк — тоже смешанный код).
 
 ### Файлы/модули под удаление или правку
 
 | Путь | Строк | Действие |
 |---|---|---|
-| `wezterm-ssh/` (весь крейт) | ~6000 | удалить целиком |
+| `onlyterm-ssh/` (весь крейт) | ~6000 | удалить целиком |
 | `mux/src/ssh.rs` | 1148 | удалить целиком |
-| `wezterm-mux-server/src/ossl.rs` | 188 | удалить целиком |
+| `onlyterm-mux-server/src/ossl.rs` | 188 | удалить целиком |
 | `lua-api-crates/ssh-funcs/` (весь крейт) | 43 | удалить целиком |
 | `config/src/ssh.rs` | 185 | удалить целиком (SshDomain, SshBackend) |
 | `config/src/tls.rs` | 105 | удалить целиком (TlsDomainClient/Server) |
-| `wezterm-client/src/client.rs` | 1392 | **правка** — вычленить и оставить только Unix-domain путь, убрать TLS/SSH-специфичный код |
-| `wezterm-mux-server-impl/src/dispatch.rs` | 213 | **правка** — то же самое, оставить только Unix-listener путь |
+| `onlyterm-client/src/client.rs` | 1392 | **правка** — вычленить и оставить только Unix-domain путь, убрать TLS/SSH-специфичный код |
+| `onlyterm-mux-server-impl/src/dispatch.rs` | 213 | **правка** — то же самое, оставить только Unix-listener путь |
 | `config/src/unix.rs` | 131 | **не трогать** — это то, что остаётся |
-| `wezterm/src/main.rs` | — | убрать `SubCommand::Ssh`, убрать SSH/TLS-ветки из `SubCommand::Connect` (оставить только unix/local-домены, если Connect используется и для них — проверить при реализации) |
-| `wezterm-gui/src/main.rs` | — | убрать ссылки на `SshDomain`/`TlsDomain` (launcher-меню, автосоздание доменов из ssh_config) |
-| Корневой `Cargo.toml` | — | убрать `wezterm-ssh` из `workspace.members`, убрать `ssh2`/`libssh-rs`/`openssl`/`async_ossl`(если после этого больше никем не используется)/`git2`(нет, не относится) |
+| `onlyterm/src/main.rs` | — | убрать `SubCommand::Ssh`, убрать SSH/TLS-ветки из `SubCommand::Connect` (оставить только unix/local-домены, если Connect используется и для них — проверить при реализации) |
+| `onlyterm-gui/src/main.rs` | — | убрать ссылки на `SshDomain`/`TlsDomain` (launcher-меню, автосоздание доменов из ssh_config) |
+| Корневой `Cargo.toml` | — | убрать `onlyterm-ssh` из `workspace.members`, убрать `ssh2`/`libssh-rs`/`openssl`/`async_ossl`(если после этого больше никем не используется)/`git2`(нет, не относится) |
 | `Cargo.lock` | — | пересобрать после правок |
 
-### Тонкое место: `wezterm-client`/`wezterm-mux-server-impl` смешивают Unix и TLS/SSH пути
+### Тонкое место: `onlyterm-client`/`onlyterm-mux-server-impl` смешивают Unix и TLS/SSH пути
 
 Судя по размеру файлов (1392 и 213 строк), логика подключения к мультиплексору,
 скорее всего, написана как один клиент/диспетчер с веткой по типу домена
@@ -67,7 +67,7 @@ Tls/Ssh-ветки — **это единственное реально риск
 - `cargo build --workspace` — должен пройти без единого upstream-запроса на
   openssl/ssh2/libssh-rs в графе зависимостей.
 - `cargo tree --workspace | grep -iE "openssl|ssh2|libssh"` — пусто.
-- Существующий локальный мультиплексор: `wezterm-mux-server` (`UnixDomain`)
+- Существующий локальный мультиплексор: `onlyterm-mux-server` (`UnixDomain`)
   запустить и подключиться локальным клиентом, детач/реаттач — через
   существующие `/run`/`/verify` skills (реальный живой прогон, не только
   cargo test), так как это единственная часть, которую реально можно сломать
@@ -75,31 +75,31 @@ Tls/Ssh-ветки — **это единственное реально риск
 
 ### Порядок работ
 
-- **R1. Удалить SSH-клиент.** `wezterm-ssh/` целиком, `mux/src/ssh.rs`,
+- **R1. Удалить SSH-клиент.** `onlyterm-ssh/` целиком, `mux/src/ssh.rs`,
   `lua-api-crates/ssh-funcs/` целиком, `config/src/ssh.rs`
-  (SshDomain/SshBackend), `SubCommand::Ssh` в `wezterm/src/main.rs`, ссылки в
-  `wezterm-gui/src/main.rs`. Убрать зависимости из всех перечисленных
+  (SshDomain/SshBackend), `SubCommand::Ssh` в `onlyterm/src/main.rs`, ссылки в
+  `onlyterm-gui/src/main.rs`. Убрать зависимости из всех перечисленных
   `Cargo.toml`.
 - **R2. Удалить TLS-mux.** `config/src/tls.rs` (TlsDomainClient/Server),
-  `wezterm-mux-server/src/ossl.rs` целиком, TLS-ветки в
-  `wezterm-client/src/client.rs` и `wezterm-mux-server-impl/src/dispatch.rs`
+  `onlyterm-mux-server/src/ossl.rs` целиком, TLS-ветки в
+  `onlyterm-client/src/client.rs` и `onlyterm-mux-server-impl/src/dispatch.rs`
   (аккуратно, не задев Unix-ветку — см. тонкое место выше), TLS-ветки в
-  `ConnectCommand`/`SubCommand::Connect` в `wezterm/src/main.rs`.
+  `ConnectCommand`/`SubCommand::Connect` в `onlyterm/src/main.rs`.
 - **R3. Вычистка Cargo.toml/workspace.** Убрать `ssh2`, `libssh-rs`, `openssl`,
   `async_ossl` (если не используется больше нигде — проверить перед удалением,
   напрямую grep `async_ossl`/`openssl` по всему workspace после R1+R2), убрать
-  `wezterm-ssh` из `workspace.members`. `cargo tree` — чисто.
+  `onlyterm-ssh` из `workspace.members`. `cargo tree` — чисто.
 - **R4. Верификация.** `cargo build --workspace` без Perl/OpenSSL-шага,
   `cargo test --workspace`, живой прогон локального мультиплексора
-  (`/run`/`/verify`): запуск `wezterm-mux-server` локально, подключение,
+  (`/run`/`/verify`): запуск `onlyterm-mux-server` локально, подключение,
   детач/реаттач панели — должно работать как раньше.
 
 ## Риски
 
-- Смешанный код в `wezterm-client`/`wezterm-mux-server-impl` — главный риск,
+- Смешанный код в `onlyterm-client`/`onlyterm-mux-server-impl` — главный риск,
   не задеть рабочий Unix-domain путь при удалении TLS/SSH веток.
 - `SubCommand::Connect` может быть общим для Unix/Tls/Ssh доменов — проверить,
-  что после удаления команда `wezterm connect <unix-domain-name>` продолжает
+  что после удаления команда `onlyterm connect <unix-domain-name>` продолжает
   работать.
 - Нужно перепроверить `async_ossl`/`openssl` действительно больше нигде не
   нужны после R1+R2, прежде чем убирать из workspace (иначе сборка сломается

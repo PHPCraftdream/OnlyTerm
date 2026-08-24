@@ -18,7 +18,7 @@ WebGpu остаётся Windows-дефолтом. Причина, по кото�
 ## Что уже есть в коде (на что опираемся)
 
 - `Window::new_window(...)` создаёт native-окно **до** инициализации WebGpu —
-  `crates/wezterm-gui/src/termwindow/mod.rs:859`. Ждёт рендерер только
+  `crates/onlyterm-gui/src/termwindow/mod.rs:859`. Ждёт рендерер только
   `window.show()` на строке ~970.
 - `WebGpuState::new` уже не блокирует GUI-поток (`10bdacbfc`) и уже не требует
   готовой surface для выбора адаптера (`834e9acf3`).
@@ -45,7 +45,7 @@ null-кистью не делает ничего. Показанное окно 
 ### Этап 1. Заливка фона до первого кадра
 
 Файлы: `crates/window/src/os/windows/window.rs`, `crates/window/src/lib.rs`
-(trait `WindowOps`), `crates/wezterm-gui/src/termwindow/mod.rs`.
+(trait `WindowOps`), `crates/onlyterm-gui/src/termwindow/mod.rs`.
 
 1. В `WindowInner` завести `placeholder_background: Option<COLORREF>`.
    Заполнять при создании окна из конфига (`Some(&config)` уже передаётся в
@@ -63,7 +63,7 @@ null-кистью не делает ничего. Показанное окно 
 
 ### Этап 2. Ранний show
 
-Файл: `crates/wezterm-gui/src/termwindow/mod.rs`, `new_window`.
+Файл: `crates/onlyterm-gui/src/termwindow/mod.rs`, `new_window`.
 
 1. Переместить `window.show()` и `if config.start_maximized { maximize() }`
    сразу после `Self::apply_icon(&window)?` (строка ~875) — до блока WebGpu.
@@ -114,7 +114,7 @@ null-кистью не делает ничего. Показанное окно 
 
 ## Оценка
 
-Этапы 1–2 — основная работа, два крейта (`window`, `wezterm-gui`), правки
+Этапы 1–2 — основная работа, два крейта (`window`, `onlyterm-gui`), правки
 локальные. Этапы 3–4 — проверка руками плюс один замер. Общий объём заметно
 меньше, чем у уже сделанного фикса коалесинга: вся тяжёлая инфраструктура
 (фоновая инициализация WebGpu, установка рендерера на живое окно, безопасный

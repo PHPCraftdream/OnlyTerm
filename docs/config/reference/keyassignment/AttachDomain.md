@@ -8,7 +8,7 @@ names used in your `unix_domains` configuration.
 Attaching a domain will attempt to import the windows, tabs and panes from the
 remote system into those of the local GUI.
 
-If there are no remote panes in that domain, wezterm will spawn a default
+If there are no remote panes in that domain, onlyterm will spawn a default
 program into it.
 
 This action is not bound to any keys by default. The [Launcher Menu](../../launch.md#the-launcher-menu)

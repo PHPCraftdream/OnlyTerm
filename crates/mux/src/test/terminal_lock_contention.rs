@@ -6,7 +6,7 @@
 //! This exists to give task #147 ("stop the renderer from holding
 //! `terminal.lock()` for the whole frame") an evidence-based go/no-go
 //! instead of an architectural guess. It drives a real `LocalPane` (a
-//! real `wezterm_term::Terminal` behind the exact same `Mutex` used in
+//! real `onlyterm_term::Terminal` behind the exact same `Mutex` used in
 //! production) with:
 //!   - one thread that continuously calls `perform_actions` with large
 //!     batches of freshly-parsed output (mirrors `parse_buffered_data`'s
@@ -35,17 +35,17 @@
 //! that by measuring only up to the moment `.lock()` returns.
 use crate::localpane::LocalPane;
 use crate::pane::Pane;
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{
+    KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind, Terminal,
+    TerminalConfiguration, TerminalSize,
+};
 use parking_lot::Mutex;
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use std::io::{Read, Result as IoResult, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{
-    KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind, Terminal,
-    TerminalConfiguration, TerminalSize,
-};
 
 /// A `Child` double that never exits on its own; `LocalPane` only needs
 /// something that implements the trait so it can track process state,
@@ -137,7 +137,7 @@ fn make_pane() -> Arc<LocalPane> {
     let terminal = Terminal::new(
         size,
         Arc::new(LoadTestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
     );
@@ -230,8 +230,8 @@ struct FauxRenderWork {
 impl crate::pane::WithPaneLines for FauxRenderWork {
     fn with_lines_mut(
         &mut self,
-        _first_row: wezterm_term::StableRowIndex,
-        lines: &mut [&mut wezterm_term::Line],
+        _first_row: onlyterm_term::StableRowIndex,
+        lines: &mut [&mut onlyterm_term::Line],
     ) {
         for line in lines.iter() {
             // Touch every cluster, similar in spirit to iterating
@@ -277,7 +277,7 @@ impl WaitSamples {
 /// behavior of rendering all visible rows under one lock acquisition).
 fn run_contention_load(
     duration: Duration,
-    render_row_span: std::ops::Range<wezterm_term::StableRowIndex>,
+    render_row_span: std::ops::Range<onlyterm_term::StableRowIndex>,
 ) -> (
     WaitSamples,
     WaitSamples,
@@ -410,7 +410,7 @@ fn terminal_lock_wait_time_under_sustained_output_and_input() {
     let (key_input, perform_actions, with_lines, perform_actions_hold, with_lines_hold) =
         run_contention_load(
             Duration::from_secs(5),
-            0..(ROWS as wezterm_term::StableRowIndex),
+            0..(ROWS as onlyterm_term::StableRowIndex),
         );
 
     let (n_key, p50_key, p95_key, max_key) = key_input.stats();
@@ -612,7 +612,7 @@ fn perform_actions_chunking_bounds_hold_time_and_preserves_state() {
         let dims = pane.get_dimensions();
         let (_first_row, lines) = pane.get_lines(
             dims.scrollback_top
-                ..dims.physical_top + dims.viewport_rows as wezterm_term::StableRowIndex,
+                ..dims.physical_top + dims.viewport_rows as onlyterm_term::StableRowIndex,
         );
         lines.iter().map(|line| line.as_str().to_string()).collect()
     }

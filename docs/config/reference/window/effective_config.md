@@ -28,10 +28,10 @@ If you want to change the configuration in a window, look at [set_config_overrid
 This example will log the configured font size when `CTRL-SHIFT-E` is pressed:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('show-font-size', function(window, pane)
-  wezterm.log_error(window:effective_config().font_size)
+onlyterm.on('show-font-size', function(window, pane)
+  onlyterm.log_error(window:effective_config().font_size)
 end)
 
 return {
@@ -39,7 +39,7 @@ return {
     {
       key = 'E',
       mods = 'CTRL',
-      action = wezterm.action.EmitEvent 'show-font-size',
+      action = onlyterm.action.EmitEvent 'show-font-size',
     },
   },
 }

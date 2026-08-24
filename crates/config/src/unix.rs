@@ -1,7 +1,7 @@
 use crate::config::validate_domain_name;
 use crate::*;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::path::PathBuf;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 /// Configures an instance of a multiplexer that can be communicated
 /// with via a unix domain socket
@@ -27,9 +27,9 @@ pub struct UnixDomain {
 
     /// If we decide that we need to start the server, the command to run
     /// to set that up.  The default is to spawn:
-    /// `wezterm-mux-server --daemonize`
+    /// `onlyterm-mux-server --daemonize`
     /// but it can be useful to set this to eg:
-    /// `wsl -e wezterm-mux-server --daemonize` to start up
+    /// `wsl -e onlyterm-mux-server --daemonize` to start up
     /// a unix domain inside a wsl container.
     pub serve_command: Option<Vec<String>>,
 

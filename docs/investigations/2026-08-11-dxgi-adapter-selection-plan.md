@@ -5,7 +5,7 @@
 
 ## Контекст
 
-Профилирование холодного старта (см. `startup:`-чекпоинты в `crates/wezterm-gui/src/main.rs` и
+Профилирование холодного старта (см. `startup:`-чекпоинты в `crates/onlyterm-gui/src/main.rs` и
 предыдущее расследование `docs/investigations/2026-08-03-startup-latency.md`, пункт `834e9acf3`)
 показало, что после сужения перебора бэкендов до одного DX12 (было `Backends::all()`, тратившее
 и на DX12 ~2.0с, и на Vulkan ~2.2с; стало — только DX12) остаётся необъяснённый разрыв ровно в
@@ -13,7 +13,7 @@
 
 Причина найдена и подтверждена по исходникам `wgpu-hal`, не предположительно:
 
-- `ProcessGpuContext::new` (`crates/wezterm-gui/src/termwindow/webgpu/context.rs`) в общем случае
+- `ProcessGpuContext::new` (`crates/onlyterm-gui/src/termwindow/webgpu/context.rs`) в общем случае
   (без `webgpu_preferred_adapter`) вызывает `instance.request_adapter(&wgpu::RequestAdapterOptions
   { power_preference, ... })`.
 - Внутри `wgpu-core` 25.0.2 `request_adapter` перечисляет **все** DXGI-адаптеры через
@@ -74,7 +74,7 @@ architecture info — используя приватные хелперы (`aux
 Даже если бы `expose()` была публичной, самостоятельный вызов
 `IDXGIFactory6::EnumAdapterByGpuPreference` упирается во вторую проблему: `wgpu-hal` 25.0.2
 зависит от `windows = "0.58"` (`wgpu-hal-25.0.2/Cargo.toml:406-410`), тогда как весь остальной код
-репозитория (включая `wezterm-gui`) закреплён на `windows = "0.33.0"` (корневой `Cargo.toml:246`).
+репозитория (включая `onlyterm-gui`) закреплён на `windows = "0.33.0"` (корневой `Cargo.toml:246`).
 
 Крейт `windows` не даёт бинарной/типовой совместимости между минорными версиями 0.x — тип
 `IDXGIAdapter1` из `windows 0.33` и тип `IDXGIAdapter1` из `windows 0.58` это **разные,
@@ -180,7 +180,7 @@ LUID само по себе годится только вкупе с решен
 Проблема конфликта версий `windows` (пункт 2) к моменту реализации уже была снята отдельной
 полной миграцией на `windows = "0.58"` (`10a944467`), так что второй блокер исчез сам собой.
 
-**Интеграция** (`crates/wezterm-gui/src/termwindow/webgpu/context.rs`,
+**Интеграция** (`crates/onlyterm-gui/src/termwindow/webgpu/context.rs`,
 `try_fast_dx12_adapter`): вызывается ДО обычного `request_adapter`, только когда нет
 `webgpu_preferred_adapter`/`webgpu_force_fallback_adapter` (см. пункт 3 выше — эти пути
 сознательно оставлены на медленном, но точно корректном пути). Любая неудача (нет

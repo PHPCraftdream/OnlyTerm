@@ -59,7 +59,7 @@ pub use units::*;
 pub use unix::*;
 pub use version::*;
 
-use wezterm_color_schemes_data as scheme_data;
+use onlyterm_color_schemes_data as scheme_data;
 
 pub(crate) use configuration::{
     default_config_with_overrides_applied, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP,

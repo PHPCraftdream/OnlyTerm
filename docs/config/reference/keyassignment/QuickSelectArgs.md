@@ -38,7 +38,7 @@ The `QuickSelectArgs` struct allows for the following fields:
 !!! danger "Non-functional: `action` can no longer run arbitrary code"
 
     Earlier versions of this page showed an example using `action` together
-    with `wezterm.action_callback(...)` to run custom Lua/rhai code (e.g. to
+    with `onlyterm.action_callback(...)` to run custom Lua/rhai code (e.g. to
     open the quick-selected text as a URL) against the selected text instead
     of copying it to the clipboard. That relied on the rhai/Lua scripting
     engine and event-handler registry, both of which have been removed — see

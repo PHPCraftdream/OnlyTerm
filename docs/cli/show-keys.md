@@ -1,4 +1,4 @@
-# `wezterm show-keys`
+# `onlyterm show-keys`
 
 {{since('20220624-141144-bd1b7c5d')}}
 
@@ -46,5 +46,5 @@ Mouse
 ## Synopsis
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-show-keys--help.txt" %}
+{% include "../examples/cmd-synopsis-onlyterm-show-keys--help.txt" %}
 ```

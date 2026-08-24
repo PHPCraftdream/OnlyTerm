@@ -49,7 +49,7 @@ Get-Process onlyterm-gui,OpenConsole -ErrorAction SilentlyContinue |
 
 | | время до выполнения команды оболочкой |
 |---|---|
-| апстрим `C:/Program Files/WezTerm/wezterm-gui.exe` | **0.56 / 0.67 / 0.72 с** |
+| апстрим `C:/Program Files/OnlyTerm/onlyterm-gui.exe` | **0.56 / 0.67 / 0.72 с** |
 | наш `D:/dev/rust/.cargo-target/release/onlyterm-gui.exe` | **3.50 / 3.56 / 3.65 с** |
 | установленный `C:/Program Files/OnlyTerm/onlyterm-gui.exe` | **4.04 / 3.85 / 3.92 / 3.97 с** |
 
@@ -133,16 +133,16 @@ spawn_pane ЦЕЛИКОМ ... 913 мс
    Defender (подтверждено чтением списка). Замер после: 4.16 / 4.62 / 4.58 /
    3.96 с — без изменений. Более того, в списке исключений **уже был** `D:\dev`,
    то есть каталог сборки был исключён всё время, а апстрим работает из
-   неисключённого `C:\Program Files\WezTerm` за 0.7 с.
+   неисключённого `C:\Program Files\OnlyTerm` за 0.7 с.
 
 4. **Спавн панели ждёт готовности рендерера.** Опровергнуто по коду:
    `domain.spawn()` вызывается в `async_run_terminal_gui`
-   (`crates/wezterm-gui/src/main.rs`, ~строка 348) **до** создания окна
+   (`crates/onlyterm-gui/src/main.rs`, ~строка 348) **до** создания окна
    `TermWindow`.
 
 5. **Неподписанный dev-бинарник провоцирует поведенческий мониторинг.**
    Опровергнуто: `Get-AuthenticodeSignature` даёт `NotSigned` **и** для нашего
-   `onlyterm-gui.exe`, **и** для апстримовского `wezterm-gui.exe`. Апстрим при
+   `onlyterm-gui.exe`, **и** для апстримовского `onlyterm-gui.exe`. Апстрим при
    этом укладывается в 0.7 с.
 
 6. **Отдельный процесс `OpenConsole.exe` на каждую панель.** Опровергнуто: при

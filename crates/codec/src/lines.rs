@@ -8,11 +8,11 @@
 use std::ops::Range;
 use std::sync::Arc;
 
+use onlyterm_term::StableRowIndex;
 use rangeset::*;
 use serde::{Deserialize, Serialize};
 use termwiz::hyperlink::Hyperlink;
 use termwiz::surface::Line;
-use wezterm_term::StableRowIndex;
 
 use crate::messages::SerializedImageCell;
 

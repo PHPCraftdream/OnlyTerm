@@ -33,7 +33,7 @@ pipeline и создание `RenderState`**. На исследуемой маш
 Новый симптом появился не из этих правок. Его ключевой предшественник —
 `e9d4ff97e` от 2026-07-30:
 
-> `wezterm-gui: WebGpu->OpenGL fallback, enable render thread by default on Windows`
+> `onlyterm-gui: WebGpu->OpenGL fallback, enable render thread by default on Windows`
 
 Этот коммит намеренно изменил Windows-default с OpenGL на WebGpu, чтобы по
 умолчанию заработал отдельный render thread и зависший GPU-driver call не мог
@@ -146,7 +146,7 @@ Renderer-этап занимает около 320 мс вместо 3.5 с.
 
 ## Почему окно невидимо всё это время
 
-Порядок в `crates/wezterm-gui/src/termwindow/mod.rs` сейчас такой:
+Порядок в `crates/onlyterm-gui/src/termwindow/mod.rs` сейчас такой:
 
 1. `Window::new_window(...).await` создаёт native window (строки около 859–872).
 2. Для WebGpu вызывается и ожидается `WebGpuState::new(...).await` (около

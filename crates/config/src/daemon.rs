@@ -1,7 +1,7 @@
 use crate::*;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(Default, Debug, Clone, FromDynamic, ToDynamic)]
 pub struct DaemonOptions {

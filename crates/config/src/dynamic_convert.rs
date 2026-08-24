@@ -1,5 +1,5 @@
+use onlyterm_dynamic::{ToDynamic, Value};
 use std::collections::BTreeMap;
-use wezterm_dynamic::{ToDynamic, Value};
 
 fn toml_table_has_numeric_keys(t: &toml::value::Table) -> bool {
     t.keys().all(|k| k.parse::<isize>().is_ok())

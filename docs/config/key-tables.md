@@ -1,7 +1,7 @@
 {{since('20220408-101518-b908e2dd')}}
 
 In addition to the default key table defined by the `keys` configuration
-option, `wezterm` supports defining additional named key tables using the
+option, `onlyterm` supports defining additional named key tables using the
 `key_tables` configuration option.
 
 On its own, a named table doesn't do anything, but when paired with the
@@ -18,7 +18,7 @@ modes, using `r` for resize and `a` for activation:
 !!! note "`update-right-status` no longer exists"
 
     The original version of this example also registered a
-    `wezterm.on('update-right-status', ...)` handler to show the active key
+    `onlyterm.on('update-right-status', ...)` handler to show the active key
     table's name in the status bar. That event hook has been removed along
     with the rest of the scripting engine — see the
     [changelog](../changelog.md#continuousnightly). Only the `leader`/
@@ -100,7 +100,7 @@ key_tables: {
 
 ### Key Table Activation Stack
 
-Each `wezterm` GUI window maintains a stack of activations, which allows you to
+Each `onlyterm` GUI window maintains a stack of activations, which allows you to
 create complex layering of keyboard customization.
 
 The [ActivateKeyTable](reference/keyassignment/ActivateKeyTable.md) action will push
@@ -116,7 +116,7 @@ clear the entire stack.
 
 The stack is also cleared when the configuration is reloaded, so if you're
 working on a complex key table setup and get stuck, you may be able to unstick
-yourself by re-saving your wezterm configuration to trigger a reload.
+yourself by re-saving your onlyterm configuration to trigger a reload.
 
 {{since('20220624-141144-bd1b7c5d')}}
 

@@ -4,7 +4,7 @@
 
 #define MyAppName "OnlyTerm"
 ;#define MyAppVersion "1.5"
-#define MyAppPublisher "Wez Furlong"
+#define MyAppPublisher "PHPCraftdream"
 #define MyAppURL "https://github.com/PHPCraftdream/OnlyTerm"
 #define MyAppExeName "onlyterm-gui.exe"
 
@@ -82,8 +82,8 @@ Type: files; Name: "{app}\libGLESv2.dll"
 Type: filesandordirs; Name: "{app}\mesa"
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "org.wezfurlong.onlyterm"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; AppUserModelID: "org.wezfurlong.onlyterm"
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "org.phpcraftdream.onlyterm"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; AppUserModelID: "org.phpcraftdream.onlyterm"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

@@ -1,10 +1,10 @@
 use crate::*;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_term::color::ColorPalette;
 use std::convert::TryFrom;
 use std::str::FromStr;
 use termwiz::color::ColorSpec as TWColorSpec;
 pub use termwiz::color::{AnsiColor, ColorAttribute, RgbColor, SrgbaTuple};
-use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_term::color::ColorPalette;
 
 mod color_scheme;
 mod tabbar;

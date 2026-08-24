@@ -22,19 +22,19 @@ space.
 
 The parameter is a string that can contain escape sequences that change presentation.
 
-It is recommended that you use [wezterm.format](../wezterm/format.md) to compose
+It is recommended that you use [onlyterm.format](../onlyterm/format.md) to compose
 the string.
 
 Here's a basic example that displays the time in the status area:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('update-right-status', function(window, pane)
-  local date = wezterm.strftime '%Y-%m-%d %H:%M:%S'
+onlyterm.on('update-right-status', function(window, pane)
+  local date = onlyterm.strftime '%Y-%m-%d %H:%M:%S'
 
   -- Make it italic and underlined
-  window:set_right_status(wezterm.format {
+  window:set_right_status(onlyterm.format {
     { Attribute = { Underline = 'Single' } },
     { Attribute = { Italic = true } },
     { Text = 'Hello ' .. date },
@@ -51,7 +51,7 @@ it can potentially pick up the remote hostname if your remote shell session is u
 [OSC 7 shell integration](../../../shell-integration.md#osc-7-escape-sequence-to-set-the-working-directory).
 
 ```lua
-wezterm.on('update-right-status', function(window, pane)
+onlyterm.on('update-right-status', function(window, pane)
   -- Each element holds the text for a cell in a "powerline" style << fade
   local cells = {}
 
@@ -64,13 +64,13 @@ wezterm.on('update-right-status', function(window, pane)
     local hostname = ''
 
     if type(cwd_uri) == 'userdata' then
-      -- Running on a newer version of wezterm and we have
+      -- Running on a newer version of onlyterm and we have
       -- a URL object here, making this simple!
 
       cwd = cwd_uri.file_path
-      hostname = cwd_uri.host or wezterm.hostname()
+      hostname = cwd_uri.host or onlyterm.hostname()
     else
-      -- an older version of wezterm, 20230712-072601-f4abf8fd or earlier,
+      -- an older version of onlyterm, 20230712-072601-f4abf8fd or earlier,
       -- which doesn't have the Url object
       cwd_uri = cwd_uri:sub(8)
       local slash = cwd_uri:find '/'
@@ -89,7 +89,7 @@ wezterm.on('update-right-status', function(window, pane)
       hostname = hostname:sub(1, dot - 1)
     end
     if hostname == '' then
-      hostname = wezterm.hostname()
+      hostname = onlyterm.hostname()
     end
 
     table.insert(cells, cwd)
@@ -97,11 +97,11 @@ wezterm.on('update-right-status', function(window, pane)
   end
 
   -- I like my date/time in this style: "Wed Mar 3 08:14"
-  local date = wezterm.strftime '%a %b %-d %H:%M'
+  local date = onlyterm.strftime '%a %b %-d %H:%M'
   table.insert(cells, date)
 
   -- An entry for each battery (typically 0 or 1 battery)
-  for _, b in ipairs(wezterm.battery_info()) do
+  for _, b in ipairs(onlyterm.battery_info()) do
     table.insert(cells, string.format('%.0f%%', b.state_of_charge * 100))
   end
 
@@ -145,6 +145,6 @@ wezterm.on('update-right-status', function(window, pane)
     push(cell, #cells == 0)
   end
 
-  window:set_right_status(wezterm.format(elements))
+  window:set_right_status(onlyterm.format(elements))
 end)
 ```

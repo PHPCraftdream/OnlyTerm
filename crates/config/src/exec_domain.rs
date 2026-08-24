@@ -1,5 +1,5 @@
 use crate::config::validate_domain_name;
-use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
+use onlyterm_dynamic::{FromDynamic, ToDynamic, Value};
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic)]
 pub enum ValueOrFunc {

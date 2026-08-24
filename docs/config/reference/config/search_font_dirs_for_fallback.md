@@ -8,10 +8,10 @@ tags:
 
 Defaults to `false`.
 
-When wezterm cannot find a glyph for some codepoint in your configured fonts,
+When onlyterm cannot find a glyph for some codepoint in your configured fonts,
 it searches a list of *fallback* fonts to find one that has the glyph. By
 default, that fallback search only looks at the fonts resolved by your
-[font_locator](font_locator.md) (the system font resolver) and wezterm's
+[font_locator](font_locator.md) (the system font resolver) and onlyterm's
 built-in fallback fonts -- it does **not** look at
 [font_dirs](font_dirs.md), even though `font_dirs` is still scanned at
 startup to build a database of the fonts found there.
@@ -26,10 +26,10 @@ search_font_dirs_for_fallback: true
 ```
 
 If you have `font_dirs` configured but `search_font_dirs_for_fallback` is
-left at its default `false`, and wezterm shows a "No fonts contain glyphs for
+left at its default `false`, and onlyterm shows a "No fonts contain glyphs for
 these codepoints" warning even though you believe one of your `font_dirs`
 fonts covers it, this is very likely the reason: the directory was scanned,
-but never consulted during fallback resolution. wezterm's warning message
+but never consulted during fallback resolution. onlyterm's warning message
 will call this out explicitly when it detects this situation.
 
 ## Performance and stability warning

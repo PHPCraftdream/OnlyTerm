@@ -23,14 +23,14 @@ For example, if you prefer to launch your preferred MUA in a new window
 in response to clicking on `mailto:` URLs, you could do something like:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('open-uri', function(window, pane, uri)
+onlyterm.on('open-uri', function(window, pane, uri)
   local start, match_end = uri:find 'mailto:'
   if start == 1 then
     local recipient = uri:sub(match_end + 1)
     window:perform_action(
-      wezterm.action.SpawnCommandInNewWindow {
+      onlyterm.action.SpawnCommandInNewWindow {
         args = { 'mutt', recipient },
       },
       pane

@@ -64,7 +64,7 @@ onlyterm_gui!std::alloc::_::__rust_alloc_error_handler+0x18     alloc.rs @ 423
 onlyterm_gui!alloc::alloc::handle_alloc_error+0x18               alloc.rs @ 557
 onlyterm_gui!alloc::raw_vec::handle_error+0x1b                   raw_vec\mod.rs @ 890
 onlyterm_gui!onlyterm_gui::termwindow::TermWindow::paint_impl+0x4b81
-    D:\dev\rust\wezterm\crates\wezterm-gui\src\termwindow\render\paint.rs @ 143
+    D:\dev\rust\onlyterm\crates\onlyterm-gui\src\termwindow\render\paint.rs @ 143
   (inline) do_paint_webgpu_impl+0x8      render_pipeline.rs @ 1419
 onlyterm_gui!...::do_paint_webgpu+0x63
 onlyterm_gui!...::dispatch_window_event+0x2103
@@ -115,7 +115,7 @@ Microsoft symbol server) — точный итоговый объём committed-
 с зеркалированием атласа глифов — код, который сегодня стал безусловным дефолтом для
 каждого окна.
 
-`AtlasMirrorLog.written` (`crates/wezterm-gui/src/termwindow/webgpu/mod.rs:273-276`,
+`AtlasMirrorLog.written` (`crates/onlyterm-gui/src/termwindow/webgpu/mod.rs:273-276`,
 `BTreeMap<AtlasRect, Vec<u8>>`) хранит **полную CPU-копию пикселей каждого когда-либо
 записанного в атлас прямоугольника** — то есть удваивает память атласа (GPU-текстура +
 идентичная CPU-копия), пока жива эта генерация мирроринга. Согласно doc-комментарию

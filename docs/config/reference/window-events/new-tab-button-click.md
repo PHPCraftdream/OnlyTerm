@@ -33,39 +33,39 @@ The following values are possible:
 * `"Middle"` - the middle mouse button
 
 The last event parameter is a [KeyAssignment](../keyassignment/index.md) which
-encodes the default, built-in action that wezterm will take.  It may be `nil`
-in the case where wezterm would not take any action.
+encodes the default, built-in action that onlyterm will take.  It may be `nil`
+in the case where onlyterm would not take any action.
 
 You may take any action you wish in this event handler.
 
-If you return `false` then you will prevent wezterm from carrying out its
+If you return `false` then you will prevent onlyterm from carrying out its
 default action.
 
-Otherwise, wezterm will proceed to perform that action once your event
+Otherwise, onlyterm will proceed to perform that action once your event
 handler returns.
 
 This following two examples are equivalent in functionality:
 
 ```lua
-wezterm.on(
+onlyterm.on(
   'new-tab-button-click',
   function(window, pane, button, default_action)
-    -- just log the default action and allow wezterm to perform it
-    wezterm.log_info('new-tab', window, pane, button, default_action)
+    -- just log the default action and allow onlyterm to perform it
+    onlyterm.log_info('new-tab', window, pane, button, default_action)
   end
 )
 ```
 
 ```lua
-wezterm.on(
+onlyterm.on(
   'new-tab-button-click',
   function(window, pane, button, default_action)
-    wezterm.log_info('new-tab', window, pane, button, default_action)
+    onlyterm.log_info('new-tab', window, pane, button, default_action)
     -- We're explicitly going to perform the default action
     if default_action then
       window:perform_action(default_action, pane)
     end
-    -- and tell wezterm that we handled the event so that it doesn't
+    -- and tell onlyterm that we handled the event so that it doesn't
     -- perform it a second time.
     return false
   end

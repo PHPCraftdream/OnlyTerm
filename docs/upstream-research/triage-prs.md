@@ -10,7 +10,7 @@ title,body,files` (все 74 запроса выполнены успешно, �
 Основной вывод по применимости: наш форк убрал только SSH-клиент, TLS-mux, mlua/luahelper, git2 и
 C-рендер/фонт-стек (cairo/freetype/harfbuzz → tiny-skia/rustybuzz/swash), но **сохранил** практически
 весь остальной код в неизменном виде — mux, pty, term, window (macOS/X11/Wayland/Windows backends),
-wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее большинство важных апстримных багфиксов
+onlyterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее большинство важных апстримных багфиксов
 (даже тех, что относятся к коду 2023–2024 годов) применимо к нашему дереву практически один в один.
 
 ## Важное — багфиксы/крэши/тормоза/плохой код (74 штуки)
@@ -38,7 +38,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   `RenderState`; `Drop` для `glium::RawProgram` дергает `make_current` → `CGLUpdateContext` →
   обращение к мёртвому Mach-порту → abort. Фикс: `render_state.take()` в обработчике
   `WindowEvent::Destroyed`.
-- Применимо: `wezterm-gui/src/termwindow/mod.rs` — код рендер-стейта и обработки закрытия окна не
+- Применимо: `onlyterm-gui/src/termwindow/mod.rs` — код рендер-стейта и обработки закрытия окна не
   переписывался (у нас по-прежнему glium/OpenGL путь наравне с WebGPU).
 - Сложность: needs adaptation (нужно свериться с текущей структурой `RenderState`/`Option`, но
   логика точечная — один `.take()` в правильном месте).
@@ -59,17 +59,17 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   `max_texture_dimension_2d` (16384 на Apple Silicon); внутри `did_resize` Objective-C→Rust FFI
   callback Rust не может размотать стек → abort. Возникает на macOS с тайлинг-WM (Aerospace) при
   пробуждении/ретайле на несколько Retina-мониторов.
-- Применимо: `wezterm-gui/src/termwindow/webgpu.rs` присутствует, WebGPU-бэкенд у нас активно
+- Применимо: `onlyterm-gui/src/termwindow/webgpu.rs` присутствует, WebGPU-бэкенд у нас активно
   используется (наравне с OpenGL).
 - Сложность: trivial (clamp по обеим осям перед `SurfaceConfiguration`).
 - Приоритет: high.
 
 ### PR #7704 — fix: preserve LruCache capacity in make_all_stale to prevent unbounded memory growth
-- Что чинит: `RenderableInner::make_all_stale()` в `wezterm-client/src/pane/renderable.rs` создаёт
+- Что чинит: `RenderableInner::make_all_stale()` в `onlyterm-client/src/pane/renderable.rs` создаёт
   новый `LruCache::unbounded()`, теряя исходный лимит ёмкости. Срабатывает на каждом mux-коннекте
   клиента (initial resize) и далее на resize/zoom/palette change — построчный кэш растёт без
   ограничения, до многогигабайтного потребления за часы/дни работы.
-- Применимо: `wezterm-client/src/pane/renderable.rs` идентичен апстриму — client/mux слой не
+- Применимо: `onlyterm-client/src/pane/renderable.rs` идентичен апстриму — client/mux слой не
   затрагивался нашей миграцией.
 - Сложность: trivial (сохранить исходную capacity вместо `unbounded()`).
 - Приоритет: high (классическая утечка памяти, легко воспроизводимая).
@@ -78,7 +78,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: двусторонний deadlock сокета — `process_async` (сервер) и `client_thread_async`
   (клиент) читают/пишут на одной задаче; при подключении к серверу с ~30 табами GUI виснет
   навсегда, реконнект не помогает (сервер тоже застревает).
-- Применимо: `wezterm-client/src/client.rs`, `wezterm-mux-server-impl/src/dispatch.rs` — не
+- Применимо: `onlyterm-client/src/client.rs`, `onlyterm-mux-server-impl/src/dispatch.rs` — не
   тронуты миграцией.
 - Сложность: substantial (нужно разносить чтение/запись по разным задачам/каналам, это
   архитектурное изменение конкурентности, не однострочный патч).
@@ -95,7 +95,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   вернуть `Some(0)`).
 - Приоритет: high.
 
-### PR #5977 — fix(windows): closing panes sometimes freezes wezterm
+### PR #5977 — fix(windows): closing panes sometimes freezes onlyterm
 - Что чинит: закрытие панелей на Windows иногда виснет из-за особенностей работы `conpty.dll`
   (задокументированный edge-case у Microsoft: закрытие handle'ов до завершения псевдоконсольной
   сессии). Патч руками закрывает handle'ы в правильном порядке перед закрытием pty.
@@ -120,7 +120,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: при перетаскивании окна между мониторами с разным DPI на Windows возникает
   feedback-loop в resize-коде (`live_resizing` → `scaling_changed()` → `set_inner_size()` →
   `SetWindowPos` посреди drag), окно "зацикливается" и разъезжается до экстремальных размеров.
-- Применимо: `wezterm-gui/src/termwindow/resize.rs` не тронут миграцией.
+- Применимо: `onlyterm-gui/src/termwindow/resize.rs` не тронут миграцией.
 - Сложность: needs adaptation (нужно понять текущий resize/DPI pipeline, но фикс достаточно
   локальный — гасить один из путей ресайза во время drag).
 - Приоритет: medium-high (не крэш, но юзабилити многомониторных Windows-конфигураций сломана до
@@ -154,7 +154,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: при построении команды для исполнения на mux-сервере использовалось базовое окружение
   клиента вместо серверного — потенциальная утечка/подмена переменных окружения между
   клиентом и сервером, если клиент явно его очистил.
-- Применимо: `mux/src/domain.rs`, `pty/src/cmdbuilder.rs`, `wezterm-client/src/domain.rs` — не
+- Применимо: `mux/src/domain.rs`, `pty/src/cmdbuilder.rs`, `onlyterm-client/src/domain.rs` — не
   менялись.
 - Сложность: needs adaptation (проверить текущие fixup-пути CommandBuilder).
 - Приоритет: medium (граница доверия client/server в mux-протоколе, стоит того, чтобы разобраться).
@@ -162,8 +162,8 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 ### Кластер "PaneFocused notification storm / feedback loop" (4 связанных PR — рекомендуется решать вместе)
 
 Четыре PR решают вариации одного и того же корневого бага: `PaneFocused`-уведомления, которые
-обрабатываются в `mux/src/tab.rs`, `wezterm-client/src/pane/clientpane.rs`,
-`wezterm-gui/src/frontend.rs`, `wezterm-mux-server-impl/src/sessionhandler.rs`, могут порождать
+обрабатываются в `mux/src/tab.rs`, `onlyterm-client/src/pane/clientpane.rs`,
+`onlyterm-gui/src/frontend.rs`, `onlyterm-mux-server-impl/src/sessionhandler.rs`, могут порождать
 новые `PaneFocused`-события в ответ на себя же → зацикливание/шторм при массовом уничтожении
 панелей, множественных mux-клиентах или задержках домена. Все затронутые файлы у нас присутствуют
 без изменений.
@@ -173,8 +173,8 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   уничтожении панелей и mux reconciliation (продолжение #7763, те же файлы). Тестировалось вручную
   и через cli на предмет регрессии #4390/#4737.
 - Применимо: да, тот же набор файлов (`mux/src/lib.rs`, `mux/src/tab.rs`, `mux/src/tmux_commands.rs`,
-  `wezterm-client/src/pane/clientpane.rs`, `wezterm-gui/src/frontend.rs`,
-  `wezterm-mux-server-impl/src/sessionhandler.rs`) присутствует без изменений.
+  `onlyterm-client/src/pane/clientpane.rs`, `onlyterm-gui/src/frontend.rs`,
+  `onlyterm-mux-server-impl/src/sessionhandler.rs`) присутствует без изменений.
 - Сложность: substantial (много скоординированных изменений в разных крейтах, но это самая зрелая
   версия фикса в цепочке — рекомендуется взять именно её, а не #7763 отдельно).
 - Приоритет: high.
@@ -190,7 +190,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: альтернативный (более старый, архитектурно иной) подход к тому же классу бага —
   вводит serial/sequence number для GUI-инициированных смен фокуса панели, чтобы GUI мог
   игнорировать устаревшие ответы сервера. Затрагивает 14 файлов, включая `codec/src/lib.rs`,
-  `wezterm/src/cli/activate_{pane,tab}.rs`.
+  `onlyterm/src/cli/activate_{pane,tab}.rs`.
 - Применимо: файлы существуют, `mux/src/serial.rs` из PR у нас отсутствует (т.е. концепции serial
   ещё нет вообще).
 - Сложность: substantial — это принципиально другое (более общее) решение, чем #7871/#7763.
@@ -206,7 +206,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   экрана. Фикс вводит флаг `NotifyMux` в `set_active_pane`, чтобы серверные изменения фокуса не
   ретранслировались обратно.
 - Применимо: файлы (`mux/src/lib.rs`, `mux/src/tab.rs`, `mux/src/tmux_commands.rs`,
-  `wezterm-client/src/pane/clientpane.rs`, `wezterm-mux-server-impl/src/sessionhandler.rs`)
+  `onlyterm-client/src/pane/clientpane.rs`, `onlyterm-mux-server-impl/src/sessionhandler.rs`)
   пересекаются с #7871/#7763 почти один в один — весьма вероятно, что фикс #7871 уже закрывает и
   этот случай, либо оба патча нужно свести в один заход, а не переносить раздельно.
 - Сложность: substantial (нужно свести с #7871 в единую реализацию, не дублировать логику).
@@ -228,7 +228,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 
 ### PR #7398 — fix(procinfo): return argv0 when handling priviledged programs with `can_close_without_prompting`
 - Что чинит: чтение `/proc/<pid>/exe` для процесса с повышенными привилегиями (например, под
-  `sudo`) без повышенных прав самого wezterm всегда возвращает пустой путь → в списке процессов
+  `sudo`) без повышенных прав самого onlyterm всегда возвращает пустой путь → в списке процессов
   остаётся только шелл, из-за чего `can_close_without_prompting` неверно считает, что "опасного"
   дочернего процесса нет, и таб закрывается без подтверждения, хотя внутри всё ещё работает,
   например, `sudo apt install`.
@@ -264,29 +264,29 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 ### Windows-специфичные баги
 
 ### PR #7955 — Fix duplicate blob storage on Windows
-- Что чинит: `SimpleTempDir::store` в `wezterm-blob-leases/src/simple_tempdir.rs` перезаписывает
+- Что чинит: `SimpleTempDir::store` в `onlyterm-blob-leases/src/simple_tempdir.rs` перезаписывает
   файл по content-hash пути при каждом сохранении; если у него ещё открыт читатель — Windows
   возвращает "Access is denied" (error 5), что ломает повторную загрузку одинакового контента
   (например, анимированных фонов в дополнительных окнах). Фикс — переиспользовать существующий blob
   и инкрементить refcount.
-- Применимо: `wezterm-blob-leases/src/simple_tempdir.rs` присутствует без изменений.
+- Применимо: `onlyterm-blob-leases/src/simple_tempdir.rs` присутствует без изменений.
 - Сложность: trivial-easy (плюс регресс-тест в PR).
 - Приоритет: medium.
 
-### PR #7896 — windows: publish absolute gui sock path so `wezterm cli` connects from any cwd
+### PR #7896 — windows: publish absolute gui sock path so `onlyterm cli` connects from any cwd
 ### PR #7698 — windows: resolve gui socket path from runtime dir
-- Что чинит (обе вместе): на Windows discovery GUI-сокета (`wezterm-client/src/discovery.rs`)
+- Что чинит (обе вместе): на Windows discovery GUI-сокета (`onlyterm-client/src/discovery.rs`)
   публикует только имя файла в shared memory; при резолве это имя ошибочно трактуется как полный
-  путь → `wezterm cli` не может подключиться к работающему GUI, если cwd клиента не совпадает с
+  путь → `onlyterm cli` не может подключиться к работающему GUI, если cwd клиента не совпадает с
   runtime dir. #7896 чинит сторону публикации, #7698 — сторону резолва (join с
   `config::RUNTIME_DIR`); это дополняющие друг друга половины одного и того же исправления одного
   файла.
-- Применимо: `wezterm-client/src/discovery.rs` присутствует, не менялся.
+- Применимо: `onlyterm-client/src/discovery.rs` присутствует, не менялся.
 - Сложность: trivial (оба патча небольшие; переносить вместе, а не по отдельности).
-- Приоритет: medium-high (базовая функциональность `wezterm cli` на Windows).
+- Приоритет: medium-high (базовая функциональность `onlyterm cli` на Windows).
 
 ### PR #7879 — fix: allow navigation to non-admin symlinks on Windows
-- Что чинит: Windows-инсталлятор (Inno Setup) ломается при симлинке `~/.config/wezterm`
+- Что чинит: Windows-инсталлятор (Inno Setup) ломается при симлинке `~/.config/onlyterm`
   ("The path cannot be traversed because it contains an untrusted mount point", os error 448) —
   актуально для пользователей, симлинкающих versioned dotfiles.
 - Применимо: `ci/windows-installer.iss` присутствует.
@@ -297,8 +297,8 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: при делегировании spawn к уже работающему GUI, флаг `--attach` не долетал до
   `domain_spawn_v2` — новая панель могла спауниться не так, как просил пользователь (без attach к
   уже detached домену). Требует бампа версии codec (`SpawnV2`, 45→46).
-- Применимо: `codec/src/lib.rs`, `wezterm-client/src/domain.rs`,
-  `wezterm-mux-server-impl/src/sessionhandler.rs`, `wezterm/src/cli/spawn_command.rs` — все на
+- Применимо: `codec/src/lib.rs`, `onlyterm-client/src/domain.rs`,
+  `onlyterm-mux-server-impl/src/sessionhandler.rs`, `onlyterm/src/cli/spawn_command.rs` — все на
   месте.
 - Сложность: needs adaptation (нужно свериться с текущим codec version counter, но сама правка
   небольшая).
@@ -309,17 +309,17 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   применяются к уже устаревшему состоянию (из-за гонки resize/resync), в результате конечный размер
   панели хаотично отличается от желаемого — на видео проиллюстрирован "дребезг" сплита при быстром
   перетаскивании границы.
-- Применимо: `mux/src/tab.rs`, `wezterm-gui/src/termwindow/mouseevent.rs` не менялись.
+- Применимо: `mux/src/tab.rs`, `onlyterm-gui/src/termwindow/mouseevent.rs` не менялись.
 - Сложность: needs adaptation (нужно перейти на абсолютные позиции вместо дельт в resize-протоколе
   сплита).
 - Приоритет: medium (UX-баг при интерактивном ресайзе сплитов, не крэш, но раздражающий и
   воспроизводимый).
 
 ### PR #6881 — Fix build fails when the target dir doesn't exist
-- Что чинит: `wezterm-gui/build.rs` копирует `OpenConsole.exe` и т.п. в дефолтный `target/` на
+- Что чинит: `onlyterm-gui/build.rs` копирует `OpenConsole.exe` и т.п. в дефолтный `target/` на
   Windows; если используется кастомный `CARGO_TARGET_DIR`, копирование падает и сборка прерывается.
   Фикс — читать `CARGO_TARGET_DIR` перед копированием.
-- Применимо: `wezterm-gui/build.rs` присутствует.
+- Применимо: `onlyterm-gui/build.rs` присутствует.
 - Сложность: trivial.
 - Приоритет: low-medium (влияет на воспроизводимость сборки в нестандартных окружениях, что
   релевантно для форка с собственной CI).
@@ -336,7 +336,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Приоритет: medium.
 
 ### PR #7966 — wayland: honor compositor size for tiled windows (eg: sway)
-- Что чинит: на тайлинг-композиторах (sway) wezterm рендерится в узкую область вместо выделенного
+- Что чинит: на тайлинг-композиторах (sway) onlyterm рендерится в узкую область вместо выделенного
   тайла; причина — спекулятивный resize (`apply_dimensions()`/`set_inner_size`) при первом
   определении scale factor перезаписывает compositor-заданный tiled size собственным configure.
 - Применимо: `window/src/lib.rs`, `window/src/os/wayland/window.rs`.
@@ -353,19 +353,19 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Приоритет: medium.
 
 ### PR #7548 — Treat SCTKWindowState::TILED as a maximized state
-- Что чинит: SCTK ввёл `TILED` состояние вместо/вместе с `MAXIMIZED`; wezterm его не обрабатывает
+- Что чинит: SCTK ввёл `TILED` состояние вместо/вместе с `MAXIMIZED`; onlyterm его не обрабатывает
   и считает тайловое окно resizable, что рендерит в неверном размере.
 - Применимо: `window/src/os/wayland/window.rs`.
 - Сложность: trivial.
 - Приоритет: medium.
 
 ### PR #7735 — Fix wgpu/Vulkan rendering on Wayland compositors (like Niri)
-- Что чинит: без этого фикса окна wezterm зависают на старте или становятся неотзывчивыми при
+- Что чинит: без этого фикса окна onlyterm зависают на старте или становятся неотзывчивыми при
   `front_end = "WebGpu"` на Wayland+Vulkan; на tiling-компоузерах (Niri) фриз происходит сразу и не
   лечится ресайзом. Причина — конфликт между `wl_surface.frame()` callback throttling через SCTK
   (расчитан на EGL/`eglSwapBuffers`) и собственным управлением commit'ами surface в Vulkan WSI
   (`vkQueuePresentKHR`).
-- Применимо: `wezterm-gui/src/renderstate.rs`, `wezterm-gui/src/termwindow/{webgpu.rs,render/draw.rs}`,
+- Применимо: `onlyterm-gui/src/renderstate.rs`, `onlyterm-gui/src/termwindow/{webgpu.rs,render/draw.rs}`,
   `window/src/os/wayland/window.rs` — все присутствуют, WebGPU-бэкенд у нас в строю.
 - Сложность: needs adaptation (два независимых фикса: frame-callback bypass + что-то ещё, детали
   обрезаны в теле PR — требуется прочитать диф целиком перед портированием).
@@ -390,12 +390,12 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 
 ### PR #7944 — Fix: Kitty keyboard protocol drops single-char Composed key events
 ### PR #7915 — fix: encode Composed keys properly in Kitty keyboard protocol
-- Что чинят (дублирующие фиксы одного бага): `encode_kitty()` в `wezterm-input-types/src/lib.rs` не
+- Что чинят (дублирующие фиксы одного бага): `encode_kitty()` в `onlyterm-input-types/src/lib.rs` не
   имеет ветки для `KeyCode::Composed` (символ от IME/emoji picker без "сырого" hardware-события) —
   падает в catch-all, который требует `self.raw`, а он всегда `None` → функция молча возвращает
   пустую строку, нажатие теряется без ошибки. Особенно заметно при CJK-вводе (китайский/корейский)
   под Kitty-протоколом на Windows.
-- Применимо: `wezterm-input-types/src/lib.rs` присутствует без изменений.
+- Применимо: `onlyterm-input-types/src/lib.rs` присутствует без изменений.
 - Сложность: trivial (добавить match-ветку для `Composed`); #7944 и #7915 — по сути конкурирующие
   реализации одного и того же фикса, переносить одну (любую, суть идентична).
 - Приоритет: high (полная потеря ввода CJK-текста при активном kitty-протоколе — серьёзная
@@ -415,7 +415,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   приложения вроде `less`/`git show`, которые ставят DECCKM и ждут `ESC O {key}`, ломаются (стрелки
   не скроллят), если включен kitty keyboard protocol.
 - Применимо: `mux/src/{localpane.rs,pane.rs}`, `term/src/terminalstate/mod.rs`,
-  `wezterm-gui/src/termwindow/keyevent.rs`, `wezterm-input-types/src/lib.rs` — все на месте.
+  `onlyterm-gui/src/termwindow/keyevent.rs`, `onlyterm-input-types/src/lib.rs` — все на месте.
 - Сложность: needs adaptation (несколько файлов, но логика точечная — учитывать DECCKM в
   kitty-кодере).
 - Приоритет: medium-high (ломает базовую навигацию в `less`/pagers при включённом kitty-протоколе).
@@ -432,19 +432,19 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: `repeat_count` в kitty-протоколе на всех платформах захардкожен в 1 — автор явно
   пишет, что реализовал только для macOS и "не имеет ресурсов" доделать остальные платформы; PR —
   отправная точка, а не готовый фикс.
-- Применимо: `wezterm-input-types/src/lib.rs`, `wezterm-gui/src/termwindow/keyevent.rs`,
+- Применимо: `onlyterm-input-types/src/lib.rs`, `onlyterm-gui/src/termwindow/keyevent.rs`,
   `window/src/os/macos/window.rs` — на месте.
 - Сложность: substantial (реализация не завершена самим автором; чтобы закрыть баг полностью,
   нужно доделать Linux/Windows).
 - Приоритет: medium (несоответствие спецификации kitty-протокола, но не крэш).
 
 ### PR #6849 — Remove `mode` from `PushKittyState` CSI representation
-- Что чинит: термвиз (у нас — `wezterm-escape-parser`) излишне эмитит/принимает необязательный
+- Что чинит: термвиз (у нас — `onlyterm-escape-parser`) излишне эмитит/принимает необязательный
   параметр `mode` в push-последовательности kitty keyboard protocol, чего нет ни в спецификации,
   ни в референсной реализации kitty — расхождение со спецификацией протокола.
-- Применимо: `term/src/terminalstate/performer.rs`, `wezterm-escape-parser/src/csi.rs` (было
+- Применимо: `term/src/terminalstate/performer.rs`, `onlyterm-escape-parser/src/csi.rs` (было
   `termwiz/src/escape/csi.rs` в апстриме — у нас этот код просто переехал в отдельный крейт
-  `wezterm-escape-parser`, логика идентична).
+  `onlyterm-escape-parser`, логика идентична).
 - Сложность: trivial.
 - Приоритет: medium (протокольная корректность для приложений, строго проверяющих кодирование).
 
@@ -452,7 +452,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: локальные панели кодируют kitty keyboard protocol корректно, но панели через mux идут
   другим кодовым путём и не кодируют его вовсе.
 - Применимо: `termwiz/src/input.rs` присутствует (обратите внимание: несмотря на переезд
-  escape-парсера в `wezterm-escape-parser`, `termwiz` как крейт у нас тоже остаётся — см.
+  escape-парсера в `onlyterm-escape-parser`, `termwiz` как крейт у нас тоже остаётся — см.
   Cargo.toml workspace members).
 - Сложность: needs adaptation (нужно свести локальный и mux code path).
 - Приоритет: medium-high (полная потеря kitty-протокола в самом частом сценарии — мультиплексовании).
@@ -481,7 +481,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   широкого символа; двойной клик по слову оставляет "хвост" широкого символа невыделенным. Две
   независимые причины — в `compute_double_click_range` (Line::compute_double_click_range) не
   учитывается ширина ячейки, и в обработке click/drag выделения.
-- Применимо: `wezterm-gui/src/termwindow/mouseevent.rs`, `wezterm-surface/src/line/line.rs` — на
+- Применимо: `onlyterm-gui/src/termwindow/mouseevent.rs`, `onlyterm-surface/src/line/line.rs` — на
   месте (термин "surface" — наш аналог/потомок структуры line из термвиза, не тронут миграцией).
 - Сложность: needs adaptation (несколько файлов, есть новый тест).
 - Приоритет: medium (заметный, регулярно воспроизводимый баг для CJK-пользователей).
@@ -497,8 +497,8 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 
 ### PR #7626 — fix: suppress duplicate DA responses for tmux control mode panes
 ### PR #7292 — tmux-CC: suppress capability handshakes in control mode
-- Что чинят (пересекающийся кластер): под `tmux -CC` и tmux, и wezterm отвечают на DA/capability
-  запросы приложения (например, neovim) — приложение получает ответ от tmux сразу, а ответ wezterm
+- Что чинят (пересекающийся кластер): под `tmux -CC` и tmux, и onlyterm отвечают на DA/capability
+  запросы приложения (например, neovim) — приложение получает ответ от tmux сразу, а ответ onlyterm
   приходит с опозданием через control-протокол уже после выхода приложения → в шелле остаётся
   "мусорная" escape-последовательность на экране. #7292 — более общее решение (перехват и
   DA/OSC/CSI/DCS handshake, буферизация по панели), #7626 — более узкое (только DA1/2/3).
@@ -511,7 +511,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 ### PR #7148 — fix: tmux -CC "Unrecognized tmux cc line error for %unlinked-window-renamed"
 - Что чинит: парсер control-mode строк (`tmux_cc/tmux.pest`) не знает событие
   `%unlinked-window-renamed`, что приводит к ошибке парсинга.
-- Применимо: `wezterm-escape-parser/src/tmux_cc/{mod.rs,tmux.pest}` — présent (переехало вместе с
+- Применимо: `onlyterm-escape-parser/src/tmux_cc/{mod.rs,tmux.pest}` — présent (переехало вместе с
   остальным escape-parser кодом, логика та же).
 - Сложность: trivial (добавить правило в pest-грамматику).
 - Приоритет: low-medium.
@@ -528,14 +528,14 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: пропущенные параметры в sixel color-определениях (`#1;2;;50;`) неверно трактуются как
   100 из-за -1 sentinel-значений, переполняющихся при приведении типов; по спецификации DEC Sixel
   пропущенный параметр должен по умолчанию быть 0.
-- Применимо: `wezterm-escape-parser/src/parser/sixel.rs`.
+- Применимо: `onlyterm-escape-parser/src/parser/sixel.rs`.
 - Сложность: trivial.
 - Приоритет: medium (протокольная корректность рендеринга sixel-изображений).
 
 ### PR #2724 — termwiz: revert to using semicolon when encoding 8 bit SGR colors
 - Что чинит: Windows-консоль не поддерживает 8-битные (256-цветные) SGR-последовательности с
   двоеточием-разделителем (только true-color нужно двоеточие), regression от более раннего коммита.
-- Применимо: **подтверждено чтением исходников** — в `wezterm-escape-parser/src/csi.rs`, макрос
+- Применимо: **подтверждено чтением исходников** — в `onlyterm-escape-parser/src/csi.rs`, макрос
   `ansi_color!` (строка ~1513), у нас до сих пор `write!(f, "{}:5:{}m", ...)` для 8-битного индекса
   палитры — то есть баг из PR **буквально всё ещё присутствует** в нашем коде один в один.
 - Сложность: trivial (поменять формат-строку `"{}:5:{}m"` → `"{};5;{}m"`, аналогично для
@@ -548,38 +548,38 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: при detach→reattach к mux-серверу пользовательские переменные (`user_vars`) теряются,
   потому что `GetPaneRenderChangesResponse` их не включает — добавляется поле `user_vars` в
   response.
-- Применимо: `codec/src/lib.rs`, `wezterm-client/src/pane/clientpane.rs`,
-  `wezterm-mux-server-impl/src/sessionhandler.rs` — на месте.
+- Применимо: `codec/src/lib.rs`, `onlyterm-client/src/pane/clientpane.rs`,
+  `onlyterm-mux-server-impl/src/sessionhandler.rs` — на месте.
 - Сложность: trivial (+4 строки в апстримном диффе).
 - Приоритет: low-medium.
 
 ### Разное — функциональные баги
 
-### PR #6913 — fix: wezterm cli set-window-title #4899
-- Что чинит: `wezterm cli set-window-title foo` не применяет заголовок, если нет
+### PR #6913 — fix: onlyterm cli set-window-title #4899
+- Что чинит: `onlyterm cli set-window-title foo` не применяет заголовок, если нет
   `format-window-title` Lua/rhai-обработчика — фикс переставляет приоритет источников заголовка
   (заголовок объекта окна > дефолт), если нет обработчика форматирования.
-- Применимо: `wezterm-gui/src/termwindow/mod.rs`.
+- Применимо: `onlyterm-gui/src/termwindow/mod.rs`.
 - Сложность: trivial.
 - Приоритет: medium (базовая CLI-функциональность, которая просто не работает).
 
 ### PR #7091 — Prevent shell integration from interfering with other terminal programs
 ### PR #6957 — fix: disable shell integration inside a Neovim terminal
-- Что чинят: `assets/shell-integration/wezterm.sh` подключается через
-  `/etc/profile.d/wezterm.sh` без проверки, что текущий терминал — именно wezterm, из-за чего
+- Что чинят: `assets/shell-integration/onlyterm.sh` подключается через
+  `/etc/profile.d/onlyterm.sh` без проверки, что текущий терминал — именно onlyterm, из-за чего
   ломает поведение других терминалов, и отдельно — печатает мусор перед промптом внутри
   `:terminal` в Neovim.
-- Применимо: `assets/shell-integration/wezterm.sh` — присутствует без изменений (shell-интеграция
+- Применимо: `assets/shell-integration/onlyterm.sh` — присутствует без изменений (shell-интеграция
   не зависит от Lua/rhai/рендера).
 - Сложность: trivial (shell-скрипт, без Rust-кода).
 - Приоритет: medium (влияет на всех пользователей неосознанно, если у них установлен
-  `/etc/profile.d/wezterm.sh`, даже когда они пользуются другим терминалом).
+  `/etc/profile.d/onlyterm.sh`, даже когда они пользуются другим терминалом).
 
 ### PR #7694 — Fix error when decode webp images
 - Что чинит: встроенный в крейт `image` WebP-декодер поддерживает только lossless-кодирование —
   lossy webp (частый в реальных файлах) не декодируется, ошибка. Фикс — переезд на выделенный крейт
   `image-webp` того же вендора.
-- Применимо: **подтверждено** — `wezterm-gui/src/glyphcache.rs` действительно использует
+- Применимо: **подтверждено** — `onlyterm-gui/src/glyphcache.rs` действительно использует
   `image::codecs::webp::WebPDecoder` (строка ~297), т.е. подвержен той же проблеме.
 - Сложность: trivial (замена зависимости/декодера в Cargo.toml + glyphcache.rs).
 - Приоритет: medium (background/inline images в lossy webp сейчас не грузятся вовсе).
@@ -601,8 +601,8 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   распространяется на удалённый mux-сервер; попутно чинится опечатка в Lua API (rotate всегда
   крутил в одну сторону).
 - Применимо: широкий охват файлов (`mux/src/{domain.rs,lib.rs,tab.rs}`,
-  `wezterm-client/src/{client.rs,domain.rs}`, `wezterm-gui/src/{frontend.rs,termwindow/mod.rs,
-  termwindow/paneselect.rs}`, `wezterm-mux-server-impl/*`, `lua-api-crates/mux/src/tab.rs`) — все
+  `onlyterm-client/src/{client.rs,domain.rs}`, `onlyterm-gui/src/{frontend.rs,termwindow/mod.rs,
+  termwindow/paneselect.rs}`, `onlyterm-mux-server-impl/*`, `lua-api-crates/mux/src/tab.rs`) — все
   присутствуют.
 - Сложность: substantial (добавление RPC для ротации/свапа панелей через mux-домен — не тривиальный
   перенос, но код-база позволяет).
@@ -613,7 +613,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: URL-хайлайтинг под курсором использует номер строки, посчитанный относительно активной
   панели, но это не всегда верно (мультипанельные раскладки) — подсветка URL может сработать не в
   той панели.
-- Применимо: `wezterm-gui/src/termwindow/mouseevent.rs`.
+- Применимо: `onlyterm-gui/src/termwindow/mouseevent.rs`.
 - Сложность: trivial (добавить проверку, что курсор реально над активной панелью).
 - Приоритет: medium.
 
@@ -621,7 +621,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: `OpenLinkAtMouseCursor` / `CompleteSelectionOrOpenLinkAtMouseCursor` не работают в
   режиме mouse reporting (когда приложение внутри перехватывает мышь, например vim/tmux) для
   дефолтных и пользовательских биндингов.
-- Применимо: `wezterm-gui/src/termwindow/mouseevent.rs`.
+- Применимо: `onlyterm-gui/src/termwindow/mouseevent.rs`.
 - Сложность: trivial.
 - Приоритет: low-medium.
 
@@ -637,7 +637,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: оверлеи ввода текста (`PromptInputLine`, например, переименование таба) теряют
   IME-скоммиченный текст (`KeyCode::Composed`) — добавляется `Pane::send_composed_text` для
   правильной маршрутизации.
-- Применимо: `mux/src/{pane.rs,termwiztermtab.rs}`, `wezterm-gui/src/termwindow/keyevent.rs`.
+- Применимо: `mux/src/{pane.rs,termwiztermtab.rs}`, `onlyterm-gui/src/termwindow/keyevent.rs`.
 - Сложность: needs adaptation.
 - Приоритет: medium (та же категория проблем с CJK/IME вводом, что #7944/#7915/#7494, но в другом
   UI-контексте — оверлеи, а не основной терминал).
@@ -646,7 +646,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 - Что чинит: под i3 (и, вероятно, некоторыми другими WM) клик мышью может прийти раньше события
   фокуса окна; сейчас клик по неактивному окну не долетает до приложения внутри. Автор сам называет
   PR черновым и не уверен в правильности места фикса.
-- Применимо: `wezterm-gui/src/termwindow/mouseevent.rs`.
+- Применимо: `onlyterm-gui/src/termwindow/mouseevent.rs`.
 - Сложность: trivial-ish идея, но требует валидации на реальном i3/подобных WM перед принятием
   (гонка порядка событий, а не гарантированно детерминированный фикс).
 - Приоритет: low-medium.
@@ -654,7 +654,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 ### PR #7730 — Fix IPv6 rule in quick select parsing
 - Что чинит: регулярное выражение для quick-select IPv6-паттерна ошибочно: `A-f` (диапазон символов)
   не равно `A-Fa-f` (буквы A-F в обоих регистрах) и вдобавок захватывает лишние символы `\~]^`.
-- Применимо: `wezterm-gui/src/overlay/quickselect.rs`.
+- Применимо: `onlyterm-gui/src/overlay/quickselect.rs`.
 - Сложность: trivial (однострочная правка regex).
 - Приоритет: low.
 
@@ -667,8 +667,8 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 
 ### N/A — подсистема удалена в нашем форке (SSH-клиент / freetype-internals)
 
-### PR #7812 — fix(wezterm-ssh): support tilde expansion and multiple files for include directive
-- N/A — SSH-клиент (`wezterm-ssh`) в нашем форке удалён целиком; ssh_config-парсинг отсутствует.
+### PR #7812 — fix(onlyterm-ssh): support tilde expansion and multiple files for include directive
+- N/A — SSH-клиент (`onlyterm-ssh`) в нашем форке удалён целиком; ssh_config-парсинг отсутствует.
 
 ### PR #7745 — ssh: IdentitiesOnly=yes should filter agent keys, not skip agent auth
 - N/A — то же самое, SSH-клиент удалён.
@@ -709,7 +709,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
 
 ### Наш подход (уже сделан, не POC, в проде)
 
-- **Шейпинг**: `wezterm-font/src/shaper/rustybuzz.rs` — используем **rustybuzz** (чистый Rust порт
+- **Шейпинг**: `onlyterm-font/src/shaper/rustybuzz.rs` — используем **rustybuzz** (чистый Rust порт
   HarfBuzz), а не harfrust (более новый, отдельный от HarfBuzz-семейства проект). rustybuzz —
   консервативный выбор: he максимально совместим по API/поведению с оригинальным HarfBuzz (это
   прямой построчный порт C++ кода), что снижает риск регрессий в сложных скриптах (арабский,
@@ -718,11 +718,11 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   идиоматичная, но менее "проверена боем" на момент разбора. **Вывод**: наш выбор rustybuzz
   консервативнее и безопаснее; апстримный harfrust потенциально быстрее — стоит держать это в поле
   зрения как будущую опцию для замены, но не как немедленную необходимость.
-- **Растеризация**: `wezterm-font/src/rasterizer/swash.rs` + `swash_metrics.rs` — тоже **swash**,
+- **Растеризация**: `onlyterm-font/src/rasterizer/swash.rs` + `swash_metrics.rs` — тоже **swash**,
   то есть в этой части наш выбор идентичен POC #7607. Значит, для растеризации мы уже пришли к тому
   же решению, которое апстрим только предлагает как эксперимент — мы здесь не "отстаём", а по факту
   уже в проде используем то же самое решение, которое там всё ещё experimental/POC.
-- **2D-рисование/композитинг (замена Cairo)**: `wezterm-font/src/rasterizer/paint.rs` — наш
+- **2D-рисование/композитинг (замена Cairo)**: `onlyterm-font/src/rasterizer/paint.rs` — наш
   собственный `Painter`, реализующий cairo-совместимый API (save/restore, transform, path-builder,
   push_group/pop_group, clip-маски) поверх **tiny-skia**, с явным протоколом "dry-run для расчёта
   ink extents → второй проход в реальный Pixmap" (комментарий в файле подробно объясняет, почему
@@ -736,7 +736,7 @@ wezterm-gui/termwindow, codec, tmux-CC. Поэтому подавляющее б
   Painter.
 - **Fontconfig**: здесь у нас **не полное соответствие POC** — `deps/fontconfig/` в нашем форке
   по-прежнему **линкуется с системной C-библиотекой fontconfig** через `pkg-config` (см.
-  `deps/fontconfig/build.rs`, `wezterm-font/src/fcwrap.rs` — это FFI-обёртка над `FcFontSet` и
+  `deps/fontconfig/build.rs`, `onlyterm-font/src/fcwrap.rs` — это FFI-обёртка над `FcFontSet` и
   т.п., не переписана на чистый Rust). Мы удалили freetype/harfbuzz/cairo как C-зависимости, но
   **fontconfig как единственная оставшаяся C-библиотека всё ещё используется** (только для
   Linux-поиска шрифтов на диске). **Это единственная конкретная идея из POC #7607, которую мы
@@ -809,7 +809,7 @@ tracking) у нас не реализованы и являются самост
 #7828 Fix hyperlink hover underline for identical text with different links
 #7826 x11: handle horizontal scroll wheel (buttons 6 and 7)
 #7823 Add opt-in forwarding for macOS marked text
-#7820 Add Wine build instructions for wezterm-gui
+#7820 Add Wine build instructions for onlyterm-gui
 #7816 Fix stale mouse move restoring hidden cursor and URL hover
 #7809 tab bar: add tab_bar_width config to stretch tabs across the bar
 #7789 filedescriptor: Add `into_stdio` conversion
@@ -865,7 +865,7 @@ tracking) у нас не реализованы и являются самост
 #7555 fix: set DBus notification priority to normal
 #7554 build(deps): bump bytes from 1.10.1 to 1.11.1
 #7539 Change display order of `key` and `mode` in `show-keys --lua`
-#7526 fix(wezterm-gui): max tab title length
+#7526 fix(onlyterm-gui): max tab title length
 #7510 termwindow: emit pane-focus-changed window event
 #7500 Add new window_close_mux_behavior config option
 #7493 feat(macos): add services for opening folders
@@ -880,12 +880,12 @@ tracking) у нас не реализованы и являются самост
 #7390 Alpine: Add static libraries for OpenSSL and zlib
 #7385 feat: smart case search
 #7381 docs: replace literal `\n` with `<br/>` in flowchart labels
-#7379 wezterm ssh: add `--assume-shell` argument
+#7379 onlyterm ssh: add `--assume-shell` argument
 #7360 wayland: Show client-side decorations when compositor doesn't provide server-side
 #7357 Implement hide window operation for x11 windows
 #7352 Support background image blurring
 #7349 Add bell_urgency_hint config option and window:request_attention() API
-#7338 Removed "start --cwd ." from Exec=wezterm in wezterm/assets/wezterm.desktop
+#7338 Removed "start --cwd ." from Exec=onlyterm in onlyterm/assets/onlyterm.desktop
 #7312 Abandon kitty's legacy key event encoding
 #7296 Add PowerShell integration script
 #7284 docs: Improve get_progress example circle rendering
@@ -904,7 +904,7 @@ tracking) у нас не реализованы и являются самост
 #7178 pty!: Fix typo: psuedo => pseudo
 #7170 build(deps): bump xcb from 1.5.0 to 1.6.0
 #7161 Add CopyMode overlay to TermwizTerminalPane overlays
-#7160 wezterm-ssh: support ProxyJump in ssh config
+#7160 onlyterm-ssh: support ProxyJump in ssh config
 #7151 build(deps): bump slab from 0.4.10 to 0.4.11
 #7146 FEATURE: Add metadata for cargo-deb build
 #7140 copy_mode: implement `MoveToBlankLine`
@@ -926,9 +926,9 @@ tracking) у нас не реализованы и являются самост
 #6876 Introduce `win32_window_appearance` to override Windows setting
 #6856 Support SGR DECRQSS
 #6821 lua-api-crates/mux: expose swap_active_with_index
-#6756 WezTerm Shell Context Menu for Windows 11
+#6756 OnlyTerm Shell Context Menu for Windows 11
 #6657 Improve dragging and double-clicking for maximize on the tab bar
-#6610 wezterm-ssh: make SshPty fields public
+#6610 onlyterm-ssh: make SshPty fields public
 #6533 Improve Wayland scroll behavior
 #6527 feat: reorder tabs via left mouse drag
 #6511 Fixed cursor blinking on transparent backgrounds
@@ -946,7 +946,7 @@ tracking) у нас не реализованы и являются самост
 #5850 feat: Identify modifiers on Wayland/X11 (new)
 #5820 Add plugin aliases
 #5780 Simplify wayland configure event
-#5779 wezterm-ssh: add support for comments in `Match` statements
+#5779 onlyterm-ssh: add support for comments in `Match` statements
 #5573 replace all 'psuedo' by 'pseudo'
 #5567 Hotfix/search overlay move to end of line
 #5452 doc: Use more stable format when first describing SGR sequence
@@ -963,7 +963,7 @@ tracking) у нас не реализованы и являются самост
 #4767 Expose as_command API on CommandBuilder
 #4727 Improve integrated titlebar buttons on macos
 #4635 Windows rs
-#4493 Path and MetaData objects + `wezterm.<functions>`
+#4493 Path and MetaData objects + `onlyterm.<functions>`
 #4413 Fix Gnome window buttons DPI scaling
 #4393 Start line selection at 0th cell
 #4336 Adding some functions to work with Lua tables.

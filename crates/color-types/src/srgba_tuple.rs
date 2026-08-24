@@ -6,13 +6,13 @@ use csscolorparser::Color;
 #[cfg(not(feature = "std"))]
 #[allow(unused)]
 use num_traits::float::Float;
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::sync::LazyLock;
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -89,7 +89,7 @@ impl FromDynamic for SrgbaTuple {
     fn from_dynamic(
         value: &Value,
         options: FromDynamicOptions,
-    ) -> Result<Self, wezterm_dynamic::Error> {
+    ) -> Result<Self, onlyterm_dynamic::Error> {
         let s = String::from_dynamic(value, options)?;
         Ok(SrgbaTuple::from_str(&s).map_err(|()| format!("unknown color name: {}", s))?)
     }

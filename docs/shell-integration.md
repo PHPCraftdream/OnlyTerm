@@ -42,17 +42,17 @@ given pane rather than a process.
 Installing the OnlyTerm shell integration will define the following user vars
 by default:
 
-* `WEZTERM_PROG` - the command line being executed by the shell
-* `WEZTERM_USER` - holds the output from `id -un`; the current user name
-* `WEZTERM_HOST` - holds the output from `hostname`; the hostname that the shell is running on
-* `WEZTERM_IN_TMUX` - holds `1` if the shell is running inside tmux, `0` otherwise
+* `ONLYTERM_PROG` - the command line being executed by the shell
+* `ONLYTERM_USER` - holds the output from `id -un`; the current user name
+* `ONLYTERM_HOST` - holds the output from `hostname`; the hostname that the shell is running on
+* `ONLYTERM_IN_TMUX` - holds `1` if the shell is running inside tmux, `0` otherwise
 
 If you are a tmux user, you must ensure that you have `set -g allow-passthrough on` set
 in your tmux.conf for user vars to work.
 
 Those vars will be updated each time the prompt is shown and just prior to executing a command.
 
-The shell integration provides a shell function named `__wezterm_set_user_var` which can be
+The shell integration provides a shell function named `__onlyterm_set_user_var` which can be
 used to set your own user vars.
 
 Setting a user var will generate events in the window that contains

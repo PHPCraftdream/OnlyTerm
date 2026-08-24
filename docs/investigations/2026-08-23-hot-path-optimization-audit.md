@@ -20,7 +20,7 @@
 
 ### 1. Перемещать `CellCluster`, а не клонировать
 
-Файл: `crates/wezterm-gui/src/termwindow/render/screen_line.rs:766-893`.
+Файл: `crates/onlyterm-gui/src/termwindow/render/screen_line.rs:766-893`.
 
 `build_line_element_shape` итерирует `&cell_clusters`, а затем делает `cluster.clone()`. `CellCluster` содержит `String` и индексные `Vec`, поэтому clone создаёт реальные heap-аллокации на каждый shape-cache miss.
 
@@ -30,7 +30,7 @@
 
 ### 2. Убрать временные `Vec` из frame signature
 
-Файл: `crates/wezterm-gui/src/termwindow/render/draw.rs:263-281`.
+Файл: `crates/onlyterm-gui/src/termwindow/render/draw.rs:263-281`.
 
 Каждый вызов `call_draw_webgpu` создаёт несколько временных коллекций:
 
@@ -45,7 +45,7 @@ Signature считается до `build_webgpu_frame`/`build_wire_frame`, по�
 
 ### 3. Упростить структуру `AtlasMirrorLog`
 
-Файл: `crates/wezterm-gpu-render/src/webgpu/mod.rs:271-320`.
+Файл: `crates/onlyterm-gpu-render/src/webgpu/mod.rs:271-320`.
 
 Сейчас используются:
 
@@ -65,7 +65,7 @@ HashSet<AtlasRect>
 
 ### 4. Immutable snapshots строк с переиспользованием по seqno
 
-Файлы: `crates/term/src/screen.rs:565`, `crates/mux/src/pane.rs:591`, GUI вызов из `crates/wezterm-gui/src/termwindow/render/pane.rs:860`.
+Файлы: `crates/term/src/screen.rs:565`, `crates/mux/src/pane.rs:591`, GUI вызов из `crates/onlyterm-gui/src/termwindow/render/pane.rs:860`.
 
 Сейчас видимые строки глубоко клонируются при каждом paint, чтобы отпустить terminal mutex до shaping/render. Это правильно с точки зрения блокировок, но дорого по памяти.
 
@@ -79,7 +79,7 @@ HashSet<AtlasRect>
 
 ### 5. Уменьшить аллокации Rustybuzz shaping
 
-Файл: `crates/wezterm-font/src/shaper/rustybuzz.rs:606-683, 958-1034`.
+Файл: `crates/onlyterm-font/src/shaper/rustybuzz.rs:606-683, 958-1034`.
 
 Текущая реализация создаёт `Vec<Vec<Info>>`, то есть потенциально отдельную heap-аллокацию на cluster. Дополнительные `HashMap` создаются в `ClusterResolver` на каждый shape invocation.
 
@@ -94,7 +94,7 @@ HashSet<AtlasRect>
 
 ### 6. Scratch pool всё ещё делает полную копию
 
-Файл: `crates/wezterm-gui/src/renderstate.rs:359-381`.
+Файл: `crates/onlyterm-gui/src/renderstate.rs:359-381`.
 
 `scratch_pool` убирает новые allocations, но `accumulate_instances` копирует весь scratch `Vec<QuadInstance>` в accumulator. Можно исследовать chunked/page storage или прямой append с явной поддержкой вложенных `with_quad_allocator` вызовов.
 
@@ -103,8 +103,8 @@ HashSet<AtlasRect>
 ## Низкоприоритетные кандидаты
 
 - `crates/mux/src/lib.rs:508-520`: `snapshot` и `dead` в `Mux::notify` можно перевести на `SmallVec`; integer-key map с AHash проверять только после измерения. Lock/queue semantics важнее hasher’а.
-- `crates/wezterm-gui/src/termwindow/render/pane.rs:550`: `Value::String("password_input".to_string())` создаётся для cursor row; нужен typed metadata accessor или переиспользуемый ключ.
-- `crates/wezterm-gui/src/termwindow/render/mod.rs:1196`: basename foreground process всё ещё материализуется через `into_owned`, но после hoist это одна аллокация на pane/frame, а не на каждую строку.
+- `crates/onlyterm-gui/src/termwindow/render/pane.rs:550`: `Value::String("password_input".to_string())` создаётся для cursor row; нужен typed metadata accessor или переиспользуемый ключ.
+- `crates/onlyterm-gui/src/termwindow/render/mod.rs:1196`: basename foreground process всё ещё материализуется через `into_owned`, но после hoist это одна аллокация на pane/frame, а не на каждую строку.
 - `build_webgpu_frame`/`build_wire_frame` создают маленький внешний `Vec<GpuDraw`; `SmallVec` возможен, но ожидаемый выигрыш ниже, чем у устранения line clone и signature vectors.
 
 ## Хешеры и контейнеры: что не менять вслепую

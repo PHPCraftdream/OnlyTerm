@@ -21,9 +21,9 @@ This example demonstrates using the launcher menu to select and create workspace
 and how the workspace can be shown in the right status area.
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('update-right-status', function(window, pane)
+onlyterm.on('update-right-status', function(window, pane)
   window:set_right_status(window:active_workspace())
 end)
 
@@ -32,7 +32,7 @@ return {
     {
       key = '9',
       mods = 'ALT',
-      action = wezterm.action.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' },
+      action = onlyterm.action.ShowLauncherArgs { flags = 'FUZZY|WORKSPACES' },
     },
   },
 }

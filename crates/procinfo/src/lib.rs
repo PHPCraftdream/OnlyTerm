@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 #[cfg(feature = "lua")]
-use wezterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 
 mod windows;
 
@@ -459,7 +459,7 @@ mod tests {
         }
 
         // Root with a normal executable path.
-        let mut root = make(1, "wezterm", PathBuf::from("/usr/bin/wezterm"));
+        let mut root = make(1, "onlyterm", PathBuf::from("/usr/bin/onlyterm"));
 
         // A privileged child whose executable path is entirely empty
         // (no permission to read it); only its COMM name is available.
@@ -468,7 +468,7 @@ mod tests {
 
         let names = root.flatten_to_exe_names();
         // The normal process contributes its executable base name.
-        assert!(names.contains("wezterm"));
+        assert!(names.contains("onlyterm"));
         // The privileged process, with no resolvable executable path,
         // must still appear via its COMM name rather than vanishing.
         assert!(names.contains("sudo"));

@@ -18,18 +18,18 @@ information on this key assignment.
 
 ### Log Files
 
-You can find log files in `$XDG_RUNTIME_DIR/wezterm` on unix systems,
-or `$HOME/.local/share/wezterm` on macOS and Windows systems.
+You can find log files in `$XDG_RUNTIME_DIR/onlyterm` on unix systems,
+or `$HOME/.local/share/onlyterm` on macOS and Windows systems.
 
 ### Increasing Log Verbosity
 
-The `WEZTERM_LOG` environment variable can be used to adjust the level
+The `ONLYTERM_LOG` environment variable can be used to adjust the level
 of logging for different modules within OnlyTerm.
 
 To see maximum verbosity, you can start OnlyTerm like this:
 
 ```
-WEZTERM_LOG=debug onlyterm
+ONLYTERM_LOG=debug onlyterm
 ```
 
 to see debug level logs for everything on stdout.
@@ -39,36 +39,36 @@ On Windows systems you'll usually need to set the environment variable separatel
 Using `cmd.exe`:
 
 ```
-C:\> set WEZTERM_LOG=debug
+C:\> set ONLYTERM_LOG=debug
 C:\> onlyterm
 ```
 
 Using powershell:
 
 ```
-PS C:\> $env:WEZTERM_LOG="debug"
+PS C:\> $env:ONLYTERM_LOG="debug"
 PS C:\> onlyterm
 ```
 
 When using a flatpak you must first enter the flatpak container by running:
 
 ```
-flatpak run --command=sh --devel org.wezfurlong.wezterm
+flatpak run --command=sh --devel org.wezfurlong.onlyterm
 ```
 
 Before then running `onlyterm`.
 
 Each log line will include the module name, which is a colon separated
 namespace; in the output below the modules are `config`,
-`wezterm_gui::frontend`, `wezterm_font::ftwrap` and `wezterm_gui::termwindow`:
+`onlyterm_gui::frontend`, `onlyterm_font::ftwrap` and `onlyterm_gui::termwindow`:
 
 ```
 10:29:24.451  DEBUG  config                    > Reloaded configuration! generation=2
-10:29:24.452  DEBUG  wezterm_gui::frontend     > workspace is default, fixup windows
-10:29:24.459  DEBUG  wezterm_font::ftwrap      > set_char_size computing 12 dpi=124 (pixel height=20.666666666666668)
-10:29:24.461  DEBUG  wezterm_font::ftwrap      > set_char_size computing 12 dpi=124 (pixel height=20.666666666666668)
-10:29:24.494  DEBUG  wezterm_gui::termwindow   > FocusChanged(true)
-10:29:24.495  DEBUG  wezterm_gui::termwindow   > FocusChanged(false)
+10:29:24.452  DEBUG  onlyterm_gui::frontend     > workspace is default, fixup windows
+10:29:24.459  DEBUG  onlyterm_font::ftwrap      > set_char_size computing 12 dpi=124 (pixel height=20.666666666666668)
+10:29:24.461  DEBUG  onlyterm_font::ftwrap      > set_char_size computing 12 dpi=124 (pixel height=20.666666666666668)
+10:29:24.494  DEBUG  onlyterm_gui::termwindow   > FocusChanged(true)
+10:29:24.495  DEBUG  onlyterm_gui::termwindow   > FocusChanged(false)
 ```
 
 Those modules generally match up to directories and file names within the
@@ -79,7 +79,7 @@ For example, if you wanted to debug only configuration related things you might
 set:
 
 ```
-WEZTERM_LOG=config=debug,info
+ONLYTERM_LOG=config=debug,info
 ```
 
 which says:
@@ -90,7 +90,7 @@ which says:
 You can add more comma-separated items:
 
 ```
-WEZTERM_LOG=config=debug,wezterm_font=debug,info
+ONLYTERM_LOG=config=debug,onlyterm_font=debug,info
 ```
 
 See Rust's [env_logger

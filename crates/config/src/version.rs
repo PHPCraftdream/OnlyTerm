@@ -20,38 +20,38 @@ pub fn assign_version_info(
     BUILD_TIME.set(build_time).unwrap();
 }
 
-pub fn wezterm_version() -> &'static str {
+pub fn onlyterm_version() -> &'static str {
     VERSION
         .get()
         .unwrap_or(&"someone forgot to call assign_version_info")
 }
 
-pub fn wezterm_target_triple() -> &'static str {
+pub fn onlyterm_target_triple() -> &'static str {
     TRIPLE
         .get()
         .unwrap_or(&"someone forgot to call assign_version_info")
 }
 
-pub fn wezterm_commit_hash() -> &'static str {
+pub fn onlyterm_commit_hash() -> &'static str {
     COMMIT_HASH
         .get()
         .unwrap_or(&"someone forgot to call assign_version_info")
 }
 
-pub fn wezterm_commit_count() -> &'static str {
+pub fn onlyterm_commit_count() -> &'static str {
     COMMIT_COUNT
         .get()
         .unwrap_or(&"someone forgot to call assign_version_info")
 }
 
-pub fn wezterm_build_time() -> &'static str {
+pub fn onlyterm_build_time() -> &'static str {
     BUILD_TIME
         .get()
         .unwrap_or(&"someone forgot to call assign_version_info")
 }
 
 /// WSL detection (checking `uname` for "microsoft") only ever mattered
-/// for a Linux binary of wezterm running *inside* WSL; OnlyTerm only
+/// for a Linux binary of onlyterm running *inside* WSL; OnlyTerm only
 /// ships a native Windows binary, which is never itself "under WSL" in
 /// that sense.
 pub fn running_under_wsl() -> bool {

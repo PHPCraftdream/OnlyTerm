@@ -1,10 +1,10 @@
 use crate::pane::{ForEachPaneLogicalLine, WithPaneLines};
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_term::{Line, StableRowIndex, Terminal};
 use rangeset::RangeSet;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 use termwiz::surface::SequenceNo;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_term::{Line, StableRowIndex, Terminal};
 
 /// Describes the location of the cursor
 #[derive(

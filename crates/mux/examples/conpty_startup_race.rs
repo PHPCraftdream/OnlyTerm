@@ -5,7 +5,7 @@
 //! shortly afterwards the way maximizing the window does.
 //!
 //! Everything the pty produces is both (a) recorded with timestamps and
-//! dumped as escaped text, and (b) fed through a real `wezterm_term::Terminal`
+//! dumped as escaped text, and (b) fed through a real `onlyterm_term::Terminal`
 //! so the resulting grid can be printed. If the grid shows the echo one row
 //! below the prompt, the defect is reproducible headlessly and can be turned
 //! into a regression test.
@@ -17,12 +17,12 @@
 //! cargo run -p mux --example conpty_startup_race -- "git branch" 150
 //! ```
 
+use onlyterm_term::{Terminal, TerminalSize};
 use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use std::io::Write;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use wezterm_term::{Terminal, TerminalSize};
 
 /// A `Write` that several owners can hold at once: the `Terminal` (for
 /// answerbacks such as DA1 and the cursor-position report ConPTY asks for at
@@ -80,7 +80,7 @@ fn main() -> anyhow::Result<()> {
         start,
         Arc::new(config::TermConfig::new()),
         "OnlyTerm",
-        config::wezterm_version(),
+        config::onlyterm_version(),
         Box::new(writer.clone()),
     );
     terminal.enable_conpty_quirks();

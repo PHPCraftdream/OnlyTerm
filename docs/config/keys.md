@@ -14,9 +14,9 @@ keys: [
 
 !!! tip "Migrating from Lua or rhai?"
 
-    In a Lua config this used `action = wezterm.action.DisableDefaultAssignment`;
+    In a Lua config this used `action = onlyterm.action.DisableDefaultAssignment`;
     in a rhai config, `action: act.DisableDefaultAssignment`. In ktav there is
-    no `wezterm.action`/`act` helper at all: a simple action is its name as a
+    no `onlyterm.action`/`act` helper at all: a simple action is its name as a
     bare string (`DisableDefaultAssignment`), and a parameterized action is a
     single-key object (e.g. `{ SpawnCommandInNewTab: { cwd: /tmp } }`, with no
     quotes around `/tmp` since ktav does not strip them). See
@@ -36,7 +36,7 @@ Possible Modifier labels are:
  * `SHIFT` - The shift key.  Left and right are equivalent.
  * `ALT`, `OPT`, `META` - these are all equivalent: on macOS the `Option` key,
    on other systems the `Alt` or `Meta` key.  Left and right are equivalent.
- * `LEADER` - a special modal modifier state managed by `wezterm`. See [Leader Key](#leader-key) for more information.
+ * `LEADER` - a special modal modifier state managed by `onlyterm`. See [Leader Key](#leader-key) for more information.
  * `VoidSymbol` - This keycode is emitted in special cases where the original
    function of the key has been removed. Such as in Linux and using `setxkbmap`.
    `setxkbmap -option caps:none`. The `CapsLock` will no longer function as
@@ -85,7 +85,7 @@ You can explicitly assign the mapped key by adding a `mapped:` prefix to the
 value, for example: `key: mapped:a` will match a key press where the OS
 keyboard layout produces `a`, regardless of its physical position.
 
-If you omit an explicit prefix, wezterm will assume `phys:` and use the
+If you omit an explicit prefix, onlyterm will assume `phys:` and use the
 physical position of the specified key.
 
 The default key assignments listed above use `phys:`.  In previous releases
@@ -107,7 +107,7 @@ The default key assignments will respect `key_map_preference`.
 
 ### Raw Key Assignments
 
-In some cases, `wezterm` may not know how to represent a key event in either
+In some cases, `onlyterm` may not know how to represent a key event in either
 its `phys:` or `mapped:` forms.  In that case, you may wish to define an
 assignment in terms of the underlying operating system key code, using a `raw:`
 prefix.

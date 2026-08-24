@@ -1,4 +1,4 @@
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ToDynamic, Default)]
 pub enum FrontEndSelection {
@@ -17,7 +17,7 @@ impl FromDynamic for FrontEndSelection {
     fn from_dynamic(
         value: &Value,
         options: FromDynamicOptions,
-    ) -> Result<Self, wezterm_dynamic::Error> {
+    ) -> Result<Self, onlyterm_dynamic::Error> {
         let s = String::from_dynamic(value, options)?;
         match s.as_str() {
             "WebGpu" => Ok(Self::WebGpu),
@@ -33,7 +33,7 @@ impl FromDynamic for FrontEndSelection {
                 crate::show_error(&message);
                 Ok(Self::WebGpu)
             }
-            _ => Err(wezterm_dynamic::Error::Message(format!(
+            _ => Err(onlyterm_dynamic::Error::Message(format!(
                 "`{s}` is not a valid FrontEndSelection variant, use one of `WebGpu`"
             ))),
         }

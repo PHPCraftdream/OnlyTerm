@@ -52,7 +52,7 @@ and then run:
 $ onlyterm connect unix
 ```
 
-Note that in earlier versions of WezTerm, a `connect_automatically` domain
+Note that in earlier versions of OnlyTerm, a `connect_automatically` domain
 option was shown as the way to connect on startup.  Using
 `default_gui_startup_args` is recommended instead as it works more reliably.
 
@@ -100,7 +100,7 @@ to an appropriate invocation of netcat/socat on Windows:
 unix_domains: [
   {
     name: unix
-    proxy_command: [nc, -U, /Users/wez/.local/share/wezterm/sock]
+    proxy_command: [nc, -U, /Users/user/.local/share/onlyterm/sock]
   }
 ]
 ```
@@ -112,7 +112,7 @@ local echo using `local_echo_threshold_ms`. If the measured round-trip latency
 between the OnlyTerm client and the server exceeds the specified threshold, the
 client will attempt to predict the server's response to key events and echo the
 result of that prediction locally without waiting, hence hiding latency to the
-user. This option only applies when `multiplexing = "WezTerm"`.
+user. This option only applies when `multiplexing = "OnlyTerm"`.
 
 ```
 unix_domains: [
@@ -136,7 +136,7 @@ unix_domains: [
     ## Override the default path to match the default on the host win32
     ## filesystem.  This will allow the host to connect into the WSL
     ## container.
-    socket_path: /mnt/c/Users/USERNAME/.local/share/wezterm/sock
+    socket_path: /mnt/c/Users/USERNAME/.local/share/onlyterm/sock
     ## NTFS permissions will always be "wrong", so skip that check
     skip_permissions_check: true
   }
@@ -239,7 +239,7 @@ reading the current source, not assumed from upstream WezTerm docs):
 
 - **Blank/default tab titles and formatters.** `ClientPane` (the pane type
   used for panes that live in a remote mux domain — see
-  `crates/wezterm-client/src/pane/clientpane.rs`) does not override
+  `crates/onlyterm-client/src/pane/clientpane.rs`) does not override
   `get_foreground_process_name` or `get_foreground_process_info`. Both fall
   back to the `Pane` trait's defaults (`crates/mux/src/pane.rs`), which
   simply return `None`. Anything in your tab title / status-bar formatter
@@ -251,32 +251,32 @@ reading the current source, not assumed from upstream WezTerm docs):
   foreground process name, for the entire life of the test panes.
 - **Window tracking is per-GUI-process, not global.** Each GUI process
   tracks only the `known_windows` it created locally
-  (`crates/wezterm-gui/src/frontend.rs`). A second GUI process attached to
+  (`crates/onlyterm-gui/src/frontend.rs`). A second GUI process attached to
   the same `main` domain has its own, disjoint set of known windows, and
   (now that the scripting engine that used to expose a
-  `wezterm.gui.gui_windows()` function is gone) there is no way to enumerate
+  `onlyterm.gui.gui_windows()` function is gone) there is no way to enumerate
   windows from config at all. To see "every window across every GUI process
-  attached to this mux-server" you need to go through `wezterm cli list`
+  attached to this mux-server" you need to go through `onlyterm cli list`
   (which talks to the mux-server directly) instead.
 - **No automatic reconnect if `onlyterm-mux-server` itself dies.**
   `Reconnectable::reconnectable()` for a unix-domain `ClientDomain`
-  (`crates/wezterm-client/src/client.rs`) unconditionally returns `false`,
+  (`crates/onlyterm-client/src/client.rs`) unconditionally returns `false`,
   with a comment explaining why: reconnecting to a *respawned* unix socket
   server wouldn't preserve the original set of tabs anyway, so silently
   retrying would just produce confusing, inconsistent state. If the daemon
   process itself is killed (not just a GUI process), your panes are gone;
   GUI processes attached to it will show the domain as detached/dead rather
   than silently spinning up a replacement behind your back.
-- **`wezterm cli` from outside any pane needs the right config to find the
-  socket.** When `wezterm cli` runs from a plain external shell (not from
+- **`onlyterm cli` from outside any pane needs the right config to find the
+  socket.** When `onlyterm cli` runs from a plain external shell (not from
   inside a running OnlyTerm session), it resolves its target unix domain via
-  `Client::compute_unix_domain` (`crates/wezterm-client/src/client.rs`):
+  `Client::compute_unix_domain` (`crates/onlyterm-client/src/client.rs`):
   1. If `$ONLYTERM_UNIX_SOCKET` is set in the environment, that path is used
      directly, bypassing everything else.
   2. Otherwise, unless `--prefer-mux` forces past this step, it tries to
      resolve a **published gui-sock** — the location of a currently-running
      GUI process's own embedded mux (see `Publish::resolve` in
-     `crates/wezterm-gui/src/main.rs`).
+     `crates/onlyterm-gui/src/main.rs`).
   3. Otherwise it falls back to `config.unix_domains.first()` — i.e. the
      `main` domain above, using its default socket path.
 
@@ -289,7 +289,7 @@ reading the current source, not assumed from upstream WezTerm docs):
   if you ever drop the `default_domain` override. Confirmed by manual test
   in this session: after starting a GUI process under this config, no
   `gui-sock-<pid>` file appeared in the runtime directory. Practically, this
-  means `wezterm cli` invoked from an external shell always falls through to
+  means `onlyterm cli` invoked from an external shell always falls through to
   step 3 (the `main` unix domain's default socket path) as long as it loads
   the *same* config file — which is exactly what you want for this
   topology, but relies on the CLI and the GUI/mux-server agreeing on config

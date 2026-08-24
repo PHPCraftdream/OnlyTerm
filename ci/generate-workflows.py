@@ -381,9 +381,9 @@ rustup default {toolchain}
 
     def build_all_release(self):
         bin_crates = [
-            "wezterm",
-            "wezterm-gui",
-            "wezterm-mux-server",
+            "onlyterm",
+            "onlyterm-gui",
+            "onlyterm-mux-server",
             "strip-ansi-escapes",
         ]
         steps = []
@@ -445,9 +445,9 @@ rustup default {toolchain}
                 rpmbuild = "/usr/src/packages/RPMS/*"
 
             script = ""
-            # Note that 'wezterm' MUST be last in this list,
+            # Note that 'onlyterm' MUST be last in this list,
             # otherwise the globbing will mess things up
-            for pkg in ['wezterm-common', 'wezterm-gui', 'wezterm-mux-server', 'wezterm']:
+            for pkg in ['onlyterm-common', 'onlyterm-gui', 'onlyterm-mux-server', 'onlyterm']:
                 script = script + f"mv {rpmbuild}/{pkg}-*.rpm {pkg}-nightly-{self.name}.rpm\n"
 
             steps.append(
@@ -460,7 +460,7 @@ rustup default {toolchain}
             steps.append(
                 RunStep(
                     "Move APKs",
-                    f"mv ~/packages/wezterm/x86_64/*.apk wezterm-nightly-{self.name}.apk",
+                    f"mv ~/packages/onlyterm/x86_64/*.apk onlyterm-nightly-{self.name}.apk",
                 )
             )
 
@@ -668,7 +668,7 @@ rustup default {toolchain}
             steps += [
                 RunStep(
                     "Workaround git permissions issue",
-                    "git config --global --add safe.directory /__w/wezterm/wezterm",
+                    "git config --global --add safe.directory /__w/OnlyTerm/OnlyTerm",
                 )
             ]
         steps += [CheckoutStep(container=self.container)]

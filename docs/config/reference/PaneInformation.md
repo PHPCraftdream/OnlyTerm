@@ -38,7 +38,7 @@ The `PaneInformation` struct contains the following fields:
 {{since('20220101-133340-7edc5b5a')}}
 
 Additional fields are available; note that accessing these may not be cheap to
-compute and may slow down wezterm.  Unlike the fields listed above, these are
+compute and may slow down onlyterm.  Unlike the fields listed above, these are
 not pre-computed snapshots of information, so if you don't use them, you won't
 pay the cost of computing them.
 
@@ -48,7 +48,7 @@ pay the cost of computing them.
 This example places the executable name in the tab titles:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
 -- Equivalent to POSIX basename(3)
 -- Given "/foo/bar" returns "bar"
@@ -57,7 +57,7 @@ function basename(s)
   return string.gsub(s, '(.*[/\\])(.*)', '%2')
 end
 
-wezterm.on(
+onlyterm.on(
   'format-tab-title',
   function(tab, tabs, panes, config, hover, max_width)
     local pane = tab.active_pane
@@ -87,10 +87,10 @@ This example shows how to use this event to change the color of the
 tab in the tab bar when there is unseen output.
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 local config = {}
 
-wezterm.on(
+onlyterm.on(
   'format-tab-title',
   function(tab, tabs, panes, config, hover, max_width)
     if tab.is_active then
@@ -126,10 +126,10 @@ The `domain_name` field returns the name of the domain with which the pane is as
 This example shows the domain name of the active pane appended to the tab title:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 local config = {}
 
-wezterm.on('format-tab-title', function(tab)
+onlyterm.on('format-tab-title', function(tab)
   local pane = tab.active_pane
   local title = pane.title
   if pane.domain_name then

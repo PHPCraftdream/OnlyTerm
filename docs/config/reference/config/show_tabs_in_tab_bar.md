@@ -23,7 +23,7 @@ show_new_tab_button_in_tab_bar: false
 !!! note "`update-right-status` no longer exists"
 
     An earlier version of this example also registered a
-    `wezterm.on('update-right-status', ...)` handler to populate the left
+    `onlyterm.on('update-right-status', ...)` handler to populate the left
     and right status areas with static placeholder text (`"left"`/`"right"`).
     That event hook has been removed along with the rest of the scripting
     engine — see the [changelog](../../../changelog.md#continuousnightly) —

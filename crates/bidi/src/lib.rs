@@ -3,7 +3,7 @@
 // Algorithm (UAX #9) uses. Renaming the enum variants to `Ltr`/`Rtl`
 // would harm readability and break the public `DirectionIter` API, so the
 // `upper_case_acronyms` lint is suppressed crate-wide -- matching the
-// precedent set by the `vtparse` and `wezterm-escape-parser` crates.
+// precedent set by the `vtparse` and `onlyterm-escape-parser` crates.
 #![allow(clippy::upper_case_acronyms)]
 
 extern crate alloc;

@@ -27,7 +27,7 @@ impl MuxWindow {
 // `set_gui_window_resolver_rhai`/`GUI_WINDOW_RESOLVER_RHAI` weak-hook
 // mechanism that only existed to back its `gui_window` binding) used to live
 // below this point. `set_gui_window_resolver_rhai` was never actually called
-// by `wezterm-gui` (confirmed by grep across the workspace) -- only
+// by `onlyterm-gui` (confirmed by grep across the workspace) -- only
 // re-exported and exercised by this crate's own `tests/rhai_smoke.rs`. With
 // the scripting layer removed, none of it had a remaining caller anywhere in
 // the workspace, so it has been deleted. `MuxWindow`'s plain-Rust

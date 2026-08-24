@@ -27,7 +27,7 @@
 7923	docs: document escape sequences that are handled but were undocumented
 7915	fix: encode Composed keys properly in Kitty keyboard protocol
 7903	feat(lua): expose link/mouse position under cursor; OpenLinkAtMouseCursor fallback
-7896	windows: publish absolute gui sock path so `wezterm cli` connects from any cwd
+7896	windows: publish absolute gui sock path so `onlyterm cli` connects from any cwd
 7883	Windows: Fix drag lock and resize loop when dragging across DPI boundary
 7879	fix: allow navigation to non-admin symlinks on Windows
 7878	feat: add `ReconnectDomain` key assignment for reconnecting remote domains
@@ -49,9 +49,9 @@
 7826	x11: handle horizontal scroll wheel (buttons 6 and 7)
 7823	Add opt-in forwarding for macOS marked text
 7821	webgpu: clamp surface dimensions to max_texture_dimension_2d
-7820	Add Wine build instructions for wezterm-gui
+7820	Add Wine build instructions for onlyterm-gui
 7816	Fix stale mouse move restoring hidden cursor and URL hover
-7812	fix(wezterm-ssh): support tilde expansion and multiple files for include directive
+7812	fix(onlyterm-ssh): support tilde expansion and multiple files for include directive
 7809	tab bar: add tab_bar_width config to stretch tabs across the bar
 7804	Fix Shift-AltGr dead key probing
 7799	Fix SIGABRT on window close caused by OpenGL teardown ordering (MacOS)
@@ -134,7 +134,7 @@
 7548	Treat SCTKWindowState::TILED as a maximized state
 7542	fix kitty keyboard protocol not work in mux mode
 7539	Change display order of `key` and `mode` in `show-keys --lua`
-7526	fix(wezterm-gui): max tab title length
+7526	fix(onlyterm-gui): max tab title length
 7510	termwindow: emit pane-focus-changed window event
 7500	Add new window_close_mux_behavior config option
 7494	fix(macos): improve IME preedit handling
@@ -155,14 +155,14 @@
 7390	Alpine: Add static libraries for OpenSSL and zlib
 7385	feat: smart case search
 7381	docs: replace literal `\n` with `<br/>` in flowchart labels
-7379	wezterm ssh: add `--assume-shell` argument
+7379	onlyterm ssh: add `--assume-shell` argument
 7378	RemoteSshDomain: Use `sh -c`, not `$SHELL -c`
 7360	wayland: Show client-side decorations when compositor doesn't provide server-side
 7357	Implement hide window operation for x11 windows
 7352	Support background image blurring
 7349	Add bell_urgency_hint config option and window:request_attention() API
 7345	fix omitted color params in sixel parser
-7338	Removed "start --cwd ." from Exec=wezterm in wezterm/assets/wezterm.desktop
+7338	Removed "start --cwd ." from Exec=onlyterm in onlyterm/assets/onlyterm.desktop
 7312	Abandon kitty's legacy key event encoding
 7296	Add PowerShell integration script
 7292	tmux-CC: suppress capability handshakes in control mode
@@ -185,7 +185,7 @@
 7177	Align with_phys_lines()'s implementation with with_phys_lines_mut()
 7170	build(deps): bump xcb from 1.5.0 to 1.6.0
 7161	Add CopyMode overlay to TermwizTerminalPane overlays
-7160	wezterm-ssh: support ProxyJump in ssh config
+7160	onlyterm-ssh: support ProxyJump in ssh config
 7151	build(deps): bump slab from 0.4.10 to 0.4.11
 7148	fix: tmux -CC "Unrecognized tmux cc line error for %unlinked-window-r…
 7146	FEATURE: Add metadata for cargo-deb build
@@ -209,7 +209,7 @@
 6973	Proposal: alternative minimum contrast algorithm
 6957	fix: disable shell integration inside a Neovim terminal
 6937	WIP: Makefile `servedocs` target with live reload; reorder subsections in "Config" and "Colors & Appearance"
-6913	fix: wezterm cli set-window-title #4899
+6913	fix: onlyterm cli set-window-title #4899
 6881	Fix build fails when the target dir doesn't exist
 6878	feat: support left/right mods for keybindings
 6876	Introduce `win32_window_appearance` to override Windows setting
@@ -217,9 +217,9 @@
 6849	Remove `mode` from `PushKittyState` CSI representation
 6821	lua-api-crates/mux: expose swap_active_with_index
 6782	fix: tmux -CC mouse reporting issue
-6756	WezTerm Shell Context Menu for Windows 11
+6756	OnlyTerm Shell Context Menu for Windows 11
 6657	Improve dragging and double-clicking for maximize on the tab bar
-6610	wezterm-ssh: make SshPty fields public
+6610	onlyterm-ssh: make SshPty fields public
 6533	Improve Wayland scroll behavior
 6527	feat: reorder tabs via left mouse drag
 6511	Fixed cursor blinking on transparent backgrounds
@@ -233,7 +233,7 @@
 6062	don't resize pane with delta
 5997	Enhanced vi-like word motions in copy mode
 5995	Attempt to implement AccessKit inside the window crate
-5977	fix(windows): closing panes sometimes freezes wezterm
+5977	fix(windows): closing panes sometimes freezes onlyterm
 5972	Add command to check config values
 5969	Fix ghost space left by SplitPane with top_level=true
 5941	WIP: add logging to help investigate incorrect terminal size on macOS
@@ -241,7 +241,7 @@
 5850	feat: Identify modifiers on Wayland/X11 (new)
 5820	Add plugin aliases
 5780	Simplify wayland configure event
-5779	wezterm-ssh: add support for comments in `Match` statements
+5779	onlyterm-ssh: add support for comments in `Match` statements
 5573	replace all 'psuedo' by 'pseudo'
 5567	Hotfix/search overlay move to end of line
 5452	doc: Use more stable format when first describing SGR sequence
@@ -262,7 +262,7 @@
 4767	Expose as_command API on CommandBuilder
 4727	Improve integrated titlebar buttons on macos
 4635	Windows rs
-4493	Path and MetaData objects + `wezterm.<functions>`
+4493	Path and MetaData objects + `onlyterm.<functions>`
 4413	Fix Gnome window buttons DPI scaling
 4393	Start line selection at 0th cell
 4336	Adding some functions to work with Lua tables.

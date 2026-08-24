@@ -1,5 +1,5 @@
 [package]
-name = "wezterm-bidi"
+name = "onlyterm-bidi"
 version = "0.2.3"
 edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
@@ -13,7 +13,7 @@ exclude = ["/data", "/tests"]
 
 [dependencies]
 log.workspace = true
-wezterm-dynamic.workspace = true
+onlyterm-dynamic.workspace = true
 
 [dev-dependencies]
 k9.workspace = true

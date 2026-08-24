@@ -24,7 +24,7 @@ bypassing mouse reporting capture.
 
 ## Default Mouse Assignments
 
-*Note: you can run `wezterm show-keys` to show the effective key and mouse assignments*.
+*Note: you can run `onlyterm show-keys` to show the effective key and mouse assignments*.
 
 In the table below, `Triple Left Down` means that the left mouse button is
 being triple clicked and that the event matches the downstroke of the third

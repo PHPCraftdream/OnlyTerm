@@ -2,7 +2,7 @@
 
 ## Session summary
 
-OnlyTerm — Windows-ориентированный форк wezterm со снятым скриптовым
+OnlyTerm — Windows-ориентированный форк onlyterm со снятым скриптовым
 слоем (конфиг ktav, ни Lua, ни rhai). Эта часть сессии продолжает
 babygoal-цикл, запущенный явным запросом пользователя: "реализуй задачи
 с помощью /crush (fallback - @sh), между тасками делай коммиты. После
@@ -109,7 +109,7 @@ hot-swap) запустил `ci\dev-install.ps1` с UAC-элевацией — и
 - #384 Startup UX: красивый лоадер вместо заливки-заглушки
 - #383 Startup UX: показывать окно сразу в финальном размере без двойного resize
 - #382 Startup UX: расследование причины (план для #383-385)
-- #381 wezterm-font: детерминированная сортировка fallback-шрифтов
+- #381 onlyterm-font: детерминированная сортировка fallback-шрифтов
 
 ## Decisions
 
@@ -166,11 +166,11 @@ hot-swap) запустил `ci\dev-install.ps1` с UAC-элевацией — и
 
 ```
 44d10a6f6 window: fix placeholder-fade overlay's first paint being silently dropped (task #385)
-67c6e6968 wezterm-gui/window: cross-fade the startup spinner into the terminal (task #385)
-b4e1e8c04 wezterm-gui: replace startup placeholder fill with an animated spinner (task #384)
+67c6e6968 onlyterm-gui/window: cross-fade the startup spinner into the terminal (task #385)
+b4e1e8c04 onlyterm-gui: replace startup placeholder fill with an animated spinner (task #384)
 aac97ab06 window: query real primary-monitor DPI instead of hardcoded 96 default (task #383)
-524f941f9 wezterm-font: make fallback font selection deterministic (task #381)
+524f941f9 onlyterm-font: make fallback font selection deterministic (task #381)
 26d6b0a94 ci: hot-swap binaries in dev-install.ps1 instead of killing running instances
-7507e83d0 wezterm-gui: point the update checker at OnlyTerm's own repo
-fa13c19cc wezterm-surface: make Line's Debug output independent of the appdata feature (task #368)
+7507e83d0 onlyterm-gui: point the update checker at OnlyTerm's own repo
+fa13c19cc onlyterm-surface: make Line's Debug output independent of the appdata feature (task #368)
 ```

@@ -14,10 +14,10 @@ mod stable_seqno;
 // mod selection; FIXME: port to render layer
 use crate::color::ColorPalette;
 use k9::assert_equal as assert_eq;
+use onlyterm_escape_parser::csi::{Edit, EraseInDisplay, EraseInLine};
+use onlyterm_escape_parser::{OneBased, OperatingSystemCommand, CSI};
+use onlyterm_surface::{CursorShape, CursorVisibility, SequenceNo, SEQ_ZERO};
 use std::sync::{Arc, Mutex};
-use wezterm_escape_parser::csi::{Edit, EraseInDisplay, EraseInLine};
-use wezterm_escape_parser::{OneBased, OperatingSystemCommand, CSI};
-use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo, SEQ_ZERO};
 
 #[derive(Debug)]
 struct LocalClip {
@@ -90,7 +90,7 @@ impl TestTerm {
                 dpi: 0,
             },
             Arc::new(TestTermConfig { scrollback }),
-            "WezTerm",
+            "OnlyTerm",
             "O_o",
             writer,
         );
@@ -330,7 +330,7 @@ fn assert_all_contents(term: &Terminal, file: &str, line: u32, expect_lines: &[&
 
 #[test]
 fn test_semantic_1539() {
-    use wezterm_escape_parser::osc::FinalTermSemanticPrompt;
+    use onlyterm_escape_parser::osc::FinalTermSemanticPrompt;
     let mut term = TestTerm::new(5, 10, 0);
     term.print(format!(
         "{}prompt\r\nwoot",
@@ -366,7 +366,7 @@ fn test_semantic_1539() {
 
 #[test]
 fn test_semantic() {
-    use wezterm_escape_parser::osc::FinalTermSemanticPrompt;
+    use onlyterm_escape_parser::osc::FinalTermSemanticPrompt;
     let mut term = TestTerm::new(5, 10, 0);
     term.print("hello");
     term.print(format!(
@@ -839,10 +839,12 @@ fn test_scroll_margins() {
     term.print("1\n2\n3\n4\n");
     assert_all_contents(&term, file!(), line!(), &["1", "2", "3", "4", ""]);
 
-    let margins = CSI::Cursor(wezterm_escape_parser::csi::Cursor::SetTopAndBottomMargins {
-        top: OneBased::new(1),
-        bottom: OneBased::new(2),
-    });
+    let margins = CSI::Cursor(
+        onlyterm_escape_parser::csi::Cursor::SetTopAndBottomMargins {
+            top: OneBased::new(1),
+            bottom: OneBased::new(2),
+        },
+    );
     term.print(format!("{}", margins));
 
     term.print("z\n");
@@ -1097,14 +1099,14 @@ fn test_hyperlinks() {
 /// This was originally diagnosed with a throwaway harness that printed a
 /// real-world reproducer file line-by-line through a `TestTerm` and
 /// dumped both the raw stored cells and `cluster_with_wrap_context`'s
-/// output (exactly what `crates/wezterm-gui/src/termwindow/render/screen_line.rs`
+/// output (exactly what `crates/onlyterm-gui/src/termwindow/render/screen_line.rs`
 /// consumes) -- see git history for this file. That harness depended on
 /// a personal external file path and would not build/run on another
 /// machine or in CI, so it has been replaced with this inline
 /// reproducer covering the same failure mode, exercised through the
 /// same full pipeline (Performer -> Line -> cluster_with_wrap_context).
 /// The root-cause fix itself lives in
-/// `crates/wezterm-surface/src/cellcluster.rs` (`make_cluster_with_bidi`
+/// `crates/onlyterm-surface/src/cellcluster.rs` (`make_cluster_with_bidi`
 /// / `reorder_hebrew_phrases`), which also has its own focused unit
 /// tests.
 #[test]
@@ -1118,12 +1120,12 @@ fn hebrew_phrase_hugged_by_parens_keeps_brackets_out_of_reversed_cluster() {
     let phys = screen.phys_row(0);
     let line = screen.line_mut(phys);
 
-    let bidi_hint = Some(wezterm_bidi::ParagraphDirectionHint::AutoLeftToRight);
+    let bidi_hint = Some(onlyterm_bidi::ParagraphDirectionHint::AutoLeftToRight);
     let clusters = line.cluster_with_wrap_context(bidi_hint, false);
 
     for c in &clusters {
         let has_paren = c.text.contains('(') || c.text.contains(')');
-        let has_hebrew = wezterm_surface::cellcluster::CellCluster::is_hebrew_cell(&c.text);
+        let has_hebrew = onlyterm_surface::cellcluster::CellCluster::is_hebrew_cell(&c.text);
         assert!(
             !(has_paren && has_hebrew),
             "a shaping cluster must not mix punctuation with reversed Hebrew content: {:?}",

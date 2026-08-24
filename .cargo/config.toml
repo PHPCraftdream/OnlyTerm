@@ -2,7 +2,7 @@
 #
 #   cargo lint                      -- fix what is fixable, report the rest
 #   cargo lint -- --deny            -- treat any clippy lint as a failure
-#   cargo lint -- -p wezterm-gui    -- restrict it to a single package
+#   cargo lint -- -p onlyterm-gui    -- restrict it to a single package
 #   cargo lint-check                -- change nothing, CI mode
 #
 # Implemented by the `xtask` crate: a plain dependency-free Rust binary, so

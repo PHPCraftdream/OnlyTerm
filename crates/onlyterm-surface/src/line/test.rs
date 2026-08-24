@@ -1,0 +1,858 @@
+#![cfg(test)]
+
+use super::*;
+use crate::hyperlink::{Hyperlink, Rule};
+use crate::line::clusterline::ClusteredLine;
+use crate::SEQ_ZERO;
+use alloc::sync::Arc;
+use k9::assert_equal as assert_eq;
+use onlyterm_cell::{Cell, CellAttributes};
+
+/// There are 4 double-wide graphemes that occupy 2 cells each.
+/// When we join the lines, we must preserve the invisible blank
+/// that is part of the grapheme otherwise our metrics will be
+/// wrong.
+/// <https://github.com/wezterm/wezterm/issues/2568>
+#[test]
+fn append_line() {
+    let mut line1: Line = "0123456789".into();
+    let line2: Line = "グループaa".into();
+
+    line1.append_line(line2, SEQ_ZERO);
+
+    assert_eq!(line1.len(), 20);
+}
+
+#[test]
+fn hyperlinks() {
+    let text = "❤ 😍🤢 http://example.com \u{1f468}\u{1f3fe}\u{200d}\u{1f9b0} http://example.com";
+
+    let rules = vec![
+        Rule::new(r"\b\w+://(?:[\w.-]+)\.[a-z]{2,15}\S*\b", "$0").unwrap(),
+        Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0").unwrap(),
+    ];
+
+    let hyperlink = Arc::new(Hyperlink::new_implicit("http://example.com"));
+    let hyperlink_attr = CellAttributes::default()
+        .set_hyperlink(Some(hyperlink.clone()))
+        .clone();
+
+    let mut line: Line = text.into();
+    line.scan_and_create_hyperlinks(&rules);
+    assert!(line.has_hyperlink());
+    assert_eq!(
+        line.coerce_vec_storage().to_vec(),
+        vec![
+            Cell::new_grapheme("❤", CellAttributes::default(), None),
+            Cell::new(' ', CellAttributes::default()), // double width spacer
+            Cell::new_grapheme("😍", CellAttributes::default(), None),
+            Cell::new(' ', CellAttributes::default()), // double width spacer
+            Cell::new_grapheme("🤢", CellAttributes::default(), None),
+            Cell::new(' ', CellAttributes::default()), // double width spacer
+            Cell::new(' ', CellAttributes::default()),
+            Cell::new('h', hyperlink_attr.clone()),
+            Cell::new('t', hyperlink_attr.clone()),
+            Cell::new('t', hyperlink_attr.clone()),
+            Cell::new('p', hyperlink_attr.clone()),
+            Cell::new(':', hyperlink_attr.clone()),
+            Cell::new('/', hyperlink_attr.clone()),
+            Cell::new('/', hyperlink_attr.clone()),
+            Cell::new('e', hyperlink_attr.clone()),
+            Cell::new('x', hyperlink_attr.clone()),
+            Cell::new('a', hyperlink_attr.clone()),
+            Cell::new('m', hyperlink_attr.clone()),
+            Cell::new('p', hyperlink_attr.clone()),
+            Cell::new('l', hyperlink_attr.clone()),
+            Cell::new('e', hyperlink_attr.clone()),
+            Cell::new('.', hyperlink_attr.clone()),
+            Cell::new('c', hyperlink_attr.clone()),
+            Cell::new('o', hyperlink_attr.clone()),
+            Cell::new('m', hyperlink_attr.clone()),
+            Cell::new(' ', CellAttributes::default()),
+            Cell::new_grapheme(
+                // man: dark skin tone, red hair ZWJ emoji grapheme
+                "\u{1f468}\u{1f3fe}\u{200d}\u{1f9b0}",
+                CellAttributes::default(),
+                None,
+            ),
+            Cell::new(' ', CellAttributes::default()), // double width spacer
+            Cell::new(' ', CellAttributes::default()),
+            Cell::new('h', hyperlink_attr.clone()),
+            Cell::new('t', hyperlink_attr.clone()),
+            Cell::new('t', hyperlink_attr.clone()),
+            Cell::new('p', hyperlink_attr.clone()),
+            Cell::new(':', hyperlink_attr.clone()),
+            Cell::new('/', hyperlink_attr.clone()),
+            Cell::new('/', hyperlink_attr.clone()),
+            Cell::new('e', hyperlink_attr.clone()),
+            Cell::new('x', hyperlink_attr.clone()),
+            Cell::new('a', hyperlink_attr.clone()),
+            Cell::new('m', hyperlink_attr.clone()),
+            Cell::new('p', hyperlink_attr.clone()),
+            Cell::new('l', hyperlink_attr.clone()),
+            Cell::new('e', hyperlink_attr.clone()),
+            Cell::new('.', hyperlink_attr.clone()),
+            Cell::new('c', hyperlink_attr.clone()),
+            Cell::new('o', hyperlink_attr.clone()),
+            Cell::new('m', hyperlink_attr.clone()),
+        ]
+    );
+}
+
+#[test]
+fn double_click_range_bounds() {
+    let line: Line = "hello".into();
+    let r = line.compute_double_click_range(200, |_| true);
+    assert_eq!(r, DoubleClickRange::Range(200..200));
+}
+
+/// Double-clicking a run of wide (2-cell) characters must include the full
+/// width of the trailing character, otherwise the last glyph is left
+/// half-selected. <https://github.com/wezterm/wezterm/issues/6733>
+#[test]
+fn double_click_range_wide() {
+    // "日本語" occupies 6 columns (each character is 2 cells wide).
+    let line: Line = "日本語".into();
+    assert_eq!(line.len(), 6);
+    // Clicking on any of its columns should select all 6 columns, so that the
+    // final wide character's second column (index 5) is included.
+    for click_col in 0..6 {
+        let r = line.compute_double_click_range(click_col, |_| true);
+        assert_eq!(r, DoubleClickRange::Range(0..6));
+    }
+}
+
+#[test]
+fn wide_cell_covering() {
+    // "a日b": a=col0 (w1), 日=col1..3 (w2), b=col3 (w1)
+    let line: Line = "a日b".into();
+    assert_eq!(line.len(), 4);
+    assert_eq!(line.wide_cell_covering(0), None); // single-width 'a'
+    assert_eq!(line.wide_cell_covering(1), Some(1..3)); // start of wide '日'
+    assert_eq!(line.wide_cell_covering(2), Some(1..3)); // hidden 2nd col of '日'
+    assert_eq!(line.wide_cell_covering(3), None); // single-width 'b'
+    assert_eq!(line.wide_cell_covering(4), None); // past end of line
+}
+
+#[test]
+fn cluster_representation_basic() {
+    let line: Line = "hello".into();
+    let mut compressed = line.clone();
+    compressed.compress_for_scrollback();
+    k9::snapshot!(
+        &compressed.cells,
+        r#"
+C(
+    ClusteredLine {
+        text: "hello",
+        is_double_wide: None,
+        clusters: [
+            Cluster {
+                cell_width: 5,
+                attrs: CellAttributes {
+                    attributes: 0,
+                    intensity: Normal,
+                    underline: None,
+                    blink: None,
+                    italic: false,
+                    reverse: false,
+                    strikethrough: false,
+                    invisible: false,
+                    wrapped: false,
+                    overline: false,
+                    semantic_type: Output,
+                    foreground: Default,
+                    background: Default,
+                    fat: None,
+                },
+            },
+        ],
+        len: 5,
+        last_cell_width: Some(
+            1,
+        ),
+    },
+)
+"#
+    );
+    compressed.coerce_vec_storage();
+    assert_eq!(line, compressed);
+}
+
+#[test]
+fn cluster_representation_double_width() {
+    let line: Line = "❤ 😍🤢he❤ 😍🤢llo❤ 😍🤢".into();
+    let mut compressed = line.clone();
+    compressed.compress_for_scrollback();
+    k9::snapshot!(
+        &compressed.cells,
+        r#"
+C(
+    ClusteredLine {
+        text: "❤ 😍🤢he❤ 😍🤢llo❤ 😍🤢",
+        is_double_wide: Some(
+            FixedBitSet {
+                data: [
+                    2626580,
+                ],
+                length: 23,
+            },
+        ),
+        clusters: [
+            Cluster {
+                cell_width: 23,
+                attrs: CellAttributes {
+                    attributes: 0,
+                    intensity: Normal,
+                    underline: None,
+                    blink: None,
+                    italic: false,
+                    reverse: false,
+                    strikethrough: false,
+                    invisible: false,
+                    wrapped: false,
+                    overline: false,
+                    semantic_type: Output,
+                    foreground: Default,
+                    background: Default,
+                    fat: None,
+                },
+            },
+        ],
+        len: 23,
+        last_cell_width: Some(
+            2,
+        ),
+    },
+)
+"#
+    );
+    compressed.coerce_vec_storage();
+    assert_eq!(line, compressed);
+}
+
+#[test]
+fn cluster_representation_empty() {
+    let line = Line::from_cells(vec![], SEQ_ZERO);
+
+    let mut compressed = line.clone();
+    compressed.compress_for_scrollback();
+    k9::snapshot!(
+        &compressed.cells,
+        r#"
+C(
+    ClusteredLine {
+        text: "",
+        is_double_wide: None,
+        clusters: [],
+        len: 0,
+        last_cell_width: None,
+    },
+)
+"#
+    );
+    compressed.coerce_vec_storage();
+    assert_eq!(line, compressed);
+}
+
+#[test]
+fn cluster_wrap_last() {
+    let mut line: Line = "hello".into();
+    line.compress_for_scrollback();
+    line.set_last_cell_was_wrapped(true, 1);
+    k9::snapshot!(
+        line,
+        r#"
+Line {
+    cells: C(
+        ClusteredLine {
+            text: "hello",
+            is_double_wide: None,
+            clusters: [
+                Cluster {
+                    cell_width: 4,
+                    attrs: CellAttributes {
+                        attributes: 0,
+                        intensity: Normal,
+                        underline: None,
+                        blink: None,
+                        italic: false,
+                        reverse: false,
+                        strikethrough: false,
+                        invisible: false,
+                        wrapped: false,
+                        overline: false,
+                        semantic_type: Output,
+                        foreground: Default,
+                        background: Default,
+                        fat: None,
+                    },
+                },
+                Cluster {
+                    cell_width: 1,
+                    attrs: CellAttributes {
+                        attributes: 2048,
+                        intensity: Normal,
+                        underline: None,
+                        blink: None,
+                        italic: false,
+                        reverse: false,
+                        strikethrough: false,
+                        invisible: false,
+                        wrapped: true,
+                        overline: false,
+                        semantic_type: Output,
+                        foreground: Default,
+                        background: Default,
+                        fat: None,
+                    },
+                },
+            ],
+            len: 5,
+            last_cell_width: Some(
+                1,
+            ),
+        },
+    ),
+    zones: [],
+    seqno: 1,
+    bits: LineBits(
+        0x0,
+    ),
+}
+"#
+    );
+}
+
+#[test]
+fn cluster_wrap_last_wide_trailing_grapheme() {
+    // Regression test for a 6th @oh review pass finding:
+    // `ClusteredLine::from_cell_vec` (used by `Line::compress_for_scrollback`)
+    // hardcoded `last_cell_width` to 1 regardless of the real last cell's
+    // width, so `set_last_cell_was_wrapped` on a compressed line ending in a
+    // double-width grapheme (e.g. CJK) split the final cluster at the wrong
+    // column count -- corrupting the cluster's own width bookkeeping, not
+    // just misplacing the wrapped attribute the way the V-storage bug did.
+    let mut line: Line = "a你".into();
+    line.compress_for_scrollback();
+    line.set_last_cell_was_wrapped(true, 1);
+    // Force a real recompute rather than reading the setter's own
+    // cache-primed value, same reasoning as the V-storage tests above.
+    line.update_last_change_seqno(2);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "wrap flag must be observable after set_last_cell_was_wrapped on a \
+         compressed (C-storage) line ending in a wide trailing grapheme"
+    );
+    assert_eq!(
+        line.len(),
+        3,
+        "splitting the final cluster to tag the wrap attribute must not \
+         change the line's total column count"
+    );
+    let mut roundtrip = line.clone();
+    roundtrip.coerce_vec_storage();
+    assert_eq!(
+        roundtrip.visible_cells().map(|c| c.width()).sum::<usize>(),
+        3,
+        "the wide grapheme must still occupy 2 columns after round-tripping \
+         back through vec storage, not have been split into two 1-column cells"
+    );
+}
+
+#[test]
+fn last_cell_was_wrapped_lazily_caches_on_read() {
+    // A line that is only ever read, never explicitly told whether it
+    // wrapped, must still compute (and repeatedly return) the correct
+    // value: the cache must be populate-able from the read path, not
+    // only from `set_last_cell_was_wrapped`.
+    let line: Line = "hello".into();
+    assert_eq!(line.last_cell_was_wrapped(), false);
+    // Second read exercises the now-populated cache and must agree.
+    assert_eq!(line.last_cell_was_wrapped(), false);
+
+    let wrapped_line =
+        Line::from_text_with_wrapped_last_col("hello", &CellAttributes::default(), SEQ_ZERO);
+    assert_eq!(wrapped_line.last_cell_was_wrapped(), true);
+    assert_eq!(wrapped_line.last_cell_was_wrapped(), true);
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_survives_unrelated_mutation() {
+    // Sanity check that the cache doesn't need to be busted by changes
+    // that don't touch the last cell.
+    let mut line: Line = "hello".into();
+    assert_eq!(line.last_cell_was_wrapped(), false);
+    line.set_cell(
+        0,
+        Cell::new_grapheme("H", CellAttributes::default(), None),
+        1,
+    );
+    assert_eq!(line.last_cell_was_wrapped(), false);
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_overwriting_last_cell() {
+    // Regression test: caching `last_cell_was_wrapped()` must not let a
+    // direct overwrite of the last cell (e.g. cursor repositioned via
+    // CUP and a character printed, as TUI apps redrawing a status line
+    // routinely do) return a stale value.
+    let mut line = Line::with_width_and_cell(5, Cell::blank(), SEQ_ZERO);
+    line.set_last_cell_was_wrapped(true, 1);
+    assert_eq!(line.last_cell_was_wrapped(), true);
+
+    // Overwrite the last cell directly with plain (non-wrapped) content,
+    // at a later seqno.
+    line.set_cell(
+        4,
+        Cell::new_grapheme("X", CellAttributes::default(), None),
+        2,
+    );
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        false,
+        "stale cached `true` must not survive overwriting the last cell"
+    );
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_resize_and_clear() {
+    let mut line = Line::with_width_and_cell(5, Cell::blank(), SEQ_ZERO);
+    line.set_last_cell_was_wrapped(true, 1);
+    assert_eq!(line.last_cell_was_wrapped(), true);
+
+    line.resize_and_clear(5, 2, CellAttributes::default());
+    assert_eq!(line.last_cell_was_wrapped(), false);
+
+    line.set_last_cell_was_wrapped(true, 3);
+    assert_eq!(line.last_cell_was_wrapped(), true);
+
+    line.resize(10, 4);
+    // resize() pads with blank cells; the (now different) last cell is blank.
+    assert_eq!(line.last_cell_was_wrapped(), false);
+}
+
+// Regression tests for a bug an @oh review pass caught in the wrap-cache
+// fix above: `update_last_change_seqno` takes `max(self.seqno, seqno)`, so
+// a caller that computes `seqno` as the max of two already-existing seqnos
+// (as `apply_hyperlink_rules` does when joining physical lines back into a
+// logical one) can pass a seqno that is a no-op on the receiving line even
+// though its content just changed. Relying on the seqno match alone left
+// `append_line` and `split_off` able to serve a stale cached value.
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_append_line_same_seqno() {
+    // Mirrors the pattern in `apply_hyperlink_rules`: `seqno` is the max of
+    // the two lines' own seqnos, so it can equal `self`'s current seqno.
+    let mut a = Line::from_text_with_wrapped_last_col("ab", &CellAttributes::default(), 5);
+    assert_eq!(
+        a.last_cell_was_wrapped(),
+        true,
+        "populate the cache before mutating"
+    );
+
+    let b = Line::from_text("cd", &CellAttributes::default(), SEQ_ZERO, None);
+    let seqno = a.current_seqno().max(b.current_seqno()); // == 5, a no-op bump
+    a.append_line(b, seqno);
+
+    assert_eq!(
+        a.last_cell_was_wrapped(),
+        false,
+        "appended content is not wrapped; a same-seqno append must not serve the stale cached value"
+    );
+}
+
+#[test]
+fn last_cell_was_wrapped_cache_invalidated_by_split_off() {
+    let mut line = Line::from_text_with_wrapped_last_col("abcd", &CellAttributes::default(), 1);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "populate the cache before mutating"
+    );
+
+    // split_off truncates `line` in place; its new last cell ('b', at
+    // index 1) is not wrapped, even though split_off never bumps `line`'s
+    // own seqno via update_last_change_seqno.
+    let _remainder = line.split_off(2, 1);
+
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        false,
+        "split_off must invalidate the truncated line's own wrap cache"
+    );
+}
+
+#[test]
+fn last_cell_was_wrapped_wide_trailing_grapheme() {
+    // Regression test for a bug the 3rd @oh review pass found: for a
+    // V-storage line ending in a double-width grapheme (e.g. CJK),
+    // `set_last_cell_was_wrapped`'s old `cells.last_mut()` targeted the
+    // padding cell that follows the wide grapheme, while the reader's
+    // `visible_cells().last()` skips that padding cell and inspects the
+    // wide grapheme's lead cell instead -- so the attribute was set on a
+    // cell the reader never looks at. The setter must resolve the same
+    // cell index as the reader.
+    let mut line = Line::from_text("a你", &CellAttributes::default(), SEQ_ZERO, None);
+    line.set_last_cell_was_wrapped(true, 1);
+    // Bust the seqno-keyed wrap cache before reading: the setter primes it
+    // with the value it was *given*, at the same seqno it just wrote, so an
+    // immediate read would pass off the cache alone regardless of which
+    // cell the attribute actually landed on. Forcing a real recompute via
+    // `visible_cells()` is what actually exercises the fix.
+    line.update_last_change_seqno(2);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "setter and reader must agree on which cell is 'last' for a wide trailing grapheme"
+    );
+    // Cache-independent pin of the actual invariant (setter and reader
+    // resolve the same cell), found missing by a 5th @oh review pass: the
+    // assertion above alone depends on `last_cell_was_wrapped()`'s cache
+    // being keyed on `seqno` specifically, so if the cache were ever
+    // rekeyed on something else, a bare seqno bump would stop busting it
+    // and this test would silently degrade into a tautology.
+    assert_eq!(
+        line.visible_cells()
+            .last()
+            .map(|c| (c.cell_index(), c.attrs().wrapped())),
+        Some((1, true)),
+        "the wrap attribute must land on the wide grapheme's lead cell, not its padding cell"
+    );
+}
+
+#[test]
+fn from_text_with_wrapped_last_col_wide_trailing_grapheme() {
+    // Regression test for a 4th @oh review pass finding: the test-only
+    // constructor `from_text_with_wrapped_last_col` had the exact same
+    // last_mut()-vs-visible_cells().last() mismatch as the setter fixed
+    // above. It's fixed by delegating to `set_last_cell_was_wrapped`, which
+    // means this constructor now goes through the very same seqno-keyed
+    // cache as the setter -- so, as a 5th @oh review pass found, an
+    // immediate read here is just as susceptible to passing off a
+    // cache-primed value as the setter test above was; it needs the same
+    // seqno bump to force a real recompute.
+    let mut line = Line::from_text_with_wrapped_last_col("a你", &CellAttributes::default(), 1);
+    line.update_last_change_seqno(2);
+    assert_eq!(
+        line.last_cell_was_wrapped(),
+        true,
+        "from_text_with_wrapped_last_col must produce a line whose wrap flag is \
+         actually observable via last_cell_was_wrapped(), even for wide trailing graphemes"
+    );
+    assert_eq!(
+        line.visible_cells()
+            .last()
+            .map(|c| (c.cell_index(), c.attrs().wrapped())),
+        Some((1, true)),
+        "the wrap attribute must land on the wide grapheme's lead cell, not its padding cell"
+    );
+}
+
+fn bold() -> CellAttributes {
+    use onlyterm_cell::Intensity;
+    let mut attr = CellAttributes::default();
+    attr.set_intensity(Intensity::Bold);
+    attr
+}
+
+#[test]
+fn cluster_representation_attributes() {
+    let line = Line::from_cells(
+        vec![
+            Cell::new_grapheme("a", CellAttributes::default(), None),
+            Cell::new_grapheme("b", bold(), None),
+            Cell::new_grapheme("c", CellAttributes::default(), None),
+            Cell::new_grapheme("d", bold(), None),
+        ],
+        SEQ_ZERO,
+    );
+
+    let mut compressed = line.clone();
+    compressed.compress_for_scrollback();
+    k9::snapshot!(
+        &compressed.cells,
+        r#"
+C(
+    ClusteredLine {
+        text: "abcd",
+        is_double_wide: None,
+        clusters: [
+            Cluster {
+                cell_width: 1,
+                attrs: CellAttributes {
+                    attributes: 0,
+                    intensity: Normal,
+                    underline: None,
+                    blink: None,
+                    italic: false,
+                    reverse: false,
+                    strikethrough: false,
+                    invisible: false,
+                    wrapped: false,
+                    overline: false,
+                    semantic_type: Output,
+                    foreground: Default,
+                    background: Default,
+                    fat: None,
+                },
+            },
+            Cluster {
+                cell_width: 1,
+                attrs: CellAttributes {
+                    attributes: 1,
+                    intensity: Bold,
+                    underline: None,
+                    blink: None,
+                    italic: false,
+                    reverse: false,
+                    strikethrough: false,
+                    invisible: false,
+                    wrapped: false,
+                    overline: false,
+                    semantic_type: Output,
+                    foreground: Default,
+                    background: Default,
+                    fat: None,
+                },
+            },
+            Cluster {
+                cell_width: 1,
+                attrs: CellAttributes {
+                    attributes: 0,
+                    intensity: Normal,
+                    underline: None,
+                    blink: None,
+                    italic: false,
+                    reverse: false,
+                    strikethrough: false,
+                    invisible: false,
+                    wrapped: false,
+                    overline: false,
+                    semantic_type: Output,
+                    foreground: Default,
+                    background: Default,
+                    fat: None,
+                },
+            },
+            Cluster {
+                cell_width: 1,
+                attrs: CellAttributes {
+                    attributes: 1,
+                    intensity: Bold,
+                    underline: None,
+                    blink: None,
+                    italic: false,
+                    reverse: false,
+                    strikethrough: false,
+                    invisible: false,
+                    wrapped: false,
+                    overline: false,
+                    semantic_type: Output,
+                    foreground: Default,
+                    background: Default,
+                    fat: None,
+                },
+            },
+        ],
+        len: 4,
+        last_cell_width: Some(
+            1,
+        ),
+    },
+)
+"#
+    );
+    compressed.coerce_vec_storage();
+    assert_eq!(line, compressed);
+}
+
+#[test]
+fn cluster_append() {
+    let mut cl = ClusteredLine::new();
+    cl.append(Cell::new_grapheme("h", CellAttributes::default(), None));
+    cl.append(Cell::new_grapheme("e", CellAttributes::default(), None));
+    cl.append(Cell::new_grapheme("l", bold(), None));
+    cl.append(Cell::new_grapheme("l", CellAttributes::default(), None));
+    cl.append(Cell::new_grapheme("o", CellAttributes::default(), None));
+    k9::snapshot!(
+        cl,
+        r#"
+ClusteredLine {
+    text: "hello",
+    is_double_wide: None,
+    clusters: [
+        Cluster {
+            cell_width: 2,
+            attrs: CellAttributes {
+                attributes: 0,
+                intensity: Normal,
+                underline: None,
+                blink: None,
+                italic: false,
+                reverse: false,
+                strikethrough: false,
+                invisible: false,
+                wrapped: false,
+                overline: false,
+                semantic_type: Output,
+                foreground: Default,
+                background: Default,
+                fat: None,
+            },
+        },
+        Cluster {
+            cell_width: 1,
+            attrs: CellAttributes {
+                attributes: 1,
+                intensity: Bold,
+                underline: None,
+                blink: None,
+                italic: false,
+                reverse: false,
+                strikethrough: false,
+                invisible: false,
+                wrapped: false,
+                overline: false,
+                semantic_type: Output,
+                foreground: Default,
+                background: Default,
+                fat: None,
+            },
+        },
+        Cluster {
+            cell_width: 2,
+            attrs: CellAttributes {
+                attributes: 0,
+                intensity: Normal,
+                underline: None,
+                blink: None,
+                italic: false,
+                reverse: false,
+                strikethrough: false,
+                invisible: false,
+                wrapped: false,
+                overline: false,
+                semantic_type: Output,
+                foreground: Default,
+                background: Default,
+                fat: None,
+            },
+        },
+    ],
+    len: 5,
+    last_cell_width: Some(
+        1,
+    ),
+}
+"#
+    );
+}
+
+#[test]
+fn cluster_line_new() {
+    let mut line = Line::new(1);
+    line.set_cell(
+        0,
+        Cell::new_grapheme("h", CellAttributes::default(), None),
+        1,
+    );
+    line.set_cell(
+        1,
+        Cell::new_grapheme("e", CellAttributes::default(), None),
+        2,
+    );
+    line.set_cell(2, Cell::new_grapheme("l", bold(), None), 3);
+    line.set_cell(
+        3,
+        Cell::new_grapheme("l", CellAttributes::default(), None),
+        4,
+    );
+    line.set_cell(
+        4,
+        Cell::new_grapheme("o", CellAttributes::default(), None),
+        5,
+    );
+    k9::snapshot!(
+        line,
+        r#"
+Line {
+    cells: C(
+        ClusteredLine {
+            text: "hello",
+            is_double_wide: None,
+            clusters: [
+                Cluster {
+                    cell_width: 2,
+                    attrs: CellAttributes {
+                        attributes: 0,
+                        intensity: Normal,
+                        underline: None,
+                        blink: None,
+                        italic: false,
+                        reverse: false,
+                        strikethrough: false,
+                        invisible: false,
+                        wrapped: false,
+                        overline: false,
+                        semantic_type: Output,
+                        foreground: Default,
+                        background: Default,
+                        fat: None,
+                    },
+                },
+                Cluster {
+                    cell_width: 1,
+                    attrs: CellAttributes {
+                        attributes: 1,
+                        intensity: Bold,
+                        underline: None,
+                        blink: None,
+                        italic: false,
+                        reverse: false,
+                        strikethrough: false,
+                        invisible: false,
+                        wrapped: false,
+                        overline: false,
+                        semantic_type: Output,
+                        foreground: Default,
+                        background: Default,
+                        fat: None,
+                    },
+                },
+                Cluster {
+                    cell_width: 2,
+                    attrs: CellAttributes {
+                        attributes: 0,
+                        intensity: Normal,
+                        underline: None,
+                        blink: None,
+                        italic: false,
+                        reverse: false,
+                        strikethrough: false,
+                        invisible: false,
+                        wrapped: false,
+                        overline: false,
+                        semantic_type: Output,
+                        foreground: Default,
+                        background: Default,
+                        fat: None,
+                    },
+                },
+            ],
+            len: 5,
+            last_cell_width: Some(
+                1,
+            ),
+        },
+    ),
+    zones: [],
+    seqno: 5,
+    bits: LineBits(
+        0x0,
+    ),
+}
+"#
+    );
+}

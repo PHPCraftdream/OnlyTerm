@@ -6,7 +6,7 @@
 //! This is not a correctness test (though it does assert determinism of
 //! chunked vs. non-chunked application); it is a throwaway measurement
 //! harness, run with:
-//!   cargo test -p wezterm-term --release perf_probe -- --nocapture
+//!   cargo test -p onlyterm-term --release perf_probe -- --nocapture
 //!
 //! It answers two questions:
 //!   1. Is the cost dominated by any single action kind (print vs.
@@ -18,10 +18,10 @@
 //!      the same terminal state as one unchunked call?
 use crate::terminalstate::performer::Performer;
 use crate::{Terminal, TerminalConfiguration, TerminalSize};
+use onlyterm_escape_parser::parser::Parser;
+use onlyterm_escape_parser::Action;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wezterm_escape_parser::parser::Parser;
-use wezterm_escape_parser::Action;
 
 use super::LocalClip;
 
@@ -47,7 +47,7 @@ fn make_terminal() -> Terminal {
     let mut term = Terminal::new(
         size,
         Arc::new(ProbeConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
     );

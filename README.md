@@ -23,7 +23,7 @@ OnlyTerm is a terminal emulator and multiplexer with GPU-accelerated rendering. 
 
 ## What this fork focuses on
 
-This is built on the wezterm/wezterm codebase, with a set of real-world bug and stability fixes ported in — primarily ones affecting Windows: GUI hangs and crashes under load, ConPTY-related races, correctness of pane resize/split handling, input and scroll responsiveness, keyboard-layout-independent standard key bindings, and other targeted fixes. The internal naming of the code (crate names, environment variables, system identifiers) has been left as-is, as a mark of appreciation for the upstream authors and contributors.
+This is built on the wezterm/wezterm codebase, with a set of real-world bug and stability fixes ported in — primarily ones affecting Windows: GUI hangs and crashes under load, ConPTY-related races, correctness of pane resize/split handling, input and scroll responsiveness, keyboard-layout-independent standard key bindings, and other targeted fixes. The internal naming of the code (crate names, environment variables, system identifiers) has been renamed to OnlyTerm branding; the upstream copyright and license attribution are preserved unchanged.
 
 OnlyTerm is also **100% Rust**: the last remaining C dependency (`zstd-sys`, used to compress mux-protocol messages between the client and server) has been replaced with `flate2`'s pure-Rust `miniz_oxide` backend. Nothing in the runtime binaries links or compiles any bundled C library anymore — the only C/C++ still touched anywhere in the build is a tiny build-time-only helper (`vswhom-sys`, via `embed-resource`) used to locate the MSVC toolchain so the application icon can be embedded into the `.exe`, which never ships as part of the running program.
 

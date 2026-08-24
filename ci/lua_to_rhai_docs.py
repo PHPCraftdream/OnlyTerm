@@ -8,14 +8,14 @@ This is a scratch/utility script (not part of the build) used during the
 Lua-purge documentation pass. It targets the recurring idioms found across
 the doc tree:
 
-  * `local wezterm = require 'wezterm'` / `local config = wezterm.config_builder()`
+  * `local onlyterm = require 'onlyterm'` / `local config = onlyterm.config_builder()`
     / `return config` boilerplate -> dropped (the returned map is the whole file)
   * `config.xxx = value` -> kept as-is (still valid: `config` is just a
     variable name used for illustration in these snippets)
-  * `wezterm.action.Foo` / `wezterm.action.Foo{...}` -> `"Foo"` / `#{ Foo: #{...} }`
-  * `wezterm.foo(...)`  -> `foo(...)` for the documented top-level helpers
-  * `wezterm.color.*`, `wezterm.serde.*`, `wezterm.procinfo.*`,
-    `wezterm.plugin.*`, `wezterm.mux.*` -> `color::*`, `serde::*`, etc.
+  * `onlyterm.action.Foo` / `onlyterm.action.Foo{...}` -> `"Foo"` / `#{ Foo: #{...} }`
+  * `onlyterm.foo(...)`  -> `foo(...)` for the documented top-level helpers
+  * `onlyterm.color.*`, `onlyterm.serde.*`, `onlyterm.procinfo.*`,
+    `onlyterm.plugin.*`, `onlyterm.mux.*` -> `color::*`, `serde::*`, etc.
   * Lua table literals used as maps `{ key = value }` -> `#{ key: value }`
   * Lua table literals used as arrays `{ 'a', 'b' }` -> `[ "a", "b" ]`
   * `foo 'bar'` / `foo { ... }` (Lua's paren-less single-argument call
@@ -119,51 +119,51 @@ def restore_strings(s: str, literals) -> str:
 
 
 def strip_boilerplate(s: str) -> str:
-    s = re.sub(r"^[ \t]*local wezterm = require\(?\s*\x00STR\d+\x00\s*\)?\n", "", s, flags=re.M)
-    s = re.sub(r"^[ \t]*local act = wezterm\.action\n", "", s, flags=re.M)
-    s = re.sub(r"^[ \t]*local mux = wezterm\.mux\n", "", s, flags=re.M)
-    s = re.sub(r"^[ \t]*local config = wezterm\.config_builder\(\)\n", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*local onlyterm = require\(?\s*\x00STR\d+\x00\s*\)?\n", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*local act = onlyterm\.action\n", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*local mux = onlyterm\.mux\n", "", s, flags=re.M)
+    s = re.sub(r"^[ \t]*local config = onlyterm\.config_builder\(\)\n", "", s, flags=re.M)
     s = re.sub(r"^[ \t]*local config = \{\}\n", "", s, flags=re.M)
     s = re.sub(r"\n[ \t]*return config[ \t]*$", "", s)
     s = re.sub(r"^[ \t]*return config\n", "", s, flags=re.M)
-    s = re.sub(r"\n[ \t]*return wezterm\.config_builder\(\)[ \t]*$", "", s)
+    s = re.sub(r"\n[ \t]*return onlyterm\.config_builder\(\)[ \t]*$", "", s)
     return s
 
 
-def convert_wezterm_refs(s: str) -> str:
-    s = re.sub(r"\bwezterm\.action_callback\(", "action_callback(", s)
-    s = re.sub(r"\bwezterm\.action\.", "act.", s)
-    s = re.sub(r"\bwezterm\.color\.", "color::", s)
-    s = re.sub(r"\bwezterm\.serde\.", "serde::", s)
-    s = re.sub(r"\bwezterm\.procinfo\.", "procinfo::", s)
-    s = re.sub(r"\bwezterm\.plugin\.", "plugin::", s)
-    s = re.sub(r"\bwezterm\.mux\.", "mux::", s)
-    s = re.sub(r"\bwezterm\.gui\.", "gui::", s)
-    s = re.sub(r"\bwezterm\.nerdfonts\.([A-Za-z0-9_]+)", r'nerdfonts("\1")', s)
+def convert_onlyterm_refs(s: str) -> str:
+    s = re.sub(r"\bonlyterm\.action_callback\(", "action_callback(", s)
+    s = re.sub(r"\bonlyterm\.action\.", "act.", s)
+    s = re.sub(r"\bonlyterm\.color\.", "color::", s)
+    s = re.sub(r"\bonlyterm\.serde\.", "serde::", s)
+    s = re.sub(r"\bonlyterm\.procinfo\.", "procinfo::", s)
+    s = re.sub(r"\bonlyterm\.plugin\.", "plugin::", s)
+    s = re.sub(r"\bonlyterm\.mux\.", "mux::", s)
+    s = re.sub(r"\bonlyterm\.gui\.", "gui::", s)
+    s = re.sub(r"\bonlyterm\.nerdfonts\.([A-Za-z0-9_]+)", r'nerdfonts("\1")', s)
 
-    s = re.sub(r"\bwezterm\.on\(", "on(", s)
-    s = re.sub(r"\bwezterm\.format\(", "format(", s)
-    s = re.sub(r"\bwezterm\.json_encode\(", "serde::json_encode(", s)
-    s = re.sub(r"\bwezterm\.json_decode\(", "serde::json_decode(", s)
-    s = re.sub(r"\bwezterm\.has_action\(", "has_action(", s)
+    s = re.sub(r"\bonlyterm\.on\(", "on(", s)
+    s = re.sub(r"\bonlyterm\.format\(", "format(", s)
+    s = re.sub(r"\bonlyterm\.json_encode\(", "serde::json_encode(", s)
+    s = re.sub(r"\bonlyterm\.json_decode\(", "serde::json_decode(", s)
+    s = re.sub(r"\bonlyterm\.has_action\(", "has_action(", s)
     s = re.sub(
-        r"\bwezterm\.add_to_config_reload_watch_list\(",
+        r"\bonlyterm\.add_to_config_reload_watch_list\(",
         "add_to_config_reload_watch_list(",
         s,
     )
 
-    s = re.sub(r"\bwezterm\.home_dir\b(?!\()", "home_dir()", s)
-    s = re.sub(r"\bwezterm\.hostname\b(?!\()", "hostname()", s)
-    s = re.sub(r"\bwezterm\.version\b(?!\()", "version()", s)
-    s = re.sub(r"\bwezterm\.config_file\b(?!\()", "config_file()", s)
-    s = re.sub(r"\bwezterm\.config_dir\b(?!\()", "config_dir()", s)
-    s = re.sub(r"\bwezterm\.target_triple\b(?!\()", "target_triple()", s)
+    s = re.sub(r"\bonlyterm\.home_dir\b(?!\()", "home_dir()", s)
+    s = re.sub(r"\bonlyterm\.hostname\b(?!\()", "hostname()", s)
+    s = re.sub(r"\bonlyterm\.version\b(?!\()", "version()", s)
+    s = re.sub(r"\bonlyterm\.config_file\b(?!\()", "config_file()", s)
+    s = re.sub(r"\bonlyterm\.config_dir\b(?!\()", "config_dir()", s)
+    s = re.sub(r"\bonlyterm\.target_triple\b(?!\()", "target_triple()", s)
 
-    # remaining top-level wezterm.<fn>(...) calls (e.g. wezterm.font,
-    # wezterm.font_with_fallback, wezterm.default_hyperlink_rules,
-    # wezterm.permute_any_mods, ...) simply drop the `wezterm.` prefix --
+    # remaining top-level onlyterm.<fn>(...) calls (e.g. onlyterm.font,
+    # onlyterm.font_with_fallback, onlyterm.default_hyperlink_rules,
+    # onlyterm.permute_any_mods, ...) simply drop the `onlyterm.` prefix --
     # in rhai these are global functions.
-    s = re.sub(r"\bwezterm\.([A-Za-z_][A-Za-z0-9_]*)", r"\1", s)
+    s = re.sub(r"\bonlyterm\.([A-Za-z_][A-Za-z0-9_]*)", r"\1", s)
     s = re.sub(r"\brequire\(\x00STR\d+\x00\)\.", "", s)
 
     return s
@@ -183,7 +183,7 @@ _NOT_A_CALL = {
 def convert_no_paren_calls(s: str) -> str:
     # `ident.Ident STRPLACEHOLDER` (Lua's paren-less single-string-arg call) ->
     # `ident.Ident(STRPLACEHOLDER)` -- covers `act.CopyMode 'NextMatchPage'`,
-    # `wezterm.font 'Roboto'` (post-prefix-strip: `font 'Roboto'`), etc.
+    # `onlyterm.font 'Roboto'` (post-prefix-strip: `font 'Roboto'`), etc.
     # Restricted to the same line (no newline in the whitespace) and to
     # identifiers that are themselves in "value position" (preceded by
     # `=`, `(`, `,`, `[`, or start of line) so that this can't accidentally
@@ -226,9 +226,9 @@ def convert_no_paren_calls(s: str) -> str:
 
 def convert_local_decls(s: str) -> str:
     # `local NAME = ...` / `local NAME1, NAME2 = ...` -> `let NAME = ...`
-    # (the specific `local wezterm/act/mux/config = ...` boilerplate lines
+    # (the specific `local onlyterm/act/mux/config = ...` boilerplate lines
     # are already stripped entirely by strip_boilerplate(); this handles
-    # everything else, e.g. `local SOLID_LEFT_ARROW = wezterm.nerdfonts...`).
+    # everything else, e.g. `local SOLID_LEFT_ARROW = onlyterm.nerdfonts...`).
     return re.sub(r"^([ \t]*)local\b", r"\1let", s, flags=re.M)
 
 
@@ -372,7 +372,7 @@ def convert_block(code: str) -> str:
     s, literals = extract_strings(code)
 
     s = strip_boilerplate(s)
-    s = convert_wezterm_refs(s)
+    s = convert_onlyterm_refs(s)
     s = convert_table_insert(s)
     s = convert_method_calls(s)
     s = convert_string_concat(s)

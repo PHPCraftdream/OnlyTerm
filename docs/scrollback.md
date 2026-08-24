@@ -90,7 +90,7 @@ it, by setting the `search_mode` key of `key_tables` to a full replacement
 list of key assignments. There is no way to override just part of the table
 from within config: obtaining the defaults programmatically previously
 required calling
-[wezterm.gui.default_key_tables](config/reference/wezterm.gui/default_key_tables.md)
+[onlyterm.gui.default_key_tables](config/reference/onlyterm.gui/default_key_tables.md)
 from a scripting config, which no longer works (see the
 [changelog](changelog.md#continuousnightly)). If you want the defaults plus
 your own additions, copy the default table shown below into your config and

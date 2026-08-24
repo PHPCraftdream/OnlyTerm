@@ -1,18 +1,18 @@
 use crate::bail;
 use crate::error::Result;
 use crate::escape::csi::KittyKeyboardFlags;
+use onlyterm_input_types::{ctrl_mapping, KeyboardLedStatus as InputKeyboardLedStatus};
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
-use wezterm_input_types::{ctrl_mapping, KeyboardLedStatus as InputKeyboardLedStatus};
 
 use super::Modifiers;
 
 pub const CSI: &str = "\x1b[";
 pub const SS3: &str = "\x1bO";
 
-fn to_input_types_key_code(key: KeyCode) -> Option<wezterm_input_types::KeyCode> {
-    use wezterm_input_types::KeyCode as IK;
+fn to_input_types_key_code(key: KeyCode) -> Option<onlyterm_input_types::KeyCode> {
+    use onlyterm_input_types::KeyCode as IK;
     Some(match key {
         KeyCode::Char(c) => IK::Char(c),
 
@@ -324,9 +324,9 @@ impl KeyCode {
 
         if let KeyboardEncoding::Kitty(flags) = modes.encoding {
             // When in kitty mode, reuse the same encoder used by the GUI layer:
-            // wezterm_input_types::KeyEvent::encode_kitty.
+            // onlyterm_input_types::KeyEvent::encode_kitty.
             if let Some(input_key) = to_input_types_key_code(key) {
-                let ev = wezterm_input_types::KeyEvent {
+                let ev = onlyterm_input_types::KeyEvent {
                     key: input_key,
                     modifiers: mods,
                     leds: InputKeyboardLedStatus::default(),

@@ -1,5 +1,5 @@
-use wezterm_color_types::LinearRgba;
-use wezterm_font::parser::ParsedFont;
+use onlyterm_color_types::LinearRgba;
+use onlyterm_font::parser::ParsedFont;
 
 use crate::ULength;
 

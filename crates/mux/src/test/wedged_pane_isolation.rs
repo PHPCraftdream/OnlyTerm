@@ -19,8 +19,8 @@
 //! isolation again -- it drives TWO real `LocalPane`s side by side (a
 //! "victim" with its terminal wedged, and a "healthy" pane with no
 //! contention at all) and exercises exactly the operation set
-//! `wezterm-gui`'s `TermWindow::pos_pane_to_pane_info`
-//! (`crates/wezterm-gui/src/termwindow/mod.rs`) performs against every
+//! `onlyterm-gui`'s `TermWindow::pos_pane_to_pane_info`
+//! (`crates/onlyterm-gui/src/termwindow/mod.rs`) performs against every
 //! pane on essentially every key/mouse event via `get_tab_information()`:
 //! `has_unseen_output()`, `is_unresponsive()`, `get_title()`,
 //! `copy_user_vars()`, `get_progress()`,
@@ -33,14 +33,14 @@
 //! cover).
 use crate::localpane::LocalPane;
 use crate::pane::{CachePolicy, Pane};
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{Terminal, TerminalConfiguration, TerminalSize};
 use parking_lot::Mutex;
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use std::io::{Read, Result as IoResult, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{Terminal, TerminalConfiguration, TerminalSize};
 
 /// A `Child` double that never exits on its own, mirroring
 /// `localpane::tests::NeverExitChild` / `terminal_lock_contention::NeverExitChild`:
@@ -111,7 +111,7 @@ impl MasterPty for FakeMasterPty {
 /// stopped reading. Wrapped in a real `crate::domain::WriterWrapper` below
 /// (the type actually returned by `Pane::writer()` in production) so this
 /// test exercises the exact call shape `pane.writer().write_all(...)`
-/// call sites in `wezterm-gui` use (paste, `SendString`, ...).
+/// call sites in `onlyterm-gui` use (paste, `SendString`, ...).
 struct BlockingWriter {
     gate: Arc<Mutex<()>>,
     wrote: Arc<AtomicBool>,
@@ -139,7 +139,7 @@ impl TerminalConfiguration for TestConfig {
 const ROWS: usize = 24;
 const COLS: usize = 80;
 
-/// Builds a real `LocalPane` with a real `wezterm_term::Terminal` behind
+/// Builds a real `LocalPane` with a real `onlyterm_term::Terminal` behind
 /// the exact same `Mutex` used in production, and a real
 /// `crate::domain::WriterWrapper` (task #245) in front of a
 /// `BlockingWriter`, so `pane.writer().write_all()` exercises the actual
@@ -161,7 +161,7 @@ fn make_pane(name: &str) -> (Arc<LocalPane>, Arc<Mutex<()>>, Arc<AtomicBool>) {
     let terminal = Terminal::new_with_nonblocking_writer(
         size,
         Arc::new(TestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(writer.clone()),
     );
@@ -187,7 +187,7 @@ fn make_pane(name: &str) -> (Arc<LocalPane>, Arc<Mutex<()>>, Arc<AtomicBool>) {
 }
 
 /// Snapshot of everything `TermWindow::pos_pane_to_pane_info`
-/// (`crates/wezterm-gui/src/termwindow/mod.rs`) reads off a pane on the
+/// (`crates/onlyterm-gui/src/termwindow/mod.rs`) reads off a pane on the
 /// GUI thread, plus the wall-clock time the whole batch took.
 struct PaneInfoSnapshot {
     has_unseen_output: bool,

@@ -23,7 +23,7 @@ quickly as possible in order to avoid blocking the GUI thread.
 
 The most notable consequence of this is that some functions that are
 asynchronous (such as
-[wezterm.run_child_process](../wezterm/run_child_process.md)) are not possible
+[onlyterm.run_child_process](../onlyterm/run_child_process.md)) are not possible
 to call from inside the event handler and will generate a `format-window-title:
 runtime error: attempt to yield from outside a coroutine` error.
 
@@ -32,7 +32,7 @@ to the default processing--not very useful except as a starting point for
 making your own title text:
 
 ```lua
-wezterm.on('format-window-title', function(tab, pane, tabs, panes, config)
+onlyterm.on('format-window-title', function(tab, pane, tabs, panes, config)
   local zoomed = ''
   if tab.active_pane.is_zoomed then
     zoomed = '[Z] '
@@ -63,5 +63,5 @@ then the default window title text will be computed and used instead.
 
 Only the first `format-window-title` event will be executed; it doesn't make
 sense to define multiple instances of the event with multiple
-`wezterm.on("format-window-title", ...)` calls.
+`onlyterm.on("format-window-title", ...)` calls.
 

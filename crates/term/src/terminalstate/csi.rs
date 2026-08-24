@@ -3,14 +3,14 @@
 #![allow(clippy::range_plus_one)]
 use super::*;
 use num_traits::ToPrimitive;
-use std::io::Write;
-use terminfo::Value;
-use wezterm_escape_parser::csi::{
+use onlyterm_escape_parser::csi::{
     Cursor, DecPrivateMode, DecPrivateModeCode, Device, Edit, EraseInDisplay, EraseInLine, Mode,
     Sgr, TerminalMode, TerminalModeCode, Window, XtSmGraphics, XtSmGraphicsAction,
     XtSmGraphicsItem, XtSmGraphicsStatus, XtermKeyModifierResource,
 };
-use wezterm_escape_parser::OneBased;
+use onlyterm_escape_parser::OneBased;
+use std::io::Write;
+use terminfo::Value;
 
 impl TerminalState {
     /// <https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h4-Device-Control-functions:DCS-plus-q-Pt-ST.F95>
@@ -404,17 +404,17 @@ impl TerminalState {
             Mode::SetDecPrivateMode(DecPrivateMode::Code(
                 DecPrivateModeCode::SynchronizedOutput,
             )) => {
-                // This is handled in wezterm's mux
+                // This is handled in onlyterm's mux
             }
             Mode::ResetDecPrivateMode(DecPrivateMode::Code(
                 DecPrivateModeCode::SynchronizedOutput,
             )) => {
-                // This is handled in wezterm's mux
+                // This is handled in onlyterm's mux
             }
             Mode::QueryDecPrivateMode(DecPrivateMode::Code(
                 DecPrivateModeCode::SynchronizedOutput,
             )) => {
-                // This is handled in wezterm's mux; if we get here, then it isn't enabled,
+                // This is handled in onlyterm's mux; if we get here, then it isn't enabled,
                 // so we always report false
                 self.decqrm_response(mode, true, false);
             }
@@ -831,7 +831,7 @@ impl TerminalState {
         }
 
         // Treat uninitialized cells as spaces.
-        // The concept of uninitialized cells in wezterm is not the same as that on VT520 or that
+        // The concept of uninitialized cells in onlyterm is not the same as that on VT520 or that
         // on xterm, so, to prevent a lot of noise in esctest, treat them as spaces, at least when
         // asking for the checksum of a single cell (which is what esctest does).
         // See: https://github.com/wezterm/wezterm/pull/4565

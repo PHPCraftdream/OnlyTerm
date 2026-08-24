@@ -1,7 +1,7 @@
 use crate::color::RgbaColor;
 use crate::font::{FontStretch, FontStyle, FontWeight, FreeTypeLoadFlags, FreeTypeLoadTarget};
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use ordered_float::NotNan;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, FromDynamic, ToDynamic)]
 pub struct FontAttributes {
@@ -346,7 +346,7 @@ mod font_attribute_tests {
         let parsed = ktav::parse("font: [{ family: Lucida Console }]").unwrap();
         let dyn_value = crate::ktav_value::ktav_value_to_dynamic(&parsed);
         let obj = match dyn_value {
-            wezterm_dynamic::Value::Object(obj) => obj,
+            onlyterm_dynamic::Value::Object(obj) => obj,
             // Explicit argument rather than an inline `{other:?}` capture:
             // this crate is edition 2018, where implicit format captures
             // don't exist, so the placeholder would be printed literally
@@ -354,12 +354,12 @@ mod font_attribute_tests {
             other => panic!("expected an object, got {:?}", other),
         };
         let font = obj
-            .get(&wezterm_dynamic::Value::String("font".to_string()))
+            .get(&onlyterm_dynamic::Value::String("font".to_string()))
             .expect("font key")
             .clone();
 
         let attrs: Vec<FontAttributes> =
-            wezterm_dynamic::FromDynamic::from_dynamic(&font, Default::default())
+            onlyterm_dynamic::FromDynamic::from_dynamic(&font, Default::default())
                 .expect("`{ family: ... }` alone must be a loadable font entry");
 
         assert_eq!(attrs.len(), 1);

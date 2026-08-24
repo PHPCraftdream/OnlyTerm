@@ -8,7 +8,7 @@
 
 Прежде чем читать дальше — изоляция вкладок **не включена из коробки**.
 
-`crates/wezterm-gui/src/spawn.rs` решает так:
+`crates/onlyterm-gui/src/spawn.rs` решает так:
 
 ```rust
 let use_single_pane =
@@ -25,7 +25,7 @@ let use_single_pane =
 
 ## Обычная вкладка: end-to-end путь
 
-Когда пользователь создаёт обычную (не администраторскую) вкладку — при включённом флаге, см. выше — запускается `spawn_single_pane_tab` в `crates/wezterm-gui/src/spawn.rs`.
+Когда пользователь создаёт обычную (не администраторскую) вкладку — при включённом флаге, см. выше — запускается `spawn_single_pane_tab` в `crates/onlyterm-gui/src/spawn.rs`.
 
 ### Создание домена
 
@@ -92,7 +92,7 @@ Single-pane ребёнок никогда не вызывает `socketpair()` �
 
 ## Админская вкладка: почему тот же путь не работает
 
-Админская вкладка запускается через `spawn_elevated_single_pane_tab` в `crates/wezterm-gui/src/spawn.rs`. Путь отличается фундаментально.
+Админская вкладка запускается через `spawn_elevated_single_pane_tab` в `crates/onlyterm-gui/src/spawn.rs`. Путь отличается фундаментально.
 
 ### Проблема: `ShellExecuteExW("runas")` не поддерживает наследование хэндлов
 
@@ -112,11 +112,11 @@ GUI связывает loopback-слушателя на `127.0.0.1:0`, гене�
 
 Ребёнок подключается обратно к GUI по WebSocket, предъявляя токен в заголовке `X-OnlyTerm-Token`. Слой WebSocket (tungstenite) затем бриджится на обычный `filedescriptor::socketpair()` через фоновый pump-поток, и существующая mux-машинерия (`dispatch::process`) работает без изменений.
 
-Подробнее: `crates/wezterm-elevated-transport/src/lib.rs`.
+Подробнее: `crates/onlyterm-elevated-transport/src/lib.rs`.
 
 ### ShellExecuteExW("runas"): блокирующий UAC-пропт
 
-`spawn_elevated_single_pane` в `crates/wezterm-gui/src/elevate.rs`:
+`spawn_elevated_single_pane` в `crates/onlyterm-gui/src/elevate.rs`:
 
 1. Связывает `RendezvousListener::bind()` — открывает порт и генерирует токен
 2. Формирует командную строку через `construct_single_pane_command_line`
@@ -147,7 +147,7 @@ GUI связывает loopback-слушателя на `127.0.0.1:0`, гене�
 
 ### Обычные дети: Job Object с KILL_ON_JOB_CLOSE
 
-`crates/wezterm-client/src/client/windows_job.rs` реализует `assign_to_kill_on_close_job(child, process_name)`:
+`crates/onlyterm-client/src/client/windows_job.rs` реализует `assign_to_kill_on_close_job(child, process_name)`:
 
 1. Создаёт Job Object через `CreateJobObjectW`
 2. Устанавливает `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` через `SetInformationJobObject`
@@ -167,7 +167,7 @@ Job Object не может пересекать границу целостно�
 
 Решение: обратное направление. Elevated ребёнок может открыть хэндл к lower-integrity родителю и ждать его завершения.
 
-`spawn_parent_watcher` в `crates/wezterm-mux-server/src/main.rs`:
+`spawn_parent_watcher` в `crates/onlyterm-mux-server/src/main.rs`:
 
 1. Вызывается для всех детей, которым передан `--supervise-pid` — и обычных, и поднятых
 2. Открывает хэндл через `OpenProcess(SYNCHRONIZE, false, parent_pid)` **сразу**, на вызывающем потоке, ещё до создания потока-сторожа
@@ -200,7 +200,7 @@ Windows переиспользует PID. Если отложить разреш
 
 ## Cleanup домена при закрытии вкладки
 
-`ClientDomain::perform_detach` в `crates/wezterm-client/src/domain/mod.rs`:
+`ClientDomain::perform_detach` в `crates/onlyterm-client/src/domain/mod.rs`:
 
 1. Очищает внутреннее состояние: `self.inner.lock().unwrap().take()`
 2. Удаляет домен из registration maps: `mux.remove_domain(&domain)`
@@ -253,7 +253,7 @@ Windows переиспользует PID. Если отложить разреш
 
 Все замеры в этом документе сняты с дерева процессов, работавшего с приоритетом **Idle**: их снимал агент, а его оболочка — фоновая и низкоприоритетная, что наследуется всем запущенным из неё. На незагруженной машине разница невелика, но это **нижняя оценка**, а не нейтральное измерение. Прежде чем приводить эти числа как пользовательские, их следует переснять при обычном приоритете.
 
-Где вызывается постановка в Job Object — `crates/wezterm-client/src/client/conn.rs`, ветка `UnixTarget::Proxy`, сразу после `cmd.spawn()`; полученный хендл возвращается наверх и должен жить столько же, сколько соединение с ребёнком, потому что закрытие хендла и есть сигнал ядру убить процесс.
+Где вызывается постановка в Job Object — `crates/onlyterm-client/src/client/conn.rs`, ветка `UnixTarget::Proxy`, сразу после `cmd.spawn()`; полученный хендл возвращается наверх и должен жить столько же, сколько соединение с ребёнком, потому что закрытие хендла и есть сигнал ядру убить процесс.
 
 ---
 

@@ -1,6 +1,6 @@
-# `wezterm set-working-directory`
+# `onlyterm set-working-directory`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-set-working-directory--help.txt" %}
+{% include "../examples/cmd-synopsis-onlyterm-set-working-directory--help.txt" %}
 ```
 

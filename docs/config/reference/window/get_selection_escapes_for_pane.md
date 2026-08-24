@@ -27,14 +27,14 @@ This example copies the current selection + escapes to the clipboard when
 `CTRL+SHIFT+E` is pressed:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
 return {
   keys = {
     {
       key = 'E',
       mods = 'CTRL',
-      action = wezterm.action_callback(function(window, pane)
+      action = onlyterm.action_callback(function(window, pane)
         local ansi = window:get_selection_escapes_for_pane(pane)
         window:copy_to_clipboard(ansi)
       end),

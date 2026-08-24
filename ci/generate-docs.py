@@ -278,7 +278,7 @@ title: Color Schemes with first letter "{scheme_prefix}"
                     origin_url = scheme["metadata"].get("origin_url", None)
                     if origin_url:
                         idx.write(f"Source: <{origin_url}><br/>\n")
-                    version = scheme["metadata"].get("wezterm_version", None)
+                    version = scheme["metadata"].get("onlyterm_version", None)
                     if version and version != "Always":
                         idx.write(f"{{{{since('{version}')}}}}<br/>\n")
 
@@ -324,7 +324,7 @@ document.addEventListener("DOMContentLoaded", function() {{
 
 TOC = [
     Page(
-        "WezTerm",
+        "OnlyTerm",
         "index.md",
         children=[
             Page("Features", "features.md"),
@@ -374,40 +374,40 @@ TOC = [
                 "config/reference/config",
             ),
             Gen(
-                "module: wezterm",
-                "config/reference/wezterm",
+                "module: onlyterm",
+                "config/reference/onlyterm",
             ),
             Gen(
-                "module: wezterm.color",
-                "config/reference/wezterm.color",
+                "module: onlyterm.color",
+                "config/reference/onlyterm.color",
             ),
             Gen(
-                "module: wezterm.gui",
-                "config/reference/wezterm.gui",
+                "module: onlyterm.gui",
+                "config/reference/onlyterm.gui",
             ),
             Gen(
-                "module: wezterm.mux",
-                "config/reference/wezterm.mux",
+                "module: onlyterm.mux",
+                "config/reference/onlyterm.mux",
             ),
             Gen(
-                "module: wezterm.plugin",
-                "config/reference/wezterm.plugin",
+                "module: onlyterm.plugin",
+                "config/reference/onlyterm.plugin",
             ),
             Gen(
-                "module: wezterm.procinfo",
-                "config/reference/wezterm.procinfo",
+                "module: onlyterm.procinfo",
+                "config/reference/onlyterm.procinfo",
             ),
             Gen(
-                "module: wezterm.serde",
-                "config/reference/wezterm.serde",
+                "module: onlyterm.serde",
+                "config/reference/onlyterm.serde",
             ),
             Gen(
-                "module: wezterm.time",
-                "config/reference/wezterm.time",
+                "module: onlyterm.time",
+                "config/reference/onlyterm.time",
             ),
             Gen(
-                "module: wezterm.url",
-                "config/reference/wezterm.url",
+                "module: onlyterm.url",
+                "config/reference/onlyterm.url",
             ),
             Gen(
                 "enum: KeyAssignment",
@@ -426,7 +426,7 @@ TOC = [
             Page("object: PaneInformation", "config/reference/PaneInformation.md"),
             Page("object: TabInformation", "config/reference/TabInformation.md"),
             Page("object: SpawnCommand", "config/reference/SpawnCommand.md"),
-            Gen("object: Time", "config/reference/wezterm.time/Time"),
+            Gen("object: Time", "config/reference/onlyterm.time/Time"),
             Gen(
                 "object: Pane",
                 "config/reference/pane",
@@ -453,17 +453,17 @@ TOC = [
         "CLI Reference",
         "cli/general.md",
         children=[
-            Gen("wezterm cli", "cli/cli"),
-            Page("wezterm connect", "cli/connect.md"),
-            Page("wezterm imgcat", "cli/imgcat.md"),
-            Page("wezterm ls-fonts", "cli/ls-fonts.md"),
-            Page("wezterm record", "cli/record.md"),
-            Page("wezterm replay", "cli/replay.md"),
-            Page("wezterm serial", "cli/serial.md"),
-            Page("wezterm set-working-directory", "cli/set-working-directory.md"),
-            Page("wezterm show-keys", "cli/show-keys.md"),
-            Page("wezterm ssh", "cli/ssh.md"),
-            Page("wezterm start", "cli/start.md"),
+            Gen("onlyterm cli", "cli/cli"),
+            Page("onlyterm connect", "cli/connect.md"),
+            Page("onlyterm imgcat", "cli/imgcat.md"),
+            Page("onlyterm ls-fonts", "cli/ls-fonts.md"),
+            Page("onlyterm record", "cli/record.md"),
+            Page("onlyterm replay", "cli/replay.md"),
+            Page("onlyterm serial", "cli/serial.md"),
+            Page("onlyterm set-working-directory", "cli/set-working-directory.md"),
+            Page("onlyterm show-keys", "cli/show-keys.md"),
+            Page("onlyterm ssh", "cli/ssh.md"),
+            Page("onlyterm start", "cli/start.md"),
         ],
     ),
     Page(
@@ -484,7 +484,6 @@ TOC = [
             Page("Contributing", "contributing.md"),
         ],
     ),
-    Page("Change Log", "changelog.md"),
 ]
 
 os.chdir("docs")

@@ -4,14 +4,14 @@
 > исследования (архитектура SessionInner/backend-agnostic API остаётся верной
 > информацией о коде на момент удаления).
 
-# План: миграция wezterm-ssh с libssh2/libssh-rs (C+OpenSSL) на russh (чистый Rust)
+# План: миграция onlyterm-ssh с libssh2/libssh-rs (C+OpenSSL) на russh (чистый Rust)
 
-Дата: 2026-07-23. Репо: форк `PHPCraftdream/wezterm`, ветка `main`.
+Дата: 2026-07-23. Репо: форк `PHPCraftdream/onlyterm`, ветка `main`.
 
 ## Контекст и почему это вообще всплыло
 
-При работе над задачей #10 (почини сборку `wezterm-font`) обнаружился независимый
-блокер: `wezterm-font → config → wezterm-ssh → openssl (vendored)` требует Perl для
+При работе над задачей #10 (почини сборку `onlyterm-font`) обнаружился независимый
+блокер: `onlyterm-font → config → onlyterm-ssh → openssl (vendored)` требует Perl для
 сборки OpenSSL из C-исходников, и нужного Perl-модуля на машине нет. Решение
 (подтверждено пользователем): не чинить vendored OpenSSL точечно, а убрать саму
 зависимость от него — заменить SSH-стек на `russh` (чистый Rust, tokio-async,
@@ -23,7 +23,7 @@ RustCrypto-бэкенд, без C/asm). Задача #10 закрыта (`delete
 ## Важное отличие от cairo→tiny-skia миграции
 
 Там был один узкий, изолированный потребитель (5 файлов рендера глифов).
-Здесь `wezterm-ssh` — core-функциональность (~6000 строк): session, channel, pty,
+Здесь `onlyterm-ssh` — core-функциональность (~6000 строк): session, channel, pty,
 sftp, auth, host-key verification, keepalive, proxy. Это **security-critical** код:
 баг в аутентификации или в проверке host-key — это не косметика, а риск для
 реального доступа пользователя к машинам. Более высокая планка верификации,
@@ -34,10 +34,10 @@ sftp, auth, host-key verification, keepalive, proxy. Это **security-critical*
 
 ### Текущая архитектура — почему миграция реалистична
 
-Ключевая находка: публичный API `wezterm-ssh` уже **backend-agnostic** и
+Ключевая находка: публичный API `onlyterm-ssh` уже **backend-agnostic** и
 async-facing:
 
-- `wezterm-ssh/src/session.rs`: `Session` — тонкий фасад с async-методами
+- `onlyterm-ssh/src/session.rs`: `Session` — тонкий фасад с async-методами
   (`connect`, `request_pty`, `exec`, `sftp`), использующий `smol::channel` для
   запросов/ответов. Сам `Session` не содержит ни строчки, завязанной на
   ssh2/libssh-rs напрямую.
@@ -61,7 +61,7 @@ async-facing:
 `SftpRequest`) можно оставить как есть — меняется только начинка
 `SessionInner` (плюс `channelwrap.rs`/`sftpwrap.rs`/`dirwrap.rs`/`filewrap.rs`,
 которые сейчас enum-обёртки над ssh2/libssh-rs типами). Вызывающий код в
-`wezterm-gui`/`mux` не должен почувствовать разницы.
+`onlyterm-gui`/`mux` не должен почувствовать разницы.
 
 ### russh — проверено (docs.rs)
 
@@ -116,7 +116,7 @@ async-facing:
 
 SSH — не то же самое, что рендер глифов: тут diff двух PNG не поможет,
 нужна **живая проверка протокола**. Но управление живым GUI/скриншоты
-по-прежнему не нужны — верификация происходит на уровне крейта `wezterm-ssh`,
+по-прежнему не нужны — верификация происходит на уровне крейта `onlyterm-ssh`,
 через integration-тесты с реальным SSH-сервером:
 
 - **Тестовый SSH-сервер — сам russh в серверном режиме.** russh поддерживает
@@ -129,19 +129,19 @@ SSH — не то же самое, что рендер глифов: тут diff
   проверить, есть ли на машине системный OpenSSH-сервер (Windows 10/11 имеет
   опциональный компонент "OpenSSH Server") — но in-process russh-сервер
   предпочтителен, т.к. не требует прав администратора/системных фич.
-- **`wezterm-ssh/tests/integration.rs`** (новый) — гоняет: connect + auth
+- **`onlyterm-ssh/tests/integration.rs`** (новый) — гоняет: connect + auth
   (pubkey и password) + exec простой команды + чтение вывода + resize PTY +
   sftp put/get/stat + сценарий mismatch host-key (должен вернуть ошибку,
   не тихо продолжить). Всё через тестовый russh-сервер выше — полностью
   автоматически, без участия пользователя.
 - Для не-функциональных проверок (сборка, отсутствие openssl в дереве
-  зависимостей) — `cargo tree -p wezterm-ssh | grep -i openssl` должен быть
+  зависимостей) — `cargo tree -p onlyterm-ssh | grep -i openssl` должен быть
   пустым после миграции; `cargo build --workspace` должен проходить без
   Perl/OpenSSL шага вообще.
 
 ### Порядок работ
 
-- **0. Тулинг.** `wezterm-ssh/tests/support/test_server.rs` — in-process
+- **0. Тулинг.** `onlyterm-ssh/tests/support/test_server.rs` — in-process
   russh-сервер для тестов (auth, pty, exec, sftp). Это разблокирует все
   следующие шаги тестами, а не ручной проверкой.
 - **1. `SessionInner::run_impl_russh()` — базовый connect + auth.** Новый
@@ -157,11 +157,11 @@ SSH — не то же самое, что рендер глифов: тут diff
 - **4. Keepalive + edge cases.** `serveraliveinterval`, обработка обрыва
   соединения, host-key mismatch (явный тест на "должен зафейлить, не продолжить").
 - **5. Вычистка.** Убрать `ssh2`, `libssh-rs`, `openssl`/`async_ossl`(там, где
-  единственный потребитель — SSH) из `wezterm-ssh/Cargo.toml` и корневого
+  единственный потребитель — SSH) из `onlyterm-ssh/Cargo.toml` и корневого
   workspace, убрать enum `SshBackend`/переключение бэкендов из
   `config/src/ssh.rs`, закрепить russh на чисто RustCrypto-фичах.
   `cargo tree | grep -i openssl` — пусто. `cargo build --workspace` без Perl.
-- **6. Верификация.** Полный прогон `wezterm-ssh/tests/integration.rs`,
+- **6. Верификация.** Полный прогон `onlyterm-ssh/tests/integration.rs`,
   `cargo test --workspace`, и (если пользователь захочет) один ручной sanity-
   коннект к реальному внешнему хосту как последняя проверка — но это
   единственное место, где решение о ручном участии за пользователем, не по

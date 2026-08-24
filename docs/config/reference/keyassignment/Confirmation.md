@@ -10,7 +10,7 @@ tags:
 !!! danger "Non-functional: required a scripting callback"
 
     `Confirmation`'s `action`/`cancel` fields were designed to hold an event
-    callback registered via `wezterm.action_callback(...)`, resolved through
+    callback registered via `onlyterm.action_callback(...)`, resolved through
     rhai's (and, before that, Lua's) event-handler registry. That registry no
     longer exists — see the [changelog](../../../changelog.md#continuousnightly)
     and the [migration guide](../../../migration-to-ktav.md). The overlay
@@ -29,10 +29,10 @@ Activates an overlay to display a confirmation menu.
 * `message` - the text to show for confirmation. You may embed
   escape sequences. Defaults to: `"🛑 Really continue?"`.
 * `action` - previously an event callback registered via
-  `wezterm.action_callback`, called when the user selects `Yes`. No longer
+  `onlyterm.action_callback`, called when the user selects `Yes`. No longer
   connected to anything (see above).
 * `cancel` - previously an event callback registered via
-  `wezterm.action_callback`, called when the user selects `No` or closes the
+  `onlyterm.action_callback`, called when the user selects `No` or closes the
   confirmation menu. Optional. No longer connected to anything (see above).
 
 ## Historical example (no longer functional)
@@ -47,14 +47,14 @@ config.keys = [
     mods: "CTRL|SHIFT",
     action: act.Confirmation(#{
       message: "Do you want to run htop in a new window?",
-      action: wezterm.action_callback(|window, pane| {
+      action: onlyterm.action_callback(|window, pane| {
         window.perform_action(
           act.SpawnCommandInNewWindow(#{ args: ["htop"] }),
           pane
         );
       }),
-      cancel: wezterm.action_callback(|window, pane| {
-        wezterm.log_error("user declined");
+      cancel: onlyterm.action_callback(|window, pane| {
+        onlyterm.log_error("user declined");
       }),
     }),
   },

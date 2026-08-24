@@ -20,5 +20,5 @@ serde.workspace = true
 smol.workspace = true
 termwiz-funcs.workspace = true
 termwiz.workspace = true
-wezterm-dynamic.workspace = true
-wezterm-term.workspace = true
+onlyterm-dynamic.workspace = true
+onlyterm-term.workspace = true

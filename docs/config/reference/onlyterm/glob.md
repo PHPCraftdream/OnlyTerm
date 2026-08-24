@@ -1,0 +1,43 @@
+---
+title: onlyterm.glob
+tags:
+ - utility
+ - filesystem
+---
+
+# `onlyterm.glob(pattern [, relative_to])`
+
+!!! danger "Removed: no scripting engine"
+
+    This page documents part of the rhai (and, before that, Lua) **scripting
+    API**, which has been removed entirely. OnlyTerm's configuration format
+    is now [ktav](../../../migration-to-ktav.md), a static `key: value` data
+    format with no expressions, function calls, or callbacks of any kind --
+    there is nothing left in OnlyTerm that could call this function, invoke
+    this method, or construct this object. The description and examples
+    below are kept for historical reference (e.g. if you're migrating a very
+    old config and trying to understand what it used to do), but none of it
+    is callable today. See the [changelog](../../../changelog.md#continuousnightly)
+    for the full rationale.
+
+{{since('20200503-171512-b13ef15f')}}
+
+This function evaluates the glob `pattern` and returns an array containing the
+absolute file names of the matching results.  Due to limitations in the lua
+bindings, all of the paths must be able to be represented as UTF-8 or this
+function will generate an error.
+
+The optional `relative_to` parameter can be used to make the results relative
+to a path.  If the results have the same prefix as `relative_to` then it will
+be removed from the returned path.
+
+```lua
+local onlyterm = require 'onlyterm'
+
+-- logs the names of all of the conf files under `/etc`
+for _, v in ipairs(onlyterm.glob '/etc/*.conf') do
+  onlyterm.log_error('entry: ' .. v)
+end
+```
+
+

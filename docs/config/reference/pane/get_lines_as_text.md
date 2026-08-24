@@ -39,12 +39,12 @@ and visible area of the active pane, write it to a file and then open that file
 in the `vim` editor:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 local io = require 'io'
 local os = require 'os'
-local act = wezterm.action
+local act = onlyterm.action
 
-wezterm.on('trigger-vim-with-scrollback', function(window, pane)
+onlyterm.on('trigger-vim-with-scrollback', function(window, pane)
   -- Retrieve the text from the pane
   local text = pane:get_lines_as_text(pane:get_dimensions().scrollback_rows)
 
@@ -69,7 +69,7 @@ wezterm.on('trigger-vim-with-scrollback', function(window, pane)
   --
   -- Note: We don't strictly need to remove this file, but it is nice
   -- to avoid cluttering up the temporary directory.
-  wezterm.sleep_ms(1000)
+  onlyterm.sleep_ms(1000)
   os.remove(name)
 end)
 

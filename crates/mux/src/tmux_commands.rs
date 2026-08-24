@@ -6,6 +6,7 @@ use crate::tmux::{AttachState, TmuxDomain, TmuxDomainState, TmuxRemotePane, Tmux
 use crate::tmux_pty::{TmuxChild, TmuxPty};
 use crate::{Mux, MuxNotification, Pane};
 use anyhow::{anyhow, Context};
+use onlyterm_term::TerminalSize;
 use parking_lot::{Condvar, Mutex};
 use portable_pty::{MasterPty, PtySize};
 use std::collections::HashSet;
@@ -15,7 +16,6 @@ use std::sync::Arc;
 use termwiz::escape::csi::{Cursor, DecPrivateMode, DecPrivateModeCode, Mode, CSI};
 use termwiz::escape::{Action, OneBased};
 use termwiz::tmux_cc::*;
-use wezterm_term::TerminalSize;
 
 pub(crate) trait TmuxCommand: Send + Debug {
     fn get_command(&self, domain_id: DomainId) -> String;
@@ -224,11 +224,11 @@ impl TmuxDomainState {
         // `crates/mux/src/domain.rs`), so use
         // `new_with_nonblocking_writer` here rather than `new`, to avoid
         // wrapping it in a second, redundant `ThreadedWriter`.
-        let terminal = wezterm_term::Terminal::new_with_nonblocking_writer(
+        let terminal = onlyterm_term::Terminal::new_with_nonblocking_writer(
             size,
             std::sync::Arc::new(config::TermConfig::new()),
             "OnlyTerm",
-            config::wezterm_version(),
+            config::onlyterm_version(),
             Box::new(writer.clone()),
         );
 

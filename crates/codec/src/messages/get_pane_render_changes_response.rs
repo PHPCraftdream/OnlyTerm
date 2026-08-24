@@ -4,10 +4,10 @@ use std::ops::Range;
 use mux::pane::PaneId;
 use mux::renderable::{RenderableDimensions, StableCursorPosition};
 use mux::tab::SerdeUrl;
+use onlyterm_term::StableRowIndex;
 use serde::{Deserialize, Serialize};
 use termwiz::input::KeyboardEncoding;
 use termwiz::surface::SequenceNo;
-use wezterm_term::StableRowIndex;
 
 use crate::input_serial::InputSerial;
 use crate::lines::SerializedLines;

@@ -28,4 +28,4 @@ keys: [
 ]
 ```
 
-See also: [SplitHorizontal](SplitHorizontal.md), [SplitVertical](SplitVertical.md) and `wezterm cli split-pane --help`.
+See also: [SplitHorizontal](SplitHorizontal.md), [SplitVertical](SplitVertical.md) and `onlyterm cli split-pane --help`.

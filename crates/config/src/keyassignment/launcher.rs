@@ -1,5 +1,5 @@
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::convert::TryFrom;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(Default, Debug, Clone, FromDynamic, ToDynamic, PartialEq, Eq)]
 pub struct LauncherActionArgs {

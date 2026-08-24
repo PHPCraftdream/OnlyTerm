@@ -1,0 +1,67 @@
+[package]
+authors = ["Wez Furlong"]
+name = "onlyterm-escape-parser"
+version = "0.1.0"
+edition = "2024"
+repository = "https://github.com/wezterm/wezterm"
+description = "Escape Sequence Parser"
+license = "MIT"
+documentation = "https://docs.rs/wezterm-escape-parser"
+keywords = ["terminal", "escape", "parser"]
+
+[dependencies]
+base64 = {workspace = true, default-features=false, features=["alloc"]}
+bitflags = "2.0"
+hex = {workspace = true, default-features=false, features=["alloc"]}
+image = {workspace =true, optional=true }
+log.workspace = true
+num-derive.workspace = true
+num-traits.workspace = true
+ordered-float.workspace = true
+pest = {workspace = true, optional=true}
+pest_derive = {workspace = true, optional=true}
+serde = {workspace=true, optional=true}
+sha2 = {workspace=true, optional=true}
+thiserror = {version = "2.0", default-features=false }
+vtparse = {workspace = true, features=["alloc"]}
+onlyterm-blob-leases = {workspace=true, optional=true}
+onlyterm-color-types.workspace = true
+onlyterm-dynamic.workspace = true
+onlyterm-input-types = {workspace = true, default-features=false}
+
+[target."cfg(unix)".dependencies]
+nix = { workspace=true, optional=true, features=["mman", "fs"] }
+
+[target."cfg(windows)".dependencies.winapi]
+workspace = true
+optional = true
+features = [
+    "winbase",
+    "winerror",
+    "winnls",
+    "winuser",
+    "consoleapi",
+    "handleapi",
+    "fileapi",
+    "synchapi",
+    "memoryapi",
+    "winnt",
+    "impl-default"
+]
+
+[features]
+std = ["vtparse/std", "thiserror/std", "onlyterm-input-types/std", "hex/std", "onlyterm-dynamic/std"]
+kitty-shm = ["dep:nix", "dep:winapi"]
+use_serde = ["dep:serde", "onlyterm-color-types/use_serde", "onlyterm-blob-leases/serde", "bitflags/serde", "onlyterm-input-types/serde"]
+use_image = ["image", "dep:image"]
+image = ["sha2", "onlyterm-blob-leases"]
+tmux_cc = ["dep:pest", "dep:pest_derive"]
+docs = ["use_serde", "image", "tmux_cc", "kitty-shm"]
+
+[dev-dependencies]
+env_logger.workspace = true
+k9.workspace = true
+
+[package.metadata.docs.rs]
+features = ["docs"]
+rustdoc-args = ["--cfg", "feature=\"docs\""]

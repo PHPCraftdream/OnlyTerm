@@ -35,7 +35,7 @@ actions — около 0.1–0.16 мс.
 
 ## Что измерено сейчас
 
-Использовался текущий `target/release/onlyterm-gui.exe` (`wezterm v0.0.2-alpha-dirty`), окно
+Использовался текущий `target/release/onlyterm-gui.exe` (`onlyterm v0.0.2-alpha-dirty`), окно
 80×24 и периодический вывод внутренних metrics. Были сделаны два прогона: короткий burst на
 50 000 строк и 15-секундный прогон, в котором после четырёх секунд покоя выводились 100 000
 строк. Второй прогон важнее: renderer уже был готов до начала потока, поэтому он показывает не
@@ -82,7 +82,7 @@ parser thread
 
 - `Mux::dispatch_notification`, `crates/mux/src/lib.rs:571-583`;
 - `TermWindow::subscribe_to_pane_updates`,
-  `crates/wezterm-gui/src/termwindow/render_pipeline.rs:1636-1654`;
+  `crates/onlyterm-gui/src/termwindow/render_pipeline.rs:1636-1654`;
 - `Window::notify` и безусловном `Connection::with_window_inner`,
   `crates/window/src/os/windows/window.rs:1891-1902` и
   `crates/window/src/os/windows/connection.rs:191-215`.
@@ -132,7 +132,7 @@ generation меняется и после завершения планируе�
 - создание shader, bind-group layouts и render pipeline;
 - создание per-window surface и ресурсов.
 
-Код находится в `crates/wezterm-gui/src/termwindow/webgpu/state_impl.rs:183-478` и
+Код находится в `crates/onlyterm-gui/src/termwindow/webgpu/state_impl.rs:183-478` и
 `:621-692`. Pipeline создаётся с `cache: None`.
 
 Полезное разделение типов:
@@ -176,7 +176,7 @@ context ускорит окна внутри процесса, но **не** в�
 ## P1: тип GPU-данных — instanced quads
 
 Сейчас `Vertex` — 17 `f32`, 68 байт. На quad записываются четыре почти одинаковые вершины:
-272 байта (`crates/wezterm-gui/src/quad.rs:27-58`, size assertion на `:403-407`). Цвета, HSV,
+272 байта (`crates/onlyterm-gui/src/quad.rs:27-58`, size assertion на `:403-407`). Цвета, HSV,
 flags и большая часть геометрии повторяются четыре раза.
 
 `BoxedQuad` уже показывает естественное instance-представление: 84 байта уникальных данных на
@@ -188,7 +188,7 @@ quad. Статические четыре corner-вершины плюс оди�
 - меньше CPU stores при построении кадра.
 
 После этого имеет смысл заменить per-frame `create_buffer(mapped_at_creation=true)` в
-`WebGpuVertexBuffer::recreate` (`crates/wezterm-gui/src/renderstate.rs:136-145`) на persistent
+`WebGpuVertexBuffer::recreate` (`crates/onlyterm-gui/src/renderstate.rs:136-145`) на persistent
 `VERTEX | COPY_DST` buffer с `Queue::write_buffer`, staging belt либо небольшой ring. Записывать
 нужно только реально использованный prefix, не всю capacity. Single-slot frame backpressure в
 `RenderThreadHandle::send_frame` уже не даёт расти очереди кадров; её сохраняем.
@@ -204,7 +204,7 @@ quad. Статические четыре corner-вершины плюс оди�
 - `impl_get_lines_via_with_lines` вызывает `line.clone()` для каждой строки,
   `crates/mux/src/pane.rs:562-586`;
 - `Line::clone` клонирует `CellStorage` и zones,
-  `crates/wezterm-surface/src/line/line.rs:61-71`;
+  `crates/onlyterm-surface/src/line/line.rs:61-71`;
 - `VecStorage` содержит обычный `Vec<Cell>`, а `ClusteredLine` — `String` и `Vec<Cluster>`.
 
 Возвращаться к shaping под terminal mutex не нужно. Более безопасная цель — immutable render
@@ -224,7 +224,7 @@ cloned bytes с разделением `VecStorage`/`ClusteredLine`. COW все�
 ### `Vec<Box<BoxedQuad>>` → contiguous или chunked storage
 
 `HeapQuadAllocator` хранит три `Vec<Box<BoxedQuad>>` и делает отдельный heap allocation на каждый
-quad (`crates/wezterm-gui/src/quad.rs:304-378`). Комментарий объясняет это страхом перед
+quad (`crates/onlyterm-gui/src/quad.rs:304-378`). Комментарий объясняет это страхом перед
 многомегабайтным contiguous realloc, но текущий allocator создаётся **на одну строку** в
 `render/pane.rs:537`, затем кладётся в line cache. Для 80 обычных quad один слой занимает всего
 около 6.7 КБ логических данных; даже несколько quad на cell — это десятки КБ, не мегабайты.
@@ -282,7 +282,7 @@ Glyph cache делает lookup на каждый glyph и пока исполь
 `bidi_disabled_by_foreground_process` сейчас вызывается для каждой видимой строки при создании
 quad key, а на cache miss ещё раз из `render_screen_line`. Каждый вызов получает process name,
 разбирает `Path` и делает `to_string_lossy().into_owned()` для basename
-(`crates/wezterm-gui/src/termwindow/render/mod.rs:1042-1063`, вызовы в `render/pane.rs:461-465` и
+(`crates/onlyterm-gui/src/termwindow/render/mod.rs:1042-1063`, вызовы в `render/pane.rs:461-465` и
 `render/screen_line.rs:91-96`).
 
 Результат одинаков для всего pane в одном кадре. Его лучше вычислить один раз до `LineRender`,

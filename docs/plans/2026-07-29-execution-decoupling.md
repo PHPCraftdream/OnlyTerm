@@ -17,7 +17,7 @@ lock-free-работу, оценить перевод на асинхронно�
 Цепочка причин, каждое звено подтверждено чтением исходников:
 
 1. **Все окна живут в одном процессе.** GUI-процесс публикует
-   `gui-sock-{pid}` (`crates/wezterm-gui/src/main.rs:352`) и экспортирует
+   `gui-sock-{pid}` (`crates/onlyterm-gui/src/main.rs:352`) и экспортирует
    `ONLYTERM_UNIX_SOCKET` в дочерние процессы
    (`crates/mux/src/domain.rs:506`). Всё, что пользователь запускает из
    OnlyTerm, подключается обратно к тому же `onlyterm-gui.exe`. Инцидент в
@@ -50,7 +50,7 @@ lock-free-работу, оценить перевод на асинхронно�
    есть — есть чем мерить «до/после».
 
 5. **Нет ни watchdog'а, ни пути «отцепить зависшее».** Поиск по
-   `watchdog|heartbeat|hang_detect` в `wezterm-gui`/`window` не даёт ничего.
+   `watchdog|heartbeat|hang_detect` в `onlyterm-gui`/`window` не даёт ничего.
    Чтобы закрыть зависшую вкладку крестиком, нужно, чтобы message loop
    обработал клик — а он-то и заблокирован.
 
@@ -183,7 +183,7 @@ mux-протокол.
 требует реального GPU-адаптера (`wgpu::Instance`/`request_adapter`), которого
 нет в headless CI. Логика без GPU уже покрыта юнит-тестами, добавленными по
 ходу 221.4–221.7 (`dispatch_loop`'s coalescing/back-pressure/shutdown,
-`is_hung_given`) — см. `crates/wezterm-gui/src/renderthread.rs`.
+`is_hung_given`) — см. `crates/onlyterm-gui/src/renderthread.rs`.
 
 Вместо этого проведена ручная проверка end-to-end на реальном GPU этой
 машины (2026-07-30), с использованием `debug_render_thread_stall_ms`

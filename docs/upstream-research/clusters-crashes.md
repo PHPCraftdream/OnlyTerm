@@ -26,7 +26,7 @@
   max_texture_dimension_2d") закрывает конкретно случай превышения лимита текстуры на WebGpu-пути.
 - Рекомендация: взять клэмпинг из #7821 как базу, но дополнительно (а) применить аналогичный клэмп
   на OpenGL/glium-пути (не только WebGpu), и (б) отдельно проверить арифметику деления на
-  scale-фактор в коде ресайза окна (`window/`, `wezterm-gui/src/termwindow/resize.rs`) — вероятно,
+  scale-фактор в коде ресайза окна (`window/`, `onlyterm-gui/src/termwindow/resize.rs`) — вероятно,
   именно она первой порождает "плохой" размер, который потом обваливает создание поверхности.
 - Приоритет: high — 5 независимых репортов на разных площадках (Sway/GNOME/macOS), суммарно ~45
   комментариев, все — жёсткие крэши/abort.
@@ -46,7 +46,7 @@
   (OpenGL/glium, WebGPU/wgpu, D3D11) есть один и тот же класс гонки: платформенный GPU-ресурс
   (drawable/IOSurface на macOS, EGL-surface на X11, D3D-контекст на Windows) разрушается или
   становится невалидным (закрытие окна, сон/пробуждение, отключение монитора, сброс драйвера), пока
-  wezterm-сторонний `RenderState`/glium-контекст всё ещё держит на него ссылку — следующий Drop или
+  onlyterm-сторонний `RenderState`/glium-контекст всё ещё держит на него ссылку — следующий Drop или
   попытка перерисовки трогает мёртвый хэндл → abort/segfault вместо storičnog переинициализации.
   PR #7958 — отдельный, но родственный по месту (тот же файл `window/src/os/macos/window.rs`,
   тот же "жизненный цикл окна во время resize") баг: реентерабельный `borrow_mut()` вместо
@@ -66,7 +66,7 @@
 ## Кластер: BlobLease (шрифтовый glyph-кэш) — утечка / зависание / permission-error
 
 - Участники: PR #7955, Issue #5422, Issue #7285, Issue #6426
-- Механизм: `wezterm-blob-leases/src/simple_tempdir.rs` хранит glyph/image-blob'ы как
+- Механизм: `onlyterm-blob-leases/src/simple_tempdir.rs` хранит glyph/image-blob'ы как
   content-addressed временные файлы с refcounting; логика store/refcount/cleanup некорректно
   обрабатывает конкурентных читателей (на Windows — блокировка файла) и не гарантирует
   своевременную очистку — один и тот же баг lifecycle проявляется тремя симптомами: перезапись
@@ -130,7 +130,7 @@
 - Участники: Issue #3425, Issue #4825, Issue #6662, Issue #7819, Issue #3229, Issue #4290, Issue
   #7528 (шире — ломает и OpenGL/Software после апдейта AMD-драйвера, не только WebGpu), Issue #6205
   (сегфолт на конкретном AMD-драйвере)
-- Механизм: путь создания/конфигурации WebGpu-поверхности (`wezterm-gui/src/termwindow/webgpu.rs`)
+- Механизм: путь создания/конфигурации WebGpu-поверхности (`onlyterm-gui/src/termwindow/webgpu.rs`)
   не валидирует и не мягко обрабатывает несовместимость адаптера/поверхности (неподдерживаемые
   форматы, лимиты размера, "виртуальные" адаптеры RDP, специфичные баги драйверов AMD/Intel) — вместо
   граceful fallback (например, на OpenGL/Software) или внятной ошибки паника/validation error из
@@ -187,7 +187,7 @@
   распространение ошибки. Windows-часть (#6783/#5107/#7025/#4364) не имеет единого корня —
   требует отдельного разбора по каждому репорту.
 - Приоритет: high — эта же ошибка спавна лежит в основе доброй половины нечитаемых "не могу
-  запустить wezterm" репортов, так как без диагностического канала причина невидима пользователю.
+  запустить onlyterm" репортов, так как без диагностического канала причина невидима пользователю.
 
 ---
 
@@ -215,10 +215,10 @@
 ## Кластер: Паника при недоступном/пропавшем fallback-шрифте (уже устранено в нашем форке)
 
 - Участники: Issue #7963, Issue #6157
-- Механизм: `wezterm-font` в пути `load_fallback` трактовал любую ошибку I/O при открытии
+- Механизм: `onlyterm-font` в пути `load_fallback` трактовал любую ошибку I/O при открытии
   кандидата fallback-шрифта (ACL-запрет доступа, либо файл удалён после запуска) как жёсткую
   ошибку/панику вместо того, чтобы пропустить этот кандидат и продолжить перебор.
-- Готовый фикс в апстриме: наш **собственный** коммит `5752050b8` ("wezterm-font: skip unreadable
+- Готовый фикс в апстриме: наш **собственный** коммит `5752050b8` ("onlyterm-font: skip unreadable
   fallback font candidates instead of erroring out") уже чинит триггер #7963.
 - Рекомендация: #6157 (шрифт удалён во время работы, а не изначально недоступен по ACL) —
   вероятно другой конкретный код-путь (переразрешение фолбэка после инвалидации кэша шрифтов, а не
@@ -253,7 +253,7 @@
 
 - Участники: PR #7883, Issue #5022, Issue #1983, Issue #3396, Issue #4633, Issue #6555
 - Механизм: при пересечении окном границы монитора с другим DPI/scale собственная логика ресайза
-  wezterm по смене scale (`scaling_changed()` → `set_inner_size()` → платформенный вызов
+  onlyterm по смене scale (`scaling_changed()` → `set_inner_size()` → платформенный вызов
   перепозиционирования) реентерабельно срабатывает до того, как ОС завершила своё перемещение окна
   — получается feedback loop, который на Windows проявляется как "зацикленный ресайз"/drag lock
   (чинит #7883), а на других платформах/таймингах — как хаотичные прыжки размера (#1983), временное
@@ -287,11 +287,11 @@
 ## Кластер: Неограниченный рост клиентского построчного рендер-кэша (LruCache) на долгих сессиях
 
 - Участники: PR #7704, Issue #3771 (вероятный, но не подтверждённый матч — см. ниже)
-- Механизм: `RenderableInner::make_all_stale()` в `wezterm-client/src/pane/renderable.rs` создаёт
+- Механизм: `RenderableInner::make_all_stale()` в `onlyterm-client/src/pane/renderable.rs` создаёт
   новый `LruCache::unbounded()` вместо сохранения исходного лимита ёмкости; срабатывает при каждом
   mux-коннекте клиента (initial resize) и далее на resize/zoom/palette change — построчный кэш
   растёт без ограничения до многогигабайтного потребления за часы/дни работы. Issue #3771 (утечка
-  памяти + высокий CPU при `RotatePanes` в `wezterm connect unix`) описывает утечку в том же самом
+  памяти + высокий CPU при `RotatePanes` в `onlyterm connect unix`) описывает утечку в том же самом
   подузле (client/mux-домен), и `RotatePanes`, скорее всего, триггерит один из перечисленных в PR
   путей (resize/reflow) — но это не подтверждено построчным чтением кода `RotatePanes`, поэтому
   приоритет матча — "вероятный", не точный.
@@ -392,8 +392,8 @@
   же паттерн, доведённый до крайности), Issue #6885 (визуальные глюки/самопроизвольное
   переключение вкладок при переподключении к мультиплексору)
 - Механизм: уведомления `PaneFocused` проходят через `mux/src/tab.rs` →
-  `wezterm-client/src/pane/clientpane.rs` → `wezterm-gui/src/frontend.rs` →
-  `wezterm-mux-server-impl/src/sessionhandler.rs`; смена фокуса может породить новую смену фокуса в
+  `onlyterm-client/src/pane/clientpane.rs` → `onlyterm-gui/src/frontend.rs` →
+  `onlyterm-mux-server-impl/src/sessionhandler.rs`; смена фокуса может породить новую смену фокуса в
   ответ на саму себя (нет idempotency/serial-guard) — получается самоподдерживающийся цикл,
   который проявляется как постоянная самопроизвольная смена фокуса/панели, мерцание, а в
   предельном случае (#7096/#3994) взрывное дублирование вкладок/окон при совпадении с логикой
@@ -420,15 +420,15 @@
 - PR #7177 — Align `with_phys_lines()`'s impl with `with_phys_lines_mut()` — рассинхронизация двух
   параллельных реализаций (`term/src/screen.rs`), потенциальный некорректный доступ/OOB при чтении
   scrollback после его обрезания — medium-high (не подтверждённый крэш, но реальный риск).
-- Issue #3214 — Wezterm has slow response and even freeze — high, слишком общий заголовок, вероятно
+- Issue #3214 — Onlyterm has slow response and even freeze — high, слишком общий заголовок, вероятно
   зонтичный симптом для одного или нескольких кластеров E/F/S, но недостаточно деталей.
 - Issue #5197 — Hanging after recent update on Arch — medium/high.
 - Issue #4912 — imgcat panic when invoked from PowerShell under WSL paths — medium/high.
-- Issue #5366 — Mouse freezes/skips/stutters over the wezterm window — high.
+- Issue #5366 — Mouse freezes/skips/stutters over the onlyterm window — high.
 - Issue #7427 — Crash (segfault) with no apparent reason on mac — high, возможный неподтверждённый
   член кластера "GPU/window-lifecycle" (нет repro/backtrace).
 - Issue #7118 — Almost daily crash on MacOS — high, тот же неподтверждённый кандидат.
-- Issue #7101 — Wezterm crashing after last update — medium.
+- Issue #7101 — Onlyterm crashing after last update — medium.
 - Issue #6077 — segfault on macbook air m2 — medium/high, тот же неподтверждённый кандидат.
 - Issue #6128 — Weztem crashing on text selection — high.
 - Issue #7249 — Segfault on macOS Tahoe (26.0) — high, тот же неподтверждённый кандидат.
@@ -436,45 +436,45 @@
 - Issue #7953 — Kitty image placement + DECSTBM scroll SIGABRT (quad-count blowup) — high; родственно
   по теме (не по механизму) визуальным #2422/#4995 (image placement lifecycle), но это единственный
   член семьи, который реально крэшит.
-- Issue #7363 — Wezterm using 22 GB of RAM — high, вероятный дубль-симптом кластеров "утечки
+- Issue #7363 — Onlyterm using 22 GB of RAM — high, вероятный дубль-симптом кластеров "утечки
   image/GPU" или "LruCache leak" — требует уточнения repro.
-- Issue #5522 — `wezterm imgcat` crashes when running in tmux — medium.
+- Issue #5522 — `onlyterm imgcat` crashes when running in tmux — medium.
 - Issue #2274 — Screen sharing over Discord causes display issues and crashes — medium.
 - Issue #7436 — Nightly Win11 launch fails, "LoadLibrary failed with error 126" — medium/high.
 - Issue #5835 — Almost no UI rendered — medium.
-- Issue #4944 — Wezterm freezes while spawning in a nested X session (Xephyr) — medium.
+- Issue #4944 — Onlyterm freezes while spawning in a nested X session (Xephyr) — medium.
 - Issue #7847 — Crash when using `pane:move_to_new_window` with single pane in window — medium.
 - Issue #7358 — Panicked when using IME completion — medium/high.
 - Issue #7257 — `Option+Cmd+H` causes unresponsiveness instead of hiding applications — medium.
-- Issue #7239 — Emacs sshx freeze in WezTerm — medium.
+- Issue #7239 — Emacs sshx freeze in OnlyTerm — medium.
 - Issue #7218 — Pane sometimes seems to disconnect from underlying output — medium/high.
 - Issue #7163 — Crash on Ctrl+N (new window) on macOS — high.
 - Issue #6499 — panic if `PATHEXT` has an empty entry (`;;`) — medium/high.
-- Issue #6094 — `CloseCurrentTab` can crash wezterm in certain sequences/timings (race) — medium/high.
-- Issue #6006 — Ctrl+Scrolllock crashes Wezterm — medium/high.
-- Issue #5745 — Wezterm freezes after being resized — high, возможно пересекается с кластерами
+- Issue #6094 — `CloseCurrentTab` can crash onlyterm in certain sequences/timings (race) — medium/high.
+- Issue #6006 — Ctrl+Scrolllock crashes Onlyterm — medium/high.
+- Issue #5745 — Onlyterm freezes after being resized — high, возможно пересекается с кластерами
   "pane-size loop" или "DPI-boundary drag", недостаточно деталей чтобы включить уверенно.
 - Issue #5446 — panic at startup on wayland — high.
-- Issue #3223 — Wezterm panic for `tmux -CC a` command via ssh — high.
-- Issue #2807 — `libEGL` crash on forwarded X session when starting wezterm — medium.
-- Issue #7689 — WezTerm crashing on macOS with EGL errors — high.
+- Issue #3223 — Onlyterm panic for `tmux -CC a` command via ssh — high.
+- Issue #2807 — `libEGL` crash on forwarded X session when starting onlyterm — medium.
+- Issue #7689 — OnlyTerm crashing on macOS with EGL errors — high.
 - Issue #7265 — segfault w/macOS Sequoia — high, неподтверждённый кандидат GPU-lifecycle кластера.
 - Issue #7050 — Crash/Unresponsive when interacting with Albert (launcher) — medium/high.
-- Issue #6531 — Windows 11 Wezterm crashes on start — high, неподтверждённый кандидат GPU-lifecycle
+- Issue #6531 — Windows 11 Onlyterm crashes on start — high, неподтверждённый кандидат GPU-lifecycle
   кластера.
 - Issue #7406 — Consistent crash when dragging image from Firefox over terminal — high.
 - Issue #7089 — Divide by zero when Minimizing in search mode — high.
 - Issue #7006 — Crash on Asahi Linux — medium/high.
 - Issue #6513 — New Windows Stop Opening After Awhile — high, возможная слабая связь с кластером
   "mux connect hang", не подтверждена деталями.
-- Issue #6361 — Crash in `wezterm.strftime` — high.
-- Issue #5944 — Wezterm crash on launching in mac, tmux default program — high.
+- Issue #6361 — Crash in `onlyterm.strftime` — high.
+- Issue #5944 — Onlyterm crash on launching in mac, tmux default program — high.
 - Issue #5927 — [Windows] app becomes unresponsive while typing in commands — high.
 - Issue #5837 — Panic on ChromeOS using Wayland — medium/high.
 - Issue #5093 — Crashes when choosing powershell from launcher menu inside WSL session — high.
 - Issue #1839 — mux server silently fails when no space is left on device — medium/high, слабая
   связь с кластером "необработанные OS-ошибки" (тихий отказ, а не крэш).
 - Issue #4396 — Weztem failed to run — medium.
-- Issue #4708 — Wezterm runs but doesn't display a window — high.
-- Issue #5518 — Wezterm panic: called `Option::unwrap()` on a `None` value — high (недостаточно
+- Issue #4708 — Onlyterm runs but doesn't display a window — high.
+- Issue #5518 — Onlyterm panic: called `Option::unwrap()` on a `None` value — high (недостаточно
   деталей, чтобы понять, в каком именно подузле).

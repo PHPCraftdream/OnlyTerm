@@ -29,10 +29,10 @@ represents the gui window.
 The second event parameter is a [`pane` object](../pane/index.md) that
 represents the active pane in that window.
 
-`wezterm` will ensure that only a single instance of this event is outstanding;
+`onlyterm` will ensure that only a single instance of this event is outstanding;
 if the hook takes longer than the
 [status_update_interval](../config/status_update_interval.md) to complete,
-`wezterm` won't schedule another call until `status_update_interval`
+`onlyterm` won't schedule another call until `status_update_interval`
 milliseconds have elapsed since the last call completed.
 
 {{since('20220903-194523-3bb1ed61')}}

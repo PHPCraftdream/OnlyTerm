@@ -1,8 +1,8 @@
 use super::*;
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{TerminalConfiguration, TerminalSize};
 use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use std::io::{Read, Result as IoResult};
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{TerminalConfiguration, TerminalSize};
 
 /// A `Child` double that never exits on its own, mirroring
 /// `test::terminal_lock_contention::NeverExitChild`: `LocalPane` only
@@ -192,7 +192,7 @@ fn make_pane() -> (Arc<LocalPane>, Arc<std::sync::atomic::AtomicBool>) {
     let terminal = Terminal::new(
         size,
         Arc::new(TestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
     );
@@ -238,7 +238,7 @@ fn make_pane_with_real_pid() -> Arc<LocalPane> {
     let terminal = Terminal::new(
         size,
         Arc::new(TestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
     );
@@ -283,7 +283,7 @@ fn make_pane_with_tracked_writer() -> (
     let terminal = Terminal::new(
         size,
         Arc::new(TestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
     );
@@ -333,7 +333,7 @@ fn make_pane_with_blocking_writer() -> (
     let terminal = Terminal::new(
         size,
         Arc::new(TestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
     );
@@ -443,7 +443,7 @@ fn make_pane_with_writer_wrapper() -> (
     let terminal = Terminal::new_with_nonblocking_writer(
         size,
         Arc::new(TestConfig),
-        "WezTerm",
+        "OnlyTerm",
         "0.0.0",
         Box::new(writer.clone()),
     );
@@ -473,7 +473,7 @@ fn make_pane_with_writer_wrapper() -> (
 /// (`crate::domain::WriterWrapper`, the concrete type behind
 /// `Pane::writer()`) used to be a direct, blocking pass-through over
 /// the real pty writer (`self.writer.lock().write(buf)`). Roughly a
-/// dozen call sites in `wezterm-gui` call
+/// dozen call sites in `onlyterm-gui` call
 /// `pane.writer().write_all(...)` synchronously from the GUI thread
 /// (paste, `SendString`, IME composition, character-picker insertion,
 /// ...); if the target process wasn't reading its stdin, any of those
@@ -776,7 +776,7 @@ fn render_budget_exceeded_expires_once_painting_stops() {
     assert!(!pane.is_unresponsive());
 
     // Simulate a frame that exceeded the render budget for this pane
-    // (what `crates/wezterm-gui/src/termwindow/render/pane.rs` does
+    // (what `crates/onlyterm-gui/src/termwindow/render/pane.rs` does
     // once per painted pane per frame).
     pane.set_render_budget_exceeded(true);
     assert!(

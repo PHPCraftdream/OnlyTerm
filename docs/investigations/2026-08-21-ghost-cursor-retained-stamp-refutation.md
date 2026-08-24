@@ -33,16 +33,16 @@ atlas-mirroring / HostProcessBackend и не затрагивают цитиру
 
 ## 1. Опровержение исходного звена «bump → устаревшие строки»
 
-- `RetainedStamp` (`crates/wezterm-gui/src/termwindow/render/mod.rs:155-169`) содержит
+- `RetainedStamp` (`crates/onlyterm-gui/src/termwindow/render/mod.rs:155-169`) содержит
   `quad_generation` (`render/mod.rs:158`) наряду с config/shape generation, пиксельными
   размерами и геометрией панели.
 - Штамп строится и сравнивается один раз на панель за кадр в `paint_pane`
-  (`crates/wezterm-gui/src/termwindow/render/pane.rs:424-435` — построение,
+  (`crates/onlyterm-gui/src/termwindow/render/pane.rs:424-435` — построение,
   `pane.rs:439-471` — сравнение). При несовпадении запись панели заменяется на свежую с
   `rows: vec![None; dims.viewport_rows]` и `resume_row: 0` (`pane.rs:446-455`).
 - После сброса `has_retained == false` для каждой строки, а `RowSweep::decide` при
   `!has_retained` безусловно возвращает `Build` независимо от бюджета
-  (`crates/wezterm-gui/src/termwindow/render/budget.rs:102`, «Never drawn before -> MUST NOT
+  (`crates/onlyterm-gui/src/termwindow/render/budget.rs:102`, «Never drawn before -> MUST NOT
   be blank»). Бюджет физически не может отложить строку, у которой нет retained-quad-ов.
 - Следствие: звенья 2→4 исходной цепочки не смыкаются — массовый cache-miss, порождённый
   bump'ом, всегда сопровождается сбросом retained и потому заканчивается полным корректным
@@ -58,17 +58,17 @@ atlas-mirroring / HostProcessBackend и не затрагивают цитиру
 
 1. Курсор запечён в quad-ы строки. Отдельного cursor-overlay нет (`paint_cursor` в коде
    отсутствует): `render_screen_line` вычисляет `cursor_cell`/`cursor_range` по условию
-   `stable_line_idx == cursor.y` (`crates/wezterm-gui/src/termwindow/render/screen_line.rs:108-123`)
+   `stable_line_idx == cursor.y` (`crates/onlyterm-gui/src/termwindow/render/screen_line.rs:108-123`)
    и рисует `cursor_sprite` в слоях строки (`screen_line.rs:317-430`). В кэш-ключ курсор входит
    как `Option<CursorProperties>` (`render/mod.rs:90-92`, `pane.rs:517-531`) — quad-ы строки
    «с курсором» и «без курсора» это разные записи `line_quad_cache`.
 2. Фоновая вкладка не рендерится: `get_panes_to_render` возвращает панели только активной
-   вкладки (`crates/wezterm-gui/src/termwindow/actions.rs:2180-2188`); вывод панели невидимой
+   вкладки (`crates/onlyterm-gui/src/termwindow/actions.rs:2180-2188`); вывод панели невидимой
    вкладки не инвалидирует окно — гейт `is_pane_visible` в `mux_pane_output_event`
-   (`crates/wezterm-gui/src/termwindow/render_pipeline.rs:1678-1696, 1720-1724`). При этом PTY
+   (`crates/onlyterm-gui/src/termwindow/render_pipeline.rs:1678-1696, 1720-1724`). При этом PTY
    фоновой вкладки продолжает работать: контент и позиция курсора меняются без единого рендера.
 3. Заморозка retained: пока вкладка неактивна, её запись в `retained_rows`
-   (`crates/wezterm-gui/src/termwindow/mod.rs:387`, `HashMap<PaneId, RetainedPaneRows>`)
+   (`crates/onlyterm-gui/src/termwindow/mod.rs:387`, `HashMap<PaneId, RetainedPaneRows>`)
    не обновляется. При возврате штамп СОВПАДАЕТ: `quad_generation` не менялся (см. §1 —
    переключение вкладок его не бампает), пиксельные размеры, геометрия и число строк те же
    (`pane.rs:424-435`) → сброса нет, `rows` и `resume_row` переживают простой

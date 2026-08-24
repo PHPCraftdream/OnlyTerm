@@ -13,7 +13,7 @@
     is callable today. See the [changelog](../../../changelog.md#continuousnightly)
     for the full rationale.
 
-**NOTE: You probably want to use [wezterm.gui.get_appearance()](../wezterm.gui/get_appearance.md) instead, as it is easier to use!**
+**NOTE: You probably want to use [onlyterm.gui.get_appearance()](../onlyterm.gui/get_appearance.md) instead, as it is easier to use!**
 
 {{since('20210814-124438-54e29167')}}
 
@@ -25,7 +25,7 @@ can be one of the following 4 values:
 * `"LightHighContrast"` - light mode but with high contrast colors (not reported on all systems)
 * `"DarkHighContrast"` - dark mode but with high contrast colors (not reported on all systems)
 
-wezterm is able to detect when the appearance has changed and will generate a
+onlyterm is able to detect when the appearance has changed and will generate a
 [window-config-reloaded](../window-events/window-config-reloaded.md) event for
 each window.
 
@@ -33,7 +33,7 @@ This example configuration shows how you can have your color scheme
 automatically adjust to the current appearance:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
 function scheme_for_appearance(appearance)
   if appearance:find 'Dark' then
@@ -43,7 +43,7 @@ function scheme_for_appearance(appearance)
   end
 end
 
-wezterm.on('window-config-reloaded', function(window, pane)
+onlyterm.on('window-config-reloaded', function(window, pane)
   local overrides = window:get_config_overrides() or {}
   local appearance = window:get_appearance()
   local scheme = scheme_for_appearance(appearance)
@@ -60,12 +60,12 @@ return {}
 
 {{since('20220807-113146-c2fee766')}}
 
-wezterm uses [XDG Desktop
+onlyterm uses [XDG Desktop
 Portal](https://flatpak.github.io/xdg-desktop-portal/) to determine the
 appearance.
 
 In earlier versions you may wish to use an alternative method to determine the
-appearance, as wezterm didn't know how to interrogate the appearance on Wayland
+appearance, as onlyterm didn't know how to interrogate the appearance on Wayland
 systems, and would always report `"Light"`.
 
 The GNOME desktop environment provides the `gsettings` tool that can
@@ -75,7 +75,7 @@ following function, which takes advantage of this:
 
 ```lua
 function query_appearance_gnome()
-  local success, stdout = wezterm.run_child_process {
+  local success, stdout = onlyterm.run_child_process {
     'gsettings',
     'get',
     'org.gnome.desktop.interface',
@@ -100,13 +100,13 @@ function query_appearance_gnome()
 end
 ```
 
-Since WezTerm will not fire a `window-config-reloaded` event on Wayland for
-older versions of wezterm, you will instead need to listen on the
+Since OnlyTerm will not fire a `window-config-reloaded` event on Wayland for
+older versions of onlyterm, you will instead need to listen on the
 [update-right-status](../window-events/update-right-status.md) event, which
 will essentially poll for the appearance periodically:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
 function scheme_for_appearance(appearance)
   if appearance:find 'Dark' then
@@ -116,7 +116,7 @@ function scheme_for_appearance(appearance)
   end
 end
 
-wezterm.on('update-right-status', function(window, pane)
+onlyterm.on('update-right-status', function(window, pane)
   local overrides = window:get_config_overrides() or {}
   local appearance = query_appearance_gnome()
   local scheme = scheme_for_appearance(appearance)

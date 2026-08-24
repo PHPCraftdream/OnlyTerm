@@ -24,7 +24,7 @@ options.
 
 Styling in this context refers to how the edges of the tabs and the new tab button are rendered.
 The default is simply a space character. Each field's value is a plain string: previously that
-string was produced by calling the [wezterm.format](../wezterm/format.md) scripting function to
+string was produced by calling the [onlyterm.format](../onlyterm/format.md) scripting function to
 build up a sequence of terminal escape codes (for color/attribute changes) around some text; with
 no scripting engine, `format(...)` can no longer be called from config.
 

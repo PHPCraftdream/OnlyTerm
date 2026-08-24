@@ -27,14 +27,14 @@ In this contrived and useless example, pressing ALT-k will output `hello there`
 in italics to the current pane:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
 return {
   keys = {
     {
       key = 'k',
       mods = 'ALT',
-      action = wezterm.action_callback(function(window, pane)
+      action = onlyterm.action_callback(function(window, pane)
         pane:inject_output '\r\n\x1b[3mhello there\r\n'
       end),
     },

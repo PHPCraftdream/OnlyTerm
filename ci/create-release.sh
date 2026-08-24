@@ -3,7 +3,7 @@ set -x
 name="$1"
 
 notes=$(cat <<EOT
-OnlyTerm $name -- a Windows-only fork of [WezTerm](https://github.com/wezterm/wezterm).
+OnlyTerm $name -- a Windows-only fork of [OnlyTerm](https://github.com/wezterm/wezterm).
 
 Download the \`.zip\` (portable) or the \`.exe\` (installer) below; each is
 published alongside a \`.sha256\` you can verify it against.

@@ -19,7 +19,7 @@ libc.workspace = true
 log.workspace = true
 termwiz-funcs.workspace = true
 termwiz.workspace = true
-wezterm-version.workspace = true
+onlyterm-version.workspace = true
 
 [target."cfg(windows)".dependencies]
 winapi.workspace = true

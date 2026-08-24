@@ -29,7 +29,7 @@ config.keys = {
   {
     key = '!',
     mods = 'LEADER | SHIFT',
-    action = wezterm.action_callback(function(win, pane)
+    action = onlyterm.action_callback(function(win, pane)
       local tab, window = pane:move_to_new_window()
     end),
   },
@@ -37,6 +37,6 @@ config.keys = {
 ```
 
 See also [pane:move_to_new_window()](move_to_new_window.md),
-[wezterm cli move-pane-to-new-tab](../../../cli/cli/move-pane-to-new-tab.md).
+[onlyterm cli move-pane-to-new-tab](../../../cli/cli/move-pane-to-new-tab.md).
 
 

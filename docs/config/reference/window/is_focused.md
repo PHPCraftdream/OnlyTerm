@@ -1,4 +1,4 @@
-# wezterm.is_focused()
+# onlyterm.is_focused()
 
 !!! danger "Removed: no scripting engine"
 
@@ -22,9 +22,9 @@ The `update-status` event is fired when the focus state changes.
 This example changes the color scheme based on the focus state:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('update-status', function(window, pane)
+onlyterm.on('update-status', function(window, pane)
   local overrides = window:get_config_overrides() or {}
   if window:is_focused() then
     overrides.color_scheme = 'nordfox'

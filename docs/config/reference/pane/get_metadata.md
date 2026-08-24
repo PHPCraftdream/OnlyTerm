@@ -40,9 +40,9 @@ This example demonstrates how to change the color scheme
 to exaggerate when a password is being input:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('update-status', function(window, pane)
+onlyterm.on('update-status', function(window, pane)
   local meta = pane:get_metadata() or {}
   local overrides = window:get_config_overrides() or {}
   if meta.password_input then
@@ -59,7 +59,7 @@ return {}
 ## is_tardy
 
 A boolean value that is populated only for multiplexer client panes.
-It is set to true if wezterm is waiting for a response from the multiplexer
+It is set to true if onlyterm is waiting for a response from the multiplexer
 server.
 
 This can be used in conjunction with `since_last_response_ms` below.
@@ -73,9 +73,9 @@ response from the multiplexer server.
 This example shows how to put mux latency information into the status area:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('update-status', function(window, pane)
+onlyterm.on('update-status', function(window, pane)
   local meta = pane:get_metadata() or {}
   if meta.is_tardy then
     local secs = meta.since_last_response_ms / 1000.0

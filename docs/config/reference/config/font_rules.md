@@ -5,10 +5,10 @@ tags:
 # `font_rules`
 
 When textual output in the terminal is styled with bold, italic or other
-attributes, wezterm uses `font_rules` to decide how to render that text.
+attributes, onlyterm uses `font_rules` to decide how to render that text.
 
 By default, unstyled text will use the font specified by the [font](font.md)
-configuration, and wezterm will use that as a base, and then automatically
+configuration, and onlyterm will use that as a base, and then automatically
 generate appropriate `font_rules` that use heavier weight fonts for bold text,
 lighter weight fonts for dim text and italic fonts for italic text.
 
@@ -192,27 +192,27 @@ font_rules: [
 
 ## Debugging Font Rules
 
-You can run `wezterm ls-fonts` to summarize the font rules and the fonts that
+You can run `onlyterm ls-fonts` to summarize the font rules and the fonts that
 match them:
 
 ```console
-$ wezterm ls-fonts
+$ onlyterm ls-fonts
 Primary font:
-wezterm.font_with_fallback({
+onlyterm.font_with_fallback({
   -- <built-in>, BuiltIn
   "JetBrains Mono",
 
-  -- /home/wez/.fonts/NotoColorEmoji.ttf, FontConfig
+  -- /home/user/.fonts/NotoColorEmoji.ttf, FontConfig
   "Noto Color Emoji",
 })
 
 
 When Intensity=Half Italic=true:
-wezterm.font_with_fallback({
+onlyterm.font_with_fallback({
   -- <built-in>, BuiltIn
   {family="JetBrains Mono", weight="ExtraLight", italic=true},
 
-  -- /home/wez/.fonts/NotoColorEmoji.ttf, FontConfig
+  -- /home/user/.fonts/NotoColorEmoji.ttf, FontConfig
   "Noto Color Emoji",
 
   -- <built-in>, BuiltIn
@@ -221,11 +221,11 @@ wezterm.font_with_fallback({
 
 
 When Intensity=Half Italic=false:
-wezterm.font_with_fallback({
+onlyterm.font_with_fallback({
   -- <built-in>, BuiltIn
   {family="JetBrains Mono", weight="ExtraLight"},
 
-  -- /home/wez/.fonts/NotoColorEmoji.ttf, FontConfig
+  -- /home/user/.fonts/NotoColorEmoji.ttf, FontConfig
   "Noto Color Emoji",
 
   -- <built-in>, BuiltIn
@@ -234,11 +234,11 @@ wezterm.font_with_fallback({
 
 
 When Intensity=Bold Italic=false:
-wezterm.font_with_fallback({
+onlyterm.font_with_fallback({
   -- <built-in>, BuiltIn
   {family="JetBrains Mono", weight="Bold"},
 
-  -- /home/wez/.fonts/NotoColorEmoji.ttf, FontConfig
+  -- /home/user/.fonts/NotoColorEmoji.ttf, FontConfig
   "Noto Color Emoji",
 
   -- <built-in>, BuiltIn
@@ -247,11 +247,11 @@ wezterm.font_with_fallback({
 
 
 When Intensity=Bold Italic=true:
-wezterm.font_with_fallback({
+onlyterm.font_with_fallback({
   -- <built-in>, BuiltIn
   {family="JetBrains Mono", weight="Bold", italic=true},
 
-  -- /home/wez/.fonts/NotoColorEmoji.ttf, FontConfig
+  -- /home/user/.fonts/NotoColorEmoji.ttf, FontConfig
   "Noto Color Emoji",
 
   -- <built-in>, BuiltIn
@@ -260,11 +260,11 @@ wezterm.font_with_fallback({
 
 
 When Intensity=Normal Italic=true:
-wezterm.font_with_fallback({
+onlyterm.font_with_fallback({
   -- <built-in>, BuiltIn
   {family="JetBrains Mono", italic=true},
 
-  -- /home/wez/.fonts/NotoColorEmoji.ttf, FontConfig
+  -- /home/user/.fonts/NotoColorEmoji.ttf, FontConfig
   "Noto Color Emoji",
 
   -- <built-in>, BuiltIn

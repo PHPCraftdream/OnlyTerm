@@ -2,7 +2,7 @@
 
 ## Session summary
 
-Продолжение большой сессии по OnlyTerm (Windows-форк wezterm, конфиг ktav,
+Продолжение большой сессии по OnlyTerm (Windows-форк onlyterm, конфиг ktav,
 без Lua/rhai). Эта видимая часть сессии сфокусирована на цикле Startup UX
 (#382-#385, полностью закрыт ранее) и его последующем практическом
 тестировании пользователем, которое вскрыло СЕРЬЁЗНУЮ архитектурную
@@ -114,8 +114,8 @@ rebuild САМОГО СЕБЯ, не про перекрытие чужим ок�
   флагом отключён — физически удалён `Publish::TryPathOrPublish`/
   `try_spawn`), но публикация СВОЕГО gui-sock (`should_publish_gui_sock`)
   оставлена — используется отдельной, легитимной функциональностью
-  (`wezterm cli`-подобные инструменты находят запущенный GUI для
-  управления им; `wezterm-client/src/client/mod.rs:428`).
+  (`onlyterm cli`-подобные инструменты находят запущенный GUI для
+  управления им; `onlyterm-client/src/client/mod.rs:428`).
 - #406/лоадер: имена `PlaceholderSpinner`/`draw_placeholder_spinner`
   оставлены без переименования при переходе с точек на текст "Loading..."
   — сознательный выбор против unrelated rename churn, задокументировано
@@ -155,8 +155,8 @@ rebuild САМОГО СЕБЯ, не про перекрытие чужим ок�
 ## Repo state
 
 ```
- M crates/wezterm-gui/src/main.rs
- M crates/wezterm-gui/src/termwindow/render_pipeline.rs
+ M crates/onlyterm-gui/src/main.rs
+ M crates/onlyterm-gui/src/termwindow/render_pipeline.rs
  M crates/window/src/os/windows/window.rs
 ?? .claude/
 ?? ci/dev-install.log
@@ -164,8 +164,8 @@ rebuild САМОГО СЕБЯ, не про перекрытие чужим ок�
 
 ```
 cf8506fe6 window: scale the startup spinner up so it doesn't get lost on large windows
-b03646222 wezterm-gui: always start an independent process, never delegate to a running GUI
-8abb82536 wezterm-gui: fancy tab bar now respects the fork's light default palette
+b03646222 onlyterm-gui: always start an independent process, never delegate to a running GUI
+8abb82536 onlyterm-gui: fancy tab bar now respects the fork's light default palette
 ab9f122d8 docs: changelog and checkpoint for the review-fix round (#389-394)
 0b337aaad window: fix stale doc comments and avoid dead HWND in ncdestroy fade backstop (task #394)
 fc6b12836 window: use try_borrow_mut in wm_timer fade tick to avoid reentrancy panic (task #393)

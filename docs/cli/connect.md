@@ -1,6 +1,6 @@
-# `wezterm connect`
+# `onlyterm connect`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-connect--help.txt" %}
+{% include "../examples/cmd-synopsis-onlyterm-connect--help.txt" %}
 ```
 

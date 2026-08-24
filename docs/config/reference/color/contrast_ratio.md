@@ -18,9 +18,9 @@
 Computes the contrast ratio between the two colors.
 
 ```
-> wezterm.color.parse("red"):contrast_ratio(wezterm.color.parse("yellow"))
+> onlyterm.color.parse("red"):contrast_ratio(onlyterm.color.parse("yellow"))
 1
-> wezterm.color.parse("red"):contrast_ratio(wezterm.color.parse("navy"))
+> onlyterm.color.parse("red"):contrast_ratio(onlyterm.color.parse("navy"))
 1.8273614734023298
 ```
 
@@ -32,7 +32,7 @@ A contrast ratio of 1 means no contrast.
 The maximum possible contrast ratio is 21:
 
 ```
-> wezterm.color.parse("black"):contrast_ratio(wezterm.color.parse("white"))
+> onlyterm.color.parse("black"):contrast_ratio(onlyterm.color.parse("white"))
 21
 ```
 

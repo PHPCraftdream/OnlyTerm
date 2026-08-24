@@ -13,5 +13,5 @@ finl_unicode.workspace = true
 lazy_static.workspace = true
 terminfo.workspace = true
 termwiz = { workspace=true, features=["use_serde"] }
-wezterm-dynamic.workspace = true
-wezterm-input-types.workspace = true
+onlyterm-dynamic.workspace = true
+onlyterm-input-types.workspace = true

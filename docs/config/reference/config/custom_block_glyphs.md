@@ -7,7 +7,7 @@ tags:
 
 {{since('20210314-114017-04b7cedd')}}
 
-When set to `true` (the default), WezTerm will compute its own idea of what the glyphs
+When set to `true` (the default), OnlyTerm will compute its own idea of what the glyphs
 in the following unicode ranges should be, instead of using glyphs resolved from a font.
 
 Ideally this option wouldn't exist, but it is present to work around a [hinting issue in freetype](https://gitlab.freedesktop.org/freetype/freetype/-/issues/761).

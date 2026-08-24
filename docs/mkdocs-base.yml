@@ -1,10 +1,10 @@
 copyright: Copyright &copy; 2018-Present Wez Furlong
 use_directory_urls: false
-site_name: Wez's Terminal Emulator
+site_name: OnlyTerm
 site_url: https://wezterm.org/
-site_description: Wez's Terminal Emulator
+site_description: OnlyTerm
 repo_url: https://github.com/wezterm/wezterm
-repo_name: wezterm/wezterm
+repo_name: OnlyTerm
 edit_uri: edit/main/docs/
 docs_dir: docs
 site_dir: gh_pages
@@ -97,8 +97,8 @@ markdown_extensions:
   - pymdownx.saneheaders
   - pymdownx.magiclink:
       repo_url_shorthand: true
-      user: wezterm
-      repo: wezterm
+      user: onlyterm
+      repo: onlyterm
   - pymdownx.details
   - attr_list
   - md_in_html

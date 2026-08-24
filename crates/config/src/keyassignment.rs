@@ -1,13 +1,13 @@
 use crate::default_true;
 use crate::keys::KeyNoAction;
 use crate::window::WindowLevel;
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
+use onlyterm_input_types::{KeyCode, Modifiers};
+use onlyterm_term::input::MouseButton;
+use onlyterm_term::SemanticType;
 use ordered_float::NotNan;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
-use wezterm_input_types::{KeyCode, Modifiers};
-use wezterm_term::input::MouseButton;
-use wezterm_term::SemanticType;
 
 mod launcher;
 mod spawn;

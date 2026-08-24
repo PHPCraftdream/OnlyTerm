@@ -1,6 +1,6 @@
 # План: миграция freetype+harfbuzz (C/C++) → rustybuzz+swash (чистый Rust)
 
-Дата: 2026-07-23. Часть более крупной инициативы "убрать весь C/asm из wezterm"
+Дата: 2026-07-23. Часть более крупной инициативы "убрать весь C/asm из onlyterm"
 (см. также `2026-07-23-decairo-tiny-skia.md`, `2026-07-23-ssh-russh-migration.md`).
 
 ## Контекст
@@ -17,7 +17,7 @@ C/C++ след — `deps/freetype` (freetype2 ~166k строк C + libpng + zlib
 
 ## Результаты исследования
 
-### Где используются (wezterm-font)
+### Где используются (onlyterm-font)
 
 | Файл | Строк | Роль |
 |---|---|---|
@@ -31,10 +31,10 @@ C/C++ след — `deps/freetype` (freetype2 ~166k строк C + libpng + zlib
 
 ### Архитектура — уже пригодна для подмены (как и с cairo)
 
-- `wezterm-font/src/shaper/mod.rs`: `pub trait FontShaper` + `pub fn new_shaper(...)`
+- `onlyterm-font/src/shaper/mod.rs`: `pub trait FontShaper` + `pub fn new_shaper(...)`
   — единственная существующая реализация `HarfbuzzShaper` в `shaper/harfbuzz.rs`.
   Чистая точка подмены: `RustybuzzShaper: FontShaper`.
-- `wezterm-font/src/rasterizer/mod.rs`: `pub trait FontRasterizer` — уже ДВЕ
+- `onlyterm-font/src/rasterizer/mod.rs`: `pub trait FontRasterizer` — уже ДВЕ
   реализации (`freetype.rs`, `harfbuzz.rs`), выбираемые конфигом — паттерн
   подмены такой же, добавляем `SwashRasterizer: FontRasterizer` (или
   замещаем существующий `freetype.rs` изнутри, сохранив тот же trait impl).
@@ -87,7 +87,7 @@ C/C++ след — `deps/freetype` (freetype2 ~166k строк C + libpng + zlib
 растеризованного глифа в PNG + метаданные — это годится и здесь без
 изменений (не важно, какой рендер-бэкенд произвёл `RasterizedGlyph`).
 Нужно добавить только одно новое измерение — **сравнение шейпинга**
-(не рендера): `wezterm-font/examples/dump_shaping.rs` — берёт строку +
+(не рендера): `onlyterm-font/examples/dump_shaping.rs` — берёт строку +
 шрифт, гонит через шейпер, печатает JSON-массив (glyph_id, x_advance,
 y_advance, cluster) — сравнение rustybuzz vs harfbuzz на реальных строках
 (латиница, арабская вязь, деванагари, ZWJ-эмодзи-последовательности из
@@ -114,7 +114,7 @@ y_advance, cluster) — сравнение rustybuzz vs harfbuzz на реаль
 - **H3.5. Переключение дефолта (найдено как пробел плана, 2026-07-24).**
   H1-H3 построили `RustybuzzShaper`/`SwashRasterizer` ПАРАЛЛЕЛЬНО,
   не подключёнными по умолчанию — `new_shaper`/`new_rasterizer` (или
-  как называются фабричные функции в wezterm-font, конкретно найти при
+  как называются фабричные функции в onlyterm-font, конкретно найти при
   реализации) всё ещё возвращают `HarfbuzzShaper`/`FreeTypeRasterizer`.
   Прежде чем удалять freetype/harfbuzz в H4, нужно реально переключить
   дефолт (конфиг-опция, если такая уже существует по аналогии с
@@ -125,7 +125,7 @@ y_advance, cluster) — сравнение rustybuzz vs harfbuzz на реаль
   `deps/harfbuzz` из workspace. `cargo build --workspace` без единого C/C++
   компилятора в графе сборки (кроме уже запланированных к вычистке cairo/
   openssl, которые к этому моменту тоже должны быть убраны).
-- **H5. Верификация.** Полный прогон `cargo test -p wezterm-font`, dump_glyph/
+- **H5. Верификация.** Полный прогон `cargo test -p onlyterm-font`, dump_glyph/
   dump_shaping на широком наборе шрифтов и скриптов, живая проверка через
   `/run`/`/verify` (уже есть, отдельного тулинга не нужно).
 

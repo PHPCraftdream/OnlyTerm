@@ -16,7 +16,7 @@ color_scheme: AdventureTime
 
 !!! tip "Migrating from a `.wezterm.lua` or `.wezterm.rhai`?"
 
-    WezTerm's config language changed from Lua, to rhai, and now to a static
+    OnlyTerm's config language changed from Lua, to rhai, and now to a static
     data format called [ktav](../migration-to-ktav.md). If you have an
     existing Lua or rhai config, see the
     [migration guide](../migration-to-ktav.md) for a side-by-side syntax
@@ -32,7 +32,7 @@ For more details, see:
 
 ## Configuration Files
 
-`wezterm` will look for a `ktav` configuration file using the logic shown
+`onlyterm` will look for a `ktav` configuration file using the logic shown
 below. (Earlier releases looked for a Lua `.wezterm.lua` file, then a rhai
 `.wezterm.rhai`/`onlyterm.rhai` file; see the
 [migration guide](../migration-to-ktav.md) to translate one.)
@@ -54,7 +54,7 @@ graph TD
   B -->|No| D[Use built-in default configuration]
   A -->|No| E{{$ONLYTERM_CONFIG_FILE<br/>environment set?}}
   E -->|Yes| B
-  E -->|No| F{{"Running on Windows and<br/>onlyterm.ktav exists in same<br/>dir as wezterm.exe?<br/>(Thumb drive mode)"}}
+  E -->|No| F{{"Running on Windows and<br/>onlyterm.ktav exists in same<br/>dir as onlyterm.exe?<br/>(Thumb drive mode)"}}
   F -->|Yes| B
   F -->|No| H{{Is $XDG_CONFIG_HOME<br/>environment set and<br/>onlyterm/onlyterm.ktav<br/>exists inside it?}}
   H -->|Yes| B
@@ -66,18 +66,18 @@ graph TD
 {% endraw %}
 
 Prior to version 20210314-114017-04b7cedd, if the candidate file exists but
-failed to parse, wezterm would treat it as though it didn't exist and continue
-to try other candidate file locations. In all current versions of wezterm, an
+failed to parse, onlyterm would treat it as though it didn't exist and continue
+to try other candidate file locations. In all current versions of onlyterm, an
 error will be shown and the default configuration will be used instead.
 
 !!! note
-    On Windows, to support users that carry their wezterm application and
-    configuration around on a thumb drive, wezterm will look for the config file in
-    the same location as wezterm.exe.  That is shown in the chart above as thumb
+    On Windows, to support users that carry their onlyterm application and
+    configuration around on a thumb drive, onlyterm will look for the config file in
+    the same location as onlyterm.exe.  That is shown in the chart above as thumb
     drive mode.  It is **not** recommended to store your configs in that
     location if you are not running off a thumb drive.
 
-`wezterm` will watch the config file that it loads; if/when it changes, the
+`onlyterm` will watch the config file that it loads; if/when it changes, the
 configuration will be automatically reloaded and the majority of options will
 take effect immediately.  You may also use the `CTRL+SHIFT+R` keyboard shortcut
 to force the configuration to be reloaded.
@@ -92,12 +92,12 @@ to force the configuration to be reloaded.
 
 {{since('20210314-114017-04b7cedd')}}
 
-`wezterm` allows overriding configuration values via the command line; here are
+`onlyterm` allows overriding configuration values via the command line; here are
 a couple of examples:
 
 ```bash
-$ wezterm --config enable_scroll_bar=true
-$ wezterm --config exit_behavior=Hold
+$ onlyterm --config enable_scroll_bar=true
+$ onlyterm --config exit_behavior=Hold
 ```
 
 Configuration specified via the command line will always override the values
@@ -133,7 +133,7 @@ font: { font: [{ family: JetBrains Mono }] }
 color_scheme: Batman
 ```
 
-(there is no `wezterm.font(...)` helper anymore — the `font` option is a
+(there is no `onlyterm.font(...)` helper anymore — the `font` option is a
 `TextStyle` object whose `font` field is an array of `FontAttributes`; see
 the [migration guide](../migration-to-ktav.md)).
 
@@ -148,7 +148,7 @@ color_scheme: Batman
 
 !!! note
 
-    WezTerm's Lua config let you split a config across multiple files via
+    OnlyTerm's Lua config let you split a config across multiple files via
     Lua's `package.path` / `require`, and the rhai engine (briefly) supported
     packaging shared code as a plugin. Neither mechanism exists for ktav:
     there is no `import`, no `require`, and no plugin loading, since all of

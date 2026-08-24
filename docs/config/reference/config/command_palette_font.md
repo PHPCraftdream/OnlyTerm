@@ -14,7 +14,7 @@ in more detail in the [Fonts](../../fonts.md) section.
 If not specified, the font is same as the font in `window_frame.font`
 
 `command_palette_font` is a `TextStyle` object (the same shape used by the
-main [font](font.md) option); the `wezterm.font`/`wezterm.font_with_fallback`
+main [font](font.md) option); the `onlyterm.font`/`onlyterm.font_with_fallback`
 scripting helpers linked from older versions of this page no longer exist
 — write the `TextStyle` value directly.
 

@@ -1,6 +1,6 @@
 use crate::Direction;
 use alloc::string::ToString;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, FromDynamic, ToDynamic)]
 pub enum ParagraphDirectionHint {

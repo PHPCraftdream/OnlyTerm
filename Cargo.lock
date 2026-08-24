@@ -745,6 +745,8 @@ dependencies = [
  "log",
  "metrics",
  "mux",
+ "onlyterm-term",
+ "onlyterm-uds",
  "portable-pty",
  "rangeset",
  "serde",
@@ -752,8 +754,6 @@ dependencies = [
  "termwiz",
  "thiserror 1.0.69",
  "varbincode",
- "wezterm-term",
- "wezterm-uds",
 ]
 
 [[package]]
@@ -779,13 +779,13 @@ dependencies = [
  "lazy_static",
  "log",
  "lru",
+ "onlyterm-color-types",
+ "onlyterm-dynamic",
+ "onlyterm-term",
  "plist",
  "serde",
  "serde_json",
  "serde_yaml",
- "wezterm-color-types",
- "wezterm-dynamic",
- "wezterm-term",
 ]
 
 [[package]]
@@ -859,6 +859,12 @@ dependencies = [
  "lazy_static",
  "log",
  "notify",
+ "onlyterm-bidi",
+ "onlyterm-color-schemes-data",
+ "onlyterm-config-derive",
+ "onlyterm-dynamic",
+ "onlyterm-input-types",
+ "onlyterm-term",
  "ordered-float",
  "portable-pty",
  "promise",
@@ -870,12 +876,6 @@ dependencies = [
  "termwiz",
  "toml 0.8.23",
  "umask",
- "wezterm-bidi",
- "wezterm-color-schemes-data",
- "wezterm-config-derive",
- "wezterm-dynamic",
- "wezterm-input-types",
- "wezterm-term",
  "winapi",
  "winreg",
 ]
@@ -1308,9 +1308,9 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "onlyterm-version",
  "termwiz",
  "termwiz-funcs",
- "wezterm-version",
  "winapi",
 ]
 
@@ -2984,6 +2984,8 @@ dependencies = [
  "metrics",
  "names",
  "ntapi",
+ "onlyterm-dynamic",
+ "onlyterm-term",
  "parking_lot",
  "percent-encoding",
  "portable-pty",
@@ -3000,8 +3002,6 @@ dependencies = [
  "textwrap",
  "thiserror 1.0.69",
  "url",
- "wezterm-dynamic",
- "wezterm-term",
  "winapi",
 ]
 
@@ -3015,6 +3015,8 @@ dependencies = [
  "libc",
  "log",
  "mux",
+ "onlyterm-dynamic",
+ "onlyterm-term",
  "parking_lot",
  "portable-pty",
  "promise",
@@ -3022,8 +3024,6 @@ dependencies = [
  "smol",
  "termwiz",
  "termwiz-funcs",
- "wezterm-dynamic",
- "wezterm-term",
 ]
 
 [[package]]
@@ -3316,6 +3316,549 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "onlyterm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_complete_fig",
+ "codec",
+ "config",
+ "embed-resource",
+ "env-bootstrap",
+ "filedescriptor",
+ "hostname",
+ "humantime",
+ "image",
+ "libc",
+ "log",
+ "mux",
+ "onlyterm-client",
+ "onlyterm-gui-subcommands",
+ "onlyterm-term",
+ "portable-pty",
+ "promise",
+ "sefer-alloc",
+ "serde",
+ "serde_json",
+ "shell-words",
+ "smol",
+ "tabout",
+ "tempfile",
+ "termwiz",
+ "termwiz-funcs",
+ "textwrap",
+ "umask",
+ "url",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-bidi"
+version = "0.2.3"
+dependencies = [
+ "env_logger 0.11.10",
+ "k9",
+ "log",
+ "onlyterm-dynamic",
+]
+
+[[package]]
+name = "onlyterm-blob-leases"
+version = "0.1.1"
+dependencies = [
+ "getrandom 0.3.4",
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "onlyterm-cell"
+version = "0.1.0"
+dependencies = [
+ "finl_unicode",
+ "image",
+ "log",
+ "onlyterm-blob-leases",
+ "onlyterm-char-props",
+ "onlyterm-color-types",
+ "onlyterm-dynamic",
+ "onlyterm-escape-parser",
+ "ordered-float",
+ "serde",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "onlyterm-char-props"
+version = "0.1.3"
+dependencies = [
+ "bench-scale-tool",
+ "k9",
+ "phf",
+ "serde",
+ "termwiz",
+ "ucd-trie",
+]
+
+[[package]]
+name = "onlyterm-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "async-trait",
+ "codec",
+ "config",
+ "filedescriptor",
+ "futures",
+ "lazy_static",
+ "log",
+ "lru",
+ "metrics",
+ "mux",
+ "onlyterm-dynamic",
+ "onlyterm-term",
+ "onlyterm-uds",
+ "parking_lot",
+ "portable-pty",
+ "promise",
+ "rangeset",
+ "ratelim",
+ "smol",
+ "termwiz",
+ "textwrap",
+ "thiserror 1.0.69",
+ "umask",
+ "url",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-color-schemes-data"
+version = "0.1.0"
+
+[[package]]
+name = "onlyterm-color-types"
+version = "0.3.0"
+dependencies = [
+ "csscolorparser",
+ "deltae",
+ "num-traits",
+ "onlyterm-dynamic",
+ "serde",
+]
+
+[[package]]
+name = "onlyterm-config-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "onlyterm-dynamic"
+version = "0.2.1"
+dependencies = [
+ "log",
+ "maplit",
+ "onlyterm-dynamic-derive",
+ "ordered-float",
+ "strsim",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "onlyterm-dynamic-derive"
+version = "0.1.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
+name = "onlyterm-elevated-transport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "codec",
+ "filedescriptor",
+ "getrandom 0.3.4",
+ "http",
+ "log",
+ "onlyterm-uds",
+ "tungstenite",
+]
+
+[[package]]
+name = "onlyterm-escape-parser"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bitflags 2.11.1",
+ "env_logger 0.11.10",
+ "hex",
+ "image",
+ "k9",
+ "log",
+ "nix",
+ "num-derive",
+ "num-traits",
+ "onlyterm-blob-leases",
+ "onlyterm-color-types",
+ "onlyterm-dynamic",
+ "onlyterm-input-types",
+ "ordered-float",
+ "pest",
+ "pest_derive",
+ "serde",
+ "sha2",
+ "thiserror 2.0.18",
+ "vtparse",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-font"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "config",
+ "dwrote",
+ "encoding_rs",
+ "enum-display-derive",
+ "env_logger 0.11.10",
+ "euclid",
+ "finl_unicode",
+ "image",
+ "k9",
+ "lazy_static",
+ "lfucache",
+ "log",
+ "memmap2",
+ "metrics",
+ "onlyterm-bidi",
+ "onlyterm-color-types",
+ "onlyterm-input-types",
+ "onlyterm-term",
+ "onlyterm-toast-notification",
+ "ordered-float",
+ "rangeset",
+ "rustybuzz",
+ "serde",
+ "serde_json",
+ "swash",
+ "termwiz",
+ "thiserror 1.0.69",
+ "tiny-skia",
+ "ttf-parser",
+ "walkdir",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-gpu-protocol"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "parking_lot",
+]
+
+[[package]]
+name = "onlyterm-gpu-render"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "bytemuck",
+ "config",
+ "filedescriptor",
+ "futures",
+ "log",
+ "metrics",
+ "onlyterm-client",
+ "onlyterm-gpu-protocol",
+ "parking_lot",
+ "promise",
+ "smol",
+ "wgpu",
+ "winapi",
+ "window",
+ "windows",
+]
+
+[[package]]
+name = "onlyterm-gui"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "anyhow",
+ "arc-swap",
+ "benchmarking",
+ "bitflags 1.3.2",
+ "bytemuck",
+ "cc",
+ "chrono",
+ "clap",
+ "codec",
+ "colorgrad",
+ "config",
+ "dhat",
+ "dirs-next",
+ "downcast-rs",
+ "embed-resource",
+ "emojis",
+ "env-bootstrap",
+ "env_logger 0.11.10",
+ "euclid",
+ "fastrand",
+ "filedescriptor",
+ "finl_unicode",
+ "frecency",
+ "futures",
+ "hdrhistogram",
+ "http_req",
+ "image",
+ "image-webp",
+ "k9",
+ "lazy_static",
+ "lfucache",
+ "libc",
+ "log",
+ "lru",
+ "metrics",
+ "mux",
+ "mux-funcs",
+ "nucleo-matcher",
+ "onlyterm-bidi",
+ "onlyterm-blob-leases",
+ "onlyterm-client",
+ "onlyterm-dynamic",
+ "onlyterm-elevated-transport",
+ "onlyterm-font",
+ "onlyterm-gpu-render",
+ "onlyterm-gui-render-thread",
+ "onlyterm-gui-subcommands",
+ "onlyterm-mux-server-impl",
+ "onlyterm-open-url",
+ "onlyterm-surface",
+ "onlyterm-term",
+ "onlyterm-toast-notification",
+ "onlyterm-uds",
+ "ordered-float",
+ "parking_lot",
+ "portable-pty",
+ "promise",
+ "rangeset",
+ "ratelim",
+ "rayon",
+ "regex",
+ "sefer-alloc",
+ "serde",
+ "serde_json",
+ "shared_library",
+ "shlex 1.3.0",
+ "smol",
+ "tabout",
+ "tempfile",
+ "terminfo",
+ "termwiz",
+ "termwiz-funcs",
+ "textwrap",
+ "thiserror 1.0.69",
+ "tiny-skia",
+ "umask",
+ "unicode-normalization",
+ "unicode-segmentation",
+ "url",
+ "walkdir",
+ "wgpu",
+ "winapi",
+ "window",
+ "windows",
+]
+
+[[package]]
+name = "onlyterm-gui-render-thread"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "log",
+ "metrics",
+ "onlyterm-gpu-render",
+ "parking_lot",
+ "wgpu",
+ "window",
+]
+
+[[package]]
+name = "onlyterm-gui-subcommands"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "config",
+]
+
+[[package]]
+name = "onlyterm-input-types"
+version = "0.1.0"
+dependencies = [
+ "bitflags 1.3.2",
+ "euclid",
+ "onlyterm-dynamic",
+ "serde",
+]
+
+[[package]]
+name = "onlyterm-mux-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cc",
+ "clap",
+ "config",
+ "embed-resource",
+ "env-bootstrap",
+ "log",
+ "mux",
+ "onlyterm-blob-leases",
+ "onlyterm-elevated-transport",
+ "onlyterm-gui-subcommands",
+ "onlyterm-mux-server-impl",
+ "onlyterm-term",
+ "onlyterm-uds",
+ "portable-pty",
+ "promise",
+ "sefer-alloc",
+ "smol",
+ "umask",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-mux-server-impl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-io",
+ "codec",
+ "config",
+ "futures",
+ "log",
+ "mux",
+ "onlyterm-client",
+ "onlyterm-term",
+ "onlyterm-uds",
+ "parking_lot",
+ "portable-pty",
+ "promise",
+ "rangeset",
+ "smol",
+ "termwiz",
+ "url",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-open-url"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-surface"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.1",
+ "fancy-regex",
+ "finl_unicode",
+ "fixedbitset",
+ "k9",
+ "onlyterm-bidi",
+ "onlyterm-blob-leases",
+ "onlyterm-cell",
+ "onlyterm-char-props",
+ "onlyterm-color-types",
+ "onlyterm-dynamic",
+ "onlyterm-escape-parser",
+ "onlyterm-input-types",
+ "ordered-float",
+ "serde",
+ "siphasher",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "onlyterm-term"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "csscolorparser",
+ "downcast-rs",
+ "env_logger 0.11.10",
+ "finl_unicode",
+ "hex",
+ "humansize",
+ "image",
+ "k9",
+ "lazy_static",
+ "log",
+ "lru",
+ "miniz_oxide 0.7.4",
+ "num-traits",
+ "onlyterm-bidi",
+ "onlyterm-cell",
+ "onlyterm-dynamic",
+ "onlyterm-escape-parser",
+ "onlyterm-surface",
+ "ordered-float",
+ "serde",
+ "terminfo",
+ "termwiz",
+ "unicode-normalization",
+ "url",
+]
+
+[[package]]
+name = "onlyterm-toast-notification"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "onlyterm-open-url",
+ "windows",
+ "xml-rs",
+]
+
+[[package]]
+name = "onlyterm-uds"
+version = "0.1.0"
+dependencies = [
+ "async-io",
+ "uds_windows",
+]
+
+[[package]]
+name = "onlyterm-version"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+]
 
 [[package]]
 name = "openssl"
@@ -3681,7 +4224,7 @@ dependencies = [
  "libc",
  "log",
  "ntapi",
- "wezterm-dynamic",
+ "onlyterm-dynamic",
  "winapi",
 ]
 
@@ -4707,6 +5250,7 @@ dependencies = [
  "lazy_static",
  "libflate",
  "log",
+ "onlyterm-dynamic",
  "redb",
  "reqwest",
  "serde",
@@ -4716,7 +5260,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml 0.8.23",
- "wezterm-dynamic",
 ]
 
 [[package]]
@@ -4843,6 +5386,15 @@ dependencies = [
  "memmem",
  "num-derive",
  "num-traits",
+ "onlyterm-bidi",
+ "onlyterm-blob-leases",
+ "onlyterm-cell",
+ "onlyterm-char-props",
+ "onlyterm-color-types",
+ "onlyterm-dynamic",
+ "onlyterm-escape-parser",
+ "onlyterm-input-types",
+ "onlyterm-surface",
  "ordered-float",
  "pest",
  "pest_derive",
@@ -4855,15 +5407,6 @@ dependencies = [
  "ucd-trie",
  "unicode-segmentation",
  "vtparse",
- "wezterm-bidi",
- "wezterm-blob-leases",
- "wezterm-cell",
- "wezterm-char-props",
- "wezterm-color-types",
- "wezterm-dynamic",
- "wezterm-escape-parser",
- "wezterm-input-types",
- "wezterm-surface",
  "winapi",
 ]
 
@@ -4875,10 +5418,10 @@ dependencies = [
  "config",
  "finl_unicode",
  "lazy_static",
+ "onlyterm-dynamic",
+ "onlyterm-input-types",
  "terminfo",
  "termwiz",
- "wezterm-dynamic",
- "wezterm-input-types",
 ]
 
 [[package]]
@@ -5594,549 +6137,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
-name = "wezterm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "chrono",
- "clap",
- "clap_complete",
- "clap_complete_fig",
- "codec",
- "config",
- "embed-resource",
- "env-bootstrap",
- "filedescriptor",
- "hostname",
- "humantime",
- "image",
- "libc",
- "log",
- "mux",
- "portable-pty",
- "promise",
- "sefer-alloc",
- "serde",
- "serde_json",
- "shell-words",
- "smol",
- "tabout",
- "tempfile",
- "termwiz",
- "termwiz-funcs",
- "textwrap",
- "umask",
- "url",
- "wezterm-client",
- "wezterm-gui-subcommands",
- "wezterm-term",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-bidi"
-version = "0.2.3"
-dependencies = [
- "env_logger 0.11.10",
- "k9",
- "log",
- "wezterm-dynamic",
-]
-
-[[package]]
-name = "wezterm-blob-leases"
-version = "0.1.1"
-dependencies = [
- "getrandom 0.3.4",
- "serde",
- "sha2",
- "tempfile",
- "thiserror 1.0.69",
- "uuid",
-]
-
-[[package]]
-name = "wezterm-cell"
-version = "0.1.0"
-dependencies = [
- "finl_unicode",
- "image",
- "log",
- "ordered-float",
- "serde",
- "sha2",
- "thiserror 1.0.69",
- "wezterm-blob-leases",
- "wezterm-char-props",
- "wezterm-color-types",
- "wezterm-dynamic",
- "wezterm-escape-parser",
-]
-
-[[package]]
-name = "wezterm-char-props"
-version = "0.1.3"
-dependencies = [
- "bench-scale-tool",
- "k9",
- "phf",
- "serde",
- "termwiz",
- "ucd-trie",
-]
-
-[[package]]
-name = "wezterm-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-io",
- "async-trait",
- "codec",
- "config",
- "filedescriptor",
- "futures",
- "lazy_static",
- "log",
- "lru",
- "metrics",
- "mux",
- "parking_lot",
- "portable-pty",
- "promise",
- "rangeset",
- "ratelim",
- "smol",
- "termwiz",
- "textwrap",
- "thiserror 1.0.69",
- "umask",
- "url",
- "wezterm-dynamic",
- "wezterm-term",
- "wezterm-uds",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-color-schemes-data"
-version = "0.1.0"
-
-[[package]]
-name = "wezterm-color-types"
-version = "0.3.0"
-dependencies = [
- "csscolorparser",
- "deltae",
- "num-traits",
- "serde",
- "wezterm-dynamic",
-]
-
-[[package]]
-name = "wezterm-config-derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "wezterm-dynamic"
-version = "0.2.1"
-dependencies = [
- "log",
- "maplit",
- "ordered-float",
- "strsim",
- "thiserror 2.0.18",
- "wezterm-dynamic-derive",
-]
-
-[[package]]
-name = "wezterm-dynamic-derive"
-version = "0.1.1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "wezterm-elevated-transport"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "codec",
- "filedescriptor",
- "getrandom 0.3.4",
- "http",
- "log",
- "tungstenite",
- "wezterm-uds",
-]
-
-[[package]]
-name = "wezterm-escape-parser"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bitflags 2.11.1",
- "env_logger 0.11.10",
- "hex",
- "image",
- "k9",
- "log",
- "nix",
- "num-derive",
- "num-traits",
- "ordered-float",
- "pest",
- "pest_derive",
- "serde",
- "sha2",
- "thiserror 2.0.18",
- "vtparse",
- "wezterm-blob-leases",
- "wezterm-color-types",
- "wezterm-dynamic",
- "wezterm-input-types",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-font"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "config",
- "dwrote",
- "encoding_rs",
- "enum-display-derive",
- "env_logger 0.11.10",
- "euclid",
- "finl_unicode",
- "image",
- "k9",
- "lazy_static",
- "lfucache",
- "log",
- "memmap2",
- "metrics",
- "ordered-float",
- "rangeset",
- "rustybuzz",
- "serde",
- "serde_json",
- "swash",
- "termwiz",
- "thiserror 1.0.69",
- "tiny-skia",
- "ttf-parser",
- "walkdir",
- "wezterm-bidi",
- "wezterm-color-types",
- "wezterm-input-types",
- "wezterm-term",
- "wezterm-toast-notification",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-gpu-protocol"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "parking_lot",
-]
-
-[[package]]
-name = "wezterm-gpu-render"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "anyhow",
- "bytemuck",
- "config",
- "filedescriptor",
- "futures",
- "log",
- "metrics",
- "parking_lot",
- "promise",
- "smol",
- "wezterm-client",
- "wezterm-gpu-protocol",
- "wgpu",
- "winapi",
- "window",
- "windows",
-]
-
-[[package]]
-name = "wezterm-gui"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "anyhow",
- "arc-swap",
- "benchmarking",
- "bitflags 1.3.2",
- "bytemuck",
- "cc",
- "chrono",
- "clap",
- "codec",
- "colorgrad",
- "config",
- "dhat",
- "dirs-next",
- "downcast-rs",
- "embed-resource",
- "emojis",
- "env-bootstrap",
- "env_logger 0.11.10",
- "euclid",
- "fastrand",
- "filedescriptor",
- "finl_unicode",
- "frecency",
- "futures",
- "hdrhistogram",
- "http_req",
- "image",
- "image-webp",
- "k9",
- "lazy_static",
- "lfucache",
- "libc",
- "log",
- "lru",
- "metrics",
- "mux",
- "mux-funcs",
- "nucleo-matcher",
- "ordered-float",
- "parking_lot",
- "portable-pty",
- "promise",
- "rangeset",
- "ratelim",
- "rayon",
- "regex",
- "sefer-alloc",
- "serde",
- "serde_json",
- "shared_library",
- "shlex 1.3.0",
- "smol",
- "tabout",
- "tempfile",
- "terminfo",
- "termwiz",
- "termwiz-funcs",
- "textwrap",
- "thiserror 1.0.69",
- "tiny-skia",
- "umask",
- "unicode-normalization",
- "unicode-segmentation",
- "url",
- "walkdir",
- "wezterm-bidi",
- "wezterm-blob-leases",
- "wezterm-client",
- "wezterm-dynamic",
- "wezterm-elevated-transport",
- "wezterm-font",
- "wezterm-gpu-render",
- "wezterm-gui-render-thread",
- "wezterm-gui-subcommands",
- "wezterm-mux-server-impl",
- "wezterm-open-url",
- "wezterm-surface",
- "wezterm-term",
- "wezterm-toast-notification",
- "wezterm-uds",
- "wgpu",
- "winapi",
- "window",
- "windows",
-]
-
-[[package]]
-name = "wezterm-gui-render-thread"
-version = "0.1.0"
-dependencies = [
- "config",
- "log",
- "metrics",
- "parking_lot",
- "wezterm-gpu-render",
- "wgpu",
- "window",
-]
-
-[[package]]
-name = "wezterm-gui-subcommands"
-version = "0.1.0"
-dependencies = [
- "clap",
- "config",
-]
-
-[[package]]
-name = "wezterm-input-types"
-version = "0.1.0"
-dependencies = [
- "bitflags 1.3.2",
- "euclid",
- "serde",
- "wezterm-dynamic",
-]
-
-[[package]]
-name = "wezterm-mux-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cc",
- "clap",
- "config",
- "embed-resource",
- "env-bootstrap",
- "log",
- "mux",
- "portable-pty",
- "promise",
- "sefer-alloc",
- "smol",
- "umask",
- "wezterm-blob-leases",
- "wezterm-elevated-transport",
- "wezterm-gui-subcommands",
- "wezterm-mux-server-impl",
- "wezterm-term",
- "wezterm-uds",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-mux-server-impl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-io",
- "codec",
- "config",
- "futures",
- "log",
- "mux",
- "parking_lot",
- "portable-pty",
- "promise",
- "rangeset",
- "smol",
- "termwiz",
- "url",
- "wezterm-client",
- "wezterm-term",
- "wezterm-uds",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-open-url"
-version = "0.1.0"
-dependencies = [
- "log",
- "winapi",
-]
-
-[[package]]
-name = "wezterm-surface"
-version = "0.1.0"
-dependencies = [
- "bitflags 2.11.1",
- "fancy-regex",
- "finl_unicode",
- "fixedbitset",
- "k9",
- "ordered-float",
- "serde",
- "siphasher",
- "unicode-segmentation",
- "wezterm-bidi",
- "wezterm-blob-leases",
- "wezterm-cell",
- "wezterm-char-props",
- "wezterm-color-types",
- "wezterm-dynamic",
- "wezterm-escape-parser",
- "wezterm-input-types",
-]
-
-[[package]]
-name = "wezterm-term"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 1.3.2",
- "csscolorparser",
- "downcast-rs",
- "env_logger 0.11.10",
- "finl_unicode",
- "hex",
- "humansize",
- "image",
- "k9",
- "lazy_static",
- "log",
- "lru",
- "miniz_oxide 0.7.4",
- "num-traits",
- "ordered-float",
- "serde",
- "terminfo",
- "termwiz",
- "unicode-normalization",
- "url",
- "wezterm-bidi",
- "wezterm-cell",
- "wezterm-dynamic",
- "wezterm-escape-parser",
- "wezterm-surface",
-]
-
-[[package]]
-name = "wezterm-toast-notification"
-version = "0.1.0"
-dependencies = [
- "log",
- "wezterm-open-url",
- "windows",
- "xml-rs",
-]
-
-[[package]]
-name = "wezterm-uds"
-version = "0.1.0"
-dependencies = [
- "async-io",
- "uds_windows",
-]
-
-[[package]]
-name = "wezterm-version"
-version = "0.1.0"
-dependencies = [
- "chrono",
-]
-
-[[package]]
 name = "wgpu"
 version = "25.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6332,6 +6332,10 @@ dependencies = [
  "line_drawing",
  "log",
  "metrics",
+ "onlyterm-bidi",
+ "onlyterm-color-types",
+ "onlyterm-font",
+ "onlyterm-input-types",
  "promise",
  "raw-window-handle",
  "resize",
@@ -6340,10 +6344,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tiny-skia",
  "url",
- "wezterm-bidi",
- "wezterm-color-types",
- "wezterm-font",
- "wezterm-input-types",
  "winapi",
  "windows",
  "winreg",

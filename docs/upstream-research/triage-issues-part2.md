@@ -1,7 +1,7 @@
 # Триаж bug-issues апстрима, часть 2 (issues 477-952 из 952, отсортированные по комментариям)
 
 Источник: `docs/upstream-research/issues_chunk_01` (476 строк, issues с 2 и 1 комментарием, затем 0 комментариев).
-Проверено применительно к нашему форку: SSH-клиент (wezterm-ssh, libssh/ssh2) и TLS-мультиплексор удалены целиком (только `UnixDomain` с опциональным `proxy_command`/`serve_command` остался — это НЕ ssh-клиент, а просто spawn внешней команды, поэтому баги в proxy_command/unix-domain это применимо к нам). `mux_enable_ssh_agent`/`ssh_agent` модуль остался (форвардинг агента для локальных доменов) — применимо. `harfbuzz_features` остался как имя конфиг-опции (маппится на rustybuzz) — применимо. `freetype`-крейт не используется. Lua(mlua) заменён на rhai — функционально эквивалентные API (wezterm.strftime, format-tab-title, wezterm.time и т.д.) считаются применимыми через rhai-биндинги. WebGpu backend (wgpu) присутствует (`wezterm-gui/src/termwindow/webgpu.rs`) — применимо.
+Проверено применительно к нашему форку: SSH-клиент (onlyterm-ssh, libssh/ssh2) и TLS-мультиплексор удалены целиком (только `UnixDomain` с опциональным `proxy_command`/`serve_command` остался — это НЕ ssh-клиент, а просто spawn внешней команды, поэтому баги в proxy_command/unix-domain это применимо к нам). `mux_enable_ssh_agent`/`ssh_agent` модуль остался (форвардинг агента для локальных доменов) — применимо. `harfbuzz_features` остался как имя конфиг-опции (маппится на rustybuzz) — применимо. `freetype`-крейт не используется. Lua(mlua) заменён на rhai — функционально эквивалентные API (onlyterm.strftime, format-tab-title, onlyterm.time и т.д.) считаются применимыми через rhai-биндинги. WebGpu backend (wgpu) присутствует (`onlyterm-gui/src/termwindow/webgpu.rs`) — применимо.
 
 ## Важное — крэши/зависания/тормоза/поломанная функциональность (427 штук)
 
@@ -17,7 +17,7 @@
 - Класс: visual/functional
 - Приоритет: medium
 
-### Issue #5419 (2) — WezTerm nightly does not display default TITLE | RESIZE on Wayland
+### Issue #5419 (2) — OnlyTerm nightly does not display default TITLE | RESIZE on Wayland
 - Суть: заголовок окна по умолчанию не показывается на Wayland.
 - Применимо: да.
 - Класс: functional
@@ -125,7 +125,7 @@
 - Класс: functional
 - Приоритет: medium-high — некорректный размер терминала, влияет на все приложения внутри.
 
-### Issue #4683 (2) — Wezterm does not preserve tab characters
+### Issue #4683 (2) — Onlyterm does not preserve tab characters
 - Суть: символы табуляции не сохраняются/некорректно обрабатываются.
 - Применимо: да, core term crate.
 - Класс: functional
@@ -191,7 +191,7 @@
 - Класс: visual
 - Приоритет: medium-high
 
-### Issue #3956 (2) — Wezterm goes crazy when entering 125% scale screen
+### Issue #3956 (2) — Onlyterm goes crazy when entering 125% scale screen
 - Суть: поломка при переходе на экран с масштабом 125%.
 - Применимо: да, общий DPI-код.
 - Класс: visual/functional
@@ -203,8 +203,8 @@
 - Класс: perf
 - Приоритет: high
 
-### Issue #3827 (2) — Wezterm becomes slow, when other wezterm window is minimized
-- Суть: замедление при сворачивании другого окна wezterm.
+### Issue #3827 (2) — Onlyterm becomes slow, when other onlyterm window is minimized
+- Суть: замедление при сворачивании другого окна onlyterm.
 - Применимо: да, общий event loop/render код.
 - Класс: perf
 - Приоритет: high — влияет на все окна, общий event-loop баг.
@@ -242,7 +242,7 @@
 - Класс: visual/perf
 - Приоритет: high — фундаментальный рендер-баг при ресайзе (повторяющаяся тема, см. #2659, #1265, #922 ниже).
 
-### Issue #3223 (2) — Wezterm panic for `tmux -CC a` command via ssh
+### Issue #3223 (2) — Onlyterm panic for `tmux -CC a` command via ssh
 - Суть: паника в парсере tmux control-mode при подключении через ssh как транспорт (ssh — внешняя команда-шелл, не наш удалённый ssh-клиент).
 - Применимо: да — баг в общем tmux-CC-парсере (термвиз/mux), ssh тут просто транспорт до удалённого tmux.
 - Класс: crash
@@ -260,7 +260,7 @@
 - Класс: visual
 - Приоритет: medium
 
-### Issue #3114 (2) — TERM_PROGRAM is not set to 'WezTerm' in root shells
+### Issue #3114 (2) — TERM_PROGRAM is not set to 'OnlyTerm' in root shells
 - Суть: переменная окружения не проставляется в root-шеллах.
 - Применимо: да, но малое влияние.
 - Класс: functional
@@ -278,7 +278,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #2807 (2) — `libEGL` crash on forwarded X session when starting wezterm
+### Issue #2807 (2) — `libEGL` crash on forwarded X session when starting onlyterm
 - Суть: крэш EGL при X11-форвардинге.
 - Применимо: да, но нишевое окружение (forwarded X).
 - Класс: crash
@@ -296,13 +296,13 @@
 - Класс: functional
 - Приоритет: high — базовая функциональность скролла в TUI.
 
-### Issue #2595 (2) — Mouse pointer size GNOME setting is ignored by wezterm windows
+### Issue #2595 (2) — Mouse pointer size GNOME setting is ignored by onlyterm windows
 - Суть: игнорируется системная настройка размера курсора GNOME.
 - Применимо: да, косметика linux.
 - Класс: visual
 - Приоритет: low
 
-### Issue #2456 (2) — [wezterm-ssh] libssh backend hangs and ssh2 backend fails
+### Issue #2456 (2) — [onlyterm-ssh] libssh backend hangs and ssh2 backend fails
 - Применимо: N/A — подсистема удалена (SSH-клиент).
 
 ### Issue #1839 (2) — mux server silently fails when no space is left on device
@@ -365,7 +365,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #7725 (1) — WezTerm crashes on Wayland (Hyprland) running large curl command (wl_display message length exceeds 4096)
+### Issue #7725 (1) — OnlyTerm crashes on Wayland (Hyprland) running large curl command (wl_display message length exceeds 4096)
 - Суть: крэш при большом выводе curl из-за протокольной ошибки Wayland.
 - Применимо: да.
 - Класс: crash
@@ -377,7 +377,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #7689 (1) — WezTerm crashing on macOS with EGL errors
+### Issue #7689 (1) — OnlyTerm crashing on macOS with EGL errors
 - Суть: крэш из-за EGL на macOS.
 - Применимо: да.
 - Класс: crash
@@ -407,7 +407,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #7423 (1) — AttachDomain / wezterm cli spawn --domain-name requires passphrase for identityfile
+### Issue #7423 (1) — AttachDomain / onlyterm cli spawn --domain-name requires passphrase for identityfile
 - Применимо: N/A — подсистема удалена (SSH identity file/passphrase — ssh-клиент).
 
 ### Issue #7413 (1) — default workspace name a bit too aggressive
@@ -422,7 +422,7 @@
 - Класс: visual/functional
 - Приоритет: medium
 
-### Issue #7365 (1) — edit in Windows wezterm, the character "555" will be automatically inserted at the beginning of the file
+### Issue #7365 (1) — edit in Windows onlyterm, the character "555" will be automatically inserted at the beginning of the file
 - Суть: самопроизвольная вставка символов "555" при редактировании, Windows.
 - Применимо: да, похоже на баг ввода/pty echo.
 - Класс: functional (порча содержимого файла)
@@ -434,7 +434,7 @@
 - Класс: visual
 - Приоритет: medium-high
 
-### Issue #7315 (1) — glow markdown rendering got broken when you scroll up/down in Wezterm
+### Issue #7315 (1) — glow markdown rendering got broken when you scroll up/down in Onlyterm
 - Суть: рендер ломается при скролле (взаимодействие с TUI-приложением glow).
 - Применимо: да, общий scrollback/redraw код.
 - Класс: visual
@@ -464,7 +464,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #7237 (1) — Wezterm search blinks when used with tmux
+### Issue #7237 (1) — Onlyterm search blinks when used with tmux
 - Суть: мигание поискового оверлея при tmux control mode.
 - Применимо: да.
 - Класс: visual
@@ -536,13 +536,13 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6846 (1) — Neovim cannot receive "Ctrl Alt h" keybinding in zellij when using Wezterm
-- Суть: клавиша не доходит через zellij внутри wezterm.
+### Issue #6846 (1) — Neovim cannot receive "Ctrl Alt h" keybinding in zellij when using Onlyterm
+- Суть: клавиша не доходит через zellij внутри onlyterm.
 - Применимо: да, но нишевая комбинация мультиплексоров.
 - Класс: functional
 - Приоритет: low-medium
 
-### Issue #6818 (1) — 15% CPU usage on Wezterm vs 1% on Windows Terminal when holding down a key
+### Issue #6818 (1) — 15% CPU usage on Onlyterm vs 1% on Windows Terminal when holding down a key
 - Суть: сильно повышенная загрузка CPU при удержании клавиши (key-repeat).
 - Применимо: да, общий цикл обработки ввода.
 - Класс: perf
@@ -554,7 +554,7 @@
 - Класс: functional
 - Приоритет: medium-high
 
-### Issue #6732 (1) — WezTerm fails to launch on Windows after OpenConsole.exe update
+### Issue #6732 (1) — OnlyTerm fails to launch on Windows after OpenConsole.exe update
 - Суть: регрессия запуска после обновления conpty.
 - Применимо: да.
 - Класс: functional
@@ -608,7 +608,7 @@
 - Класс: functional
 - Приоритет: medium-high
 
-### Issue #6531 (1) — Windows 11 Wezterm crashes on start
+### Issue #6531 (1) — Windows 11 Onlyterm crashes on start
 - Суть: крэш при старте на Win11.
 - Применимо: да.
 - Класс: crash
@@ -620,7 +620,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6480 (1) — wezterm crashes when unplugging external monitor
+### Issue #6480 (1) — onlyterm crashes when unplugging external monitor
 - Суть: крэш при отключении внешнего монитора.
 - Применимо: да.
 - Класс: crash
@@ -656,13 +656,13 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6381 (1) — Wezterm not picking up config in linked config folder on Windows
+### Issue #6381 (1) — Onlyterm not picking up config in linked config folder on Windows
 - Суть: конфиг не подхватывается из симлинк-папки на Windows.
 - Применимо: да, общая загрузка конфига.
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6353 (1) — Wezterm window jumps out
+### Issue #6353 (1) — Onlyterm window jumps out
 - Суть: (из тела) окно "выпрыгивает" по диагонали при клике вне окна, Wayland.
 - Применимо: да.
 - Класс: visual/functional
@@ -674,8 +674,8 @@
 - Класс: functional
 - Приоритет: low
 
-### Issue #6305 (1) — wezterm connect fails with timeout
-- Суть: таймаут при `wezterm connect`.
+### Issue #6305 (1) — onlyterm connect fails with timeout
+- Суть: таймаут при `onlyterm connect`.
 - Применимо: да (если домен unix+proxy_command), иначе возможен N/A для ssh-доменов.
 - Класс: functional
 - Приоритет: medium
@@ -692,7 +692,7 @@
 - Класс: visual
 - Приоритет: medium-high
 
-### Issue #6254 (1) — Wezterm slow startup time and noticeable resize after window was spawned
+### Issue #6254 (1) — Onlyterm slow startup time and noticeable resize after window was spawned
 - Суть: медленный старт + заметный ресайз после появления окна.
 - Применимо: да.
 - Класс: perf
@@ -758,7 +758,7 @@
 - Класс: visual
 - Приоритет: low
 
-### Issue #6019 (1) — Changing argument to wezterm.action.Search has no effect when argument is an empty string
+### Issue #6019 (1) — Changing argument to onlyterm.action.Search has no effect when argument is an empty string
 - Суть: пустая строка в аргументе Search игнорируется.
 - Применимо: да, через rhai-эквивалент action API.
 - Класс: functional
@@ -770,7 +770,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #5939 (1) — Rendering complex status on 'update-status' causing wezterm to feel slow and appear choppy
+### Issue #5939 (1) — Rendering complex status on 'update-status' causing onlyterm to feel slow and appear choppy
 - Суть: тяжёлый рендер статус-бара вызывает подтормаживание.
 - Применимо: да, общий статус-бар рендер.
 - Класс: perf
@@ -788,7 +788,7 @@
 - Класс: visual/functional
 - Приоритет: medium-high
 
-### Issue #5823 (1) — Keyboard layout switches made before wezterm is opened isn't registered, sometimes
+### Issue #5823 (1) — Keyboard layout switches made before onlyterm is opened isn't registered, sometimes
 - Суть: смена раскладки клавиатуры до запуска не подхватывается.
 - Применимо: да.
 - Класс: functional
@@ -824,7 +824,7 @@
 - Класс: hang/perf
 - Приоритет: high
 
-### Issue #5471 (1) — Changing font size while app outputs to terminal causes wezterm to misinterpret new lines
+### Issue #5471 (1) — Changing font size while app outputs to terminal causes onlyterm to misinterpret new lines
 - Суть: смена font_size во время активного вывода ломает интерпретацию новых строк (reflow race).
 - Применимо: да, core reflow-логика.
 - Класс: functional
@@ -938,7 +938,7 @@
 - Класс: functional
 - Приоритет: medium-high
 
-### Issue #4440 (1) — wezterm cli set-tab-title is not working correctly within tmux session
+### Issue #4440 (1) — onlyterm cli set-tab-title is not working correctly within tmux session
 - Суть: CLI set-tab-title некорректно работает под tmux.
 - Применимо: да.
 - Класс: functional
@@ -962,7 +962,7 @@
 - Класс: visual
 - Приоритет: high
 
-### Issue #4229 (1) — pane:get_semantic_zones is empty in wezterm connect sessions
+### Issue #4229 (1) — pane:get_semantic_zones is empty in onlyterm connect sessions
 - Суть: semantic zones API пустое в mux-сессиях.
 - Применимо: да.
 - Класс: functional
@@ -980,7 +980,7 @@
 - Класс: visual
 - Приоритет: medium
 
-### Issue #3994 (1) — Quickly switching tabs in a wezterm-mux-server causes an uncontrolled tab switching frenzy
+### Issue #3994 (1) — Quickly switching tabs in a onlyterm-mux-server causes an uncontrolled tab switching frenzy
 - Суть: неконтролируемое переключение вкладок (обратная связь событий) при быстром переключении на mux-сервере.
 - Применимо: да.
 - Класс: functional
@@ -1082,9 +1082,9 @@
 - Класс: crash
 - Приоритет: high
 
-### Issue #7963 (0) — Windows: panic in wezterm-font load_fallback when a fallback font resolves to ACL-protected WindowsApps font
+### Issue #7963 (0) — Windows: panic in onlyterm-font load_fallback when a fallback font resolves to ACL-protected WindowsApps font
 - Суть: паника при недоступном (ACL) fallback-шрифте.
-- Применимо: да — УЖЕ ИСПРАВЛЕНО в нашем форке коммитом `5752050b8` ("wezterm-font: skip unreadable fallback font candidates instead of erroring out", `fixes #7963`).
+- Применимо: да — УЖЕ ИСПРАВЛЕНО в нашем форке коммитом `5752050b8` ("onlyterm-font: skip unreadable fallback font candidates instead of erroring out", `fixes #7963`).
 - Класс: crash (исправлено)
 - Приоритет: high (уже закрыто у нас)
 
@@ -1100,7 +1100,7 @@
 - Класс: crash
 - Приоритет: high
 
-### Issue #7921 (0) — ~ is pasted as control character 0x1E in WezTerm on Windows with WSL
+### Issue #7921 (0) — ~ is pasted as control character 0x1E in OnlyTerm on Windows with WSL
 - Суть: `~` вставляется как control-символ 0x1E, Windows+WSL.
 - Применимо: да, порча вставляемого текста.
 - Класс: functional
@@ -1214,8 +1214,8 @@
 - Класс: functional
 - Приоритет: medium-high
 
-### Issue #7611 (0) — WezTerm engages adaptive sync
-- Суть: (из тела) WezTerm включает адаптивную синхронизацию (G-Sync) даже не в fullscreen, снижая частоту обновления монитора.
+### Issue #7611 (0) — OnlyTerm engages adaptive sync
+- Суть: (из тела) OnlyTerm включает адаптивную синхронизацию (G-Sync) даже не в fullscreen, снижая частоту обновления монитора.
 - Применимо: да, наш GPU render backend (wgpu/frame pacing).
 - Класс: perf/visual
 - Приоритет: medium
@@ -1244,7 +1244,7 @@
 - Класс: visual
 - Приоритет: high
 
-### Issue #7560 (0) — Wezterm doesn't enter fullscreen when opened from another fullscreen app on macOS
+### Issue #7560 (0) — Onlyterm doesn't enter fullscreen when opened from another fullscreen app on macOS
 - Суть: не входит в fullscreen при запуске поверх другого fullscreen-приложения.
 - Применимо: да.
 - Класс: functional
@@ -1274,7 +1274,7 @@
 - Класс: visual
 - Приоритет: medium-high
 
-### Issue #7519 (0) — Windows sleep/resume causes wezterm-gui.exe crash in d3d11.dll (APPCRASH)
+### Issue #7519 (0) — Windows sleep/resume causes onlyterm-gui.exe crash in d3d11.dll (APPCRASH)
 - Суть: крэш в d3d11 при выходе из сна, Windows.
 - Применимо: да, наш GPU backend (wgpu/d3d11).
 - Класс: crash
@@ -1334,7 +1334,7 @@
 - Класс: perf
 - Приоритет: high
 
-### Issue #7415 (0) — Unable to load a font specified by wezterm.font(...) with weight/stretch/style args
+### Issue #7415 (0) — Unable to load a font specified by onlyterm.font(...) with weight/stretch/style args
 - Суть: не удаётся загрузить шрифт по конкретным атрибутам через конфиг-API.
 - Применимо: да, наш font loader/matcher.
 - Класс: functional
@@ -1406,7 +1406,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #7289 (0) — Status bars do not respect any of the "Attribute" of a wezterm.format({})
+### Issue #7289 (0) — Status bars do not respect any of the "Attribute" of a onlyterm.format({})
 - Суть: атрибуты форматирования игнорируются в статус-баре.
 - Применимо: да.
 - Класс: visual
@@ -1484,7 +1484,7 @@
 - Класс: functional
 - Приоритет: low-medium
 
-### Issue #7096 (0) — wezterm gui add tab, adds 18 new tabs with 18 kdialog
+### Issue #7096 (0) — onlyterm gui add tab, adds 18 new tabs with 18 kdialog
 - Суть: массовое дублирование вкладок при спавне через kdialog (обратная связь событий, похоже на #3994).
 - Применимо: да.
 - Класс: functional
@@ -1598,7 +1598,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6958 (0) — Launching a new WezTerm window triggers a window demanding attention
+### Issue #6958 (0) — Launching a new OnlyTerm window triggers a window demanding attention
 - Суть: новое окно вызывает системный "demand attention" без причины.
 - Применимо: да.
 - Класс: functional
@@ -1637,13 +1637,13 @@
 ### Issue #6844 (0) — Multiple AdjustPaneSize not consistent on ssh mux
 - Применимо: N/A — подсистема удалена (явно указан ssh-mux домен).
 
-### Issue #6839 (0) — 'mux.spawn_window' doesn't launch wezterm in mac
+### Issue #6839 (0) — 'mux.spawn_window' doesn't launch onlyterm in mac
 - Суть: mux.spawn_window не запускает окно на macOS.
 - Применимо: да.
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6826 (0) — New window created by wezterm connect do not respect initial_cols, initial_rows
+### Issue #6826 (0) — New window created by onlyterm connect do not respect initial_cols, initial_rows
 - Суть: mux connect игнорирует initial_cols/rows.
 - Применимо: да.
 - Класс: functional
@@ -1733,7 +1733,7 @@
 - Класс: visual
 - Приоритет: medium-high
 
-### Issue #6465 (0) — Lower-case fallback font not found by wezterm
+### Issue #6465 (0) — Lower-case fallback font not found by onlyterm
 - Суть: fallback-шрифт не находится из-за регистра.
 - Применимо: да, наш font locator.
 - Класс: functional
@@ -1751,7 +1751,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6361 (0) — Crash in wezterm.strftime
+### Issue #6361 (0) — Crash in onlyterm.strftime
 - Суть: паника в API strftime конфигурации.
 - Применимо: да, через rhai-эквивалент этой функции.
 - Класс: crash
@@ -1763,7 +1763,7 @@
 - Класс: visual
 - Приоритет: medium-high
 
-### Issue #6312 (0) — wezterm tab and window title don't update after exiting from interactive docker container
+### Issue #6312 (0) — onlyterm tab and window title don't update after exiting from interactive docker container
 - Суть: заголовок не обновляется после выхода из интерактивного docker-контейнера (трекинг процесса).
 - Применимо: да, связано с procinfo/title-tracking (недавно рефакторено).
 - Класс: functional
@@ -1811,7 +1811,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6210 (0) — wezterm cli move-pane-to-new-tab does not work for multiplexed panes
+### Issue #6210 (0) — onlyterm cli move-pane-to-new-tab does not work for multiplexed panes
 - Суть: CLI move-pane-to-new-tab не работает для mux-панелей.
 - Применимо: да.
 - Класс: functional
@@ -1841,7 +1841,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6157 (0) — Panic after failing to load fallback font that was uninstalled after wezterm was launched
+### Issue #6157 (0) — Panic after failing to load fallback font that was uninstalled after onlyterm was launched
 - Суть: паника при пропаже fallback-шрифта во время работы (тот же класс ошибки, что и #7963).
 - Применимо: да — вероятно устранено тем же фиксом (`5752050b8`), но стоит проверить регрессионным тестом отдельно (сценарий "шрифт удалён после запуска", а не "недоступен по ACL").
 - Класс: crash
@@ -1859,7 +1859,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #6139 (0) — Wezterm resize when covered by window after changing settings
+### Issue #6139 (0) — Onlyterm resize when covered by window after changing settings
 - Суть: ресайз при перекрытии другим окном после смены настроек.
 - Применимо: да.
 - Класс: functional
@@ -1895,7 +1895,7 @@
 - Класс: functional/visual
 - Приоритет: medium
 
-### Issue #5992 (0) — [windows] crash: wezterm_gui::termwindow > opengl context was lost; should reinit
+### Issue #5992 (0) — [windows] crash: onlyterm_gui::termwindow > opengl context was lost; should reinit
 - Суть: крэш при потере OpenGL-контекста вместо переинициализации.
 - Применимо: да, общий render backend recovery код.
 - Класс: crash
@@ -1919,7 +1919,7 @@
 - Класс: functional
 - Приоритет: low-medium
 
-### Issue #5944 (0) — Wezterm crash on launching in mac, tmux default program
+### Issue #5944 (0) — Onlyterm crash on launching in mac, tmux default program
 - Суть: крэш при старте с tmux в качестве default_prog, macOS.
 - Применимо: да.
 - Класс: crash
@@ -1979,7 +1979,7 @@
 - Класс: visual
 - Приоритет: medium
 
-### Issue #5584 (0) — wezterm cannot handle symlink, makes duplicate icons when pinned on taskbar
+### Issue #5584 (0) — onlyterm cannot handle symlink, makes duplicate icons when pinned on taskbar
 - Суть: дублирование иконок в панели задач из-за symlink, Windows.
 - Применимо: да.
 - Класс: functional
@@ -1991,7 +1991,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #5548 (0) — wezterm cli commands are very slow, for example when switching panes
+### Issue #5548 (0) — onlyterm cli commands are very slow, for example when switching panes
 - Суть: высокая задержка CLI-команд (например, переключение панелей).
 - Применимо: да, общий CLI/IPC код.
 - Класс: perf
@@ -2003,7 +2003,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #5520 (0) — unexpected behavior of PaneSelect with wezterm server
+### Issue #5520 (0) — unexpected behavior of PaneSelect with onlyterm server
 - Суть: неожиданное поведение PaneSelect в mux-сессии.
 - Применимо: да.
 - Класс: functional
@@ -2021,7 +2021,7 @@
 - Класс: visual
 - Приоритет: medium
 
-### Issue #5486 (0) — Wezterm can't send s-<mouse-1> event when I press cmd+leftclick
+### Issue #5486 (0) — Onlyterm can't send s-<mouse-1> event when I press cmd+leftclick
 - Суть: не отправляется событие мыши с модификатором Super на macOS.
 - Применимо: да.
 - Класс: functional
@@ -2081,8 +2081,8 @@
 - Класс: perf
 - Приоритет: high
 
-### Issue #5225 (0) — wezterm connect called from freedesktop file hangs
-- Суть: зависание при запуске wezterm connect из .desktop-файла.
+### Issue #5225 (0) — onlyterm connect called from freedesktop file hangs
+- Суть: зависание при запуске onlyterm connect из .desktop-файла.
 - Применимо: да.
 - Класс: hang
 - Приоритет: medium-high
@@ -2123,7 +2123,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #5128 (0) — wezterm imgcat does not deallocate image memory after closing instance
+### Issue #5128 (0) — onlyterm imgcat does not deallocate image memory after closing instance
 - Суть: утечка памяти изображений после закрытия сессии imgcat.
 - Применимо: да, общий image-decoding код.
 - Класс: perf (memory leak)
@@ -2159,7 +2159,7 @@
 - Класс: functional
 - Приоритет: low-medium
 
-### Issue #5060 (0) — wezterm selecting different sizes of fonts across different files
+### Issue #5060 (0) — onlyterm selecting different sizes of fonts across different files
 - Суть: неверный подбор размера между файлами одного шрифтового семейства (multi-file font family).
 - Применимо: да, наш font matcher.
 - Класс: visual
@@ -2171,7 +2171,7 @@
 - Класс: perf
 - Приоритет: high
 
-### Issue #5022 (0) — Dragging Wezterm between 3840x2160 and 1920x1200 screens on Windows causes it to get stuck for some time
+### Issue #5022 (0) — Dragging Onlyterm between 3840x2160 and 1920x1200 screens on Windows causes it to get stuck for some time
 - Суть: временное зависание при перетаскивании между мониторами разного разрешения, Windows.
 - Применимо: да.
 - Класс: hang
@@ -2189,14 +2189,14 @@
 - Класс: functional
 - Приоритет: medium-high
 
-### Issue #4935 (0) — wezterm record unusable when invoked from wsl
+### Issue #4935 (0) — onlyterm record unusable when invoked from wsl
 - Суть: функция record непригодна при вызове из WSL.
 - Применимо: да, но нишевая фича.
 - Класс: functional
 - Приоритет: low-medium
 
 ### Issue #4871 (0) — Clickable area issue
-- Суть: (из тела) URL за пределами окна wezterm остаётся кликабельным.
+- Суть: (из тела) URL за пределами окна onlyterm остаётся кликабельным.
 - Применимо: да, hit-test область окна.
 - Класс: functional
 - Приоритет: medium
@@ -2207,7 +2207,7 @@
 - Класс: functional
 - Приоритет: medium-high
 
-### Issue #4723 (0) — Resize issue with wezterm connect domain
+### Issue #4723 (0) — Resize issue with onlyterm connect domain
 - Суть: баг ресайза при подключении к mux-домену.
 - Применимо: да.
 - Класс: functional
@@ -2225,7 +2225,7 @@
 - Класс: functional
 - Приоритет: low-medium
 
-### Issue #4621 (0) — Modifiers keys not picked up by selection and mouse reporting when wezterm is unfocused
+### Issue #4621 (0) — Modifiers keys not picked up by selection and mouse reporting when onlyterm is unfocused
 - Суть: модификаторы не учитываются в выделении/mouse reporting без фокуса окна.
 - Применимо: да.
 - Класс: functional
@@ -2249,7 +2249,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #4439 (0) — wezterm cli is not working entirely in tmux once application is quit
+### Issue #4439 (0) — onlyterm cli is not working entirely in tmux once application is quit
 - Суть: CLI полностью перестаёт работать в tmux после выхода приложения.
 - Применимо: да.
 - Класс: functional
@@ -2261,7 +2261,7 @@
 - Класс: visual
 - Приоритет: low-medium
 
-### Issue #4434 (0) — Wezterm render duplicate characters in Thai language
+### Issue #4434 (0) — Onlyterm render duplicate characters in Thai language
 - Суть: дублирование символов при рендере тайского (дубль темы #5199).
 - Применимо: да, наш шейпинг-пайплайн.
 - Класс: visual
@@ -2279,7 +2279,7 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #4283 (0) — Wezterm is "unresponsive" when trying to attach to an unreachable remote domain
+### Issue #4283 (0) — Onlyterm is "unresponsive" when trying to attach to an unreachable remote domain
 - Суть: приложение зависает целиком при попытке подключиться к недоступному удалённому домену.
 - Применимо: да, критично — блокирует весь GUI из-за одного недоступного домена.
 - Класс: hang
@@ -2363,7 +2363,7 @@
 - Класс: functional (эффективно hang для ввода)
 - Приоритет: high
 
-### Issue #3881 (0) — wezterm.font_with_fallback breaks terminal with invalid arguments
+### Issue #3881 (0) — onlyterm.font_with_fallback breaks terminal with invalid arguments
 - Суть: невалидные аргументы font_with_fallback ломают терминал (не просто ошибка конфига).
 - Применимо: да, через rhai-эквивалент API.
 - Класс: functional/crash-adjacent
@@ -2417,13 +2417,13 @@
 - Класс: functional
 - Приоритет: medium
 
-### Issue #3107 (0) — wezterm crashes when OS runs out of files
+### Issue #3107 (0) — onlyterm crashes when OS runs out of files
 - Суть: крэш при исчерпании файловых дескрипторов ОС.
 - Применимо: да, общая обработка ресурсов/fd.
 - Класс: crash
 - Приоритет: high
 
-### Issue #2905 (0) — wezterm record - paste clipboard inserts additional chars at random positions
+### Issue #2905 (0) — onlyterm record - paste clipboard inserts additional chars at random positions
 - Суть: вставка из буфера во время записи (record) добавляет случайные лишние символы.
 - Применимо: да.
 - Класс: functional
@@ -2435,7 +2435,7 @@
 - Класс: visual
 - Приоритет: medium
 
-### Issue #2800 (0) — Hiding title bar and launching wezterm with maximized, opens it in fullscreen
+### Issue #2800 (0) — Hiding title bar and launching onlyterm with maximized, opens it in fullscreen
 - Суть: при скрытом титлбаре и maximized-старте окно открывается в fullscreen вместо maximized.
 - Применимо: да.
 - Класс: functional
@@ -2489,7 +2489,7 @@
 - Класс: functional
 - Приоритет: low-medium
 
-### Issue #6237 (1) — Failure to start Wezterm after install
+### Issue #6237 (1) — Failure to start Onlyterm after install
 - Суть: (из тела) при старте после установки на Ubuntu возникает ошибка `mux::ssh_agent failed to set SSH_AUTH_SOCK`, мешающая запуску.
 - Применимо: да — `ssh_agent`-форвардинг (mux_enable_ssh_agent) остался в форке, это не удалённый ssh-клиент.
 - Класс: functional
@@ -2502,18 +2502,18 @@
 - Приоритет: low-medium
 
 ### Issue #5770 (1) — Emacsclient fails with errormessage
-- Суть: emacsclient завершается с ошибкой при запуске из wezterm (вероятно связано со спавном процесса/pty).
+- Суть: emacsclient завершается с ошибкой при запуске из onlyterm (вероятно связано со спавном процесса/pty).
 - Применимо: да.
 - Класс: functional
 - Приоритет: low-medium
 
 ### Issue #5178 (1) — Permission denied when calling docker
-- Суть: ошибка доступа при вызове docker из wezterm (edge case процесс-спавна).
+- Суть: ошибка доступа при вызове docker из onlyterm (edge case процесс-спавна).
 - Применимо: да.
 - Класс: functional
 - Приоритет: low
 
-### Issue #3477 (1) — Minor issue in wezterm's borders with Wayland and RESIZE (or the new Integrated one)
+### Issue #3477 (1) — Minor issue in onlyterm's borders with Wayland and RESIZE (or the new Integrated one)
 - Суть: мелкий визуальный баг границ окна на Wayland с RESIZE/Integrated декорациями.
 - Применимо: да.
 - Класс: visual
@@ -2532,8 +2532,8 @@
 - Приоритет: low
 
 ### Issue #5847 (0) — `Time:sun_times(lat, lon)` returns incorrect progression > 1.0
-- Суть: математическая ошибка в API wezterm.time (расчёт восхода/заката).
-- Применимо: да, через rhai-эквивалент wezterm.time API.
+- Суть: математическая ошибка в API onlyterm.time (расчёт восхода/заката).
+- Применимо: да, через rhai-эквивалент onlyterm.time API.
 - Класс: functional
 - Приоритет: low-medium
 
@@ -2557,33 +2557,33 @@
 
 ## Неважное — feature requests / окружение-специфичные / нерелевантные (49 штук)
 
-#4820 wezterm ssh new window focus issue — N/A, подсистема SSH-клиента удалена
+#4820 onlyterm ssh new window focus issue — N/A, подсистема SSH-клиента удалена
 #4693 Switching panes too quickly on SSH domain causes OOM — N/A, подсистема SSH-клиента удалена
 #5934 ssh does not work when Hostname is an ipv6 — N/A, подсистема SSH-клиента удалена
-#7659 WezTerm SSH can't handle long passphrases — N/A, подсистема SSH-клиента удалена
-#7229 WezTerm SSH: sporadic failure - libssh ssh_connect() never called — N/A, подсистема удалена
-#3784 wezterm_ssh: sftp.set_metadata fails — N/A, подсистема удалена
+#7659 OnlyTerm SSH can't handle long passphrases — N/A, подсистема SSH-клиента удалена
+#7229 OnlyTerm SSH: sporadic failure - libssh ssh_connect() never called — N/A, подсистема удалена
+#3784 onlyterm_ssh: sftp.set_metadata fails — N/A, подсистема удалена
 #3501 SSH UserKnownHostsFile /dev/null not understood — N/A, подсистема удалена
-#5108 Wezterm SSH doesn't present login prompt with tailscale — N/A, подсистема удалена
-#4756 Wezterm connect failed with "Match tagged" ssh config — N/A, ssh_config/ssh-домен удалены
+#5108 Onlyterm SSH doesn't present login prompt with tailscale — N/A, подсистема удалена
+#4756 Onlyterm connect failed with "Match tagged" ssh config — N/A, ssh_config/ssh-домен удалены
 #4284 ssh domains aren't updated when reloading config — N/A, ssh-домен удалён
 #6840 Working directory expanded to realpath when ~ is symlink in SSHMUX — N/A, ssh-домен удалён
 #3894 output from repl is broken when iterating over big table (Lua REPL) — N/A, mlua/Lua REPL удалён
 #7477 failed to run custom build command for freetype v0.1.0 — N/A, freetype не используется в сборке
 #7521 wezterm.lua doesn,t excist — вопрос пользователя, не баг
 #6277 Artemis trojan false positive in Windows Setup — ложное срабатывание антивируса, не баг
-#6178 KConfigIni parses wezterm-gui binary as config file — не баг wezterm
+#6178 KConfigIni parses onlyterm-gui binary as config file — не баг onlyterm
 #7974 Crate spin 0.9.8 is yanked — supply-chain/build hygiene, не функциональный баг приложения
 #7425 Build fails on Fedora 43 — окружение сборки, не наш build-процесс
 #7952 Copr nightly opensuse builds failing — packaging/CI окружение
-#7862 Wezterm launch issues Ubuntu 26.04 — окружение/дистрибутив
+#7862 Onlyterm launch issues Ubuntu 26.04 — окружение/дистрибутив
 #7489 Ubuntu 22.04 build fails without libxkbcommon-x11-dev — недостающая системная зависимость, документируемо
 #6888 Errors on Fedora 41 — окружение сборки
 #5148 Can't build on FreeBSD-14-RELEASE — окружение сборки
 #5484 Can not install in Debian 12 — окружение установки
 #5945 add support for chimera linux — feature request (поддержка дистрибутива)
 #6965 Update Flatpak to org.freedesktop.Platform/x86_64/24.08 — packaging request
-#7313 Wezterm flatpak fails to run using XWayland — packaging/окружение
+#7313 Onlyterm flatpak fails to run using XWayland — packaging/окружение
 #7486 CFBundleShortVersionString in Info.plist is incorrect — packaging metadata, косметика
 #7549 Release new termwiz — meta-запрос релиза
 #5037 Support common MacOS Window options (Minimise etc) — feature request
@@ -2592,17 +2592,17 @@
 #7056 Support for undercurl in WINDOWS — feature gap (формулировка "support")
 #1141 support kitty keyboard protocol — устаревший feature request, протокол давно реализован
 #3867 Problem with MacBook text-to-speech interaction — нишевая accessibility-фича macOS, очень низкое влияние
-#6279 Calendar Permissions not propagating in WezTerm — нишевая macOS-фича, не относится к терминалу
+#6279 Calendar Permissions not propagating in OnlyTerm — нишевая macOS-фича, не относится к терминалу
 #6455 Control-[ not working from VNC — нишевый транспорт VNC
 #5465 CMD+. to macOS via VNC does not act as expected — нишевый транспорт VNC
-#6409 wezterm fails to start after using KVM — нишевая виртуализация, недостаточно данных
+#6409 onlyterm fails to start after using KVM — нишевая виртуализация, недостаточно данных
 #7241 Warning when opening serial port while default_prog is set — минорное предупреждение, не влияет на работу
-#5525 On Windows 11 History not working — вероятно ответственность шелла/readline, не баг wezterm
+#5525 On Windows 11 History not working — вероятно ответственность шелла/readline, не баг onlyterm
 #7813 Color Scheme 'Modus-Operandi' seems not compatible with modus-themes in Emacs on macOS — совместимость конкретной цветовой темы со сторонним Emacs-пакетом, косметика/ниша
-#6431 Pop Shell tiling with Wayland doesn't tile Wezterm nightly — поведение конкретного тайлингового WM, не в фокусе
+#6431 Pop Shell tiling with Wayland doesn't tile Onlyterm nightly — поведение конкретного тайлингового WM, не в фокусе
 #4261 cannot paste what copied from remote server (remmina with rdp) — нишевый транспорт (remmina+RDP)
 #7460 DECANM vt52 default state - backwards for a reason? — вопрос о спецификации/дизайне, не баг
 #7072 ReloadConfiguration doesn't add a new [ssh] domain to existing windows (again) — N/A, ssh-домен удалён
-#6969 wezterm serial sluggish — нишевая функция serial-порта, не в фокусе
-#5846 Cannot execute wezterm serial with default_prog = pwsh.exe — нишевая функция serial-порта
-#5825 wezterm serial output differs from stty+cat — нишевая функция serial-порта
+#6969 onlyterm serial sluggish — нишевая функция serial-порта, не в фокусе
+#5846 Cannot execute onlyterm serial with default_prog = pwsh.exe — нишевая функция serial-порта
+#5825 onlyterm serial output differs from stty+cat — нишевая функция serial-порта

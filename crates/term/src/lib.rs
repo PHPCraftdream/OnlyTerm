@@ -1,6 +1,6 @@
 //! This crate provides the core of the virtual terminal emulator implementation
-//! used by [wezterm](https://wezterm.org/).  The home for this
-//! crate is in the wezterm repo and development is tracked at
+//! used by [onlyterm](https://wezterm.org/).  The home for this
+//! crate is in the onlyterm repo and development is tracked at
 //! <https://github.com/wezterm/wezterm/>.
 //!
 //! It is full featured, providing terminal escape sequence parsing, keyboard
@@ -16,12 +16,12 @@
 //! The entrypoint to the crate is the [Terminal](terminal/struct.Terminal.html)
 //! struct.
 use anyhow::Error;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_surface::SequenceNo;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
 use std::ops::{Deref, DerefMut, Range};
 use std::str;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_surface::SequenceNo;
 
 /// The title a terminal carries until the program running inside it sets one
 /// of its own.
@@ -29,7 +29,7 @@ use wezterm_surface::SequenceNo;
 /// This is user-visible, and not only as a fallback: an overlay pane -- the
 /// version overlay on Ctrl+I, the debug overlay -- is a terminal that nobody
 /// ever writes a title to, and `TermWizTerminalPane::get_title` hands this
-/// straight to the window title. It used to read "wezterm", which is the
+/// straight to the window title. It used to read "onlyterm", which is the
 /// project this one was forked from, so opening the version overlay renamed
 /// the window after the wrong program.
 ///
@@ -45,8 +45,8 @@ pub use config::TerminalConfiguration;
 pub mod input;
 pub use crate::input::*;
 
-pub use wezterm_cell::*;
-pub use wezterm_surface::line::*;
+pub use onlyterm_cell::*;
+pub use onlyterm_surface::line::*;
 
 pub mod screen;
 pub use crate::screen::*;
@@ -123,8 +123,8 @@ pub enum Position {
 pub struct CursorPosition {
     pub x: usize,
     pub y: VisibleRowIndex,
-    pub shape: wezterm_surface::CursorShape,
-    pub visibility: wezterm_surface::CursorVisibility,
+    pub shape: onlyterm_surface::CursorShape,
+    pub visibility: onlyterm_surface::CursorVisibility,
     pub seqno: SequenceNo,
 }
 

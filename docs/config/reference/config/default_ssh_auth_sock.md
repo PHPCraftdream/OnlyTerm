@@ -7,9 +7,9 @@ tags:
 
 {{since('nightly')}}
 
-Setting this value will cause wezterm to replace the value of the
+Setting this value will cause onlyterm to replace the value of the
 `SSH_AUTH_SOCK` environment when it first starts up, and to use this value for
-the auth socket registered with the multiplexer server (visible via `wezterm
+the auth socket registered with the multiplexer server (visible via `onlyterm
 cli list-clients`).
 
 You won't normally need to set this, but if you are running with an alternative
@@ -34,7 +34,7 @@ default_ssh_auth_sock: /home/you/.1password/agent.sock
     An earlier version of this example detected, at config-load time,
     whether gnome-keyring's ssh-agent socket was the current
     `SSH_AUTH_SOCK` and conditionally substituted the 1Password agent's
-    socket only if it existed, using Lua's `if`/`os.getenv`/`wezterm.glob`.
+    socket only if it existed, using Lua's `if`/`os.getenv`/`onlyterm.glob`.
     ktav is a static data format with no conditional expressions, no
     environment variable lookups, and no filesystem globbing at config-load
     time, so that kind of environment-dependent, self-adjusting logic can no

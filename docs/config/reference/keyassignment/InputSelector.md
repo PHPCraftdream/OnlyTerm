@@ -10,7 +10,7 @@ tags:
 !!! danger "Non-functional: required a scripting callback"
 
     `InputSelector`'s `action` field was designed to hold an event callback
-    registered via `wezterm.action_callback(...)`, resolved through rhai's
+    registered via `onlyterm.action_callback(...)`, resolved through rhai's
     (and, before that, Lua's) event-handler registry. That registry no
     longer exists — see the [changelog](../../../changelog.md#continuousnightly)
     and the [migration guide](../../../migration-to-ktav.md). The overlay
@@ -92,11 +92,11 @@ config.keys = [
     key: "E",
     mods: "CTRL|SHIFT",
     action: act.InputSelector(#{
-      action: wezterm.action_callback(|window, pane, id, label| {
+      action: onlyterm.action_callback(|window, pane, id, label| {
         if id == () && label == () {
-          wezterm.log_info("cancelled");
+          onlyterm.log_info("cancelled");
         } else {
-          wezterm.log_info("you selected " + id + label);
+          onlyterm.log_info("you selected " + id + label);
           pane.send_text(id);
         }
       }),

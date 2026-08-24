@@ -1,10 +1,10 @@
-# wezterm-bidi - a pure Rust bidi implementation
+# onlyterm-bidi - a pure Rust bidi implementation
 
 This crate provides an implementation of the *The Unicode Bidirectional
 Algorithm (UBA)* in Rust.
 
-This crate was developed for use in wezterm but does not depend on
-other code in wezterm.
+This crate was developed for use in onlyterm but does not depend on
+other code in onlyterm.
 
 The focus for this crate is conformance.
 

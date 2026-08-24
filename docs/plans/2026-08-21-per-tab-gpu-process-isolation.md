@@ -3,7 +3,7 @@
 ## Контекст
 
 Расследование `docs/per-tab-crash-isolation-investigation.md` установило: сегодня `ProcessGpuContext`
-(`crates/wezterm-gui/src/termwindow/webgpu/context.rs:214-266`) — один `Instance`/`Adapter`/`Device`/`Queue`
+(`crates/onlyterm-gui/src/termwindow/webgpu/context.rs:214-266`) — один `Instance`/`Adapter`/`Device`/`Queue`
 на весь процесс `onlyterm-gui.exe`, общий для всех окон и вкладок. Необработанное SEH-исключение из
 DXGI/D3D12 (как в реальном крахе PID 27376) убивает процесс целиком. Существующий `per_tab_process_isolation`
 (Phase A-F, реальный, отгруженный) изолирует только pty/shell — не GPU.
@@ -45,7 +45,7 @@ DirectComposition composition-surface handle (строки 1251-1266), плюс 
 
 ### Phase A — валидационный спайк (вне основного бинаря, gate перед остальным)
 
-Отдельная песочница **внутри репозитория**, не в глобальных папках (`D:\dev\rust\wezterm\.scratch\dcomp-spike\`,
+Отдельная песочница **внутри репозитория**, не в глобальных папках (`D:\dev\rust\onlyterm\.scratch\dcomp-spike\`,
 не отслеживается git, удаляется после спайка) с двумя маленькими процессами:
 1. "Родитель": создаёт `IDCompositionDevice`, корневой visual, реальное окно + swapchain на него,
    создаёт composition-surface (через `IDCompositionDesktopDevice`/аналог) и **shared handle** на неё,
@@ -68,8 +68,8 @@ Phase B. Не приступать к Phase B без прогона этого �
 
 - Новый режим бинаря: `onlyterm-gui.exe --gpu-tab-host --supervise-pid <pid> --ipc-pipe <name>`.
   Supervision — тот же паттерн, что и pty-изоляция: Job Object
-  (`crates/wezterm-client/src/client/windows_job.rs::assign_to_kill_on_close_job`) +
-  `--supervise-pid` watcher-поток как fallback (по образцу `crates/wezterm-mux-server/src/main.rs`).
+  (`crates/onlyterm-client/src/client/windows_job.rs::assign_to_kill_on_close_job`) +
+  `--supervise-pid` watcher-поток как fallback (по образцу `crates/onlyterm-mux-server/src/main.rs`).
 - Формат кадра через границу процесса: те же данные, что несёт `GpuFrame` сегодня (вершины/индексы,
   список draw-команд, дельты обновления glyph-атласа как сырые пиксели), сериализованные в IPC-канал
   (именованный pipe или shared-memory ring buffer) — НЕ прямой шаринг GPU-хендлов на входе (только на
@@ -107,7 +107,7 @@ Phase B. Не приступать к Phase B без прогона этого �
 - Аддендум в `docs/per-tab-crash-isolation-investigation.md`: находка про
   `SurfaceTarget::SurfaceHandle`/DirectComposition снимает главный риск, ранее считавшийся
   неподтверждённым ("unprototyped CreateSharedHandle") — зафиксировать со ссылкой на Phase A результаты.
-- `crates/wezterm-gui-subcommands/src/lib.rs`: обновить доккомент `--start-conf` — добавить
+- `crates/onlyterm-gui-subcommands/src/lib.rs`: обновить доккомент `--start-conf` — добавить
   `webgpu_engine` в список полей, которые можно переопределить на вкладку (сейчас перечислены
   root_dir/vars/commands, нужно упомянуть новое).
 - `CLAUDE.md`: одна уточняющая строка в разделе "Прочее" — новые дочерние GPU-host-процессы тоже будут
@@ -119,8 +119,8 @@ Phase B. Не приступать к Phase B без прогона этого �
 
 - Phase A: ручной прогон спайка на реальном железе (Intel + NVIDIA), глазами — рендер виден, дочерний
   процесс убивается без побочных эффектов на родителя.
-- Phase B: `cargo build -p wezterm-gui`, `cargo clippy -p wezterm-gui --all-targets -- -D warnings`,
-  `cargo test -p wezterm-gui` (существующие 159 тестов не должны сломаться — `PerTabProcessBackend`
+- Phase B: `cargo build -p onlyterm-gui`, `cargo clippy -p onlyterm-gui --all-targets -- -D warnings`,
+  `cargo test -p onlyterm-gui` (существующие 159 тестов не должны сломаться — `PerTabProcessBackend`
   добавляет новую реализацию трейта, не меняет старую). Ручной прогон: включить `webgpu_engine:
   PerTabProcess` в тестовом `.onlyterm.ktav`, открыть вкладку, убедиться в рендере; затем убить дочерний
   GPU-host процесс **по его собственному PID, зафиксированному при спавне** (см. стоп-правило

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::Arc;
 
-/// AgentProxy manages an agent.PID symlink in the wezterm runtime
+/// AgentProxy manages an agent.PID symlink in the onlyterm runtime
 /// directory.
 /// The intent is to maintain the symlink and have it point to the
 /// appropriate ssh agent socket path for the most recently active
@@ -18,7 +18,7 @@ use std::sync::Arc;
 /// to decide whether the client process is allowed to consume
 /// the agent or not, and us sitting in the middle breaks that.
 ///
-/// As a further complication, when a wezterm proxy client is
+/// As a further complication, when a onlyterm proxy client is
 /// present, both the proxy and the mux instance inside a gui
 /// tend to be updated together, with the gui often being
 /// touched last.
@@ -158,7 +158,7 @@ impl AgentProxy {
             // proxy entries slightly higher by adding a small Duration to
             // the actual observed value.
             // `via proxy pid` is coupled with the Pdu::SetClientId logic
-            // in wezterm-mux-server-impl/src/sessionhandler.rs
+            // in onlyterm-mux-server-impl/src/sessionhandler.rs
             const PROXY_MARKER: &str = "via proxy pid";
             let a_proxy = a.client_id.hostname.contains(PROXY_MARKER);
             let b_proxy = b.client_id.hostname.contains(PROXY_MARKER);

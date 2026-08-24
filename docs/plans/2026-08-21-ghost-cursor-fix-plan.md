@@ -21,14 +21,14 @@ C (условная) чинит причину исходного кадра п�
 
 Правки (узкие, три файла):
 
-1. `crates/wezterm-gui/src/termwindow/render/mod.rs` — `RetainedRow`: добавить поле
+1. `crates/onlyterm-gui/src/termwindow/render/mod.rs` — `RetainedRow`: добавить поле
    `contains_cursor: bool`.
-2. `crates/wezterm-gui/src/termwindow/render/pane.rs` — обе ветки, записывающие
+2. `crates/onlyterm-gui/src/termwindow/render/pane.rs` — обе ветки, записывающие
    retained row (`EmitCached` и `Build`), заполняют флаг. Консервативно:
    `cursor.y == stable_row` на момент построения quad-ов (ложный `true` стоит одного
    лишнего row build; ложный `false` сохраняет фантом — недопустим). Заодно: при
    чтении `has_retained` (`pane.rs:586-592`) доставать и флаг.
-3. `crates/wezterm-gui/src/termwindow/render/budget.rs` — `RowSweep::decide`: новый
+3. `crates/onlyterm-gui/src/termwindow/render/budget.rs` — `RowSweep::decide`: новый
    параметр `retained_contains_cursor: bool`; условие `must_build` расширяется:
    cache-miss строка с retained-курсором строится всегда (в обход бюджета и
    `work_start`), даже если это больше не текущая cursor row.
@@ -48,8 +48,8 @@ Regression-тесты (все — в `budget.rs`, чистые юниты; сп�
    `EmitRetained` (юнит на связку `has_retained=false` → `Build`; уже частично
    покрыт, зафиксировать явно).
 
-Верификация: `cargo build -p wezterm-gui`, `cargo clippy -p wezterm-gui --all-targets
--- -D warnings`, `cargo fmt --check`, `cargo test -p wezterm-gui`.
+Верификация: `cargo build -p onlyterm-gui`, `cargo clippy -p onlyterm-gui --all-targets
+-- -D warnings`, `cargo fmt --check`, `cargo test -p onlyterm-gui`.
 
 Не-цели Phase A: не трогать `quad_generation` (сужение — отдельная оптимизация, не фикс),
 не чинить snapshot race, не менять `RetainedStamp`.

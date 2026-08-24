@@ -1,7 +1,7 @@
-# `wezterm start`
+# `onlyterm start`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-start--help.txt" %}
+{% include "../examples/cmd-synopsis-onlyterm-start--help.txt" %}
 ```
 
 ## `--start-conf`: opening a fixed set of tabs at startup

@@ -17,11 +17,11 @@ use config::SrgbaTuple;
 use deltae::LabValue;
 use image::Pixel;
 use lru::LruCache;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 use std::time::SystemTime;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(FromDynamic, ToDynamic, Debug, Clone, Copy)]
 pub struct ExtractColorParams {

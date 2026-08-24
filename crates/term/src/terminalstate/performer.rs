@@ -6,6 +6,20 @@ use crate::{ClipboardSelection, Position, TerminalState, VisibleRowIndex, DCS, S
 use finl_unicode::grapheme_clusters::Graphemes;
 use log::{debug, error};
 use num_traits::FromPrimitive;
+use onlyterm_bidi::ParagraphDirectionHint;
+use onlyterm_cell::{
+    grapheme_column_width, is_white_space_grapheme, Cell, CellAttributes, SemanticType,
+};
+use onlyterm_escape_parser::csi::{
+    CharacterPath, EraseInDisplay, Keyboard, KittyKeyboardFlags, KittyKeyboardMode,
+};
+use onlyterm_escape_parser::osc::{
+    ChangeColorPair, ColorOrQuery, FinalTermSemanticPrompt, ITermProprietary,
+    ITermUnicodeVersionOp, Selection,
+};
+use onlyterm_escape_parser::{
+    Action, ControlCode, DeviceControlMode, Esc, EscCode, OperatingSystemCommand, CSI,
+};
 use ordered_float::NotNan;
 use std::fmt::Write;
 use std::io::Write as _;
@@ -13,20 +27,6 @@ use std::ops::{Deref, DerefMut};
 use termwiz::input::KeyboardEncoding;
 use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
 use url::Url;
-use wezterm_bidi::ParagraphDirectionHint;
-use wezterm_cell::{
-    grapheme_column_width, is_white_space_grapheme, Cell, CellAttributes, SemanticType,
-};
-use wezterm_escape_parser::csi::{
-    CharacterPath, EraseInDisplay, Keyboard, KittyKeyboardFlags, KittyKeyboardMode,
-};
-use wezterm_escape_parser::osc::{
-    ChangeColorPair, ColorOrQuery, FinalTermSemanticPrompt, ITermProprietary,
-    ITermUnicodeVersionOp, Selection,
-};
-use wezterm_escape_parser::{
-    Action, ControlCode, DeviceControlMode, Esc, EscCode, OperatingSystemCommand, CSI,
-};
 
 mod osc;
 
@@ -491,7 +491,7 @@ impl<'a> Performer<'a> {
             }
             ControlCode::RI => self.c1_reverse_index(),
 
-            // wezterm only supports UTF-8, so does not support the
+            // onlyterm only supports UTF-8, so does not support the
             // DEC National Replacement Character Sets.  However, it does
             // support the DEC Special Graphics character set used by
             // numerous ncurses applications.  DEC Special Graphics can be
@@ -527,7 +527,7 @@ impl<'a> Performer<'a> {
         self.flush_print();
         match csi {
             CSI::Sgr(sgr) => self.state.perform_csi_sgr(sgr),
-            CSI::Cursor(wezterm_escape_parser::csi::Cursor::Left(n)) => {
+            CSI::Cursor(onlyterm_escape_parser::csi::Cursor::Left(n)) => {
                 // We treat CUB (Cursor::Left) the same as Backspace as
                 // that is what xterm does.
                 // <https://github.com/wezterm/wezterm/issues/1273>

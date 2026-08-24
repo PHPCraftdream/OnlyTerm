@@ -15,7 +15,7 @@
 
 A Window object could not be created in Lua/rhai code directly; it was
 typically passed to your code via an event callback. A Window object was a
-handle to a GUI TermWindow running in the wezterm process.
+handle to a GUI TermWindow running in the onlyterm process.
 
 ## Available methods
 

@@ -2,9 +2,9 @@ use super::{SplitDirectionAndSize, TabId};
 use crate::pane::PaneId;
 use crate::renderable::StableCursorPosition;
 use crate::WindowId;
+use onlyterm_term::{StableRowIndex, TerminalSize};
 use serde::{Deserialize, Serialize};
 use url::Url;
-use wezterm_term::{StableRowIndex, TerminalSize};
 
 /// This type is used directly by the codec, take care to bump
 /// the codec version if you change this

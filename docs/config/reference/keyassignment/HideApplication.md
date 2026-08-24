@@ -1,6 +1,6 @@
 # `HideApplication`
 
-On macOS, hide the WezTerm application.
+On macOS, hide the OnlyTerm application.
 
 ```
 keys: [

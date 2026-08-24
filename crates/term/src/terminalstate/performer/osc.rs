@@ -253,7 +253,7 @@ impl<'a> Performer<'a> {
 
             OperatingSystemCommand::ChangeDynamicColors(first_color, colors) => {
                 log::trace!("ChangeDynamicColors: {:?} {:?}", first_color, colors);
-                use wezterm_escape_parser::osc::DynamicColorNumber;
+                use onlyterm_escape_parser::osc::DynamicColorNumber;
                 for (idx, color) in (first_color as u8..).zip(colors) {
                     let which_color: Option<DynamicColorNumber> = FromPrimitive::from_u8(idx);
                     log::trace!("ChangeDynamicColors item: {:?}", which_color);
@@ -306,7 +306,7 @@ impl<'a> Performer<'a> {
 
             OperatingSystemCommand::ResetDynamicColor(color) => {
                 log::trace!("ResetDynamicColor: {:?}", color);
-                use wezterm_escape_parser::osc::DynamicColorNumber;
+                use onlyterm_escape_parser::osc::DynamicColorNumber;
                 let which_color: Option<DynamicColorNumber> = FromPrimitive::from_u8(color as u8);
                 if let Some(which_color) = which_color {
                     macro_rules! reset {
@@ -341,7 +341,7 @@ impl<'a> Performer<'a> {
                 self.palette_did_change();
             }
             OperatingSystemCommand::ConEmuProgress(prog) => {
-                use wezterm_escape_parser::osc::Progress as TProg;
+                use onlyterm_escape_parser::osc::Progress as TProg;
                 let prog = match prog {
                     TProg::None => Progress::None,
                     TProg::SetPercentage(p) => Progress::Percentage(p),

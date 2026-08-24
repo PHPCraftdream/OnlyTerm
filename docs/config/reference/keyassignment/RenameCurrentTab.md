@@ -20,5 +20,5 @@ keys: [
 ]
 ```
 
-See also: [wezterm cli set-tab-title](../../../cli/cli/set-tab-title.md),
+See also: [onlyterm cli set-tab-title](../../../cli/cli/set-tab-title.md),
 which renames a tab non-interactively (useful from scripts).

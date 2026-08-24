@@ -263,11 +263,11 @@ fn setup_pretty() -> (LevelFilter, Logger) {
     let base_name = std::env::current_exe()
         .ok()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()))
-        .unwrap_or_else(|| "wezterm".to_string());
+        .unwrap_or_else(|| "onlyterm".to_string());
 
     if base_name.contains("gui") {
         // Only tidy up logs when the gui process is starting.
-        // rationale: `wezterm cli` commands should have as low startup
+        // rationale: `onlyterm cli` commands should have as low startup
         // overhead as possible
         prune_old_logs();
     }

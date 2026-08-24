@@ -2,7 +2,7 @@
 
 ## Session summary
 
-OnlyTerm — Windows-ориентированный форк wezterm со снятым скриптовым слоем
+OnlyTerm — Windows-ориентированный форк onlyterm со снятым скриптовым слоем
 (конфиг ktav, ни Lua, ни rhai). Основной babygoal-цикл этой сессии
 (двухэтапная уборка: распил крупных файлов «один экспорт на файл» + чистка
 `clippy` по всему воркспейсу) был полностью завершён и закоммичен ранее
@@ -16,7 +16,7 @@ WebGPU) — не трогать без отдельного согласован
 **Все семь находок теперь исправлены, проверены лично и закоммичены** —
 это основной результат данной части сессии:
 - #373 `kitty_function_code`: `VolumeDown` дублировал код `MediaPrevTrack`
-  (`57436`) в ДВУХ независимых match-блоках `wezterm-input-types`; исправлено
+  (`57436`) в ДВУХ независимых match-блоках `onlyterm-input-types`; исправлено
   на `57438` в обоих местах — коммит `17ba5cd1b`.
 - #374 `termwiz::scroll_region`: Y-координата вычислялась через `left`
   вместо `top` — коммит `e3d169003`.
@@ -75,7 +75,7 @@ Fixed, Continuous/Nightly) с перечислением всех семи пр�
 (нет)
 
 ### pending
-- #368 wezterm-surface: два snapshot-теста падают только при сборке -p (решение по фиксу не принято)
+- #368 onlyterm-surface: два snapshot-теста падают только при сборке -p (решение по фиксу не принято)
 - #369 crush-fallback state (persistent — do not complete): sh — armed
 - #370 Многие символы рисуются квадратиком (tofu): U+23BF ⎿ и другие
 - #371 Шрифт тонкий на WebGPU (нет субпиксельного сглаживания в WGSL)
@@ -130,8 +130,8 @@ Fixed, Continuous/Nightly) с перечислением всех семи пр�
 
 ```
 94e6884b1 docs: changelog entry for the seven bugs found by the @oh review
-17ba5cd1b wezterm-input-types: fix VolumeDown kitty function code (task #373)
-e2b765d52 wezterm-gui, termwiz: remove stray dead_code allow and duplicate lint (task #379)
+17ba5cd1b onlyterm-input-types: fix VolumeDown kitty function code (task #373)
+e2b765d52 onlyterm-gui, termwiz: remove stray dead_code allow and duplicate lint (task #379)
 98d6b2c39 termwiz: fix unused MouseButtons import on non-Windows targets (task #377)
 08e919056 termwiz: fix Numpad9 encoding as PageDown instead of PageUp (task #375)
 ```

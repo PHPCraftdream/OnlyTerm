@@ -48,7 +48,7 @@ a terser, quote-optional, comma-optional syntax. It has:
 
 It does **not** have variables, `let`, functions, closures, `if`/`else`
 expressions, loops, string concatenation, module imports, or any notion of
-calling into the host program (`wezterm.*`, `color::*`, `plugin::*`, and so
+calling into the host program (`onlyterm.*`, `color::*`, `plugin::*`, and so
 on are all gone — there is nothing left to call). A ktav config file is
 *read*, not *run*.
 
@@ -175,7 +175,7 @@ program arguments, and so on. There is no escaping mechanism for a value
 that would need to contain a literal `#` or `:` as its very first character
 — ktav has no quoting syntax to fall back on for that case, so if you ever
 need a string value that is genuinely ambiguous with ktav's own syntax
-(this essentially never happens for wezterm config values), there currently
+(this essentially never happens for onlyterm config values), there currently
 isn't a way to express it. Ordinary values that merely *contain* a `#`,
 `:`, or `//` in the middle (a URL like `http://example.com:8080`, a hex
 color like `#af8700`) are unaffected; the ambiguity only exists for `##`
@@ -195,12 +195,12 @@ Because ktav has no expressions or function calls, some things you may have
 had in a Lua or rhai config simply **cannot be expressed** anymore. There is
 no direct ktav replacement for:
 
-* Any use of `require`/`wezterm.plugin.require`, `config_builder()`, or any
+* Any use of `require`/`onlyterm.plugin.require`, `config_builder()`, or any
   other function call — write the value directly as it would have been
   *returned*, not the call that produced it. For example,
-  `wezterm.font_with_fallback("Operator Mono")` becomes a literal
+  `onlyterm.font_with_fallback("Operator Mono")` becomes a literal
   `TextStyle` object: `font: { font: [{ family: Operator Mono }] }`.
-* `wezterm.on(event, ...)`/`wezterm.emit(...)` and every event hook
+* `onlyterm.on(event, ...)`/`onlyterm.emit(...)` and every event hook
   (`format-tab-title`, `format-window-title`, `update-status`,
   `window-config-reloaded`, `bell`, `user-var-changed`, `gui-startup`,
   `gui-attached`, and the rest) — these have been removed with no scripting
@@ -241,11 +241,11 @@ Actions translate the same way objects do in general:
 ```lua
 -- Lua
 config.keys = {
-  { key = 'c', mods = 'CTRL|SHIFT', action = wezterm.action.Copy },
+  { key = 'c', mods = 'CTRL|SHIFT', action = onlyterm.action.Copy },
   {
     key = 't',
     mods = 'CTRL',
-    action = wezterm.action.SpawnCommandInNewTab {
+    action = onlyterm.action.SpawnCommandInNewTab {
       cwd = '/tmp',
       args = { 'bash' },
     },
@@ -323,7 +323,7 @@ Things to notice in the port:
 
 * No file-level wrapper is needed at all — no `#{ ... }` object literal, no
   `return`, nothing to evaluate. The whole file *is* the config object.
-* `font_with_fallback(...)`/`wezterm.font(...)` have no ktav equivalent;
+* `font_with_fallback(...)`/`onlyterm.font(...)` have no ktav equivalent;
   write the value directly as the `TextStyle` object they used to
   construct.
 * There's no event hook translation to show here, because event hooks no
@@ -341,7 +341,7 @@ exact legacy file, e.g.:
 ```
 Found a legacy scripted configuration file at /home/you/.onlyterm.rhai but
 scripted configs (rhai/Lua) are no longer supported: the config-scripting
-engine has been removed from wezterm's live config-loading path in favor of
+engine has been removed from onlyterm's live config-loading path in favor of
 the static `ktav` format. Please migrate /home/you/.onlyterm.rhai to the
 ktav format and save it as /home/you/.onlyterm.ktav. See the migration guide
 for details.

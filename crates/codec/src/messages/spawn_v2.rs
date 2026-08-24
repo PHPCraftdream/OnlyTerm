@@ -1,7 +1,7 @@
 use mux::window::WindowId;
+use onlyterm_term::TerminalSize;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
-use wezterm_term::TerminalSize;
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
 pub struct SpawnV2 {

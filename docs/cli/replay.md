@@ -1,7 +1,7 @@
-# `wezterm replay`
+# `onlyterm replay`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-replay--help.txt" %}
+{% include "../examples/cmd-synopsis-onlyterm-replay--help.txt" %}
 ```
 
 

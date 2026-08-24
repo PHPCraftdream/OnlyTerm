@@ -1,6 +1,6 @@
 use mux::pane::PaneId;
+use onlyterm_term::Alert;
 use serde::{Deserialize, Serialize};
-use wezterm_term::Alert;
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
 pub struct NotifyAlert {

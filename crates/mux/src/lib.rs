@@ -8,6 +8,7 @@ use anyhow::{anyhow, Context, Error};
 use config::keyassignment::{RotationDirection, SpawnTabDomain};
 use config::{configuration, ExitBehavior, GuiPosition};
 use domain::{Domain, DomainId, DomainState, SplitSource};
+use onlyterm_term::{Clipboard, ClipboardSelection, DownloadHandler, TerminalSize};
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
@@ -19,7 +20,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use thiserror::*;
-use wezterm_term::{Clipboard, ClipboardSelection, DownloadHandler, TerminalSize};
 
 pub mod activity;
 pub mod client;
@@ -58,7 +58,7 @@ pub enum MuxNotification {
     ActiveWorkspaceChanged(Arc<ClientId>),
     Alert {
         pane_id: PaneId,
-        alert: wezterm_term::Alert,
+        alert: onlyterm_term::Alert,
     },
     Empty,
     AssignClipboard {
@@ -1609,7 +1609,7 @@ impl Clipboard for MuxClipboard {
 
 struct MuxDownloader {}
 
-impl wezterm_term::DownloadHandler for MuxDownloader {
+impl onlyterm_term::DownloadHandler for MuxDownloader {
     fn save_to_downloads(&self, name: Option<String>, data: Vec<u8>) {
         if let Some(mux) = Mux::try_get() {
             mux.notify(MuxNotification::SaveToDownloads {

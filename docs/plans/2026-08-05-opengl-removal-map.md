@@ -11,7 +11,7 @@
 ### 1. Чем заменить аварийный фолбэк при отказе WebGpu?
 
 Сейчас существует полноценная подсистема спасения в
-`crates/wezterm-gui/src/termwindow/render_pipeline.rs`:
+`crates/onlyterm-gui/src/termwindow/render_pipeline.rs`:
 
 | Место | Строки | Роль |
 |---|---|---|
@@ -60,9 +60,9 @@ GL эта проблема исчезает вместе с причиной, н
 | `crates/window/src/egl/ffi.rs` | 33 | сгенерированные биндинги |
 | `crates/window/src/os/windows/wgl.rs` | 642 | WGL-бэкенд Windows |
 | `crates/window/examples/async.rs` | 151 | пример целиком на `enable_opengl` + `glium::Frame` |
-| `crates/wezterm-gui/src/uniforms.rs` | 57 | glium-специфичные uniform'ы |
-| `crates/wezterm-gui/src/glyph-frag.glsl` | 161 | GL-шейдер |
-| `crates/wezterm-gui/src/glyph-vertex.glsl` | 38 | GL-шейдер |
+| `crates/onlyterm-gui/src/uniforms.rs` | 57 | glium-специфичные uniform'ы |
+| `crates/onlyterm-gui/src/glyph-frag.glsl` | 161 | GL-шейдер |
+| `crates/onlyterm-gui/src/glyph-vertex.glsl` | 38 | GL-шейдер |
 | `docs/config/reference/config/prefer_egl.md` | 20 | документация опции |
 
 Фрагменты внутри общих файлов:
@@ -75,7 +75,7 @@ GL эта проблема исчезает вместе с причиной, н
 - `impl Texture2d for SrgbTexture2d` — `window/src/bitmaps/mod.rs:46-80`
 - macOS модуль `cglbits` — `os/macos/window.rs:242+` (CGL-бэкенд, `NSOpenGLContext`)
 - `window/build.rs` — генерация WGL/EGL биндингов
-- `wezterm-gui/build.rs:45-76` — копирование ANGLE и Mesa DLL
+- `onlyterm-gui/build.rs:45-76` — копирование ANGLE и Mesa DLL
 - `assets/windows/angle/` (5.1 МБ) и `assets/windows/mesa/` (37 МБ) — **проверено: 42 МБ суммарно**
 
 ## Категория (б): разделить (GL и WebGpu переплетены)
@@ -85,12 +85,12 @@ GL эта проблема исчезает вместе с причиной, н
 | `config/src/frontend.rs:3-9` | `enum FrontEndSelection`, `#[default] OpenGL` | убрать вариант; `#[default]` → `WebGpu`; **нужна миграция старых конфигов** с `front_end = "OpenGL"` (маппить с предупреждением, не hard error) |
 | `config/src/config.rs:1352-1378` | `default_front_end()` с cfg-ветками + тест | ветки схлопываются в константу |
 | `config/src/config.rs:624-629` | поле `prefer_egl` | удалить |
-| `wezterm-gui/src/renderstate.rs` (748) | `RenderContext/IndexBuffer/VertexBuffer/MappedVertexBuffer` — везде enum `{Glium, WebGpu}` | ~15 точек; после удаления enum'ы схлопываются в структуры. Трудоёмко, но низкорисково |
-| `wezterm-gui/src/quad.rs:44-46` | `implement_vertex!` | удалить только макрос |
-| `wezterm-gui/src/termwindow/render/draw.rs` | диспетчер `call_draw` | оставить только webgpu-ветку |
-| `wezterm-gui/src/termwindow/mod.rs` | `gl`, `opengl_fallback_relay`, `permanently_on_opengl` — чисто GL; `opengl_info` (339) — **неудачное имя**, хранит инфу любого бэкенда | первые три удалить; `opengl_info` переименовать в `renderer_info` |
-| `wezterm-gui/src/termwindow/render_pipeline.rs` | `new_window` (32-421), фолбэк (593-1158), `do_paint`/`do_paint_webgpu` (1364-1433) | **самый рискованный файл**; требует решения вопроса 1, а не механической правки |
-| `wezterm-gui/src/overlay/debug.rs:77-96`, `actions.rs:642` | параметр `opengl_info` | переименовать вслед за полем |
+| `onlyterm-gui/src/renderstate.rs` (748) | `RenderContext/IndexBuffer/VertexBuffer/MappedVertexBuffer` — везде enum `{Glium, WebGpu}` | ~15 точек; после удаления enum'ы схлопываются в структуры. Трудоёмко, но низкорисково |
+| `onlyterm-gui/src/quad.rs:44-46` | `implement_vertex!` | удалить только макрос |
+| `onlyterm-gui/src/termwindow/render/draw.rs` | диспетчер `call_draw` | оставить только webgpu-ветку |
+| `onlyterm-gui/src/termwindow/mod.rs` | `gl`, `opengl_fallback_relay`, `permanently_on_opengl` — чисто GL; `opengl_info` (339) — **неудачное имя**, хранит инфу любого бэкенда | первые три удалить; `opengl_info` переименовать в `renderer_info` |
+| `onlyterm-gui/src/termwindow/render_pipeline.rs` | `new_window` (32-421), фолбэк (593-1158), `do_paint`/`do_paint_webgpu` (1364-1433) | **самый рискованный файл**; требует решения вопроса 1, а не механической правки |
+| `onlyterm-gui/src/overlay/debug.rs:77-96`, `actions.rs:642` | параметр `opengl_info` | переименовать вслед за полем |
 | `window/src/os/x11/window.rs` | `enable_opengl` + комментарии 1621-1635 | комментарии перечитать перед удалением — возможно описывают общее поведение закрытия окна |
 | `window/src/os/wayland/window.rs` | поля `wegl_surface`/`gl_state`, ресайз 958-967 | вырезать только GL-ветку внутри общего обработчика ресайза |
 | `window/src/os/macos/window.rs` | `BackendImpl::{Cgl,Egl}`, `GlContextPair`, тройная делегация `enable_opengl` | **самая рискованная платформа**: Drop-порядок GL-ресурсов уже имеет задокументированный SIGABRT-риск (см. `render_pipeline.rs:1174-1179`) |
@@ -99,7 +99,7 @@ GL эта проблема исчезает вместе с причиной, н
 ## Категория (в): обновить только текст
 
 - `config/src/config.rs:1366-1369` — doc-комментарий теста про «OpenGL fallback»
-- `wezterm-gui/src/overlay/debug.rs:34-38` — doc-комментарий модуля
+- `onlyterm-gui/src/overlay/debug.rs:34-38` — doc-комментарий модуля
 - `docs/config/reference/config/front_end.md` — переписать (56 строк)
 - `webgpu_*.md` — **проверено: GL-упоминаний нет, менять не нужно**
 - `termwindow/webgpu/state_impl.rs:510-517` — **не удалять бездумно**: объясняет,
@@ -108,7 +108,7 @@ GL эта проблема исчезает вместе с причиной, н
 ## Зависимости
 
 - `glium 0.35` объявлена в корневом `Cargo.toml:106`, используется только крейтом
-  `window`; `wezterm-gui` обращается через ре-экспорт `::window::glium::*`.
+  `window`; `onlyterm-gui` обращается через ре-экспорт `::window::glium::*`.
 - **Важно:** `gl_generator`, `glow`, `glutin_wgl_sys` останутся в `Cargo.lock`
   после удаления нашего GL-кода — их тянет сам `wgpu-hal` как опциональный бэкенд.
   Это чужая транзитивная зависимость, трогать не нужно.
@@ -118,7 +118,7 @@ GL эта проблема исчезает вместе с причиной, н
 
 - Категория (а): **~2700–2900 строк** + 42 МБ бинарных ассетов
 - Категория (б): **~1500–2000 строк** правок (рефакторинг, не удаление)
-- Крейты: `config`, `window` (основной объём), `wezterm-gui`, `Cargo.toml/lock`, `docs`
+- Крейты: `config`, `window` (основной объём), `onlyterm-gui`, `Cargo.toml/lock`, `docs`
 - Риск платформ по убыванию: **macOS** > **Wayland** > **X11** > **Windows**
   (на Windows GL хорошо изолирован, но там живёт вся фолбэк-подсистема)
 

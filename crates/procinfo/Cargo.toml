@@ -7,12 +7,12 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [features]
 default = ["lua"]
-lua = ["dep:wezterm-dynamic"]
+lua = ["dep:onlyterm-dynamic"]
 
 [dependencies]
 libc.workspace = true
 log.workspace = true
-wezterm-dynamic = { workspace=true, optional = true, features=["std"]}
+onlyterm-dynamic = { workspace=true, optional = true, features=["std"]}
 
 [target."cfg(windows)".dependencies]
 ntapi.workspace = true

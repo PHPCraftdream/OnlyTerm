@@ -1,13 +1,13 @@
 use anyhow::{bail, Context, Error};
 use lazy_static::lazy_static;
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, UnknownFieldAction, Value};
+use onlyterm_term::UnicodeVersion;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, UnknownFieldAction, Value};
-use wezterm_term::UnicodeVersion;
 
 use crate::{CellWidth, Config, FontLocatorSelection};
 
@@ -552,7 +552,7 @@ mod reload_notify_test {
 
     /// UP-46 investigation: every live TermWindow subscribes to config
     /// reloads via `subscribe_to_config_reload` (see
-    /// `wezterm-gui/src/termwindow/mod.rs`'s `TermWindow::new_window`), and
+    /// `onlyterm-gui/src/termwindow/mod.rs`'s `TermWindow::new_window`), and
     /// *every* reload trigger -- the config-file watcher, the OS
     /// `AppearanceChanged` notification handler, and manual
     /// Ctrl+Shift+R -- funnels through this same

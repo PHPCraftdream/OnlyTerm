@@ -12,7 +12,7 @@ Switch to a different workspace, creating it if it doesn't already exist.
 !!! note "`update-right-status` no longer exists"
 
     The original version of this example also registered a
-    `wezterm.on('update-right-status', ...)` handler to show the active
+    `onlyterm.on('update-right-status', ...)` handler to show the active
     workspace name in the status bar. That event hook has been removed along
     with the rest of the scripting engine — see the
     [changelog](../../../changelog.md#continuousnightly). Only the key
@@ -43,7 +43,7 @@ keys: [
 !!! danger "Non-functional: required a scripting callback"
 
     The original version of this example used `PromptInputLine` with a
-    `wezterm.action_callback(...)` to take the entered name and switch to a
+    `onlyterm.action_callback(...)` to take the entered name and switch to a
     newly-named workspace. `PromptInputLine`'s callback mechanism no longer
     works (see [PromptInputLine](PromptInputLine.md)), so this specific
     "prompt then switch" flow currently has no working equivalent.

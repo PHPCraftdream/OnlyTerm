@@ -80,7 +80,7 @@ and then try to display a glyph that isn't present in that font (perhaps an
 emoji, or perhaps some kanji) then OnlyTerm will try to locate a fallback
 font that does contain that glyph.
 
-Wezterm uses freetype and harfbuzz to perform font shaping and rendering in a
+OnlyTerm uses freetype and harfbuzz to perform font shaping and rendering in a
 cross platform way, and as a consequence, doesn't have access to the system
 font fallback selection.  Instead it has a short list of fallback fonts that
 are likely to be present on the system and tries to use those.
@@ -185,7 +185,7 @@ environment.
 
 ## How do I enable undercurl (curly underlines)?
 
-Starting in version 20210314-114017-04b7cedd, WezTerm (the upstream project
+Starting in version 20210314-114017-04b7cedd, OnlyTerm (the upstream project
 this fork is based on) gained support for colored and curly underlines; that
 support carries over unchanged in OnlyTerm.
 
@@ -227,13 +227,13 @@ hi SpellCap   guisp=yellow gui=undercurl guifg=NONE guibg=NONE \
 If you are a neovim user then you will need to install a terminfo file that
 tells neovim about this support.
 
-You may wish to try these steps to install a copy of a `wezterm` terminfo file;
+You may wish to try these steps to install a copy of a `onlyterm` terminfo file;
 this will compile a copy of the terminfo and install it into your `~/.terminfo`
 directory:
 
 ```bash
 tempfile=$(mktemp) \
-  && curl -o $tempfile https://raw.githubusercontent.com/wezterm/wezterm/master/termwiz/data/wezterm.terminfo \
+  && curl -o $tempfile https://raw.githubusercontent.com/wezterm/wezterm/master/termwiz/data/onlyterm.terminfo \
   && tic -x -o ~/.terminfo $tempfile \
   && rm $tempfile
 ```
@@ -242,7 +242,7 @@ With that in place, you can then start neovim like this, and it should enable
 undercurl:
 
 ```bash
-env TERM=wezterm nvim
+env TERM=onlyterm nvim
 ```
 
 Note: on Windows, the ConPTY layer strips out the curly underline escape
@@ -298,24 +298,24 @@ When troubleshooting xcursor issues, you can enable tracing by turning on the lo
 below, and then moving the mouse over the OnlyTerm window:
 
 ```
-; WEZTERM_LOG=window::os::x11::cursor=trace onlyterm
+; ONLYTERM_LOG=window::os::x11::cursor=trace onlyterm
 07:34:40.001  TRACE  window::os::x11::cursor > Constructing default icon path because $XCURSOR_PATH is not set
 07:34:40.001  TRACE  window::os::x11::cursor > Using ~/.local/share because $XDG_DATA_HOME is not set
-07:34:40.001  TRACE  window::os::x11::cursor > Using $XDG_DATA_DIRS location "/home/wez/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/"
-07:34:40.001  TRACE  window::os::x11::cursor > icon_path is ["/home/wez/.local/share/icons", "/home/wez/.icons", "/home/wez/.local/share/flatpak/exports/share/icons", "/var/lib/flatpak/exports/share/icons", "/usr/local/share/icons", "/usr/share/icons", "/usr/share/pixmaps", "/home/wez/.cursors", "/usr/share/cursors/xorg-x11", "/usr/X11R6/lib/X11/icons"]
-07:34:41.838  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/home/wez/.local/share/icons/Adwaita/cursors/xterm"
-07:34:41.838  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/home/wez/.icons/Adwaita/cursors/xterm"
-07:34:41.839  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/home/wez/.local/share/flatpak/exports/share/icons/Adwaita/cursors/xterm"
+07:34:40.001  TRACE  window::os::x11::cursor > Using $XDG_DATA_DIRS location "/home/user/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/"
+07:34:40.001  TRACE  window::os::x11::cursor > icon_path is ["/home/user/.local/share/icons", "/home/user/.icons", "/home/user/.local/share/flatpak/exports/share/icons", "/var/lib/flatpak/exports/share/icons", "/usr/local/share/icons", "/usr/share/icons", "/usr/share/pixmaps", "/home/user/.cursors", "/usr/share/cursors/xorg-x11", "/usr/X11R6/lib/X11/icons"]
+07:34:41.838  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/home/user/.local/share/icons/Adwaita/cursors/xterm"
+07:34:41.838  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/home/user/.icons/Adwaita/cursors/xterm"
+07:34:41.839  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/home/user/.local/share/flatpak/exports/share/icons/Adwaita/cursors/xterm"
 07:34:41.839  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/var/lib/flatpak/exports/share/icons/Adwaita/cursors/xterm"
 07:34:41.839  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/usr/local/share/icons/Adwaita/cursors/xterm"
 07:34:41.839  TRACE  window::os::x11::cursor > candidate for Some(Text) is "/usr/share/icons/Adwaita/cursors/xterm"
 07:34:41.839  TRACE  window::os::x11::cursor > Some(Text) resolved to "/usr/share/icons/Adwaita/cursors/xterm"
-07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/wez/.local/share/icons/Adwaita/cursors/top_left_arrow"
-07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/wez/.local/share/icons/Adwaita/cursors/left_ptr"
-07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/wez/.icons/Adwaita/cursors/top_left_arrow"
-07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/wez/.icons/Adwaita/cursors/left_ptr"
-07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/wez/.local/share/flatpak/exports/share/icons/Adwaita/cursors/top_left_arrow"
-07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/wez/.local/share/flatpak/exports/share/icons/Adwaita/cursors/left_ptr"
+07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/user/.local/share/icons/Adwaita/cursors/top_left_arrow"
+07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/user/.local/share/icons/Adwaita/cursors/left_ptr"
+07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/user/.icons/Adwaita/cursors/top_left_arrow"
+07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/user/.icons/Adwaita/cursors/left_ptr"
+07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/user/.local/share/flatpak/exports/share/icons/Adwaita/cursors/top_left_arrow"
+07:34:42.915  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/home/user/.local/share/flatpak/exports/share/icons/Adwaita/cursors/left_ptr"
 07:34:42.916  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/var/lib/flatpak/exports/share/icons/Adwaita/cursors/top_left_arrow"
 07:34:42.916  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/var/lib/flatpak/exports/share/icons/Adwaita/cursors/left_ptr"
 07:34:42.916  TRACE  window::os::x11::cursor > candidate for Some(Arrow) is "/usr/local/share/icons/Adwaita/cursors/top_left_arrow"
@@ -340,10 +340,10 @@ Probably the easiest to maintain solution is to change something like:
 { SpawnCommandInNewWindow: { args: [nvim, /home/you/.onlyterm.ktav] } }
 ```
 
-!!! note "`wezterm.config_file`/`wezterm.shell_quote_arg` no longer exist"
+!!! note "`onlyterm.config_file`/`onlyterm.shell_quote_arg` no longer exist"
 
-    Earlier versions of this page used `wezterm.config_file` (to avoid
-    hardcoding the config path) and `wezterm.shell_quote_arg` (to safely
+    Earlier versions of this page used `onlyterm.config_file` (to avoid
+    hardcoding the config path) and `onlyterm.shell_quote_arg` (to safely
     quote it, together with `os.getenv 'SHELL'` to invoke your login shell)
     to build this argument list dynamically. Those were scripting functions
     that have been removed along with the rest of the scripting engine (see
@@ -410,8 +410,8 @@ See also:
 
  * [set_environment_variables](config/reference/config/set_environment_variables.md)
  * [SpawnCommand](config/reference/SpawnCommand.md)
- * [wezterm.config_file](config/reference/wezterm/config_file.md)
- * [wezterm.shell_quote_arg](config/reference/wezterm/shell_quote_arg.md)
+ * [onlyterm.config_file](config/reference/onlyterm/config_file.md)
+ * [onlyterm.shell_quote_arg](config/reference/onlyterm/shell_quote_arg.md)
  * [how to set the PATH for Finder-launched applications](https://apple.stackexchange.com/q/51677/166425)
  * [what does launchctl config user path do?](https://stackoverflow.com/q/51636338/149111)
 

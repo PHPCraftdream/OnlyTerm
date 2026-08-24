@@ -79,7 +79,7 @@ impl PtySystem for SerialTty {
 
         // The timeout needs to be rather short because, at least on Windows,
         // a read with a long timeout will block a concurrent write from
-        // happening.  In wezterm we tend to have a thread looping on read
+        // happening.  In onlyterm we tend to have a thread looping on read
         // while writes happen occasionally from the gui thread, and if we
         // make this timeout too long we can block the gui thread.
         port.set_read_timeout(Duration::from_millis(50))?;

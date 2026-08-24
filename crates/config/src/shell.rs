@@ -2,8 +2,8 @@
 //! Options dialog and by `--start-conf` layouts so that both agree on what
 //! argv each name means.
 
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 use std::path::PathBuf;
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 
 /// Folds a config token to its comparison form: case-insensitive, and
 /// ignoring the separators people reasonably reach for. `above_normal`,
@@ -225,14 +225,14 @@ impl FromDynamic for Shell {
     fn from_dynamic(
         value: &Value,
         options: FromDynamicOptions,
-    ) -> Result<Self, wezterm_dynamic::Error> {
+    ) -> Result<Self, onlyterm_dynamic::Error> {
         let s = String::from_dynamic(value, options)?;
         match normalize_token(&s).as_str() {
             "cmd" => Ok(Self::Cmd),
             "bash" => Ok(Self::Bash),
             "powershell" => Ok(Self::Powershell),
             "wsl" => Ok(Self::Wsl),
-            _ => Err(wezterm_dynamic::Error::Message(format!(
+            _ => Err(onlyterm_dynamic::Error::Message(format!(
                 "`{s}` is not a valid shell; use one of {}",
                 Shell::ALL
                     .iter()
@@ -299,7 +299,7 @@ pub fn find_git_bash() -> String {
 mod tests {
     use super::*;
 
-    fn parse(s: &str) -> Result<Shell, wezterm_dynamic::Error> {
+    fn parse(s: &str) -> Result<Shell, onlyterm_dynamic::Error> {
         Shell::from_dynamic(&Value::String(s.into()), FromDynamicOptions::default())
     }
 

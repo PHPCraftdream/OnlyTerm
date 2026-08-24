@@ -25,17 +25,17 @@ use crate::{
     KeyMapPreference, RgbaColor, SerialDomain, SystemBackdrop, WebGpuPowerPreference,
 };
 use anyhow::Context;
+use onlyterm_bidi::ParagraphDirectionHint;
+use onlyterm_config_derive::ConfigMeta;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_input_types::{
+    IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle, Modifiers,
+    UIKeyCapRendering, WindowDecorations,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 use termwiz::hyperlink;
-use wezterm_bidi::ParagraphDirectionHint;
-use wezterm_config_derive::ConfigMeta;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_input_types::{
-    IntegratedTitleButton, IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle, Modifiers,
-    UIKeyCapRendering, WindowDecorations,
-};
 
 #[derive(Debug, Clone, FromDynamic, ToDynamic, ConfigMeta)]
 pub struct Config {
@@ -131,7 +131,7 @@ pub struct Config {
     #[dynamic(default)]
     pub switch_to_last_active_tab_when_closing_tab: bool,
 
-    /// When true, launching a new wezterm instance will prefer
+    /// When true, launching a new onlyterm instance will prefer
     /// to spawn a new tab into an existing instance.
     /// Otherwise, it will spawn a new window.
     #[dynamic(default)]
@@ -203,7 +203,7 @@ pub struct Config {
 
     /// If no `prog` is specified on the command line, use this
     /// instead of running the user's shell.
-    /// For example, to have `wezterm` always run `top` by default,
+    /// For example, to have `onlyterm` always run `top` by default,
     /// you'd use this:
     ///
     /// ```toml
@@ -329,7 +329,7 @@ pub struct Config {
     /// it lists available stylistic sets here:
     /// <https://github.com/tonsky/FiraCode/wiki/How-to-enable-stylistic-sets>
     ///
-    /// and you can set them in wezterm:
+    /// and you can set them in onlyterm:
     ///
     /// ```toml
     /// # Use this for a zero with a dot rather than a line through it
@@ -426,7 +426,7 @@ pub struct Config {
     pub mux_output_parser_coalesce_delay_ms: u64,
 
     /// How many ms a synchronized update (DEC private mode 2026) may
-    /// hold back output before wezterm stops waiting for the closing
+    /// hold back output before onlyterm stops waiting for the closing
     /// sequence and applies the buffered output anyway, so that a
     /// stalled application cannot freeze the pane indefinitely
     #[dynamic(default = "default_mux_synchronized_output_timeout_ms")]
@@ -522,7 +522,7 @@ pub struct Config {
     pub tab_and_split_indices_are_zero_based: bool,
 
     /// Fallback tab title (used when a tab hasn't been explicitly renamed
-    /// via F2 / `wezterm cli set-tab-title`, and `SpawnCommand::title`
+    /// via F2 / `onlyterm cli set-tab-title`, and `SpawnCommand::title`
     /// wasn't set for that particular launch) applied to every newly
     /// spawned tab. If unset, the tab title tracks the cwd basename
     /// instead. See `SpawnCommand::title` for the per-launch override that
@@ -1056,7 +1056,7 @@ impl Default for Config {
         // specified in the struct so that we don't have to repeat
         // the same thing in a different form down here
         Config::from_dynamic(
-            &wezterm_dynamic::Value::Object(Default::default()),
+            &onlyterm_dynamic::Value::Object(Default::default()),
             Default::default(),
         )
         .unwrap()
@@ -1523,7 +1523,7 @@ mod ktav_config_load_test {
     /// via `Config::try_load`) parses a `.ktav` config file: this is the
     /// keystone task (#275) of the rhai -> ktav config-format migration,
     /// replacing the previous rhai-script-evaluation loading path with a
-    /// direct `ktav::parse` -> `wezterm_dynamic::Value` ->
+    /// direct `ktav::parse` -> `onlyterm_dynamic::Value` ->
     /// `Config::from_dynamic` pipeline (see `ktav_value::ktav_value_to_dynamic`
     /// and `Config::from_ktav_dynamic`). Exercises a font size override, a
     /// color scheme name, and a keybinding, so this proves the new load path
@@ -1557,7 +1557,7 @@ keys: [
         .unwrap();
 
         let path_item = PathPossibility::required(config_path.clone());
-        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+        let loaded = Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
             .expect("try_load should succeed")
             .expect("a config was found at the required path");
 
@@ -1588,7 +1588,7 @@ keys: [
         *CONFIG_OVERRIDES.lock().unwrap() = vec![("font_size".to_string(), "22.5".to_string())];
 
         let path_item = PathPossibility::required(config_path);
-        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+        let loaded = Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
             .expect("try_load should succeed")
             .expect("a config was found");
         let cfg = loaded.config.expect("config should parse");
@@ -1618,7 +1618,7 @@ keys: [
             let config_path = dir.path().join("onlyterm.ktav");
             std::fs::write(&config_path, body).unwrap();
             let path_item = PathPossibility::required(config_path);
-            Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
                 .expect("try_load should succeed")
                 .expect("a config was found")
                 .config
@@ -1652,7 +1652,7 @@ keys: [
             let config_path = dir.path().join("onlyterm.ktav");
             std::fs::write(&config_path, body).unwrap();
             let path_item = PathPossibility::required(config_path);
-            Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+            Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
                 .expect("try_load should succeed")
                 .expect("a config was found")
                 .config
@@ -1705,8 +1705,8 @@ colors: { background: #123456 }
     /// numeric-looking `colors.indexed` key like `136` arrives as
     /// `Value::String("136")`, not `Value::I64(136)`. `Palette::indexed` is
     /// `HashMap<u8, RgbaColor>`, and before the `map_key_from_dynamic`
-    /// fallback in `wezterm_dynamic::fromdynamic` (see
-    /// `crates/wezterm-dynamic/src/fromdynamic.rs`), `u8::from_dynamic`
+    /// fallback in `onlyterm_dynamic::fromdynamic` (see
+    /// `crates/onlyterm-dynamic/src/fromdynamic.rs`), `u8::from_dynamic`
     /// rejected a `Value::String` key outright with an opaque
     /// `NoConversion { source_type: "String", dest_type: "u8" }`, so any user
     /// customizing `colors.indexed` -- documented as usable at
@@ -1731,7 +1731,7 @@ colors: {
         .unwrap();
 
         let path_item = PathPossibility::required(config_path);
-        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+        let loaded = Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
             .expect("try_load should succeed")
             .expect("a config was found");
         let cfg = loaded.config.expect("config should parse");
@@ -1750,7 +1750,7 @@ colors: {
 
     /// If a legacy `onlyterm.rhai`/`onlyterm.lua` file exists but there is no
     /// `.ktav` sibling, `try_load` must not silently ignore it (which would
-    /// look to the user like "wezterm forgot my config"); it must fail with
+    /// look to the user like "onlyterm forgot my config"); it must fail with
     /// an actionable message telling them scripted configs are no longer
     /// supported and pointing at the specific file to rename/migrate.
     #[test]
@@ -1763,7 +1763,7 @@ colors: {
 
         let ktav_path = dir.path().join("onlyterm.ktav");
         let path_item = PathPossibility::optional(ktav_path);
-        let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
+        let err = match Config::try_load(&path_item, &onlyterm_dynamic::Value::default()) {
             Err(err) => err,
             Ok(_) => panic!("a legacy .rhai-only directory must error, not silently skip"),
         };
@@ -1815,7 +1815,7 @@ colors: {
             PathPossibility::optional(new_ktav_path.clone()),
         ];
 
-        let loaded = Config::search_paths_for_config(&paths, &wezterm_dynamic::Value::default())
+        let loaded = Config::search_paths_for_config(&paths, &onlyterm_dynamic::Value::default())
             .expect("the later candidate's valid .ktav config should be found");
         let cfg = loaded
             .config
@@ -1851,7 +1851,7 @@ colors: {
             PathPossibility::optional(empty_ktav_path),
         ];
 
-        let loaded = Config::search_paths_for_config(&paths, &wezterm_dynamic::Value::default())
+        let loaded = Config::search_paths_for_config(&paths, &onlyterm_dynamic::Value::default())
             .expect("a deferred legacy-sibling error must still be surfaced eventually");
         let err = match loaded.config {
             Err(err) => err,
@@ -1906,7 +1906,7 @@ colors: {
             PathPossibility::optional(empty_ktav_path),
         ];
 
-        let loaded = Config::search_paths_for_config(&paths, &wezterm_dynamic::Value::default())
+        let loaded = Config::search_paths_for_config(&paths, &onlyterm_dynamic::Value::default())
             .expect("a deferred legacy-sibling error must still be surfaced eventually");
         assert!(
             loaded.config.is_err(),
@@ -1963,7 +1963,7 @@ exec_domains: [
         .unwrap();
 
         let path_item = PathPossibility::required(config_path);
-        let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
+        let err = match Config::try_load(&path_item, &onlyterm_dynamic::Value::default()) {
             Err(err) => err,
             Ok(_) => panic!(
                 "a config with a non-empty exec_domains must fail to load, \
@@ -1993,7 +1993,7 @@ exec_domains: [
         std::fs::write(&config_path, "font_size: 12\n").unwrap();
 
         let path_item = PathPossibility::required(config_path);
-        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+        let loaded = Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
             .expect("try_load should succeed")
             .expect("a config was found");
         let cfg = loaded
@@ -2011,7 +2011,7 @@ exec_domains: [
     /// parses as a top-level `Array` of strings -- must fail with a clear
     /// error naming the actual parsed shape and hinting at the likely
     /// cause, not the old opaque `NoConversion Array`-style error from deep
-    /// inside `wezterm_dynamic`'s `Config::from_dynamic` conversion.
+    /// inside `onlyterm_dynamic`'s `Config::from_dynamic` conversion.
     #[test]
     fn malformed_top_level_array_config_produces_actionable_error() {
         // See `CONFIG_OVERRIDES_TEST_LOCK`.
@@ -2025,7 +2025,7 @@ exec_domains: [
         std::fs::write(&config_path, "font_size:14\nterm: screen\n").unwrap();
 
         let path_item = PathPossibility::required(config_path);
-        let err = match Config::try_load(&path_item, &wezterm_dynamic::Value::default()) {
+        let err = match Config::try_load(&path_item, &onlyterm_dynamic::Value::default()) {
             Err(err) => err,
             Ok(_) => panic!(
                 "a config document that parses as a top-level array, not an \
@@ -2045,7 +2045,7 @@ exec_domains: [
         assert!(
             !message.contains("NoConversion"),
             "the new, clearer error should be raised before ever reaching \
-             the opaque wezterm_dynamic NoConversion error: {}",
+             the opaque onlyterm_dynamic NoConversion error: {}",
             message
         );
     }
@@ -2063,7 +2063,7 @@ exec_domains: [
         std::fs::write(&config_path, "font_size: 14\nterm: screen\n").unwrap();
 
         let path_item = PathPossibility::required(config_path);
-        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+        let loaded = Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
             .expect("try_load should succeed")
             .expect("a config was found");
         let cfg = loaded
@@ -2120,7 +2120,7 @@ exec_domains: [
         std::fs::write(&config_path, "font_dirs: [fonts, ../shared-fonts]\n").unwrap();
 
         let path_item = PathPossibility::required(config_path);
-        let loaded = Config::try_load(&path_item, &wezterm_dynamic::Value::default())
+        let loaded = Config::try_load(&path_item, &onlyterm_dynamic::Value::default())
             .expect("try_load should succeed")
             .expect("a config was found");
         let cfg = loaded.config.expect("config should parse");
@@ -2146,7 +2146,7 @@ mod stack_overflow_repro {
     //! Task #422: investigating a real `EXCEPTION_STACK_OVERFLOW` seen in
     //! production (two crash dumps, identical crash address, both at
     //! 5-7s of uptime) with the reported crash frame inside
-    //! `FontDatabase::with_font_dirs` (`crates/wezterm-font/src/db.rs`)
+    //! `FontDatabase::with_font_dirs` (`crates/onlyterm-font/src/db.rs`)
     //! while scanning `C:/Windows/Fonts` led here instead of to font
     //! parsing: bisecting the crash (shrinking the font-file set under
     //! test, then isolating individual `ttf_parser`/`swash` accessor
@@ -2155,13 +2155,13 @@ mod stack_overflow_repro {
     //! succeeding fine even on a 64KiB thread stack -- ruling out
     //! COLR/COLRv1 paint-graph recursion, TTC collection handling, and
     //! cmap/coverage walking as the cause (see
-    //! `crates/wezterm-font/src/db.rs`'s `stack_overflow_repro` module
+    //! `crates/onlyterm-font/src/db.rs`'s `stack_overflow_repro` module
     //! for the font-side half of this investigation).
     //!
     //! What *did* reproduce the overflow in isolation, with no font file
     //! involved at all, was the first call to `Config::default()` in the
     //! process. `Config` derives `FromDynamic`
-    //! (`crates/wezterm-dynamic/derive/src/fromdynamic.rs`), and for a
+    //! (`crates/onlyterm-dynamic/derive/src/fromdynamic.rs`), and for a
     //! struct with 200+ fields that derive expands into one large
     //! `from_dynamic` function body containing one field-initializer
     //! expression per field (each doing a map lookup, an

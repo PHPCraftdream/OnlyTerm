@@ -1,15 +1,15 @@
-# `wezterm cli list`
+# `onlyterm cli list`
 
-*Run `wezterm cli list --help` to see more help*
+*Run `onlyterm cli list --help` to see more help*
 
 Lists the set of windows, tabs and panes that are being managed.
 
 The default output is tabular:
 
 ```
-$ wezterm cli list
+$ onlyterm cli list
 WINID TABID PANEID WORKSPACE SIZE  TITLE                          CWD
-    0     0      0 default   80x24 wezterm cli list  -- wez@foo:~ file://foo/home/wez/
+    0     0      0 default   80x24 onlyterm cli list  -- user@foo:~ file://foo/home/user/
 ```
 
 Each row describes a pane.  The meaning of the fields are:
@@ -27,7 +27,7 @@ Each row describes a pane.  The meaning of the fields are:
 You may request JSON output:
 
 ```
-$ wezterm cli list --format json
+$ onlyterm cli list --format json
 [
   {
     "window_id": 0,
@@ -38,8 +38,8 @@ $ wezterm cli list --format json
       "rows": 24,
       "cols": 80
     },
-    "title": "wezterm cli list --format json -- wez@foo:~",
-    "cwd": "file://foo/home/wez/"
+    "title": "onlyterm cli list --format json -- user@foo:~",
+    "cwd": "file://foo/home/user/"
   }
 ]
 ```
@@ -47,5 +47,5 @@ $ wezterm cli list --format json
 ## Synopsis
 
 ```console
-{% include "../../examples/cmd-synopsis-wezterm-cli-list--help.txt" %}
+{% include "../../examples/cmd-synopsis-onlyterm-cli-list--help.txt" %}
 ```

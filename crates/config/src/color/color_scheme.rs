@@ -1,16 +1,16 @@
 use crate::color::Palette;
 use anyhow::Context;
+use onlyterm_dynamic::{FromDynamic, ToDynamic, Value};
 use std::convert::TryInto;
 use std::fs;
 use std::path::Path;
-use wezterm_dynamic::{FromDynamic, ToDynamic, Value};
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, FromDynamic, ToDynamic)]
 pub struct ColorSchemeMetaData {
     pub name: Option<String>,
     pub author: Option<String>,
     pub origin_url: Option<String>,
-    pub wezterm_version: Option<String>,
+    pub onlyterm_version: Option<String>,
     #[dynamic(default)]
     pub aliases: Vec<String>,
 }

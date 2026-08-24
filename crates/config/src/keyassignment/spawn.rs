@@ -1,8 +1,8 @@
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 /// Windows process priority classes for spawned processes.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToDynamic)]
@@ -53,9 +53,9 @@ impl ProcessPriority {
 /// `--start-conf` layouts document -- now works too.
 impl FromDynamic for ProcessPriority {
     fn from_dynamic(
-        value: &wezterm_dynamic::Value,
-        options: wezterm_dynamic::FromDynamicOptions,
-    ) -> Result<Self, wezterm_dynamic::Error> {
+        value: &onlyterm_dynamic::Value,
+        options: onlyterm_dynamic::FromDynamicOptions,
+    ) -> Result<Self, onlyterm_dynamic::Error> {
         let s = String::from_dynamic(value, options)?;
         let token = crate::shell::normalize_token(&s);
         Self::ALL
@@ -63,7 +63,7 @@ impl FromDynamic for ProcessPriority {
             .copied()
             .find(|p| crate::shell::normalize_token(p.name()) == token)
             .ok_or_else(|| {
-                wezterm_dynamic::Error::Message(format!(
+                onlyterm_dynamic::Error::Message(format!(
                     "`{s}` is not a valid process priority; use one of {}",
                     Self::ALL
                         .iter()
@@ -135,7 +135,7 @@ pub struct SpawnCommand {
     /// If omitted, `Config::default_tab_title` is used instead; if that is
     /// also unset, the tab falls back to its cwd basename. Either way this
     /// is a one-shot value applied at spawn time, not a live template --
-    /// an explicit rename (F2 / `wezterm cli set-tab-title`) always
+    /// an explicit rename (F2 / `onlyterm cli set-tab-title`) always
     /// overrides it afterwards.
     pub title: Option<String>,
 
@@ -148,7 +148,7 @@ pub struct SpawnCommand {
     /// Specifies the current working directory for the command.
     /// If omitted, a default will be used; typically that will
     /// be the home directory of the user, but may also be the
-    /// current working directory of the wezterm process when
+    /// current working directory of the onlyterm process when
     /// it was launched, or for some domains it may be some
     /// other location appropriate to the domain.
     pub cwd: Option<PathBuf>,

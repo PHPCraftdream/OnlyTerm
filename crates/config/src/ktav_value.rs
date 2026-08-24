@@ -1,5 +1,5 @@
 //! Bridge between `ktav::value::Value` (the dynamic value type produced by
-//! parsing a `.ktav` config document) and `wezterm_dynamic::Value`, the
+//! parsing a `.ktav` config document) and `onlyterm_dynamic::Value`, the
 //! engine-agnostic value type that `Config` and friends speak via
 //! `FromDynamic`/`ToDynamic` (see `crate::config::Config`).
 //!
@@ -7,7 +7,7 @@
 //! the rhai-removal sequence) that `rhai_value::rhai_dynamic_to_dynamic`
 //! played for the (now superseded) rhai config-loading path: a total,
 //! generic conversion from the config-format engine's own dynamic value type
-//! into `wezterm_dynamic::Value`, so that `Config::from_dynamic` can build a
+//! into `onlyterm_dynamic::Value`, so that `Config::from_dynamic` can build a
 //! `Config` directly from a parsed `.ktav` document without `Config` (or any
 //! of the many types it references) needing to derive `serde::Deserialize`.
 //!
@@ -17,14 +17,14 @@
 //! entry point, and would be the most direct path *if* `Config` derived
 //! `serde::Deserialize`. It doesn't -- `Config` (and the large tree of types
 //! it's built from: `color.rs`, `font.rs`, `keyassignment.rs`, etc.) derives
-//! `wezterm_dynamic::{FromDynamic, ToDynamic}` instead, which is a distinct,
-//! independently-hand-rolled derive (see `wezterm-dynamic-derive`) with its
+//! `onlyterm_dynamic::{FromDynamic, ToDynamic}` instead, which is a distinct,
+//! independently-hand-rolled derive (see `onlyterm-dynamic-derive`) with its
 //! own attribute surface (`#[dynamic(default)]`, rename rules, deprecated
 //! fields, "deny unknown fields" mode, etc.) that config-loading elsewhere
 //! depends on. Retrofitting `serde::Deserialize` onto that whole type tree
 //! is out of scope for this task (see the task's own file-touch boundary),
 //! so instead this module goes through ktav's dynamic `Value` (via
-//! `ktav::parse`) and bridges it to `wezterm_dynamic::Value`, exactly the
+//! `ktav::parse`) and bridges it to `onlyterm_dynamic::Value`, exactly the
 //! way the rhai path bridged `rhai::Dynamic`.
 //!
 //! ## Coverage
@@ -33,7 +33,7 @@
 //! <https://docs.rs/ktav/0.6.1/ktav/value/value/enum.Value.html>; the
 //! mapping below is total (this conversion never fails):
 //!
-//! | ktav variant           | wezterm_dynamic::Value                    |
+//! | ktav variant           | onlyterm_dynamic::Value                    |
 //! |-------------------------|--------------------------------------------|
 //! | `Null`                   | `Value::Null`                              |
 //! | `Bool`                   | `Value::Bool`                              |
@@ -44,13 +44,13 @@
 //! | `Object`                  | `Value::Object`, keys converted to `Value::String` |
 
 use ktav::value::Value as KtavValue;
-use wezterm_dynamic::Value as DynValue;
+use onlyterm_dynamic::Value as DynValue;
 
 /// Convert a `ktav::value::Value` (the result of `ktav::parse`-ing a `.ktav`
-/// config document) into a `wezterm_dynamic::Value`.
+/// config document) into a `onlyterm_dynamic::Value`.
 ///
 /// This is total: every `ktav::value::Value` variant has an unambiguous
-/// `wezterm_dynamic::Value` representation.
+/// `onlyterm_dynamic::Value` representation.
 pub fn ktav_value_to_dynamic(value: &KtavValue) -> DynValue {
     match value {
         KtavValue::Null => DynValue::Null,
@@ -133,12 +133,12 @@ mod test {
 
     #[test]
     fn strings() {
-        let v = parse("name: wez\n");
+        let v = parse("name: onlyterm\n");
         match ktav_value_to_dynamic(&v) {
             DynValue::Object(obj) => {
                 assert_eq!(
                     obj.get_by_str("name"),
-                    Some(&DynValue::String("wez".to_string()))
+                    Some(&DynValue::String("onlyterm".to_string()))
                 );
             }
             other => panic!("expected object, got {:?}", other),

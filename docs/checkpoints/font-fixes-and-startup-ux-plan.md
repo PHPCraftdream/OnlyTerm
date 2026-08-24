@@ -2,7 +2,7 @@
 
 ## Session summary
 
-OnlyTerm — Windows-ориентированный форк wezterm со снятым скриптовым слоем
+OnlyTerm — Windows-ориентированный форк onlyterm со снятым скриптовым слоем
 (конфиг ktav, ни Lua, ни rhai). Эта часть сессии продолжает большой
 babygoal-цикл (распил файлов + чистка clippy, полностью завершён и
 закоммичен ранее) и последующее исправление семи находок ревью `@oh`
@@ -21,7 +21,7 @@ babygoal-цикл (распил файлов + чистка clippy, полнос
    работающего файла разрешено, а уже запущенные процессы продолжают
    работать со старыми (переименованными, но не удалёнными) данными.
    Заодно этот скрипт наконец закоммичен — был неотслеживаемым с начала
-   сессии. Отдельно перенастроен `crates/wezterm-gui/src/update.rs`: чекер
+   сессии. Отдельно перенастроен `crates/onlyterm-gui/src/update.rs`: чекер
    обновлений стучался в `api.github.com/repos/wezterm/wezterm` (upstream),
    теперь — в `api.github.com/repos/PHPCraftdream/OnlyTerm` (наш репозиторий,
    найден через `git remote -v`); ссылка «что нового» теперь берётся из
@@ -69,7 +69,7 @@ babygoal-цикл (распил файлов + чистка clippy, полнос
    запусков — стабильно корректно; легитимный emoji-only fallback (U+231B)
    по-прежнему резолвится через Noto Color Emoji. Коммиты: `67612a1f1`
    (#370, бандлинг Noto Sans Symbols), `2409ecf26` (#371, WGSL srgb),
-   `fa13c19cc` (#368, отдельный баг — snapshot-тесты wezterm-surface,
+   `fa13c19cc` (#368, отдельный баг — snapshot-тесты onlyterm-surface,
    зависевшие от feature-unification фичи `appdata`), `524f941f9` (#381,
    детерминированная сортировка), `a9cd9c566` (changelog на #370/#371).
 
@@ -121,8 +121,8 @@ resize; (2) «расколбасы» — это НЕ мерцание, а про
 
 ### recently completed
 - #382 Startup UX: расследование причины (полный план для #383–#385 в описании задачи)
-- #381 wezterm-font: детерминированная сортировка fallback-шрифтов
-- #368 wezterm-surface: snapshot-тесты независимы от фичи appdata
+- #381 onlyterm-font: детерминированная сортировка fallback-шрифтов
+- #368 onlyterm-surface: snapshot-тесты независимы от фичи appdata
 - #371 WGSL: gamma-space blending вместо linear (тонкий шрифт на WebGPU)
 - #370 Noto Sans Symbols/Symbols2 как fallback-шрифты (tofu-фикс)
 - #373–#379 (семь находок ревью @oh, все закрыты в предыдущей части сессии)
@@ -181,9 +181,9 @@ resize; (2) «расколбасы» — это НЕ мерцание, а про
 ```
 
 ```
-524f941f9 wezterm-font: make fallback font selection deterministic (task #381)
+524f941f9 onlyterm-font: make fallback font selection deterministic (task #381)
 26d6b0a94 ci: hot-swap binaries in dev-install.ps1 instead of killing running instances
-7507e83d0 wezterm-gui: point the update checker at OnlyTerm's own repo
-fa13c19cc wezterm-surface: make Line's Debug output independent of the appdata feature (task #368)
+7507e83d0 onlyterm-gui: point the update checker at OnlyTerm's own repo
+fa13c19cc onlyterm-surface: make Line's Debug output independent of the appdata feature (task #368)
 a9cd9c566 docs: changelog entries for the tofu and thin-font-on-WebGPU fixes
 ```

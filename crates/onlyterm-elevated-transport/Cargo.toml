@@ -1,0 +1,20 @@
+[package]
+name = "onlyterm-elevated-transport"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/wezterm/wezterm"
+description = "WebSocket rendezvous transport bridging an elevated (UAC) single-pane child process to the non-elevated GUI, for OnlyTerm's elevated-tab feature"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+filedescriptor.workspace = true
+getrandom.workspace = true
+http.workspace = true
+log.workspace = true
+tungstenite.workspace = true
+onlyterm-uds.workspace = true
+
+[dev-dependencies]
+codec = { path = "../codec" }

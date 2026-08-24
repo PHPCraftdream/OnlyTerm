@@ -1,6 +1,6 @@
 # План: миграция конфига с Lua (mlua, вендоренный C) на rhai (чистый Rust)
 
-Дата: 2026-07-23. Часть инициативы "убрать весь C/asm из wezterm". Отличается от
+Дата: 2026-07-23. Часть инициативы "убрать весь C/asm из onlyterm". Отличается от
 остальных частей инициативы (cairo, SSH, freetype/harfbuzz) тем, что это
 **breaking change публичного контракта** — существующие `wezterm.lua` конфиги
 пользователей перестанут работать как есть. Подтверждено пользователем как
@@ -16,18 +16,18 @@
 frontend,keyassignment,ssh,wsl}.rs` (структуры конфига) + **13 отдельных
 крейтов** `lua-api-crates/{battery,color-funcs,filesystem,logging,mux,plugin,
 procinfo-funcs,serde-funcs,share-data,spawn-funcs,ssh-funcs,termwiz-funcs}`
-(модульный плагин-API — `wezterm.color`, `wezterm.mux`, `wezterm.plugin` и т.д.).
+(модульный плагин-API — `onlyterm.color`, `onlyterm.mux`, `onlyterm.plugin` и т.д.).
 Итого ~4900 строк, непосредственно завязанных на mlua API.
 
 ### Хорошая новость: есть готовый слой развязки
 
-Крейт `wezterm-dynamic` (`FromDynamic`/`ToDynamic` traits) — это generic
+Крейт `onlyterm-dynamic` (`FromDynamic`/`ToDynamic` traits) — это generic
 value-тип, НЕ завязанный на mlua напрямую. Макрос `impl_lua_conversion_dynamic!`
 (используется **24 раза** в 9 файлах `config/src/*.rs`) генерирует мост
 `mlua::Value → Dynamic → FromDynamic::from_dynamic` для большинства структур
 конфига (например `SshDomain` — видели в `config/src/ssh.rs`). Это значит:
 **большинство конфиг-структур мигрируют "бесплатно"**, если заменить только
-сам мост (`mlua::Value ↔ Dynamic` на `rhai::Dynamic ↔ wezterm_dynamic::Dynamic`),
+сам мост (`mlua::Value ↔ Dynamic` на `rhai::Dynamic ↔ onlyterm_dynamic::Dynamic`),
 без переписывания каждой структуры конфига по отдельности.
 
 Отдельно от этого — небольшое число **ручных** `impl FromLua for X` (не через
@@ -49,7 +49,7 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
 На rhai это `Engine::register_fn`/`#[export_module]` + `engine.register_static_module`
 (или ручная регистрация функций в именованный неймспейс, если rhai не даёт
 готового "модуля" 1:1 — уточнить на этапе реализации, какой из двух
-механизмов rhai ближе к текущему API-контракту `wezterm.color.parse(...)`
+механизмов rhai ближе к текущему API-контракту `onlyterm.color.parse(...)`
 и т.п., чтобы сохранить путь вызова максимально похожим).
 
 ### Тонкие места
@@ -58,7 +58,7 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
    работать как есть. Нужна отдельная пользовательская документация
    (migration guide Lua→rhai) как часть выпуска — не входит в код-миграцию,
    но обязательный deliverable верификации.
-2. **Event callbacks** (`wezterm.on(...)`, `register_event`/`emit_sync_callback`
+2. **Event callbacks** (`onlyterm.on(...)`, `register_event`/`emit_sync_callback`
    в `lua.rs:722-855`) — механизм подписки на события (window-config-reloaded,
    format-tab-title и т.п.) должен сохранить семантику: callback регистрируется
    один раз, вызывается многократно, может быть синхронным или async — проверить,
@@ -86,7 +86,7 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
   идентичные Rust-структуры конфига (`Config`, `SshDomain`, keyassignments
   и т.д.) — сравнение через `assert_eq!`/`k9` (уже есть в dev-deps),
   а не визуально.
-- Для API-функций (`wezterm.color.parse` и т.п.) — по одному smoke-тесту
+- Для API-функций (`onlyterm.color.parse` и т.п.) — по одному smoke-тесту
   на каждый из 13 lua-api-crates, вызывающему функцию из `.rhai`-скрипта и
   проверяющему результат — полностью автоматически.
 
@@ -95,8 +95,8 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
 - **L0. Тулинг.** `rhai_config_smoke.rs` + per-crate smoke-тесты (см. выше).
   Плюс явно решить на этом шаге: `Engine::register_fn` vs `#[export_module]`
   как основной механизм для всех 13 крейтов (единообразие важнее гибкости).
-- **L1. Мост `Dynamic`.** Заменить `mlua::Value ↔ wezterm_dynamic::Dynamic`
-  на `rhai::Dynamic ↔ wezterm_dynamic::Dynamic` — это разблокирует все 24
+- **L1. Мост `Dynamic`.** Заменить `mlua::Value ↔ onlyterm_dynamic::Dynamic`
+  на `rhai::Dynamic ↔ onlyterm_dynamic::Dynamic` — это разблокирует все 24
   места с `impl_lua_conversion_dynamic!` разом (переименовать макрос или
   сделать его backend-agnostic).
 - **L2. Точка входа.** `config/src/lua.rs` → `config/src/rhai_engine.rs`
@@ -122,10 +122,10 @@ pub fn register(lua: &Lua) -> anyhow::Result<()> {
 
 ## Риски
 
-- Breaking change ломает конфиги всех текущих пользователей wezterm и все
+- Breaking change ломает конфиги всех текущих пользователей onlyterm и все
   сторонние Lua-плагины — осознанное решение пользователя, не технический
   риск, но требует L6 (документация) как обязательную часть, не опциональную.
-- Event-callback модель (`wezterm.on`) и config-reload watch list — самые
+- Event-callback модель (`onlyterm.on`) и config-reload watch list — самые
   архитектурно тонкие места, нет гарантии 1:1 переноса без изменения
   публичного API этих механизмов — возможно, потребуется небольшая ревизия
   самого API (не только языка), уточнить при реализации L2.

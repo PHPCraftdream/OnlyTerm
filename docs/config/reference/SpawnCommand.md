@@ -18,7 +18,7 @@ action: {
 
     ## An explicit tab title, applied once as soon as the tab is spawned.
     ## Takes priority over `default_tab_title` (see the config reference),
-    ## but a later explicit rename (F2 / `wezterm cli set-tab-title`)
+    ## but a later explicit rename (F2 / `onlyterm cli set-tab-title`)
     ## always overrides it.
     ## If omitted, the tab shows its cwd basename instead.
     title: My build
@@ -29,7 +29,7 @@ action: {
     args: [ls, -al]
 
     ## The current working directory to set for the command.
-    ## If omitted, wezterm will infer a value based on the active pane
+    ## If omitted, onlyterm will infer a value based on the active pane
     ## at the time this action is triggered.  If the active pane
     ## matches the domain specified in this `SpawnCommand` instance
     ## then the current working directory of the active pane will be
@@ -54,7 +54,7 @@ action: {
     ## Specify that the default multiplexer domain be used for this
     ## command invocation.  The default domain is typically the "local"
     ## domain, which spawns processes locally.  However, if you started
-    ## wezterm using `wezterm connect` or `wezterm serial` then the default
+    ## onlyterm using `onlyterm connect` or `onlyterm serial` then the default
     ## domain will not be "local".
     ## domain: DefaultDomain
 

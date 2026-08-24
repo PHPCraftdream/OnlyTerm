@@ -20,10 +20,10 @@ adaptation), можно делать прямо сейчас через `@sh`. *
 | # | Кластер / баг | Участники | Перенос | Приоритет |
 |---|---|---|---|---|
 | 1 | Mux: неограниченная аллокация под PDU (OOM/stack overflow) | PR #7874 ↔ Issue #7527 | trivial, 1:1 матч, подтверждено в `codec/src/lib.rs:219,267` вручную | **highest** |
-| 2 | SGR 8-битный цвет: двоеточие вместо точки-с-запятой (ломает Windows-консоль) | PR #2724 ↔ Issue #2723 | trivial, подтверждено в `wezterm-escape-parser/src/csi.rs:~1513` | high |
+| 2 | SGR 8-битный цвет: двоеточие вместо точки-с-запятой (ломает Windows-консоль) | PR #2724 ↔ Issue #2723 | trivial, подтверждено в `onlyterm-escape-parser/src/csi.rs:~1513` | high |
 | 3 | Sixel: пропущенные параметры цвета трактуются как 100 вместо 0 | PR #7345 ↔ Issue #7344 | trivial | medium-high |
-| 4 | WebP lossy-декодирование не работает | PR #7694 ↔ Issue #7693 | trivial, подтверждено в `wezterm-gui/src/glyphcache.rs` | medium |
-| 5 | `LruCache::unbounded()` в `make_all_stale` → неограниченный рост памяти | PR #7704 (+ вероятно Issue #3771) | trivial, подтверждено в `wezterm-client/src/pane/renderable.rs:426` | high |
+| 4 | WebP lossy-декодирование не работает | PR #7694 ↔ Issue #7693 | trivial, подтверждено в `onlyterm-gui/src/glyphcache.rs` | medium |
+| 5 | `LruCache::unbounded()` в `make_all_stale` → неограниченный рост памяти | PR #7704 (+ вероятно Issue #3771) | trivial, подтверждено в `onlyterm-client/src/pane/renderable.rs:426` | high |
 | 6 | Windows: deadlock при смене раскладки клавиатуры (`WM_INPUTLANGCHANGEREQUEST`) | PR #7066 ↔ Issue #6786 | trivial | high |
 | 7 | BlobLease: дубли-запись падает Access Denied на Windows | PR #7955 (+ Issue #5422/#7285/#6426 — тот же подузел, шире) | trivial-ish, расширить аудитом refcounting | high (#5422 — полная остановка рендера) |
 | 8 | Bracketed-paste "defang" обходится вложенными маркерами (security) | PR #7859 (+ Issue #7784/#3510/#7921/#7078) | trivial, зрелый (+6 тестов) | high |
@@ -33,9 +33,9 @@ adaptation), можно делать прямо сейчас через `@sh`. *
 | 12 | top_level-сплит: "призрачное" пространство после закрытия | PR #5969 ↔ Issue #4984/#4686 (был неверно помечен "фича") | trivial | medium-high |
 | 13 | INTEGRATED_BUTTONS: левый статус-бар перекрывает кнопки | PR #7199 ↔ Issue #7197 (был неверно помечен "фича") | trivial | medium |
 | 14 | Portable-pty (Unix): `exec()` падает `abort()` вместо `Result::Err`, диагностический pipe закрывается pre-exec хуком | PR #7743 (+ Issue #7742/#6783/#5107/#7025/#4364) | trivial для Unix-половины, тест есть | high |
-| 15 | Windows: discovery gui-sock публикует только имя файла, `wezterm cli` не подключается из другого cwd | PR #7896 + PR #7698 | trivial | medium-high |
+| 15 | Windows: discovery gui-sock публикует только имя файла, `onlyterm cli` не подключается из другого cwd | PR #7896 + PR #7698 | trivial | medium-high |
 | 16 | `--attach` не долетает до `domain_spawn_v2` при делегировании к существующему GUI | PR #7583 ↔ Issue #7582 | trivial | medium |
-| 17 | Windows: `PATHEXT` с пустым `;;` → паника при `wezterm start --` | Issue #6499 | one-line guard (нет готового PR, но тривиально) | medium-high |
+| 17 | Windows: `PATHEXT` с пустым `;;` → паника при `onlyterm start --` | Issue #6499 | one-line guard (нет готового PR, но тривиально) | medium-high |
 | 18 | GPU-контекст teardown crash при закрытии/пересоздании окна (macOS/X11) | PR #7958, PR #7799, PR #7617 (+ Issue #5992 — Windows, без фикса) | needs adaptation, разные API на разных платформах | high |
 | 19 | WebGPU: превышение лимита текстуры при экстремальном scale/тайлинге | PR #7821 ↔ Issue #7819 | needs adaptation (часть большого DPI-кластера, см. Tier 1 #29) | high |
 | 20 | Wayland: DPI-calc фиксы + tiled-size + SCTK TILED-state | PR #7954, PR #7966, PR #7548 | needs adaptation, несколько точечных патчей | medium-high |
@@ -56,7 +56,7 @@ adaptation), можно делать прямо сейчас через `@sh`. *
 
 | # | Кластер | Участники (репрезентативные) | Что делать |
 |---|---|---|---|
-| 31 | Крэш при нецелочисленном/экстремальном scale factor (независимо от WM) | Issue #2445/#3687/#6233/#4857 | аудит арифметики деления на scale-фактор в `window/`, `wezterm-gui/src/termwindow/resize.rs` |
+| 31 | Крэш при нецелочисленном/экстремальном scale factor (независимо от WM) | Issue #2445/#3687/#6233/#4857 | аудит арифметики деления на scale-фактор в `window/`, `onlyterm-gui/src/termwindow/resize.rs` |
 | 32 | Multi-monitor DPI drag feedback loop — macOS/X11-часть (Windows уже в Tier 0 #21) | Issue #1983/#3396/#2907/#6567/#7281/#3956 | адаптировать guard-паттерн из PR #7883 под macOS/X11 `window/src/os/*` |
 | 33 | macOS: сон/пробуждение/screen-lock ломают размер/позицию окна на внешнем мониторе | Issue #4633/#6309/#2958/#6555 | аудит обработки display-reconfiguration notification на macOS |
 | 34 | Фундаментальная порча рендера при ресайзе во время активного вывода (давняя, топ по частоте) | Issue #922/#1265/#2659/#3368/#3033/#6869/#4323/#2987/#4265/#7630/#3224 | начать с PR #7177 (`with_phys_lines` sync) как вероятного частичного кандидата, затем аудит reflow↔redraw порядка |

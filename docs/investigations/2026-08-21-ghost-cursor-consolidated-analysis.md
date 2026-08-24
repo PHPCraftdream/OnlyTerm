@@ -2,7 +2,7 @@
 
 Дата: 2026-08-21  
 Режим исследования: код, документы, локальная git-история и существующие логи — read-only; создан только этот отчёт.  
-Проверенный `HEAD`: `0259a738914a` (`wezterm-client: expose windows_job and parent_watcher for cross-crate reuse`).  
+Проверенный `HEAD`: `0259a738914a` (`onlyterm-client: expose windows_job and parent_watcher for cross-crate reuse`).  
 Исходные отчёты:
 
 - [`2026-08-21-ghost-cursor-after-refocus-tab-switch.md`](2026-08-21-ghost-cursor-after-refocus-tab-switch.md)

@@ -1,8 +1,8 @@
-# wezterm-term
+# onlyterm-term
 
 This crate provides the core of the virtual terminal emulator implementation
-used by [wezterm](https://wezterm.org/).  The home for this
-crate is in the wezterm repo and development is tracked at
+used by [onlyterm](https://wezterm.org/).  The home for this
+crate is in the onlyterm repo and development is tracked at
 <https://github.com/wezterm/wezterm/>.
 
 It is full featured, providing terminal escape sequence parsing, keyboard

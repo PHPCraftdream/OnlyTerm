@@ -9,14 +9,14 @@ use crate::{
 };
 use anyhow::Context;
 use ktav::value::Value as KtavValue;
+use onlyterm_dynamic::FromDynamic;
+use onlyterm_term::TerminalSize;
 use portable_pty::CommandBuilder;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
-use wezterm_dynamic::FromDynamic;
-use wezterm_term::TerminalSize;
 
 /// Distinguishes "no `.ktav` config exists at this candidate path, but a
 /// legacy `.rhai`/`.lua` sibling does" from any other load error (I/O error,
@@ -39,7 +39,7 @@ impl std::fmt::Display for LegacyScriptSiblingError {
             "Found a legacy scripted configuration file at {} but \
              scripted configs (rhai/Lua) are no longer supported: \
              the config-scripting engine has been removed from \
-             wezterm's live config-loading path in favor of the \
+             onlyterm's live config-loading path in favor of the \
              static `ktav` format. Please migrate {} to the ktav \
              format and save it as {}. See the migration guide for \
              details.",
@@ -54,7 +54,7 @@ impl std::error::Error for LegacyScriptSiblingError {}
 
 impl Config {
     pub fn load() -> LoadedConfig {
-        Self::load_with_overrides(&wezterm_dynamic::Value::default())
+        Self::load_with_overrides(&onlyterm_dynamic::Value::default())
     }
 
     /// `ulimit_nofile`/`ulimit_nproc` configure Unix `RLIMIT_NOFILE`/
@@ -125,7 +125,7 @@ impl Config {
         HOME_DIR.join(".onlyterm.ktav")
     }
 
-    pub fn load_with_overrides(overrides: &wezterm_dynamic::Value) -> LoadedConfig {
+    pub fn load_with_overrides(overrides: &onlyterm_dynamic::Value) -> LoadedConfig {
         let paths = Self::config_file_candidates();
 
         if let Some(found) = Self::search_paths_for_config(&paths, overrides) {
@@ -170,7 +170,7 @@ impl Config {
     /// real typo in the user's active config.
     pub(super) fn search_paths_for_config(
         paths: &[PathPossibility],
-        overrides: &wezterm_dynamic::Value,
+        overrides: &onlyterm_dynamic::Value,
     ) -> Option<LoadedConfig> {
         let mut deferred_legacy_error: Option<(anyhow::Error, PathBuf)> = None;
 
@@ -217,7 +217,7 @@ impl Config {
 
     pub fn try_default() -> anyhow::Result<LoadedConfig> {
         let (config, warnings) =
-            wezterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
+            onlyterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
                 Ok(default_config_with_overrides_applied()?.compute_extra_defaults(None))
             });
 
@@ -261,7 +261,7 @@ impl Config {
 
     pub(super) fn try_load(
         path_item: &PathPossibility,
-        overrides: &wezterm_dynamic::Value,
+        overrides: &onlyterm_dynamic::Value,
     ) -> anyhow::Result<Option<LoadedConfig>> {
         let p = path_item.path.as_path();
         log::trace!("consider config: {}", p.display());
@@ -302,7 +302,7 @@ impl Config {
         let text = s.trim_start_matches('\u{FEFF}');
 
         let (config, warnings) =
-            wezterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
+            onlyterm_dynamic::Error::capture_warnings(|| -> anyhow::Result<Config> {
                 let cfg: Config;
 
                 let parsed = ktav::parse(text)
@@ -376,37 +376,37 @@ impl Config {
         }))
     }
 
-    /// Convert a `wezterm_dynamic::Value` (the result of parsing a `.ktav`
+    /// Convert a `onlyterm_dynamic::Value` (the result of parsing a `.ktav`
     /// config document, see `crate::ktav_value::ktav_value_to_dynamic`) into
     /// a `Config`, in the same "strict: deny unknown fields" mode that the
     /// rhai and (before it) mlua config-builder paths enforced.
-    fn from_ktav_dynamic(dyn_value: wezterm_dynamic::Value) -> anyhow::Result<Config> {
+    fn from_ktav_dynamic(dyn_value: onlyterm_dynamic::Value) -> anyhow::Result<Config> {
         Config::from_dynamic(
             &dyn_value,
-            wezterm_dynamic::FromDynamicOptions {
-                unknown_fields: wezterm_dynamic::UnknownFieldAction::Deny,
-                deprecated_fields: wezterm_dynamic::UnknownFieldAction::Warn,
+            onlyterm_dynamic::FromDynamicOptions {
+                unknown_fields: onlyterm_dynamic::UnknownFieldAction::Deny,
+                deprecated_fields: onlyterm_dynamic::UnknownFieldAction::Warn,
             },
         )
         .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
     /// Apply an overrides object (as used by `overridden_config`/palette
-    /// previews) directly onto the `wezterm_dynamic::Value` parsed from the
+    /// previews) directly onto the `onlyterm_dynamic::Value` parsed from the
     /// `.ktav` config document. Ktav is a static data format with no
     /// running engine/callbacks involved, so this is a plain structural
     /// merge (one level deep, matching the previous rhai/mlua behavior).
     pub(crate) fn apply_overrides_obj_to(
-        mut config: wezterm_dynamic::Value,
-        overrides: &wezterm_dynamic::Value,
-    ) -> anyhow::Result<wezterm_dynamic::Value> {
+        mut config: onlyterm_dynamic::Value,
+        overrides: &onlyterm_dynamic::Value,
+    ) -> anyhow::Result<onlyterm_dynamic::Value> {
         match overrides {
-            wezterm_dynamic::Value::Object(obj) => {
+            onlyterm_dynamic::Value::Object(obj) => {
                 if obj.is_empty() {
                     return Ok(config);
                 }
                 let map = match &mut config {
-                    wezterm_dynamic::Value::Object(map) => map,
+                    onlyterm_dynamic::Value::Object(map) => map,
                     _ => anyhow::bail!(
                         "expected the config document to be an object, \
                          so that overrides could be applied"
@@ -422,7 +422,7 @@ impl Config {
     }
 
     /// Apply the `--config key=value` command line overrides on top of the
-    /// `wezterm_dynamic::Value` parsed from the `.ktav` config document.
+    /// `onlyterm_dynamic::Value` parsed from the `.ktav` config document.
     ///
     /// Each `value` is itself parsed as a standalone ktav scalar/value
     /// fragment (via `ktav::parse`, wrapped in a single-key document so that
@@ -449,8 +449,8 @@ impl Config {
     ///   Keep `--config` values to a single line (inline `{...}`/`[...]`
     ///   syntax is fine as long as it's all on one line).
     pub(crate) fn apply_overrides_to_ktav(
-        mut config: wezterm_dynamic::Value,
-    ) -> anyhow::Result<wezterm_dynamic::Value> {
+        mut config: onlyterm_dynamic::Value,
+    ) -> anyhow::Result<onlyterm_dynamic::Value> {
         let overrides = CONFIG_OVERRIDES.lock().unwrap();
         for (key, value) in &*overrides {
             if value == "nil" || value == "()" || value == "null" {
@@ -480,7 +480,7 @@ impl Config {
             let evaluated = crate::ktav_value::ktav_value_to_dynamic(&evaluated);
 
             let map = match &mut config {
-                wezterm_dynamic::Value::Object(map) => map,
+                onlyterm_dynamic::Value::Object(map) => map,
                 _ => anyhow::bail!(
                     "expected the config document to be an object, \
                      so that --config {}={} could be applied",
@@ -489,7 +489,7 @@ impl Config {
                 ),
             };
             log::debug!("Apply {}={} to config", key, value);
-            map.insert(wezterm_dynamic::Value::String(key.clone()), evaluated);
+            map.insert(onlyterm_dynamic::Value::String(key.clone()), evaluated);
         }
         Ok(config)
     }
@@ -651,35 +651,35 @@ impl Config {
 
         cfg.font_rules.push(StyleRule {
             italic: Some(true),
-            intensity: Some(wezterm_term::Intensity::Half),
+            intensity: Some(onlyterm_term::Intensity::Half),
             font: half_bright_italic,
             ..Default::default()
         });
 
         cfg.font_rules.push(StyleRule {
             italic: Some(false),
-            intensity: Some(wezterm_term::Intensity::Half),
+            intensity: Some(onlyterm_term::Intensity::Half),
             font: half_bright,
             ..Default::default()
         });
 
         cfg.font_rules.push(StyleRule {
             italic: Some(false),
-            intensity: Some(wezterm_term::Intensity::Bold),
+            intensity: Some(onlyterm_term::Intensity::Bold),
             font: bold,
             ..Default::default()
         });
 
         cfg.font_rules.push(StyleRule {
             italic: Some(true),
-            intensity: Some(wezterm_term::Intensity::Bold),
+            intensity: Some(onlyterm_term::Intensity::Bold),
             font: bold_italic,
             ..Default::default()
         });
 
         cfg.font_rules.push(StyleRule {
             italic: Some(true),
-            intensity: Some(wezterm_term::Intensity::Normal),
+            intensity: Some(onlyterm_term::Intensity::Normal),
             font: italic,
             ..Default::default()
         });
@@ -889,9 +889,9 @@ impl Config {
         let mut wsl_env = std::env::var("WSLENV").ok();
 
         // If we are running as an appimage, we will have "$APPIMAGE"
-        // and "$APPDIR" set in the wezterm process. These will be
+        // and "$APPDIR" set in the onlyterm process. These will be
         // propagated to the child processes. Since some apps (including
-        // wezterm) use these variables to detect if they are running in
+        // onlyterm) use these variables to detect if they are running in
         // an appimage, those child processes will be misconfigured.
         // Ensure that they are unset.
         // https://docs.appimage.org/packaging-guide/environment-variables.html#id2
@@ -921,7 +921,7 @@ impl Config {
         // TERM_PROGRAM and TERM_PROGRAM_VERSION are an emerging
         // de-facto standard for identifying the terminal.
         cmd.env("TERM_PROGRAM", "OnlyTerm");
-        cmd.env("TERM_PROGRAM_VERSION", crate::wezterm_version());
+        cmd.env("TERM_PROGRAM_VERSION", crate::onlyterm_version());
     }
 }
 

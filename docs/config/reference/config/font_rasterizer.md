@@ -11,7 +11,7 @@ if you hit a rendering regression on the new default.
 {{since('nightly')}}
 
 The default changed from `FreeType` to `Swash`, a pure-Rust rasterizer, as
-part of an effort to remove C/C++ dependencies from wezterm. `Swash` handles
+part of an effort to remove C/C++ dependencies from onlyterm. `Swash` handles
 ordinary (non-color) glyph outlines itself, and automatically falls back to
 the `Harfbuzz`-based paint rasterizer for COLR/COLRv1/CBDT/sbix color
 glyphs (e.g. color emoji), the same way `FreeType` already did via the

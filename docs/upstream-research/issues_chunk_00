@@ -1,7 +1,7 @@
 5990	77	textures broken on NixOS master branch
 5263	39	running message loop: Error while flushing display: Broken pipe (os error 32); terminating
-3958	35	WezTerm won't launch on Chromebook
-3214	30	Wezterm has slow response and even freeze
+3958	35	OnlyTerm won't launch on Chromebook
+3214	30	Onlyterm has slow response and even freeze
 2665	28	High CPU Usage
 5074	27	Winget installation flagged as a trojan by windows security
 3774	23	Font looks thin and spaced out compared to other terminals
@@ -9,47 +9,47 @@
 3142	22	Scrolling too fast in Wayland
 3032	22	Font rendering isn't gamma corrected when using WebGpu?
 2445	22	Crashes on Sway - not divisible by scale 2
-6081	21	 WezTerm has no icon under Wayland when using fractional scaling (fractional-scale-v1)
-3121	21	Wezterm fails to launch randomly
+6081	21	 OnlyTerm has no icon under Wayland when using fractional scaling (fractional-scale-v1)
+3121	21	Onlyterm fails to launch randomly
 2987	21	Bad prompt on resize behavior
 2669	21	Lag when switching between Stage manager tasks (macOS Ventura)
-5561	20	When using Neovim in wezterm, there will be borders around it that cannot be filled.
+5561	20	When using Neovim in onlyterm, there will be borders around it that cannot be filled.
 1701	20	linux+wayland+nvidia = wrong colors
 817	19	Laggy scrolling in (neo)vim on split window
 4052	18	Typing is slow
-6925	17	Wezterm becomes slow after some time, I have to close and re-run it
-5882	17	[windows] wezterm hangs randomly, mostly but not exclusively, when closing panes.
+6925	17	Onlyterm becomes slow after some time, I have to close and re-run it
+5882	17	[windows] onlyterm hangs randomly, mostly but not exclusively, when closing panes.
 5197	17	Hanging after recent update on Arch
 4883	17	tiling window manager resize race with "Update Available" notification, causes bad cursor positioning
 4633	17	Window is resized after Mac sleeps when connected to external monitor
 2687	17	flatpak release: Unable to set cursor to left_ptr: cursor not found
 6111	16	Visual Artifacts with win32_system_backdrop = 'Acrylic'
-6025	16	Wezterm window not movable via tab bar on fedora 
-4607	16	Wezterm Mux Server causes weird line artifacts in neovim
+6025	16	Onlyterm window not movable via tab bar on fedora 
+4607	16	Onlyterm Mux Server causes weird line artifacts in neovim
 3510	16	Pasting from Windows clipboard manager adds extra ``^[[200~``
-6190	15	Wezterm Freeze when trying to close tab after long session
-5604	15	Can't open wezterm under wayland
+6190	15	Onlyterm Freeze when trying to close tab after long session
+5604	15	Can't open onlyterm under wayland
 4975	15	Non-standard modifier keys emit original ANSI characters for that key on keydown
-4962	15	Wezterm does not have window decorations/titlebar on Mutter/Wayland
-3425	15	Unable to launch WezTerm with WebGPU front-end
+4962	15	Onlyterm does not have window decorations/titlebar on Mutter/Wayland
+3425	15	Unable to launch OnlyTerm with WebGPU front-end
 3221	15	Can not swtich input method
 2958	15	Incorrect initial terminal size on macOS with multiple screens
-1983	15	Moving a WezTerm window between monitors causes erratic jumping and resizing of the window
+1983	15	Moving a OnlyTerm window between monitors causes erratic jumping and resizing of the window
 7503	14	Flickering bar on full screen
-6831	14	Wezterm crashes on startup on Wayland
+6831	14	Onlyterm crashes on startup on Wayland
 5468	14	option key not working on mac
-5212	14	mouse click on wezterm, but activate the lower level window. (keyboard input always work)
+5212	14	mouse click on onlyterm, but activate the lower level window. (keyboard input always work)
 5138	14	Graphic glitch when window size is small
 3328	14	Some windows don't update their colour scheme when system theme changes
 2779	14	Cursor flashing / teleporting on typing in a nushell prompt on windows
-7520	13	Quit Opencode will close WezTerm tab
+7520	13	Quit Opencode will close OnlyTerm tab
 5260	13	Cannot input many unicode characters on windows on some applications
 4933	13	There are key combinations that don't work with Helix, such as "Ctrl + º"
-4700	13	Performance gap between Wezterm and Windows Terminal on Windows 11 VM
+4700	13	Performance gap between Onlyterm and Windows Terminal on Windows 11 VM
 4161	13	Error after manually closing last tab on ssh domain
 3803	13	default hyperlink_rules is wrong for Markdown link format
-3687	13	Wezterm crashes with display scale > 1 when client-side-decorations enabled.
-6926	12	Wezterm wont start on Hyprland
+3687	13	Onlyterm crashes with display scale > 1 when client-side-decorations enabled.
+6926	12	Onlyterm wont start on Hyprland
 6192	12	ls --hyperlink shows error when clicked
 5193	12	On key-down, the shift modifier is lost in key input encoding (between raw_key_event_impl and key_event_impl)
 4317	12	When closing tab or application, current focus window in tmux is closed on mac
@@ -58,7 +58,7 @@
 3609	12	Duplicated key-inputs (characters, commands)
 3083	12	ProxyCommand not working on Windows
 1923	12	Scroll history is missing lines
-6838	8	Wezterm sending weird key sequences to Neovim over ssh
+6838	8	Onlyterm sending weird key sequences to Neovim over ssh
 6823	11	`window_content_alignment` not rendering `r` the same when `vertical = "Center"`
 6650	11	`config.ssh_domains` configuration change doesn't get picked up
 6086	11	Using INTEGRATED_BUTTONS decorations on Linux, the minimize button is nonfunctional
@@ -69,54 +69,54 @@
 4855	11	i3/awesomewm: Giving a terminal focus recopies the selection to the primary clipboard
 3892	11	How do I force TLSDomain to accept self signed certificate
 3751	11	Unable to set cursor in Gnome Wayland
-6776	6	Starship not work on a Linux machine which install wezterm via ssh
+6776	6	Starship not work on a Linux machine which install onlyterm via ssh
 6664	10	Runtime color_scheme changes does not always apply to all active panes
 6637	10	U+2028 doesn't render as space in neovim, causing alignment issues
-5382	10	Wezterm fails to launch because of egl_lib
+5382	10	Onlyterm fails to launch because of egl_lib
 5142	10	resizing in mux domains has issues
 4948	10	Panic with Wayland
 4912	10	imgcat panic when invoked from powershell under WSL paths
-4881	10	wezterm no longer respects window_background_opacity if gpu is in use with other program
+4881	10	onlyterm no longer respects window_background_opacity if gpu is in use with other program
 4874	10	Font rendering of ligatures (and possibly other features?) is sometimes inconsistent
 4851	10	font_size != 12 vs initial_cols + initial_rows vs external monitor
-4826	10	Wezterm wgpu VRAM memory leak
+4826	10	Onlyterm wgpu VRAM memory leak
 4527	10	Unexpected extra window when opening a workspace in a domain.
 4456	10	failed to connect to Socket("gui-sock-...")
 4145	10	win32_system_backdrop Acrylic not working
 4055	10	ctrl-space tra
 2699	10	Cannot create files over SFTP `LibSsh(Sftp(SftpError(2)))`
 2536	10	Window goes out of fullscreen when focus shifts
-2387	10	Wezterm seems to forget the current keymap randomly on Gnome Wayland
+2387	10	Onlyterm seems to forget the current keymap randomly on Gnome Wayland
 7150	9	NixOS: head of main built with nix flake crashes with EGL error
 6783	9	portable-pty 0.9.0 doesn't work on windows
 6725	9	Duplicate keystrokes in a Wayland session
 6673	9	window_decorations = "NONE" not working with enable_wayland = true
-6435	9	Wezterm occasionally interprets single clicks as double clicks (or triple lcicks
-5942	9	WezTerm freezes after keyboard repeat
+6435	9	Onlyterm occasionally interprets single clicks as double clicks (or triple lcicks
+5942	9	OnlyTerm freezes after keyboard repeat
 5341	9	font fallback for U+2387 is inconsistent with native macOS apps
-5083	9	Neovim Always Scrolled Down When Launched Using Wezterm CLI
-4512	9	macOS Sonoma Copy Issues From Wezterm
+5083	9	Neovim Always Scrolled Down When Launched Using Onlyterm CLI
+4512	9	macOS Sonoma Copy Issues From Onlyterm
 4121	9	set-working-directory ignored when starting
 3936	9	window_decoration mode "RESIZE" still shows title bar in X11 (Gnome 44, Fedora 38)
 3747	9	Quick key chords send wrong keys in neovim
-3154	9	Switching between light and dark colour schemes on GNOME/Wayland makes WezTerm’s title bar disappear
+3154	9	Switching between light and dark colour schemes on GNOME/Wayland makes OnlyTerm’s title bar disappear
 1742	9	Wayland doesn't expose user's configured mouse cursor theme/style
 7715	8	background colour does not appear to apply correctly to ICH
 7275	8	High CPU usage and freezing when scrolling
-6920	8	Wezterm interpret config.window_decoration option value "RESIZE" as "RESIZE|TITLE"
+6920	8	Onlyterm interpret config.window_decoration option value "RESIZE" as "RESIZE|TITLE"
 6699	8	Explicit Sync only supported on dmabuf buffers
 6485	8	Border problems with the rounded corners on macOS.
 6359	8	`window_background_opacity` doesn't work on WebGpu
-6355	8	Why does wezterm attempt connections to api.github.com on startup?
+6355	8	Why does onlyterm attempt connections to api.github.com on startup?
 6351	6	Integrated Buttons: Hide button not working
 6275	8	Window Displacement Issue in Fullscreen Mode When Terminal Loses Focus
 5902	8	SpawnTab isn't going to wsl home directory
 5866	8	Chained dead keys keys are not supported
-5518	8	Wezterm panic: called `Option::unwrap()` on a `None` value
+5518	8	Onlyterm panic: called `Option::unwrap()` on a `None` value
 5503	8	WSL - `default_cwd` UNC path only works in the first tab opened
-5366	8	Mouse freezes, skips, and stutters over the wezterm window, recovers as soon as it leaves.
+5366	8	Mouse freezes, skips, and stutters over the onlyterm window, recovers as soon as it leaves.
 5166	8	The `windows.toast_notification()` function is not working properly.
-4708	8	Wezterm runs but doesn't display a window
+4708	8	Onlyterm runs but doesn't display a window
 4364	8	Can't start.
 4290	8	poll_for_queued_event: X(Match(RequestError when front_end="WebGpu"
 4250	8	font size affects window size
@@ -127,49 +127,49 @@
 7427	7	Crash (segfault) with no apparent reason on mac
 7271	7	High GPU usage, per window, after upgrading to macOS Tahoe
 7118	7	Almost daily crash (closed after press any key) on MacOS
-7101	7	Wezterm crashing after last update
-7000	7	Wezterm is haunted
+7101	7	Onlyterm crashing after last update
+7000	7	Onlyterm is haunted
 6828	7	tmux -CC does not react to `tmux split-window`
 6806	7	tmux -CC causing latency with remote VMs
 6762	7	Display issue inside an Ubuntu 24.04 docker container
 6463	7	Initial window size inconsistent on Sway
 6296	7	Title Bar is missing under Mutter
 6228	7	Regression in macOS Sequoia
-6191	7	Weird issue when using wezterm on gnome wayland
-6179	7	`wezterm connect --new-tab` still opens new window
+6191	7	Weird issue when using onlyterm on gnome wayland
+6179	7	`onlyterm connect --new-tab` still opens new window
 5817	7	mux_enable_ssh_agent=true disables private key authentication w/ OpenSSH_for_Windows
 5560	7	Text cursor flickers and jumps around when updating terminal
-5496	7	Wezterm ocassionally hangs when I try to close a pane
-5284	7	wezterm doesn't redraw (or lags) on Plasma 6 + Wayland + Nvidia with config.enable_wayland=true
+5496	7	Onlyterm ocassionally hangs when I try to close a pane
+5284	7	onlyterm doesn't redraw (or lags) on Plasma 6 + Wayland + Nvidia with config.enable_wayland=true
 4916	7	Unable to type a caret ('^') with kitty keyboard enabled
-4509	7	When reattaching to tmux, wezterm prints the current version number
+4509	7	When reattaching to tmux, onlyterm prints the current version number
 4484	7	Pane focus changing constantly despite no input
 4396	7	Weztem failed to run
 4390	7	Switching panes in multiple directions at once causes the focused pane to rapidly switch when any key is pressed
 4236	7	Bracketed paste not working in Helix
 4205	7	portable-pty removes custom paths from PATH on windows
 4061	7	Key repeat gets stuck after pressing two keys in fast succession (again)
-3968	7	Paste not working when `wezterm connect unix_domain` from local WSL2
+3968	7	Paste not working when `onlyterm connect unix_domain` from local WSL2
 3411	7	Pre-edit/on-the-spot IME not working
 2985	7	Ssh with Certificate Authentication
 2431	7	Font rendering issues with default font settings; depend on zoom
-2414	7	Clicking on unfocused wezterm reports a mouse drag to client software
+2414	7	Clicking on unfocused onlyterm reports a mouse drag to client software
 2070	7	Reduce cpu usage 
 7497	6	Dynamic window size only works for the first window
 7342	6	Error starting WT with egl_bindings.rs not getting loaded
-7326	6	`wezterm start` doesn't start window on top and focused sometimes on macos
-7090	6	WezTerm shell integration conflicts with other terminal programs (wezterm.sh)
+7326	6	`onlyterm start` doesn't start window on top and focused sometimes on macos
+7090	6	OnlyTerm shell integration conflicts with other terminal programs (onlyterm.sh)
 7070	6	Fail to start on Wayland/Hyprland fractional scaled monitors
 6754	3	Mouse scroll increase not working
-6265	6	Cannot get Wezterm Terminal Transparent/Acrylic BG on Windows
+6265	6	Cannot get Onlyterm Terminal Transparent/Acrylic BG on Windows
 6232	6	Incorrect cursor position when prompt has iTerm style images inlined
 6163	6	Copy mode deselects when copying in tmux
 6128	6	Weztem crashing on text selection
 5895	6	Acrylic / Mica for unfocused windows
 5790	6	WebGPU frontend not working with window opacity
 5523	6	chinese punctuation position render too high up
-5439	6	High CPU usage on Windows, happening in wezterm_ssh / WSAPoll
-5098	6	When doing `wezterm start` with `--config-file`, window opens behind main window
+5439	6	High CPU usage on Windows, happening in onlyterm_ssh / WSAPoll
+5098	6	When doing `onlyterm start` with `--config-file`, window opens behind main window
 4992	6	random artifacts when using opengl with intel iris xe graphics on windows
 4825	6	Crash with wgpu on Fedora 39
 4768	6	No fonts contain glyphs for those codepoints: \u{1d4d2}
@@ -177,8 +177,8 @@
 4681	6	Regression: Unable to set cursor to xterm: cursor not found
 4467	6	Wrong unicode display after font resize
 4412	6	Background blur not working
-3986	6	launching wezterm in gnome sometimes don't get focused upon launch
-3771	6	Memory leak and high CPU usage with actions.RotatePanes with certain pane layouts in `wezterm connect unix`
+3986	6	launching onlyterm in gnome sometimes don't get focused upon launch
+3771	6	Memory leak and high CPU usage with actions.RotatePanes with certain pane layouts in `onlyterm connect unix`
 2422	6	Kitty image protocol fails to delete images after resize by placement id
 1732	6	Wayland: tab bar appears jittery when resizing
 1115	6	briefly gives incorrect size at launch (tiling window manager)
@@ -187,18 +187,18 @@
 7302	5	Cursor jumps one line up when at the bottom of the terminal window
 7249	5	Segfault on macOS Tahoe (26.0)
 7159	5	"bold dimmed" aka 1;2m aka starship hostname not rendering as bold
-7158	5	The Wezterm application crashes when changing the configuration while the application is running.
+7158	5	The Onlyterm application crashes when changing the configuration while the application is running.
 7132	5	[colorscheme] rose-pine-moon does not have cursor selection highlight
 7126	5	Odd rendering of border corners.
 7117	5	"Unrecognized tmux cc line" error for %unlinked-window-renamed (when using multiple sessions)
 7057	5	Cmd-N when using tmux -CC creates a new tab rather than a new window
-6978	5	Using wezterm nightly + PowerShell 5.1 with window_background_opacity < 1.0 results in broken transparency
-6953	5	Seems Wezterm mouse streak is wrong, maybe affected by Deskflow
+6978	5	Using onlyterm nightly + PowerShell 5.1 with window_background_opacity < 1.0 results in broken transparency
+6953	5	Seems Onlyterm mouse streak is wrong, maybe affected by Deskflow
 6882	3	Navigation keys broken out of the box
-6877	3	Cant use wezterm for some reason
+6877	3	Cant use onlyterm for some reason
 6869	5	Buggy rendering when resizing panes
-6853	4	wezterm sends a weird key sequence after quitting yazi over ssh
-6703	5	Wezterm opens as a small cute vertical line with KDE fractional scaling
+6853	4	onlyterm sends a weird key sequence after quitting yazi over ssh
+6703	5	Onlyterm opens as a small cute vertical line with KDE fractional scaling
 6698	5	Nix Github Action / Cachix issue
 6567	5	Resizing/title bar issues with multi-monitor setup
 6543	5	Scrollback rendering issue on SSHMUX + default unix domain
@@ -206,7 +206,7 @@
 6436	5	[Bug]: Noticable delay on split pane navigation
 6115	5	Split vertical has incorrect hotkey hint in menu
 5931	5	No wm_class on Gnome Wayland
-5917	5	wezterm with custom config disables OSC52 copy to clipboard
+5917	5	onlyterm with custom config disables OSC52 copy to clipboard
 5913	5	Weird graphical rectangle artifacts on the terminal
 5892	5	Kitty image protocol visual glitches when updating placement location
 5843	5	Does scaling multiple times create a lot of white space? 
@@ -216,10 +216,10 @@
 5432	5	Closing Tab with separate process running causes terminal to stop responding
 5029	5	Can't bind ALT|SHIFT on macOS
 4967	5	Caps lock as modifier triggers viewport scroll
-4915	5	Reduction in display number and size makes wezterm unusable
-4899	5	wezterm cli set-window-title does not change the displayed window title
+4915	5	Reduction in display number and size makes onlyterm unusable
+4899	5	onlyterm cli set-window-title does not change the displayed window title
 4857	5	Inconsistent crashing with Tiling WM (sway) when resizing with neovim open
-4785	5	Wezterm may send different keys than kitty with kitty protocol enabled
+4785	5	Onlyterm may send different keys than kitty with kitty protocol enabled
 4488	5	Plugin unsupported URL protocol error
 4394	5	karabiner rules not playing well (caps lock == escape key alone/control if chord)
 4375	5	`ProxyCommand` to proxy-jump into the server is not working
@@ -236,7 +236,7 @@
 2933	5	`default_gui_startup_args` has no effect when launching with desktop file
 2162	5	Weird line wrapping behaviour
 1869	5	Numlock not properly detected under Mutter Wayland (not XWayland)
-7953	4	Kitty image placement reposition + DECSTBM scroll crashes WezTerm (SIGABRT via quad-count blowup)
+7953	4	Kitty image placement reposition + DECSTBM scroll crashes OnlyTerm (SIGABRT via quad-count blowup)
 7898	4	Do not send `\n` + EOF when unix pty is dropped
 7794	4	RightAlt (AltGr) keycode 113 incorrectly mapped to LeftArrow on French (fr) X11 keyboard layout
 7784	4	Bracketed Paste “defanged” transformation is not thorough
@@ -244,15 +244,15 @@
 7553	4	Toast notifications on KDE plasma do not expire
 7546	4	Variable font (Berkeley Mono Variable) displaying as italic/oblique
 7388	4	Complete freeze when switching windows on a mux server
-7363	4	Wezterm using 22 GB of RAM?
+7363	4	Onlyterm using 22 GB of RAM?
 7337	4	Cursor somehow keep moving when changing workspace
 7291	4	Seffault on MacOS Tahoe after resuming from the lock-screen
-7285	4	ERROR  wezterm_gui > Io error in BlobLease: Permission denied (os error 13)
+7285	4	ERROR  onlyterm_gui > Io error in BlobLease: Permission denied (os error 13)
 7113	4	Bottom gap visible even with zero window_padding
 7060	4	Odd character rendering with nerd font
 6982	3	Nightly: Up/down arrow keys stopped working
 6940	4	Delete Key shows `~` symbol instead of deleting.
-6855	3	Wezterm uses a lot of CPU on Linux
+6855	3	Onlyterm uses a lot of CPU on Linux
 6824	4	key_tables bindings not working when added a modifier
 6766	2	Links highlighted on wrong pane relative to other pane mouse position
 6684	4	Color error during `apt update` in CJK kanguage
@@ -268,10 +268,10 @@
 5879	4	window::os::wayland::connection > Unable to resolve appearance using xdg-desktop-portal
 5849	4	After enabling unix socket some tab titles are flashing
 5596	4	shaping issue with 1f575,1f575,200d in that sequence
-5579	4	when environment variable WEZTERM_CONFIG_FILE is specified, wezterm.config_dir is not part of modules search path
+5579	4	when environment variable ONLYTERM_CONFIG_FILE is specified, onlyterm.config_dir is not part of modules search path
 5559	4	Long delay updating GUI, periodic key repeats
-5552	4	Wezterm changes current working directory on nvim lsp attach
-5522	4	`wezterm imgcat` crashes when running in tmux
+5552	4	Onlyterm changes current working directory on nvim lsp attach
+5522	4	`onlyterm imgcat` crashes when running in tmux
 5498	4	Trips on inline comment in SSH config
 5442	4	Pi5/Wayland WebGpu Display is Garbled
 5370	4	CygwinBash+ssh(145msping)+tmux -> Super slow tmux pane resize
@@ -279,13 +279,13 @@
 5122	4	Modifying font size using CTRL +/- modifies window size instead
 5000	4	`unicode_version` option not always set
 4978	4	Problem with modifier keys
-4887	4	webgpu: Wezterm titlebar cannot be hidden anymore
+4887	4	webgpu: Onlyterm titlebar cannot be hidden anymore
 4878	4	Panes can be resized to zero and negative sizes
 4870	4	Background Image not working
 4558	4	Emojis are not rendered correctly (size and baseline)
 4502	4	window_background_opacity does not work with WebGpu frontend after upgrading NVIDIA drivers 
 4459	4	far2l interface is disturbed
-4358	4	Wezterm keeps switching keyboard layout
+4358	4	Onlyterm keeps switching keyboard layout
 3893	4	`config.line_height` cause weird behaviour
 3886	4	Blinking cursor is broken on transparent background
 3841	4	current_working_dir doesnot work on Windows
@@ -304,12 +304,12 @@
 1957	4	Unexpected transformed braille when increasing or decreasing line_height
 1908	4	width of unicode chars affecting lines in tmux pane to the right
 1673	4	Kitty image protocol does not display images on Windows
-1594	4	Wezterm serial uses 100% CPU
+1594	4	Onlyterm serial uses 100% CPU
 1494	4	Cursor Color not working anymore
 7932	3	adjust_window_size_when_changing_font_size = false not working
 7782	3	Extremely slow startup on Windows: 15-50 seconds delay in portable_pty::cmdbuilder and local gui-sock setup
 7703	3	Crashed when machine sleeps in full screen mode
-7439	3	Windows build creates gui-sock-* Unix socket files when launched via wezterm start --cwd from Explorer context menu
+7439	3	Windows build creates gui-sock-* Unix socket files when launched via onlyterm start --cwd from Explorer context menu
 7437	3	Kitty Keyboard doesn't restore properly
 7436	3	Nightly on Windows 11 launch fails with "LoadLibrary failed with error 126: The specified module could not be found."
 7428	3	Flickering on every keystroke on external monitor
@@ -317,26 +317,26 @@
 7410	3	Redundant links are only highlighted when the mouse is over the topmost one
 7408	3	Screen dimensions are ignored on new windows
 7240	3	Apple Color Emoji too small
-7230	3	wezterm gets into a high-event/high-power-consumption state until all windows are closed
-7212	3	Cannot type "ç" using dead keys in WezTerm
+7230	3	onlyterm gets into a high-event/high-power-consumption state until all windows are closed
+7212	3	Cannot type "ç" using dead keys in OnlyTerm
 7209	3	Incorrect keyboard layout on WSL2
-7174	3	Espanso text replacement not working in WezTerm
+7174	3	Espanso text replacement not working in OnlyTerm
 7097	3	kitty keyboard state not propagated over mux connection
 7017	3	Failure to update or redraw display on WebGpu with nvidia 575.57.08
-7011	3	AUR package wezterm-git not failing to compile - feature edition2024 is required
+7011	3	AUR package onlyterm-git not failing to compile - feature edition2024 is required
 6885	3	window going crazy (text flickering, tabs switching on their own) when reconnecting to multiplexer shared with Linux
-6815	3	Wezterm crashes on startup with WebGPU frontend and Wayland fractional scaling
+6815	3	Onlyterm crashes on startup with WebGPU frontend and Wayland fractional scaling
 6788	2	Huge fonts with MACOS_FORCE_SQUARE_CORNERS on WebGpu (but not on OpenGL)
 6736	3	When searching for Chinese, sometimes there may be problems with the search box being misplaced and unable to locate the search results correctly
-6728	3	Under MacOS and two monitors and wezterm is full screen, sometimes after obtaining focus, the cursor is still hollow
-6618	3	can't launch wezterm on sway
+6728	3	Under MacOS and two monitors and onlyterm is full screen, sometimes after obtaining focus, the cursor is still hollow
+6618	3	can't launch onlyterm on sway
 6415	3	Multiplexer / mux screen redraw rendering issue when scrolling in LESS / man pages
-6303	3	WezTerm behaves differently when launched via a shortcut
+6303	3	OnlyTerm behaves differently when launched via a shortcut
 6284	3	Shortcut keys for decrease font size fixed?
 6233	3	Opening new window from Gnome launcher crashes all windows on 200% scaling
 6187	3	Invisible window after maximizing
 6150	3	Cannot get correct numbers in emacs(terminal) when using programmer's Dvorak layout
-6145	3	--new-tab option in wezterm connect not working
+6145	3	--new-tab option in onlyterm connect not working
 6112	3	MacOS - CapsLock, Shift, Control, fn, option, cmd not logged by debug view
 6087	3	Cannot insert numbers (shift + ") in Kakoune (sent text looks messed up)
 5835	3	Almost no UI rendered  
@@ -347,15 +347,15 @@
 5453	3	Custom DPI in config is ignored after first window resize
 5422	3	Removal of BlobLeases halts rendering of entire terminal
 5357	3	High CPU usage and laggy on Fedora 40
-5280	3	An Investigation into Unresponsiveness and Performance Regression in WezTerm related to Font shaping 
+5280	3	An Investigation into Unresponsiveness and Performance Regression in OnlyTerm related to Font shaping 
 5234	3	Choppy Scrolling in Neovim
-5200	3	wezterm Multiplexing  connect server error.
+5200	3	onlyterm Multiplexing  connect server error.
 5117	3	Some panes don't resize properly when reattaching to a domain
 5089	3	`prefer_to_spawn_tabs` doesn't work
-4944	3	Wezterm freezes while spawning in a nested X session
+4944	3	Onlyterm freezes while spawning in a nested X session
 4925	3	MacOS fullscreen overide opacity
-4802	3	Tables assigned to wezterm.GLOBAL become "userdata"
-4611	3	Wezterm sending extra characters to vim
+4802	3	Tables assigned to onlyterm.GLOBAL become "userdata"
+4611	3	Onlyterm sending extra characters to vim
 4608	3	Dubious interaction between search and copy mode when search is not empty
 4549	3	first window is maximized, the others are not
 4521	3	Windows nightly responds '0' (mode not recognized) to DECRQM 2027
@@ -364,12 +364,12 @@
 4323	3	Glitchy rendering when resizing
 4295	3	weterm ssh fails to use Yubikey for authentication when using FIDO2
 4234	3	Capital Cyrillic letters are turned into "~42" sequences
-4126	2	wezterm colors are somehow dimmed
+4126	2	onlyterm colors are somehow dimmed
 4112	3	`mpv --vo=kitty` constantly flashes status message by default
 4110	3	Input lag on HiDPI 4K when maximizing window
-4041	3	Wezterm -> MUX -> tmux  =>  garbled text
+4041	3	Onlyterm -> MUX -> tmux  =>  garbled text
 4036	3	linuxbrew is based on appimage which requires recent-ubuntu-compatible glibc
-4029	3	Running `wezterm imgcat` too rapidly on any large enough image causes errors
+4029	3	Running `onlyterm imgcat` too rapidly on any large enough image causes errors
 3934	3	Injected keypresses of modifier keys result in `^@`
 3732	3	NFD strings are always NFC-normalized regardless of `normalize_output_to_unicode_nfc = false`
 3660	3	`KP_` (numeric keypad) keys not working
@@ -377,8 +377,8 @@
 3320	3	Some emojis appear to overlap each other
 3276	3	High CPU usage when hovering over tabs
 2984	3	Switching workspaces opens windows when it shouldn't
-2907	3	Wezterm window glitches and lags behind cursor when moved between 2 windows on 150% window scale
-2902	3	wezterm imgcat with vifm
+2907	3	Onlyterm window glitches and lags behind cursor when moved between 2 windows on 150% window scale
+2902	3	onlyterm imgcat with vifm
 2864	3	Vim theme
 2796	3	After a while, windows lose their title bar and resize on activation
 2570	3	Bizarre alt-tab behaviour on NixOS
@@ -395,7 +395,7 @@
 7623	2	wez.wezterm.nightly appears mispackaged in winget: resolves to stable 20240203 and fails hash validation
 7527	2	mux: Unbounded PDU memory allocation causes OOM crashes and stack overflow
 7524	2	detect_password_input doesn't display lock icon
-7490	2	WezTerm silently ignores unknown config keys, which leads to confusing behavior
+7490	2	OnlyTerm silently ignores unknown config keys, which leads to confusing behavior
 7392	2	Startup error message on ubuntu 25.10
 7389	2	Cursor flickers on helix editor when some UI elements are drawn
 7386	2	ALT + Arrow doesnt send anything
@@ -404,9 +404,9 @@
 7264	2	Windows client crashes while spawning new session on mux server
 7257	2	`Option+Cmd+H` shortcut causes unresponsiveness instead of hiding other applications
 7255	2	Sluggish input after a while when running on Tahoe
-7239	2	Emacs sshx freeze in WezTerm
+7239	2	Emacs sshx freeze in OnlyTerm
 7218	2	Pane sometimes seems to disconnect from underlying output
-7215	2	macOS: wezterm.mux.spawn_window not functioning as expected
+7215	2	macOS: onlyterm.mux.spawn_window not functioning as expected
 7197	2	Left status bar overlaps with window buttons with `"INTEGRATED_BUTTONS"`
 7164	2	Unable to rebind shift+enter to terminal newline on WSL
 7163	2	Crash on Ctrl^N (new window) on macOS
@@ -418,28 +418,28 @@
 6996	2	the title and bar have some bit problem at ubuntu 22.04
 6994	2	Ctrl+Shift+, not generating proper escape sequence with Kitty keyboard protocol
 6992	2	pure wayland mode is broken
-6988	2	Title bar does not change back to Wezterm and stays as program name
+6988	2	Title bar does not change back to Onlyterm and stays as program name
 6975	2	Missing ssh token support --- %C, %i, %d, %T
-6949	2	wezterm.default_wsl_domains()  do not work.
+6949	2	onlyterm.default_wsl_domains()  do not work.
 6946	1	tauri uses portable_pty with cmd window
-6936	2	Under macOS, `wezterm.gui.screens()` does not work
+6936	2	Under macOS, `onlyterm.gui.screens()` does not work
 6912	2	VS16 doesn't seem to set the glyph width correctly
-6910	1	Wezterm's victor mono bold isn't as bold as other terminals' bold
-6863	2	WezTerm window flashing
+6910	1	Onlyterm's victor mono bold isn't as bold as other terminals' bold
+6863	2	OnlyTerm window flashing
 6851	2	window padding is not applied to a splitted pane
 6834	2	Bottom line hidden when maximized
 6791	2	Arabic ligature takes two cells when it should take one cell.
 6787	1	Unicode combining characters don't render when input directly
 6786	2	Stuck when switching input method using im-select
 6785	2	Text rendering and character baseline inconsistent when changing line_height
-6781	2	Images do not render in WSL with WezTerm (no size information available)
+6781	2	Images do not render in WSL with OnlyTerm (no size information available)
 6778	1	Installation via linuxbrew fails: "The following formula cannot be installed from bottle and must be built from source."
 6764	2	tmux -CC mouse reporting issue
-6676	2	Fullscreen WezTerm shows windows title bar momentarily when switching apps
+6676	2	Fullscreen OnlyTerm shows windows title bar momentarily when switching apps
 6617	2	WebGpu and Wayland Crash (Nvidia?) - Protocol Error 7 on object @0, dmabufs
 6591	2	The name of the Command Palette Item is not right
 6578	2	client side decorations shown when TITLE is not present in window_decorations (nixos-24.11)
-6499	2	`wezterm start --` or `wezterm -e` panic if `PATHEXT` has an empty entry (`;;`)
+6499	2	`onlyterm start --` or `onlyterm -e` panic if `PATHEXT` has an empty entry (`;;`)
 6489	2	Immediate crash after upgrade to macOS 15.2 when setting large initial_{rows,cols}
 6426	2	%APPDATA%/local/wezterm/wezterm-blob-lease-* directory taking up too much space (15 GB at one point)
 6397	2	Issues rotating panes when connected to mux-server
@@ -451,26 +451,26 @@
 6287	2	password number only accepted with num pad
 6223	2	When the titlebar is disabled and the window is maximized, the taskbar, which is automatically hidden, does not appear
 6218	2	cwd flag not working
-6216	2	wezterm ssh fails with "Too many authentication failures"
+6216	2	onlyterm ssh fails with "Too many authentication failures"
 6211	2	Docs: augment-command-palette docs do not show how to add multiple commands
-6202	2	`wezterm start` launches in background on macOS
-6125	2	Strange terminal output in WSL on wezterm with tmux using yazi
-6094	2	perform_action of CloseCurrentTab can crash wezterm in certain sequences/timings
-6077	1	wezterm segfault on macbook air m2
+6202	2	`onlyterm start` launches in background on macOS
+6125	2	Strange terminal output in WSL on onlyterm with tmux using yazi
+6094	2	perform_action of CloseCurrentTab can crash onlyterm in certain sequences/timings
+6077	1	onlyterm segfault on macbook air m2
 6052	2	resizing window does not resize panes proportionally
 6049	2	in non-local domain, "move pane" instead clones the pane
-6006	2	Ctrl+Scrolllock crashes Wezterm
+6006	2	Ctrl+Scrolllock crashes Onlyterm
 5986	2	1337;SetUserVar is output each time a shell command runs in Neovim's builtin terminal launched from tmux
 5920	2	audible_bell = "Disabled" - not working on windows?
 5915	2	WebGPU not working on latest MESA v24.1.5
 5875	2	font not crispy on swaywm with 200% scaling
 5832	2	User vars become unset after detach and re-attach to multiplexer Unix domain
 5793	2	Clipboard in the terminal tab lags behind system's clipboard
-5745	2	Wezterm freezes after being resized
+5745	2	Onlyterm freezes after being resized
 5741	2	Can't ignore F20 key
-5570	2	dim effect from helix editor is showing bright in wezterm when combined with reversed colour effect
-5543	2	`wezterm cli tlscreds` generates a certificate that does not use FQDN
-5509	2	wezterm can't not use Ctrl+D to disconnect remote ssh session which using zsh
+5570	2	dim effect from helix editor is showing bright in onlyterm when combined with reversed colour effect
+5543	2	`onlyterm cli tlscreds` generates a certificate that does not use FQDN
+5509	2	onlyterm can't not use Ctrl+D to disconnect remote ssh session which using zsh
 5478	2	Colors not picked up by escape codes when colors are set from event
-5473	2	Wezterm WebGpu doesn't work with llvmpipe driver
-5455	2	tmux crashes when using wezterm and open nvim on remote computer via SSH connection
+5473	2	Onlyterm WebGpu doesn't work with llvmpipe driver
+5455	2	tmux crashes when using onlyterm and open nvim on remote computer via SSH connection

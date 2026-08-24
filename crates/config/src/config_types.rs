@@ -1,6 +1,6 @@
 use crate::units::Dimension;
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use termwiz::surface::CursorShape;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
 
 #[derive(FromDynamic, ToDynamic, Clone, Copy, Debug, Default)]
 pub enum DefaultCursorStyle {
@@ -102,7 +102,7 @@ pub enum WindowCloseConfirmation {
     // running programs are stateful
 }
 
-/// Behavior when the program spawned by wezterm terminates
+/// Behavior when the program spawned by onlyterm terminates
 #[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExitBehavior {
     /// Close the associated pane
@@ -182,15 +182,15 @@ pub enum BoldBrightening {
 
 impl FromDynamic for BoldBrightening {
     fn from_dynamic(
-        value: &wezterm_dynamic::Value,
-        options: wezterm_dynamic::FromDynamicOptions,
-    ) -> Result<Self, wezterm_dynamic::Error> {
+        value: &onlyterm_dynamic::Value,
+        options: onlyterm_dynamic::FromDynamicOptions,
+    ) -> Result<Self, onlyterm_dynamic::Error> {
         match String::from_dynamic(value, options) {
             Ok(s) => match s.as_str() {
                 "No" => Ok(Self::No),
                 "BrightAndBold" => Ok(Self::BrightAndBold),
                 "BrightOnly" => Ok(Self::BrightOnly),
-                s => Err(wezterm_dynamic::Error::Message(format!(
+                s => Err(onlyterm_dynamic::Error::Message(format!(
                     "`{s}` is not valid, use one of `No`, `BrightAndBold` or `BrightOnly`"
                 ))),
             },
@@ -205,7 +205,7 @@ impl FromDynamic for BoldBrightening {
 
 #[derive(Debug, FromDynamic, ToDynamic, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ImePreeditRendering {
-    /// IME preedit is rendered by WezTerm itself
+    /// IME preedit is rendered by OnlyTerm itself
     #[default]
     Builtin,
     /// IME preedit is rendered by system

@@ -3,7 +3,7 @@
 Thanks for considering donating your time and energy!  Any contribution is
 valued, even if it is just to highlight a typo.
 
-OnlyTerm is a fork of [WezTerm](https://github.com/wezterm/wezterm); for
+OnlyTerm is a fork of [OnlyTerm](https://github.com/wezterm/wezterm); for
 anything specific to this fork, please use this repository's own issue
 tracker. The following upstream resources may also be helpful:
 

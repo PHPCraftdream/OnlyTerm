@@ -1,6 +1,6 @@
 # `QuitApplication`
 
-Terminate the WezTerm application, killing all tabs.
+Terminate the OnlyTerm application, killing all tabs.
 
 ```
 keys: [

@@ -1,9 +1,9 @@
 use crate::color::{RgbColor, RgbaColor};
+use onlyterm_dynamic::{FromDynamic, ToDynamic};
+use onlyterm_term::{Intensity, Underline};
 use std::convert::TryFrom;
 use termwiz::cell::CellAttributes;
 use termwiz::color::ColorSpec as TWColorSpec;
-use wezterm_dynamic::{FromDynamic, ToDynamic};
-use wezterm_term::{Intensity, Underline};
 
 /// Specify the text styling for a tab in the tab bar
 #[derive(Debug, Clone, Default, PartialEq, FromDynamic, ToDynamic)]

@@ -14,12 +14,12 @@ use async_trait::async_trait;
 use config::keyassignment::RotationDirection;
 use config::{configuration, ExecDomain, SerialDomain, ValueOrFunc};
 use downcast_rs::{impl_downcast, Downcast};
+use onlyterm_term::TerminalSize;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, ExitStatus, MasterPty, PtySize, PtySystem};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use wezterm_term::TerminalSize;
 mod writer_wrapper;
 pub(crate) use writer_wrapper::WriterWrapper;
 
@@ -192,7 +192,7 @@ pub trait Domain: Downcast + Send + Sync {
     ///
     /// Also used for a "single-pane hosting process" domain (one dedicated
     /// OS process per tab, used for regular and elevated/UAC tabs alike --
-    /// see `wezterm-gui`'s `spawn_single_pane_tab`/
+    /// see `onlyterm-gui`'s `spawn_single_pane_tab`/
     /// `spawn_elevated_single_pane_tab`), which is built to host exactly
     /// the one pane it was created for and overrides this to `false`.
     /// `Mux::resolve_spawn_tab_domain` consults this for
@@ -531,7 +531,7 @@ impl Domain for LocalDomain {
         // handle that `CreateProcessW` then rejects with
         // `ERROR_INVALID_HANDLE`). That failure used to propagate via `?`
         // all the way up through `Domain::spawn`/`async_run_terminal_gui` to
-        // the top-level error handler in `wezterm-gui`, which tears down the
+        // the top-level error handler in `onlyterm-gui`, which tears down the
         // whole process after a toast notification -- silently destroying
         // whatever window had already been created, rather than showing the
         // user anything resembling the normal failed-command-spawn pane
@@ -548,11 +548,11 @@ impl Domain for LocalDomain {
             Ok(pair) => pair,
             Err(err) => {
                 let writer = WriterWrapper::new(Box::new(std::io::sink()));
-                let mut terminal = wezterm_term::Terminal::new_with_nonblocking_writer(
+                let mut terminal = onlyterm_term::Terminal::new_with_nonblocking_writer(
                     size,
                     std::sync::Arc::new(config::TermConfig::new()),
                     "OnlyTerm",
-                    config::wezterm_version(),
+                    config::onlyterm_version(),
                     Box::new(writer.clone()),
                 );
                 if self.is_conpty() {
@@ -594,11 +594,11 @@ impl Domain for LocalDomain {
         // `ThreadedWriter` of its own, putting `Terminal`'s internal
         // writes and this pane's `writer()` writes on two independent
         // background threads instead of the single shared one.
-        let mut terminal = wezterm_term::Terminal::new_with_nonblocking_writer(
+        let mut terminal = onlyterm_term::Terminal::new_with_nonblocking_writer(
             size,
             std::sync::Arc::new(config::TermConfig::new()),
             "OnlyTerm",
-            config::wezterm_version(),
+            config::onlyterm_version(),
             Box::new(writer.clone()),
         );
         if self.is_conpty() {
@@ -653,7 +653,7 @@ impl Domain for LocalDomain {
     async fn domain_label(&self) -> String {
         if let Some(ed) = self.resolve_exec_domain() {
             match &ed.label {
-                Some(ValueOrFunc::Value(wezterm_dynamic::Value::String(s))) => s.to_string(),
+                Some(ValueOrFunc::Value(onlyterm_dynamic::Value::String(s))) => s.to_string(),
                 // `ValueOrFunc::Func` used to name a rhai function
                 // dispatched here (via `with_rhai_config_on_main_thread`/
                 // `emit_async_callback`) to compute the label. With the

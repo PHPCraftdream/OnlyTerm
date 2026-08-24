@@ -1,6 +1,6 @@
 use mux::pane::PaneId;
+use onlyterm_term::color::ColorPalette;
 use serde::{Deserialize, Serialize};
-use wezterm_term::color::ColorPalette;
 
 /// This is used both as a notification from server->client
 /// and as a configuration request from client->server when

@@ -5,6 +5,8 @@ use crate::pane::{CachePolicy, ForEachPaneLogicalLine, LogicalLine, Pane, PaneId
 use crate::renderable::{RenderableDimensions, StableCursorPosition};
 use crate::{parse_buffered_data, DomainId};
 use crossbeam::channel::{unbounded, Sender};
+use onlyterm_term::color::ColorPalette;
+use onlyterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 use parking_lot::{MappedMutexGuard, Mutex};
 use rangeset::RangeSet;
 use std::ops::Range;
@@ -15,8 +17,6 @@ use std::time::{Duration, Instant};
 use termwiz::escape::Action;
 use termwiz::surface::{Line, SequenceNo};
 use url::Url;
-use wezterm_term::color::ColorPalette;
-use wezterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 
 mod domain_detach;
 mod domain_registration;

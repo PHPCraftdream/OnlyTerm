@@ -1,5 +1,5 @@
+use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 use std::fmt::Display;
-use wezterm_dynamic::{FromDynamic, FromDynamicOptions, ToDynamic, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FontWeight(u16);
@@ -73,7 +73,7 @@ impl FromDynamic for FontWeight {
     fn from_dynamic(
         value: &Value,
         _options: FromDynamicOptions,
-    ) -> Result<Self, wezterm_dynamic::Error> {
+    ) -> Result<Self, onlyterm_dynamic::Error> {
         match value {
             Value::String(s) => {
                 Ok(Self::from_str(s).ok_or_else(|| format!("invalid font weight {}", s))?)
@@ -86,7 +86,7 @@ impl FromDynamic for FontWeight {
                         Err(format!("invalid font weight {}", value).into())
                     }
                 } else {
-                    Err(wezterm_dynamic::Error::NoConversion {
+                    Err(onlyterm_dynamic::Error::NoConversion {
                         source_type: other.variant_name().to_string(),
                         dest_type: "FontWeight",
                     })

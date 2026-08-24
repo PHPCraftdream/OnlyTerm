@@ -46,8 +46,8 @@ fn test_env() {
 #[test]
 fn test_env_case_insensitive_override() {
     let mut cmd = CommandBuilder::new("dummy");
-    cmd.env("Cargo_Pkg_Authors", "Not Wez");
-    assert!(cmd.get_env("cargo_pkg_authors") == Some(OsStr::new("Not Wez")));
+    cmd.env("Cargo_Pkg_Authors", "Not OnlyTerm");
+    assert!(cmd.get_env("cargo_pkg_authors") == Some(OsStr::new("Not OnlyTerm")));
 
     cmd.env_remove("cARGO_pKG_aUTHORS");
     assert!(cmd.get_env("CARGO_PKG_AUTHORS").is_none());

@@ -80,7 +80,7 @@ hyperlink_rules: [
 ```
 
 See also [hyperlink_rules](config/reference/config/hyperlink_rules.md) and
-[default_hyperlink_rules](config/reference/wezterm/default_hyperlink_rules.md)
+[default_hyperlink_rules](config/reference/onlyterm/default_hyperlink_rules.md)
 (a removed scripting function; see that page).
 
 

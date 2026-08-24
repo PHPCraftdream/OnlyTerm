@@ -28,5 +28,5 @@ It has the following fields:
  * `physical_top` the top of the physical non-scrollback screen expressed as
    a stable index.
  * `scrollback_top` the top of the scrollback; the earliest row remembered
-   by wezterm.
+   by onlyterm.
 

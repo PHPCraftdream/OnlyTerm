@@ -10,11 +10,11 @@
     information back out* from OnlyTerm's side (`format-tab-title`,
     `update-status`, `user-var-changed` event hooks, `pane:get_user_vars()`,
     `pane:get_title()`, `pane:get_current_working_dir()`,
-    `pane:get_foreground_process_info()`, the whole `wezterm.procinfo`
+    `pane:get_foreground_process_info()`, the whole `onlyterm.procinfo`
     module) required the scripting engine, which has been removed — see the
     [changelog](../changelog.md#continuousnightly). There is currently no
     way to use any of this data from your config; it's only readable via
-    `wezterm cli list`/`get-text` and similar CLI introspection.
+    `onlyterm cli list`/`get-text` and similar CLI introspection.
 
 After spawning a program into a pane, a terminal emulator has no guaranteed
 reliable way to reason about what might be happening inside the pane; the only
@@ -22,7 +22,7 @@ official system-provided means of interaction is through a limited PTY
 interface that basically provides only input and output streams and a way to
 communicate the screen size to the pane.
 
-While wezterm provides a few functions that can help to peek into locally
+While onlyterm provides a few functions that can help to peek into locally
 running processes, those cannot be used with remote processes when you're
 ssh'ing to a remote host, for example.
 
@@ -67,9 +67,9 @@ when running various commands:
 # This function emits an OSC 1337 sequence to set a user var
 # associated with the current terminal pane.
 # It requires the `base64` utility to be available in the path.
-# This function is included in the wezterm shell integration script, but
+# This function is included in the onlyterm shell integration script, but
 # is reproduced here for clarity
-__wezterm_set_user_var() {
+__onlyterm_set_user_var() {
   if hash base64 2>/dev/null ; then
     if [[ -z "${TMUX}" ]] ; then
       printf "\033]1337;SetUserVar=%s=%s\007" "$1" `echo -n "$2" | base64`
@@ -83,10 +83,10 @@ __wezterm_set_user_var() {
 
 function _run_prog() {
     # set PROG to the program being run
-    __wezterm_set_user_var "PROG" "$1"
+    __onlyterm_set_user_var "PROG" "$1"
 
     # arrange to clear it when it is done
-    trap '__wezterm_set_user_var PROG ""' EXIT
+    trap '__onlyterm_set_user_var PROG ""' EXIT
 
     # and now run the corresponding command, taking care to avoid looping
     # with the alias definition
@@ -98,14 +98,14 @@ alias tmux="_run_prog tmux"
 alias nvim="_run_prog nvim"
 ```
 
-Then on the wezterm side, this information could previously be used when
+Then on the onlyterm side, this information could previously be used when
 formatting the tab titles (this no longer works — see the note at the top of
 this page):
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-wezterm.on('format-tab-title', function(tab)
+onlyterm.on('format-tab-title', function(tab)
   local prog = tab.active_pane.user_vars.PROG
   return tab.active_pane.title .. ' [' .. (prog or '') .. ']'
 end)
@@ -113,11 +113,11 @@ end)
 return {}
 ```
 
-If you install the [wezterm shell integration](../shell-integration.md) you
+If you install the [onlyterm shell integration](../shell-integration.md) you
 will get a more comprehensive set of user vars set for you automatically.
 
 User vars enable you to very deliberately signal information from your pane to
-your wezterm config, and will work across multiplexer connections and even
+your onlyterm config, and will work across multiplexer connections and even
 through tmux (provided that you use the [tmux passthrough escape
 sequence](https://github.com/tmux/tmux/wiki/FAQ#what-is-the-passthrough-escape-sequence-and-how-do-i-use-it)
 to allow it to pass through).
@@ -130,7 +130,7 @@ specific information in a pane.
 
 ## OSC 0, 1, 2 for setting the Window/Pane Title
 
-wezterm, like many other terminals, will interpret Operating System Command
+onlyterm, like many other terminals, will interpret Operating System Command
 (OSC) escape sequences for codes 0, 1 and 2 as updating the title:
 
 |OSC|Description|Action|Example|
@@ -144,21 +144,21 @@ wezterm, like many other terminals, will interpret Operating System Command
 to retrieve the effective title that has been set for a pane.
 
 It is common practice for shells in many distributions to arrange to set OSC 2
-prior to executing a command. wezterm doesn't currently set this up
-automatically. Note that wezterm will attempt to determine the foreground
+prior to executing a command. onlyterm doesn't currently set this up
+automatically. Note that onlyterm will attempt to determine the foreground
 process and substitute its title if the pane is a local pane and no title has
 been set by an OSC escape sequence.
 
 ## OSC 7 for setting the current working directory
 
-Emitting OSC 7 will tell wezterm to use a specific URI for the current working
+Emitting OSC 7 will tell onlyterm to use a specific URI for the current working
 directory associated with a pane:
 
 ```bash
 printf "\033]7;file://HOSTNAME/CURRENT/DIR\033\\"
 ```
 
-You may also use `wezterm set-working-directory` for this if you have `wezterm`
+You may also use `onlyterm set-working-directory` for this if you have `onlyterm`
 available.
 
 The value you set via OSC 7 is available
@@ -166,29 +166,29 @@ The value you set via OSC 7 is available
 and/or the [PaneInformation](../config/reference/PaneInformation.md)
 `current_working_dir` field can be used to retrieve the working directory that
 has been set for a pane.  If OSC 7 has never been used in a pane, and that pane
-is a local pane, wezterm can attempt to determine the working directory of the
+is a local pane, onlyterm can attempt to determine the working directory of the
 foreground process that is associated with the pane.
 
-Installing the [wezterm shell integration](../shell-integration.md) will
+Installing the [onlyterm shell integration](../shell-integration.md) will
 arrange for bash/zsh to set OSC 7 for you.
 
 ## Local Process State
 
-wezterm provides some functions that can attempt to extract information about
+onlyterm provides some functions that can attempt to extract information about
 processes that are running on the local machine; these will not work with
 multiplexer connections of any kind (even unix multiplexers):
 
 * [pane:get_foreground_process_info()](../config/reference/pane/get_foreground_process_info.md) -
   returns information about the process hierarchy in a pane
-* [wezterm.procinfo.get_info_for_pid()](../config/reference/wezterm.procinfo/get_info_for_pid.md) -
+* [onlyterm.procinfo.get_info_for_pid()](../config/reference/onlyterm.procinfo/get_info_for_pid.md) -
   returns information about the process hierarchy for a given process id
 
 There are a couple of other similar/related methods available to the
 [Pane](../config/reference/pane/index.md) object and in the
-[wezterm.procinfo](../config/reference/wezterm.procinfo/index.md) module.
+[onlyterm.procinfo](../config/reference/onlyterm.procinfo/index.md) module.
 
 Because these local process functions don't require changing your shell
 configuration to get them working, they may be the most convenient to use in
-your wezterm configuration, but they are limited to local processes only and
+your onlyterm configuration, but they are limited to local processes only and
 may not work as well to determine the correct foreground process when running
 on Windows.

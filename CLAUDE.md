@@ -1,4 +1,4 @@
-# OnlyTerm (форк wezterm под Windows)
+# OnlyTerm (форк upstream-терминала под Windows)
 
 ## СТОП-ПРАВИЛО: процессы OnlyTerm неприкосновенны
 
@@ -39,8 +39,8 @@ multi-day sessions).
 ## Прочее
 
 - Не трогать `C:\Users\Computer\.onlyterm.ktav` (конфиг пользователя).
-- Проверки: `cargo build -p wezterm-gui`, `cargo clippy -p wezterm-gui --all-targets -- -D warnings`,
-  `cargo fmt --check`, `cargo test -p wezterm-gui`.
+- Проверки: `cargo build -p onlyterm-gui`, `cargo clippy -p onlyterm-gui --all-targets -- -D warnings`,
+  `cargo fmt --check`, `cargo test -p onlyterm-gui`.
 - Edition 2018: `panic!("...{var}")` без явных аргументов не интерполирует и валит
   `clippy -D warnings` — только `panic!("...{}", var)`.
 - Логи OnlyTerm пишутся по одному файлу на PID в `C:\Users\Computer\.local\share\onlyterm\`

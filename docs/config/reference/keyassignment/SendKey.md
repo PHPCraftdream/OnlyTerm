@@ -7,7 +7,7 @@ the effect of a key combination.
 
 Note that this rebinding effect only applies to the input that is about to be
 sent to the pane; it doesn't get re-evaluated against the key assignments
-you've configured in wezterm again.
+you've configured in onlyterm again.
 
 For example, macOS users often prefer to rebind `Option+LeftArrow` and
 `Option+RightArrow` to match the behavior of Terminal.app, where those key

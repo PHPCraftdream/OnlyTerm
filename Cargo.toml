@@ -4,27 +4,27 @@ members = [
   "crates/bidi/generate",
   "crates/strip-ansi-escapes",
   "crates/sync-color-schemes",
-  "crates/wezterm",
-  "crates/wezterm-blob-leases",
-  "crates/wezterm-cell",
-  "crates/wezterm-color-schemes-data",
-  "crates/wezterm-escape-parser",
-  "crates/wezterm-dynamic",
-  "crates/wezterm-elevated-transport",
-  "crates/wezterm-gpu-render",
-  "crates/wezterm-gpu-protocol",
-  "crates/wezterm-gui",
-  "crates/wezterm-gui-render-thread",
-  "crates/wezterm-mux-server",
-  "crates/wezterm-open-url",
-  "crates/wezterm-surface",
-  "crates/wezterm-uds",
+  "crates/onlyterm",
+  "crates/onlyterm-blob-leases",
+  "crates/onlyterm-cell",
+  "crates/onlyterm-color-schemes-data",
+  "crates/onlyterm-escape-parser",
+  "crates/onlyterm-dynamic",
+  "crates/onlyterm-elevated-transport",
+  "crates/onlyterm-gpu-render",
+  "crates/onlyterm-gpu-protocol",
+  "crates/onlyterm-gui",
+  "crates/onlyterm-gui-render-thread",
+  "crates/onlyterm-mux-server",
+  "crates/onlyterm-open-url",
+  "crates/onlyterm-surface",
+  "crates/onlyterm-uds",
   "xtask",
 ]
 resolver = "2"
 exclude = [
   "crates/termwiz/codegen",
-  "crates/wezterm-char-props/codegen",
+  "crates/onlyterm-char-props/codegen",
 ]
 
 # Vendored copy of wgpu-hal 25.0.2, patched to expose a fast DX12
@@ -228,31 +228,31 @@ varbincode = "0.1"
 vtparse = { version="0.7", path="crates/vtparse", default-features=false }
 walkdir = "2"
 # wayland-* removed - Windows-only build
-wezterm-bidi = { version="0.2.3", path = "crates/bidi", default-features=false}
-wezterm-blob-leases = { version="0.1.1", path = "crates/wezterm-blob-leases"}
-wezterm-cell = { path = "crates/wezterm-cell"}
-wezterm-char-props = { path = "crates/wezterm-char-props", default-features=false }
-wezterm-color-schemes-data = { path = "crates/wezterm-color-schemes-data" }
-wezterm-client = { path = "crates/wezterm-client" }
-wezterm-color-types = { version="0.3", path = "crates/color-types", default-features=false }
-wezterm-config-derive = { version="0.1", path="crates/config/derive" }
-wezterm-dynamic = { version = "0.2.1", path = "crates/wezterm-dynamic", default-features=false }
-wezterm-dynamic-derive = { version="0.1.1", path="crates/wezterm-dynamic/derive" }
-wezterm-elevated-transport = { path = "crates/wezterm-elevated-transport" }
-wezterm-escape-parser = { version="0.1.0", path="crates/wezterm-escape-parser" }
-wezterm-font = { path = "crates/wezterm-font" }
-wezterm-gpu-render = { path = "crates/wezterm-gpu-render" }
-wezterm-gpu-protocol = { path = "crates/wezterm-gpu-protocol" }
-wezterm-gui-render-thread = { path = "crates/wezterm-gui-render-thread" }
-wezterm-gui-subcommands = { path = "crates/wezterm-gui-subcommands" }
-wezterm-input-types = { version="0.1", path = "crates/wezterm-input-types", default-features=false }
-wezterm-mux-server-impl = { path = "crates/wezterm-mux-server-impl" }
-wezterm-open-url = { path = "crates/wezterm-open-url" }
-wezterm-surface = { path = "crates/wezterm-surface" }
-wezterm-term = { path = "crates/term" }
-wezterm-toast-notification = { path = "crates/wezterm-toast-notification" }
-wezterm-uds = { path = "crates/wezterm-uds" }
-wezterm-version = { path = "crates/wezterm-version" }
+onlyterm-bidi = { version="0.2.3", path = "crates/bidi", default-features=false}
+onlyterm-blob-leases = { version="0.1.1", path = "crates/onlyterm-blob-leases"}
+onlyterm-cell = { path = "crates/onlyterm-cell"}
+onlyterm-char-props = { path = "crates/onlyterm-char-props", default-features=false }
+onlyterm-color-schemes-data = { path = "crates/onlyterm-color-schemes-data" }
+onlyterm-client = { path = "crates/onlyterm-client" }
+onlyterm-color-types = { version="0.3", path = "crates/color-types", default-features=false }
+onlyterm-config-derive = { version="0.1", path="crates/config/derive" }
+onlyterm-dynamic = { version = "0.2.1", path = "crates/onlyterm-dynamic", default-features=false }
+onlyterm-dynamic-derive = { version="0.1.1", path="crates/onlyterm-dynamic/derive" }
+onlyterm-elevated-transport = { path = "crates/onlyterm-elevated-transport" }
+onlyterm-escape-parser = { version="0.1.0", path="crates/onlyterm-escape-parser" }
+onlyterm-font = { path = "crates/onlyterm-font" }
+onlyterm-gpu-render = { path = "crates/onlyterm-gpu-render" }
+onlyterm-gpu-protocol = { path = "crates/onlyterm-gpu-protocol" }
+onlyterm-gui-render-thread = { path = "crates/onlyterm-gui-render-thread" }
+onlyterm-gui-subcommands = { path = "crates/onlyterm-gui-subcommands" }
+onlyterm-input-types = { version="0.1", path = "crates/onlyterm-input-types", default-features=false }
+onlyterm-mux-server-impl = { path = "crates/onlyterm-mux-server-impl" }
+onlyterm-open-url = { path = "crates/onlyterm-open-url" }
+onlyterm-surface = { path = "crates/onlyterm-surface" }
+onlyterm-term = { path = "crates/term" }
+onlyterm-toast-notification = { path = "crates/onlyterm-toast-notification" }
+onlyterm-uds = { path = "crates/onlyterm-uds" }
+onlyterm-version = { path = "crates/onlyterm-version" }
 wgpu = "25.0.2"
 winapi = "0.3.9"
 window = {path="crates/window"}

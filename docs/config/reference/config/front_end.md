@@ -24,7 +24,7 @@ The `WebGpu` front end gets a dedicated per-window render thread (see
 `webgpu_render_thread`), which isolates a stuck GPU driver call so that it
 can't freeze the whole process.
 
-The WebGpu front end allows wezterm to use GPU acceleration provided by
+The WebGpu front end allows onlyterm to use GPU acceleration provided by
 a number of platform-specific backends:
 
 * Metal (on macOS)
@@ -32,7 +32,7 @@ a number of platform-specific backends:
 * DirectX 12 (on Windows)
 
 If WebGpu adapter/device initialization fails outright (for example in a VM
-without GPU passthrough, or due to a driver mismatch), wezterm will report a
+without GPU passthrough, or due to a driver mismatch), onlyterm will report a
 clear error explaining what went wrong rather than silently degrading or
 leaving a blank window on screen.
 

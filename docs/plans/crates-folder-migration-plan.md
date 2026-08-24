@@ -1,4 +1,4 @@
-# План: перенос всех крейтов wezterm в `crates/`
+# План: перенос всех крейтов onlyterm в `crates/`
 
 (Задача TaskList #127 — только план, перенос не выполнялся)
 
@@ -6,11 +6,11 @@
 
 Все 42 директории верхнего уровня со своим `Cargo.toml` (explicit `workspace.members`, `exclude`-крейты и крейты, подтягиваемые только через `path =` в `[workspace.dependencies]`):
 
-`base91, bidi, bidi/generate, bintree, codec, color-types, config, env-bootstrap, filedescriptor, frecency, lfucache, mux, procinfo, promise, pty, rangeset, ratelim, strip-ansi-escapes, sync-color-schemes, tabout, term, termwiz, umask, vtparse, wezterm, wezterm-blob-leases, wezterm-cell, wezterm-char-props, wezterm-client, wezterm-dynamic, wezterm-escape-parser, wezterm-font, wezterm-gui, wezterm-gui-subcommands, wezterm-input-types, wezterm-mux-server, wezterm-mux-server-impl, wezterm-open-url, wezterm-surface, wezterm-toast-notification, wezterm-uds, wezterm-version, window`.
+`base91, bidi, bidi/generate, bintree, codec, color-types, config, env-bootstrap, filedescriptor, frecency, lfucache, mux, procinfo, promise, pty, rangeset, ratelim, strip-ansi-escapes, sync-color-schemes, tabout, term, termwiz, umask, vtparse, onlyterm, onlyterm-blob-leases, onlyterm-cell, onlyterm-char-props, onlyterm-client, onlyterm-dynamic, onlyterm-escape-parser, onlyterm-font, onlyterm-gui, onlyterm-gui-subcommands, onlyterm-input-types, onlyterm-mux-server, onlyterm-mux-server-impl, onlyterm-open-url, onlyterm-surface, onlyterm-toast-notification, onlyterm-uds, onlyterm-version, window`.
 
 Плюс переносится как единое целое вместе с родителем:
 - `bidi/generate` → `crates/bidi/generate`.
-- `termwiz/codegen`, `wezterm-char-props/codegen` (в `exclude`, но физически вложены) → едут автоматически вместе с родителями.
+- `termwiz/codegen`, `onlyterm-char-props/codegen` (в `exclude`, но физически вложены) → едут автоматически вместе с родителями.
 - `deps/fontconfig` (крейт `fontconfig`) — рекомендация: перенести в `crates/fontconfig` для единообразия, поправить `path = "deps/fontconfig"`.
 - `lua-api-crates/*` (14 под-крейтов) — вся директория переезжает как `crates/lua-api-crates/*`, сохраняя внутреннюю структуру.
 
@@ -25,13 +25,13 @@
 - **Корневой `Cargo.toml`**: `members = [...]` (14 явных записей → префикс `crates/`), `exclude = [...]` (2 записи → префикс `crates/`), `[workspace.dependencies]` — все ~50+ `path = "..."` записей получают префикс `crates/`.
 - **Path-зависимости внутри Cargo.toml каждого крейта** — если все крейты остаются прямыми детьми `crates/`, относительные пути между соседями (`../other-crate`) не меняются. Требуется точечная перепроверка каждого из 62 файлов при выполнении.
 - **`include_bytes!` через границу крейта** (критично для атомарности переноса):
-  - `term/src/terminalstate/mod.rs:40` — `include_bytes!("../../../termwiz/data/wezterm")`.
+  - `term/src/terminalstate/mod.rs:40` — `include_bytes!("../../../termwiz/data/onlyterm")`.
   - `lua-api-crates/termwiz-funcs/src/lib.rs:155` — `include_bytes!("../../../termwiz/data/xterm-256color")`.
   - Безопасно ТОЛЬКО если весь перенос делается одним атомарным шагом (все участвующие крейты становятся siblings под `crates/` одновременно).
 - **`.github/workflows/*.yml`** — сгенерированы из `ci/generate-workflows.py`; используют `cargo build -p <crate>` (имя пакета, не путь) — правок не требуют.
 - **`Makefile`** — только `-p <crate>` — правок не требуют.
-- **`nix/flake.nix:235`** — `${finalAttrs.src}/termwiz/data/wezterm.terminfo` → `.../crates/termwiz/data/wezterm.terminfo`.
-- **`ci/deploy.sh` (строки 39, 412)** и **`ci/generate-workflows.py` (строка 37, `EXTRA_INPUT_PATHS`)** — `termwiz/data/wezterm.terminfo` → `crates/termwiz/data/wezterm.terminfo`.
+- **`nix/flake.nix:235`** — `${finalAttrs.src}/termwiz/data/onlyterm.terminfo` → `.../crates/termwiz/data/onlyterm.terminfo`.
+- **`ci/deploy.sh` (строки 39, 412)** и **`ci/generate-workflows.py` (строка 37, `EXTRA_INPUT_PATHS`)** — `termwiz/data/onlyterm.terminfo` → `crates/termwiz/data/onlyterm.terminfo`.
 - **`ci/generate-docs.py`, `.gitignore`, `rust-toolchain.toml`, `.cargo/config.toml`** — проверены, правок не требуют.
 
 ## 4. Стратегия миграции

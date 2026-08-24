@@ -1,6 +1,6 @@
 use super::*;
 use crate::escape::csi::KittyKeyboardFlags;
-use wezterm_input_types::KeyboardLedStatus as InputKeyboardLedStatus;
+use onlyterm_input_types::KeyboardLedStatus as InputKeyboardLedStatus;
 
 const NO_MORE: bool = false;
 const MAYBE_MORE: bool = true;
@@ -521,9 +521,9 @@ fn encode_tab_with_modifiers() {
 #[test]
 fn encode_kitty_matches_input_types_encode_kitty() {
     // In Kitty mode, termwiz's KeyCode::encode must delegate to the same
-    // wezterm_input_types::KeyEvent::encode_kitty encoder used by the GUI
+    // onlyterm_input_types::KeyEvent::encode_kitty encoder used by the GUI
     // layer (this is what makes the kitty keyboard protocol work for
-    // panes reached via the mux / `wezterm connect`). Verify the wiring --
+    // panes reached via the mux / `onlyterm connect`). Verify the wiring --
     // the to_input_types_key_code mapping plus the encode_kitty call --
     // by comparing against a direct encode_kitty call on the equivalent
     // input-types KeyEvent, for both key-down and key-up.
@@ -536,13 +536,13 @@ fn encode_kitty_matches_input_types_encode_kitty() {
         modify_other_keys: None,
     };
 
-    // (termwiz KeyCode, equivalent wezterm_input_types::KeyCode)
-    let cases: &[(KeyCode, wezterm_input_types::KeyCode)] = &[
-        (KeyCode::Char('a'), wezterm_input_types::KeyCode::Char('a')),
-        (KeyCode::Enter, wezterm_input_types::KeyCode::Char('\r')),
+    // (termwiz KeyCode, equivalent onlyterm_input_types::KeyCode)
+    let cases: &[(KeyCode, onlyterm_input_types::KeyCode)] = &[
+        (KeyCode::Char('a'), onlyterm_input_types::KeyCode::Char('a')),
+        (KeyCode::Enter, onlyterm_input_types::KeyCode::Char('\r')),
         (
             KeyCode::Escape,
-            wezterm_input_types::KeyCode::Char('\u{1b}'),
+            onlyterm_input_types::KeyCode::Char('\u{1b}'),
         ),
     ];
 
@@ -550,7 +550,7 @@ fn encode_kitty_matches_input_types_encode_kitty() {
         for is_down in [true, false] {
             let via_encode = tw_key.encode(Modifiers::NONE, mode, is_down).unwrap();
 
-            let direct = wezterm_input_types::KeyEvent {
+            let direct = onlyterm_input_types::KeyEvent {
                 key: it_key.clone(),
                 modifiers: Modifiers::NONE,
                 leds: InputKeyboardLedStatus::default(),

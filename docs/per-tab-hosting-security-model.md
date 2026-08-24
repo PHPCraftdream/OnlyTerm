@@ -25,7 +25,7 @@ UAC, — то есть повышение привилегий без запро
 
 ### Обычная вкладка — унаследованная пара сокетов
 
-`crates/wezterm-client/src/client/conn.rs`, ветка `UnixTarget::Proxy`:
+`crates/onlyterm-client/src/client/conn.rs`, ветка `UnixTarget::Proxy`:
 GUI создаёт `filedescriptor::socketpair()` и отдаёт один конец ребёнку как
 stdin/stdout при спавне. Файлового объекта не создаётся вовсе.
 
@@ -46,7 +46,7 @@ ACL-поверхности, в которой можно ошибиться**. �
 
 ### Админская вкладка — WebSocket-рандеву
 
-`crates/wezterm-elevated-transport/src/lib.rs`. Поднятый ребёнок не может
+`crates/onlyterm-elevated-transport/src/lib.rs`. Поднятый ребёнок не может
 унаследовать хендл от непривилегированного родителя, поэтому направление
 обратное: GUI открывает слушателя на `127.0.0.1:0`, генерирует токен и передаёт
 порт с токеном ребёнку, а ребёнок подключается обратно и предъявляет токен в
@@ -64,7 +64,7 @@ ACL-поверхности, в которой можно ошибиться**. �
    переменная в `spawn_elevated_single_pane`; как только `accept` вернул поток,
    она дропается и порт закрывается. Даже добытый токен предъявить негде.
 4. **Allow-list PDU.** `PduPolicy::ElevatedSinglePaneAllowList`
-   (`crates/wezterm-mux-server-impl/src/sessionhandler/mod.rs`) пропускает
+   (`crates/onlyterm-mux-server-impl/src/sessionhandler/mod.rs`) пропускает
    только минимум для работы одной панели и отвергает `SpawnV2`, `SplitPane`,
    `MovePaneToNewTab`, `GetClientList`, работу со scrollback и управление
    workspace. Даже полностью захваченный канал не даёт запустить произвольный
@@ -73,7 +73,7 @@ ACL-поверхности, в которой можно ошибиться**. �
 ## Замер: утекает ли токен через командную строку
 
 Токен передаётся поднятому ребёнку аргументом командной строки —
-`construct_single_pane_command_line` в `crates/wezterm-gui/src/elevate.rs`
+`construct_single_pane_command_line` в `crates/onlyterm-gui/src/elevate.rs`
 формирует `--single-pane --connect-ws-port <port> --token <token> --supervise-pid <pid>`.
 
 Это выглядит как утечка: командная строка процесса на Windows читается снаружи.

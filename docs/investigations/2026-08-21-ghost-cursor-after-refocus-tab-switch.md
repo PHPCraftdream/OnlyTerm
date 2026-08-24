@@ -29,8 +29,8 @@ PID живого процесса: 15072 (`--start-conf dev-forge.ktav`, окн�
     строку (`Screen::rewrap_lines`, `crates/term/src/screen.rs`).
   - `2c4006622` — слот курсора для `RowSweep`-исключения из бюджета считался от
     `physical_top` вместо реального `current_viewport`, что давало неверный слот при
-    скролл-бэке (`crates/wezterm-gui/src/termwindow/render/budget.rs`,
-    `crates/wezterm-gui/src/termwindow/render/pane.rs`).
+    скролл-бэке (`crates/onlyterm-gui/src/termwindow/render/budget.rs`,
+    `crates/onlyterm-gui/src/termwindow/render/pane.rs`).
 - Не связано с сегодняшней работой над `HostProcessBackend` — установленный бинарник не
   содержит этого кода вообще (собран из того же коммита, что сейчас HEAD, до всех
   незакоммиченных изменений этой сессии).
@@ -38,13 +38,13 @@ PID живого процесса: 15072 (`--start-conf dev-forge.ktav`, окн�
 ## Правдоподобный механизм (одна цепочка, подтверждена чтением кода)
 
 1. **`quad_generation` — это одно поле на всё окно**, не per-строка и не per-панель
-   (`crates/wezterm-gui/src/termwindow/mod.rs:368`). Оно входит в
+   (`crates/onlyterm-gui/src/termwindow/mod.rs:368`). Оно входит в
    `LineQuadCacheKey.quad_generation` (`render/mod.rs:80`) — ключ кэша построенных
    quad-ов для КАЖДОЙ строки терминала. Любое изменение этого поля разом делает
    cache-miss ВСЕ строки ВСЕХ панелей окна одновременно, а не одну строку.
 
 2. **Оно бампается на каждой смене фокуса окна**, в обе стороны (потеря и получение):
-   `focus_changed()`, `crates/wezterm-gui/src/termwindow/window_handler.rs:32`
+   `focus_changed()`, `crates/onlyterm-gui/src/termwindow/window_handler.rs:32`
    (`self.quad_generation += 1;`). То же самое происходит и на любой смене
    `window_state`/размера — `resize.rs:51` и `resize.rs:153` (`apply_dimensions`).
    Оба события естественно случаются ровно в описанном пользователем сценарии:
@@ -54,7 +54,7 @@ PID живого процесса: 15072 (`--start-conf dev-forge.ktav`, окн�
 3. **Бюджет перестройки строк по кадру ограничен по умолчанию** —
    `tab_frame_build_budget_ms` = 40 мс (`crates/config/src/config.rs:1305`), это
    рабочий дефолт, не выключен. Логика — `RowSweep::decide`
-   (`crates/wezterm-gui/src/termwindow/render/budget.rs:88`): при cache-miss
+   (`crates/onlyterm-gui/src/termwindow/render/budget.rs:88`): при cache-miss
    гарантированно перестраивается (`RowAction::Build`) только (а) строка, на которой
    реально сейчас курсор (`cursor_row_slot`, вычисляется каждый кадр заново и, после
    фикса `2c4006622`, корректно), и (б) одна "ротационная" строка, продвигающая

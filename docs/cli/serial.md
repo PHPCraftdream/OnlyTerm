@@ -1,7 +1,7 @@
-# `wezterm serial`
+# `onlyterm serial`
 
 ```console
-{% include "../examples/cmd-synopsis-wezterm-serial--help.txt" %}
+{% include "../examples/cmd-synopsis-onlyterm-serial--help.txt" %}
 ```
 
 

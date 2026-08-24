@@ -5,6 +5,14 @@ use super::*;
 use crate::color::{ColorPalette, RgbColor};
 use crate::config::{BidiMode, NewlineCanon};
 use log::debug;
+use onlyterm_bidi::ParagraphDirectionHint;
+use onlyterm_cell::image::ImageData;
+use onlyterm_cell::UnicodeVersion;
+use onlyterm_escape_parser::csi::{
+    CursorStyle, Edit, EraseInDisplay, EraseInLine, TabulationClear,
+};
+use onlyterm_escape_parser::{OperatingSystemCommand, CSI};
+use onlyterm_surface::{CursorShape, CursorVisibility, SequenceNo};
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::num::NonZeroUsize;
@@ -14,12 +22,6 @@ use std::sync::Arc;
 use terminfo::Database;
 use termwiz::input::KeyboardEncoding;
 use url::Url;
-use wezterm_bidi::ParagraphDirectionHint;
-use wezterm_cell::image::ImageData;
-use wezterm_cell::UnicodeVersion;
-use wezterm_escape_parser::csi::{CursorStyle, Edit, EraseInDisplay, EraseInLine, TabulationClear};
-use wezterm_escape_parser::{OperatingSystemCommand, CSI};
-use wezterm_surface::{CursorShape, CursorVisibility, SequenceNo};
 
 mod csi;
 mod image;
@@ -34,7 +36,7 @@ use crate::terminalstate::kitty::*;
 
 lazy_static::lazy_static! {
     static ref DB: Database = {
-        let data = include_bytes!("../../../termwiz/data/wezterm");
+        let data = include_bytes!("../../../termwiz/data/onlyterm");
         Database::from_buffer(&data[..]).unwrap()
     };
 }
@@ -674,7 +676,7 @@ impl TerminalState {
     /// OSC 1 is used to set the "icon title", which some terminal
     /// emulators interpret as a shorter title string for use when
     /// showing the tab title.
-    /// Here in wezterm the terminalstate is isolated from other
+    /// Here in onlyterm the terminalstate is isolated from other
     /// tabs; we process escape sequences without knowledge of other
     /// tabs, so we maintain both title strings here.
     /// The gui layer doesn't currently have a concept of what the

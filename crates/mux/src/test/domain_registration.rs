@@ -6,9 +6,9 @@
 use super::*;
 use crate::{Domain, DomainId, Mux};
 use async_trait::async_trait;
+use onlyterm_term::TerminalSize;
 use portable_pty::CommandBuilder;
 use std::sync::Arc;
-use wezterm_term::TerminalSize;
 
 /// A minimal Domain implementation for testing domain registration.
 struct TestDomain {

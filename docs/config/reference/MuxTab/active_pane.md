@@ -17,7 +17,7 @@
 
 A convenience accessor for returning the active pane in the tab.
 
-In earlier versions of wezterm, you could obtain this via:
+In earlier versions of onlyterm, you could obtain this via:
 
 ```lua
 function active_pane(tab)

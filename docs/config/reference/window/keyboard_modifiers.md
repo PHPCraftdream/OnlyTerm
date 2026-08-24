@@ -28,13 +28,13 @@ This example shows the current modifier and led status in the right status
 area:
 
 ```lua
-local wezterm = require 'wezterm'
+local onlyterm = require 'onlyterm'
 
-local config = wezterm.config_builder()
+local config = onlyterm.config_builder()
 
 config.debug_key_events = true
 
-wezterm.on('update-status', function(window, pane)
+onlyterm.on('update-status', function(window, pane)
   local mods, leds = window:keyboard_modifiers()
   window:set_right_status('mods=' .. mods .. ' leds=' .. leds)
 end)

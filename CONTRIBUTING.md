@@ -51,7 +51,7 @@ Keep in mind that for maximal compatibility and utility the terminal model aims 
 be compatible with the `xterm` behavior.
 https://invisible-island.net/xterm/ctlseqs/ctlseqs.html is a useful resource!
 
-The `crates/wezterm-gui` directory holds the code for the GUI renderer for the
+The `crates/onlyterm-gui` directory holds the code for the GUI renderer for the
 terminal model.  If you want to change something about the GUI you want to be
 in that directory.
 
@@ -90,8 +90,8 @@ per benchmark, then re-runs that static count on every subsequent `cargo bench`,
 wall-time becomes a directly comparable speed signal across runs.
 
 All benchmarks in this workspace use this harness — `rangeset` (`crates/rangeset/benches/rangeset.rs`),
-`termwiz`'s `cell` bench (`crates/termwiz/benches/cell.rs`), `wezterm-char-props`'s
-`wcwidth` bench (`crates/wezterm-char-props/benches/wcwidth.rs`), and the
+`termwiz`'s `cell` bench (`crates/termwiz/benches/cell.rs`), `onlyterm-char-props`'s
+`wcwidth` bench (`crates/onlyterm-char-props/benches/wcwidth.rs`), and the
 `mux`/`placeholder` demo (`crates/mux/benches/placeholder.rs`). Criterion is no
 longer used anywhere in the project; it has been fully replaced by `bench-scale-tool`.
 

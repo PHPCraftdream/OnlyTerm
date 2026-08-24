@@ -1,7 +1,7 @@
 use mux::pane::PaneId;
 use mux::tab::TabId;
+use onlyterm_term::TerminalSize;
 use serde::{Deserialize, Serialize};
-use wezterm_term::TerminalSize;
 
 #[derive(Deserialize, Serialize, PartialEq, Debug)]
 pub struct Resize {

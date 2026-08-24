@@ -30,7 +30,7 @@ keys: [
     An earlier version of this example rebound plain `CTRL-C` to
     conditionally copy-and-clear only when there was an active selection
     (falling back to sending a literal `CTRL-C` interrupt byte otherwise),
-    using `wezterm.action_callback(...)` to inspect
+    using `onlyterm.action_callback(...)` to inspect
     `window:get_selection_text_for_pane(pane)` at run time and branch on it.
     That relied on the scripting engine, which has been removed — see the
     [changelog](../../../changelog.md#continuousnightly). There is currently

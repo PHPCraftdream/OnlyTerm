@@ -33,6 +33,6 @@ contrast ratio of at least 4.5:1 for normal text, so setting
 selected color scheme has poor contrast in the applications that you run in
 your terminal.
 
-The default wezterm color scheme has poor contrast for some applications;
+The default onlyterm color scheme has poor contrast for some applications;
 `text_min_contrast_ratio = 4.5` boosts contrast enough to fix that for most
 cases.

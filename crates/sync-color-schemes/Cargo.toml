@@ -24,4 +24,4 @@ tar.workspace = true
 tempfile.workspace = true
 tokio = { workspace=true, features = ["rt-multi-thread", "sync", "macros"] }
 toml.workspace = true
-wezterm-dynamic.workspace = true
+onlyterm-dynamic.workspace = true

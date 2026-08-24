@@ -10,7 +10,7 @@ tags:
 !!! danger "Non-functional: required a scripting callback"
 
     `PromptInputLine`'s `action` field was designed to hold an event
-    callback registered via `wezterm.action_callback(...)`, resolved through
+    callback registered via `onlyterm.action_callback(...)`, resolved through
     rhai's (and, before that, Lua's) event-handler registry. That registry no
     longer exists — see the [changelog](../../../changelog.md#continuousnightly)
     and the [migration guide](../../../migration-to-ktav.md). The overlay
@@ -30,7 +30,7 @@ from the user.
 * `description` - the text to show at the top of the display area. You may
   embed escape sequences.
 * `action` - previously an event callback registered via
-  `wezterm.action_callback`, called with the entered line. No longer
+  `onlyterm.action_callback`, called with the entered line. No longer
   connected to anything (see above).
 * `prompt` - the text to show as the prompt. You may embed escape sequences.
   Defaults to: `"> "`. {{since('nightly', inline=True)}}
@@ -51,7 +51,7 @@ config.keys = [
     action: act.PromptInputLine(#{
       description: "Enter new name for tab",
       initial_value: "My Tab Name",
-      action: wezterm.action_callback(|window, pane, line| {
+      action: onlyterm.action_callback(|window, pane, line| {
         // line will be `()` if they hit escape without entering anything
         // An empty string if they just hit enter
         // Or the actual line of text they wrote
@@ -71,7 +71,7 @@ config.keys = [
     mods: "CTRL|SHIFT",
     action: act.PromptInputLine(#{
       description: "Enter name for new workspace",
-      action: wezterm.action_callback(|window, pane, line| {
+      action: onlyterm.action_callback(|window, pane, line| {
         if line != () {
           window.perform_action(
             act.SwitchToWorkspace(#{ name: line }),

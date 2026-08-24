@@ -4,13 +4,13 @@ use crate::{Mux, MuxNotification, WindowId};
 use bintree::PathBranch;
 use config::configuration;
 use config::keyassignment::PaneDirection;
+use onlyterm_term::TerminalSize;
 use parking_lot::Mutex;
 use rangeset::intersects_range;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Arc;
-use wezterm_term::TerminalSize;
 
 mod codec;
 #[cfg(test)]
