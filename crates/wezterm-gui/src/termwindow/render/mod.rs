@@ -308,6 +308,12 @@ pub struct ComputeCellFgBgParams<'a> {
     pub cursor_is_default_color: bool,
     pub cursor_border_color: LinearRgba,
     pub pane: Option<&'a Arc<dyn Pane>>,
+    /// The theme's own resolved default foreground/background, used by
+    /// `ensure_min_contrast` as the readable fallback pair for a cell whose
+    /// computed foreground and background are identical -- see that
+    /// function's doc comment.
+    pub default_fg: LinearRgba,
+    pub default_bg: LinearRgba,
 }
 
 #[derive(Debug)]
@@ -685,13 +691,47 @@ impl crate::TermWindow {
         Ok(())
     }
 
-    fn ensure_min_contrast(&self, fg_color: LinearRgba, bg_color: LinearRgba) -> LinearRgba {
-        match self.config.text_min_contrast_ratio {
-            Some(ratio) => fg_color
-                .ensure_contrast_ratio(&bg_color, ratio)
-                .unwrap_or(fg_color),
-            None => fg_color,
+    /// A cell whose foreground and background end up identical is either a
+    /// deliberate hide (a real password prompt uses the `invisible` SGR
+    /// attribute for that, checked separately in `render_screen_line` --
+    /// this is just apps/color-schemes landing on the same value by
+    /// accident, eg. an app painting its own "dim" chrome color as both its
+    /// background and its own placeholder foreground, which the active
+    /// color scheme happens to map to one shared value) or it's the
+    /// degenerate case the underlying OKLAB-based luminance nudge handles
+    /// worst (there's no "which direction is lighter" to go on when both
+    /// colors already match). Rather than trying to nudge away from an
+    /// identical starting point, substitute the theme's own default
+    /// foreground/background pair -- simple, always readable, and it makes
+    /// the cell look like normal themed text instead of a patched-up
+    /// mismatch.
+    fn ensure_min_contrast(
+        &self,
+        fg_color: LinearRgba,
+        bg_color: LinearRgba,
+        default_fg: LinearRgba,
+        default_bg: LinearRgba,
+    ) -> (LinearRgba, LinearRgba) {
+        let Some(ratio) = self.config.text_min_contrast_ratio else {
+            return (fg_color, bg_color);
+        };
+
+        if fg_color == bg_color {
+            return if self.config.text_min_contrast_respects_hidden_text {
+                (fg_color, bg_color)
+            } else {
+                (default_fg, default_bg)
+            };
         }
+
+        let fg_color = fg_color
+            .ensure_contrast_ratio(
+                &bg_color,
+                ratio,
+                self.config.text_min_contrast_respects_hidden_text,
+            )
+            .unwrap_or(fg_color);
+        (fg_color, bg_color)
     }
 
     pub fn compute_cell_fg_bg(&self, params: ComputeCellFgBgParams) -> ComputeCellFgBgResult {
@@ -707,7 +747,12 @@ impl crate::TermWindow {
                     (params.cursor_fg, params.cursor_bg)
                 };
 
-                let fg_color = self.ensure_min_contrast(fg_color, bg_color);
+                let (fg_color, bg_color) = self.ensure_min_contrast(
+                    fg_color,
+                    bg_color,
+                    params.default_fg,
+                    params.default_bg,
+                );
 
                 // interpolate between the background color and the target color
                 let bg_color_alt = params
@@ -741,7 +786,12 @@ impl crate::TermWindow {
                     (params.cursor_fg, params.cursor_bg)
                 };
 
-                let fg_color = self.ensure_min_contrast(fg_color, bg_color);
+                let (fg_color, bg_color) = self.ensure_min_contrast(
+                    fg_color,
+                    bg_color,
+                    params.default_fg,
+                    params.default_bg,
+                );
 
                 let color = params
                     .config
@@ -826,7 +876,8 @@ impl crate::TermWindow {
             _ => (params.fg_color, params.bg_color, params.cursor_border_color),
         };
 
-        let fg_color = self.ensure_min_contrast(fg_color, bg_color);
+        let (fg_color, bg_color) =
+            self.ensure_min_contrast(fg_color, bg_color, params.default_fg, params.default_bg);
 
         let blinking = params.cursor.is_some()
             && params.is_active_pane

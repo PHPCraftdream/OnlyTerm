@@ -398,9 +398,14 @@ impl SrgbaTuple {
     /// If the ratio is already suitable, returns None; the caller should
     /// continue to use `self` as the foreground color.
     #[cfg(feature = "std")]
-    pub fn ensure_contrast_ratio(&self, other: &Self, min_ratio: f32) -> Option<Self> {
+    pub fn ensure_contrast_ratio(
+        &self,
+        other: &Self,
+        min_ratio: f32,
+        respect_intentional_hiding: bool,
+    ) -> Option<Self> {
         self.to_linear()
-            .ensure_contrast_ratio(&other.to_linear(), min_ratio)
+            .ensure_contrast_ratio(&other.to_linear(), min_ratio, respect_intentional_hiding)
             .map(|linear| linear.to_srgb())
     }
 }

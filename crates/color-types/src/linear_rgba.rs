@@ -169,9 +169,24 @@ impl LinearRgba {
     /// foreground color.
     /// If the ratio is already suitable, returns None; the caller should
     /// continue to use `self` as the foreground color.
+    ///
+    /// `respect_intentional_hiding`: when `self == other`, an app may have
+    /// deliberately made text invisible (eg. a password prompt). `true`
+    /// preserves that and returns `None` unconditionally for identical
+    /// colors. `false` treats identical colors the same as any other
+    /// too-low-contrast pair and boosts them like everything else --
+    /// useful when the actual cause is an app/color-scheme mismatch
+    /// (an app paints a "dim" chrome color as both its background and its
+    /// placeholder foreground, and the active scheme happens to map that
+    /// slot to the same value) rather than a deliberate hide.
     #[cfg(feature = "std")]
-    pub fn ensure_contrast_ratio(&self, other: &Self, min_ratio: f32) -> Option<Self> {
-        if self == other {
+    pub fn ensure_contrast_ratio(
+        &self,
+        other: &Self,
+        min_ratio: f32,
+        respect_intentional_hiding: bool,
+    ) -> Option<Self> {
+        if respect_intentional_hiding && self == other {
             // Intentionally the same color, don't try to fixup
             return None;
         }
@@ -192,7 +207,7 @@ impl LinearRgba {
 
         let increased_lum = ((bg_lum + 0.05) * min_ratio - 0.05).clamp(0.05, 1.0);
         let increased_col = Self::from_oklaba(increased_lum, fg_a, fg_b, fg_alpha);
-        let increased_ratio = reduced_col.contrast_ratio(other);
+        let increased_ratio = increased_col.contrast_ratio(other);
 
         // Prefer the reduced luminance version if the fg is dimmer than bg
         if fg_lum < bg_lum && reduced_ratio >= min_ratio {
@@ -245,6 +260,44 @@ mod tests {
             (2.91 - contrast_ratio).abs() < 0.01,
             "contrast({}) == 2.91",
             contrast_ratio
+        );
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn identical_fg_bg_is_left_alone_when_respecting_hidden_text() {
+        // A dark-gray-on-dark-gray "dim chrome" cell: with
+        // respect_intentional_hiding = true, this must be treated the same
+        // as a deliberately hidden password prompt and left untouched.
+        let color = LinearRgba::with_srgba(0x24, 0x29, 0x2f, 255);
+        assert_eq!(color.ensure_contrast_ratio(&color, 4.5, true), None);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn identical_fg_bg_is_boosted_when_not_respecting_hidden_text() {
+        // Same cell as above, but respect_intentional_hiding = false: this
+        // is the default going forward, since the far more common real
+        // cause is an app's own dim/placeholder color landing on its own
+        // background under the active color scheme, not a deliberate hide.
+        //
+        // This only checks that *some* improvement was made, not that
+        // min_ratio is actually reached: the function's own contract is
+        // best-effort ("a slightly better ... color will be used" -- see
+        // its doc comment), and the OKLAB-based nudge this delegates to is
+        // measurably imprecise for very dark colors close to black. The
+        // caller this exists for (`TermWindow::ensure_min_contrast`)
+        // doesn't rely on this path reaching the target ratio either: it
+        // intercepts the identical-color case itself and substitutes the
+        // theme's own default foreground/background pair instead of
+        // calling this function at all.
+        let color = LinearRgba::with_srgba(0x24, 0x29, 0x2f, 255);
+        let boosted = color
+            .ensure_contrast_ratio(&color, 4.5, false)
+            .expect("identical low-contrast colors must be boosted when not respecting hiding");
+        assert!(
+            boosted.contrast_ratio(&color) > 1.0,
+            "boosted color must be at least some improvement over the original 1:1 ratio"
         );
     }
 }

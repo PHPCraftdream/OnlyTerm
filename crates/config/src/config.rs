@@ -659,6 +659,17 @@ pub struct Config {
     #[dynamic(default)]
     pub text_min_contrast_ratio: Option<f32>,
 
+    /// When `text_min_contrast_ratio` is set, a cell whose foreground and
+    /// background colors are exactly identical is by default boosted like
+    /// any other too-low-contrast cell -- most real occurrences are an
+    /// app's "dim" chrome color landing on the same value as its own
+    /// background under the active color scheme, not a deliberate hide.
+    /// Set this to `true` to restore the old behavior: identical
+    /// foreground/background is left untouched (eg. for apps that
+    /// deliberately hide text, like a password prompt).
+    #[dynamic(default)]
+    pub text_min_contrast_respects_hidden_text: bool,
+
     #[dynamic(default)]
     pub force_reverse_video_cursor: bool,
     #[dynamic(default = "default_reverse_video_cursor_min_contrast")]
