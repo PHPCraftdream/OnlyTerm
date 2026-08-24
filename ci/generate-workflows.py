@@ -120,7 +120,7 @@ class SccacheStep(ActionStep):
 
 class CheckoutStep(ActionStep):
     def __init__(self, name="checkout repo", container=None):
-        super().__init__(name, action=f"actions/checkout@v5")
+        super().__init__(name, action=f"actions/checkout@v7")
 
 
 class InstallCrateStep(ActionStep):
