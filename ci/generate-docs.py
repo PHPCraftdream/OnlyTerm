@@ -462,7 +462,6 @@ TOC = [
             Page("onlyterm serial", "cli/serial.md"),
             Page("onlyterm set-working-directory", "cli/set-working-directory.md"),
             Page("onlyterm show-keys", "cli/show-keys.md"),
-            Page("onlyterm ssh", "cli/ssh.md"),
             Page("onlyterm start", "cli/start.md"),
         ],
     ),

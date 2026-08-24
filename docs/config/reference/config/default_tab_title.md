@@ -13,7 +13,7 @@ OnlyTerm always shows one of, in priority order:
 
 1. An explicit rename -- `onlyterm cli set-tab-title`, or the tab-bar rename
    UI. This is a live user action and always wins.
-2. [`SpawnCommand.title`](../../SpawnCommand.md), if the launch that
+2. [`SpawnCommand.title`](../SpawnCommand.md), if the launch that
    created the tab specified one -- a per-launch override, for example on a
    keybinding or a `onlyterm cli spawn` invocation.
 3. `default_tab_title`, if set.

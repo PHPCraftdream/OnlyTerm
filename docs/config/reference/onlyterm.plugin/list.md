@@ -21,4 +21,4 @@
     longer a managed clone directory for `list()` to enumerate, so calling
     this function now raises an error explaining the removal. Plugins are
     installed and tracked by the user directly on the local filesystem; see
-    [Installing a Plugin](../../plugins.md#installing-a-plugin).
+    [the plugin removal notice](../../plugins.md) for details.
