@@ -109,13 +109,13 @@ class ActionStep(Step):
 class CacheStep(ActionStep):
     def __init__(self, name, path, key, id=None):
         super().__init__(
-            name, action="actions/cache@v4", params={"path": path, "key": key}, id=id
+            name, action="actions/cache@v5", params={"path": path, "key": key}, id=id
         )
 
 
 class SccacheStep(ActionStep):
     def __init__(self, name):
-        super().__init__(name, action="mozilla-actions/sccache-action@v0.0.9")
+        super().__init__(name, action="mozilla-actions/sccache-action@v0.0.11")
 
 
 class CheckoutStep(ActionStep):
