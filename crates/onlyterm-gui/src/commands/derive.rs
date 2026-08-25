@@ -415,7 +415,7 @@ pub fn derive_command_from_key_assignment(action: &KeyAssignment) -> Option<Comm
         SpawnTab(SpawnTabDomain::CurrentPaneDomain) => CommandDef {
             brief: "New Tab".into(),
             doc: "Create a new tab in the same domain as the current pane".into(),
-            keys: vec![(Modifiers::SUPER, "t".into()), (Modifiers::CTRL, "t".into())],
+            keys: vec![(Modifiers::SUPER, "t".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Shell"],
             icon: Some("md_tab_plus"),

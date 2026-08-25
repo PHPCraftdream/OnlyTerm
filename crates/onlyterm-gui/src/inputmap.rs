@@ -1169,6 +1169,36 @@ mod tests {
         assert_eq!(physical.action, mapped.action);
     }
 
+    #[test]
+    fn ctrl_shift_t_spawns_a_tab_and_bare_ctrl_t_does_not() {
+        let input_map = InputMap::default_input_map();
+        let spawn_tab =
+            KeyAssignment::SpawnTab(config::keyassignment::SpawnTabDomain::CurrentPaneDomain);
+        let mods = Modifiers::CTRL | Modifiers::SHIFT;
+
+        let mapped = input_map
+            .lookup_key(&KeyCode::Char('T'), mods, None)
+            .expect("mapped CTRL+SHIFT+T has a default New Tab binding");
+        assert_eq!(mapped.action, spawn_tab);
+
+        let physical = input_map
+            .lookup_key(&KeyCode::Physical(PhysKeyCode::T), mods, None)
+            .expect("physical CTRL+SHIFT+T must resolve to New Tab independent of keyboard layout");
+        assert_eq!(physical.action, spawn_tab);
+
+        // Bare CTRL+T (no SHIFT) must NOT spawn a tab by default -- it's
+        // commonly used by the shell/readline running inside the terminal.
+        for key in [KeyCode::Char('t'), KeyCode::Physical(PhysKeyCode::T)] {
+            if let Some(entry) = input_map.lookup_key(&key, Modifiers::CTRL, None) {
+                assert_ne!(
+                    entry.action, spawn_tab,
+                    "bare CTRL+T ({:?}) must not be a default New Tab binding",
+                    key
+                );
+            }
+        }
+    }
+
     /// Control test: plain, unmodified text entry (no CTRL/SUPER) must be
     /// completely unaffected by the physical-fallback synthesis above.
     /// Typing a bare Cyrillic character (eg: on a Russian layout, the
