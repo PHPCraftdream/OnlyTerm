@@ -228,6 +228,49 @@ pub trait Pane: Downcast + Send + Sync {
         self.for_each_logical_line_in_stable_range_mut(lines, &mut ApplyHyperLinks { rules });
     }
 
+    /// Returns a render snapshot -- cursor position, renderable dimensions,
+    /// and the cloned lines for the pane's visible range -- as one logical
+    /// read (see `PaneRenderSnapshot`).
+    ///
+    /// `viewport` is the stable row index the GUI is currently scrolled to
+    /// (the same value `get_lines` would be called with as range start),
+    /// or `None` to use the pane's own `physical_top`.
+    ///
+    /// The default implementation composes this from the same separate
+    /// getters the renderer historically used (`get_cursor_position`,
+    /// `get_dimensions`, `apply_hyperlinks`, `get_lines`), so panes without
+    /// a single-lock implementation keep their exact prior behavior --
+    /// including the windows between acquisitions where a pty parser
+    /// thread can apply output mid-read (investigation
+    /// `2026-08-25-render-and-resource-bug-hunt` section 1.3, bug B: a
+    /// paint could combine a cursor position from moment t0 with line
+    /// contents from t2, drawing the cursor block on the old prompt row
+    /// while the input box has already visually moved to a new row).
+    ///
+    /// Implementations backed by a single terminal mutex (`LocalPane`)
+    /// override this to capture everything under one short lock
+    /// acquisition, which removes those windows
+    /// (ghost-cursor-fix-plan Phase C). The lock is still short: one
+    /// viewport's worth of line clones, not held across shaping/GPU work.
+    fn get_render_snapshot(
+        &self,
+        viewport: Option<StableRowIndex>,
+        hyperlink_rules: &[Rule],
+    ) -> PaneRenderSnapshot {
+        let cursor = self.get_cursor_position();
+        let dims = self.get_dimensions();
+        let top = viewport.unwrap_or(dims.physical_top);
+        let lines = top..top + dims.viewport_rows as StableRowIndex;
+        self.apply_hyperlinks(lines.clone(), hyperlink_rules);
+        let (stable_top, lines) = self.get_lines(lines);
+        PaneRenderSnapshot {
+            cursor,
+            dims,
+            stable_top,
+            lines,
+        }
+    }
+
     /// Returns render related dimensions
     fn get_dimensions(&self) -> RenderableDimensions;
 

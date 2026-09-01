@@ -130,6 +130,13 @@ pub struct RetainedPaneRows {
     /// invalidation call site to remember to bump `retained_rows` too --
     /// a missed call site there would render garbage, not just blank.
     pub stamp: RetainedStamp,
+    /// The stable row index of the top visible slot (`rows[0]`) at the
+    /// time the contents of `rows` were recorded. The stamp deliberately
+    /// does NOT cover the viewport origin -- scrolling does not invalidate
+    /// the pixels of a retained row -- but the slot each row belongs to
+    /// moves with the origin, so a change here is handled by re-basing
+    /// `rows` via `shift_origin` rather than by a stamp-mismatch reset.
+    pub viewport_top: StableRowIndex,
     /// Indexed by visible row slot (`line_idx + pos.top`), NOT by
     /// StableRowIndex -- this must track screen position, not scrollback
     /// content position.
@@ -138,6 +145,54 @@ pub struct RetainedPaneRows {
     /// shaping budget. 0 means "a full clean sweep completed; start from
     /// the top again".
     pub resume_row: usize,
+}
+
+impl RetainedPaneRows {
+    /// Bug E (investigation `2026-08-25-render-and-resource-bug-hunt`
+    /// section 2.1): `rows` is indexed by visible row slot, so when the
+    /// viewport origin moves (the pane scrolled by k rows), the content
+    /// recorded at slot N now belongs at slot N-k. Re-base the recorded
+    /// rows to the new origin; without this, a budget-deferred slot N
+    /// could be re-emitted showing its OWN prior content -- duplicating
+    /// the line now visible at N-k -- for a frame or two until rotation
+    /// catches up.
+    ///
+    /// Retained quads are position-independent (built at origin (0,0),
+    /// translated at emission time), so shifting the recorded rows by the
+    /// same delta is semantically exact -- unlike resetting them, which is
+    /// safe but discards every retained row on every scroll. Slots that
+    /// scroll into view from outside the recorded window become `None`,
+    /// which `RowSweep::decide` treats as must-build (never blank).
+    pub fn shift_origin(&mut self, new_viewport_top: StableRowIndex) {
+        let delta = new_viewport_top - self.viewport_top;
+        if delta == 0 {
+            return;
+        }
+        let len = self.rows.len();
+        let shift = delta.unsigned_abs();
+        if shift >= len {
+            // Every previously recorded row scrolled out of the window.
+            self.rows.clear();
+            self.rows.resize(len, None);
+            self.resume_row = 0;
+        } else if delta > 0 {
+            // Content moved from slot N to slot N - shift: drop the first
+            // `shift` slots and append fresh slots at the bottom.
+            self.rows.drain(0..shift);
+            self.rows.resize(len, None);
+            self.resume_row = self.resume_row.saturating_sub(shift);
+        } else {
+            // Content moved from slot N to slot N + shift: drop the last
+            // `shift` slots and prepend fresh slots at the top.
+            self.rows.truncate(len - shift);
+            self.rows.splice(0..0, (0..shift).map(|_| None));
+            self.resume_row = (self.resume_row + shift).min(len);
+            if self.resume_row >= len {
+                self.resume_row = 0;
+            }
+        }
+        self.viewport_top = new_viewport_top;
+    }
 }
 
 /// A retained row's quad data and its expiration (if animated).
@@ -2078,5 +2133,138 @@ mod cache_bench {
             term.advance_bytes(format!("\x1b[5;1Hnew{:02}\n", step));
             render_frame(&term, &mut cache, &format!("region scroll {}", step));
         }
+    }
+}
+
+#[cfg(test)]
+mod retained_pane_rows_tests {
+    use super::*;
+    use ordered_float::NotNan;
+    use std::rc::Rc;
+
+    /// Build a RetainedPaneRows with one retained row per slot, whose
+    /// `contains_cursor` flags are taken from `flags`.
+    fn make_rows(viewport_top: StableRowIndex, flags: &[bool]) -> RetainedPaneRows {
+        RetainedPaneRows {
+            stamp: RetainedStamp {
+                config_generation: 0,
+                shape_generation: 0,
+                quad_generation: 0,
+                pixel_width: 0,
+                pixel_height: 0,
+                cell_height: 0,
+                left_pixel_x: NotNan::new(0.0).unwrap(),
+                top_pixel_y: NotNan::new(0.0).unwrap(),
+                num_rows: flags.len(),
+                num_cols: 0,
+            },
+            viewport_top,
+            rows: flags
+                .iter()
+                .map(|&contains_cursor| {
+                    Some(RetainedRow {
+                        quads: Rc::new(HeapQuadAllocator::default()),
+                        expires: None,
+                        contains_cursor,
+                    })
+                })
+                .collect(),
+            resume_row: 0,
+        }
+    }
+
+    fn flags_of(rows: &RetainedPaneRows) -> Vec<Option<bool>> {
+        rows.rows
+            .iter()
+            .map(|r| r.as_ref().map(|row| row.contains_cursor))
+            .collect()
+    }
+
+    /// Scrolling down by 2 rows moves what was at slot N to slot N-2:
+    /// content at slot 2 (`true`) lands at slot 0, the bottom two slots
+    /// are fresh (None, i.e. must-build).
+    #[test]
+    fn shift_down_moves_content_to_earlier_slots() {
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.shift_origin(102);
+        assert_eq!(flags_of(&rows), vec![Some(true), Some(false), None, None]);
+        assert_eq!(rows.viewport_top, 102);
+    }
+
+    /// Scrolling up by 2 rows moves what was at slot N to slot N+2: the
+    /// top two slots are fresh, the previously recorded content lands in
+    /// the bottom half.
+    #[test]
+    fn shift_up_moves_content_to_later_slots() {
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.shift_origin(98);
+        assert_eq!(flags_of(&rows), vec![None, None, Some(true), Some(false)]);
+        assert_eq!(rows.viewport_top, 98);
+    }
+
+    /// A shift larger than the recorded window leaves no previously
+    /// recorded row visible: every slot must be None (must-build) and
+    /// the resume point resets to the top. Same for a large upward shift.
+    #[test]
+    fn shift_larger_than_the_window_clears_everything() {
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.resume_row = 2;
+        rows.shift_origin(200);
+        assert_eq!(flags_of(&rows), vec![None, None, None, None]);
+        assert_eq!(rows.resume_row, 0);
+
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.resume_row = 2;
+        rows.shift_origin(90);
+        assert_eq!(flags_of(&rows), vec![None, None, None, None]);
+        assert_eq!(rows.resume_row, 0);
+    }
+
+    /// No scroll: shift_origin must not disturb the recorded rows or the
+    /// resume point.
+    #[test]
+    fn shift_by_zero_is_a_noop() {
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.resume_row = 3;
+        rows.shift_origin(100);
+        assert_eq!(
+            flags_of(&rows),
+            vec![Some(true), Some(false), Some(true), Some(false)]
+        );
+        assert_eq!(rows.resume_row, 3);
+        assert_eq!(rows.viewport_top, 100);
+    }
+
+    /// The cursor flag travels with its row: wherever the cursor-bearing
+    /// quads land after a shift, they stay marked, so RowSweep's
+    /// must-build protection keeps tracking them.
+    #[test]
+    fn contains_cursor_flag_travels_with_its_row() {
+        let mut rows = make_rows(100, &[false, true, false, false]);
+        rows.shift_origin(99);
+        assert_eq!(
+            flags_of(&rows),
+            vec![None, Some(false), Some(true), Some(false)]
+        );
+    }
+
+    /// The resume point tracks the slots, not the content: it shifts by
+    /// the same delta as the rows (clamped/saturated at the edges).
+    #[test]
+    fn resume_row_shifts_along_with_the_rows() {
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.resume_row = 3;
+        rows.shift_origin(102);
+        assert_eq!(rows.resume_row, 1);
+
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.resume_row = 0;
+        rows.shift_origin(98);
+        assert_eq!(rows.resume_row, 2);
+
+        let mut rows = make_rows(100, &[true, false, true, false]);
+        rows.resume_row = 2;
+        rows.shift_origin(90);
+        assert_eq!(rows.resume_row, 0);
     }
 }

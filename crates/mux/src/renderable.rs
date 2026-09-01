@@ -137,3 +137,18 @@ pub fn terminal_get_dimensions(term: &mut Terminal) -> RenderableDimensions {
         reverse_video: term.get_reverse_video(),
     }
 }
+
+/// A render snapshot: the cursor position, the renderable dimensions, and
+/// the cloned lines for the pane's visible range, captured as ONE logical
+/// read of the pane state.
+///
+/// See `Pane::get_render_snapshot` for why this exists.
+#[derive(Debug, Clone)]
+pub struct PaneRenderSnapshot {
+    pub cursor: StableCursorPosition,
+    pub dims: RenderableDimensions,
+    /// The stable row index of `lines[0]` (may differ from the requested
+    /// range start when the terminal clamps the range; see `get_lines`).
+    pub stable_top: StableRowIndex,
+    pub lines: Vec<Line>,
+}

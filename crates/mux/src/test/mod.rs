@@ -21,6 +21,7 @@ use url::Url;
 mod domain_detach;
 mod domain_registration;
 mod notify_coalescing;
+mod render_snapshot;
 mod sync_update;
 mod terminal_lock_contention;
 mod wedged_pane_isolation;

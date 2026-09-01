@@ -32,6 +32,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use termwiz::escape::csi::{Sgr, CSI};
 use termwiz::escape::{Action, DeviceControlMode};
+use termwiz::hyperlink::Rule;
 use termwiz::input::KeyboardEncoding;
 use termwiz::surface::{Line, SequenceNo};
 use url::Url;
@@ -125,6 +126,22 @@ fn lock_terminal_timed<R>(
     let mut term = terminal.lock();
     metrics::histogram!(histogram_name).record(wait_start.elapsed());
     body(&mut term)
+}
+
+/// Applies hyperlink rules to the lines of a stable range; the
+/// single-lock analogue of the `ApplyHyperLinks` visitor in the default
+/// `Pane::apply_hyperlinks` implementation (which would re-lock the
+/// terminal if called from inside a `terminal.lock()` closure).
+struct ApplyHyperlinksInLock<'a> {
+    rules: &'a [Rule],
+}
+
+impl ForEachPaneLogicalLine for ApplyHyperlinksInLock<'_> {
+    fn with_logical_line_mut(&mut self, _: Range<StableRowIndex>, lines: &mut [&mut Line]) -> bool {
+        Line::apply_hyperlink_rules(self.rules, lines);
+
+        true
+    }
 }
 
 /// Task #246: how long a GUI-thread-reachable accessor (`get_title()`,
@@ -419,6 +436,55 @@ impl Pane for LocalPane {
 
     fn get_dimensions(&self) -> RenderableDimensions {
         terminal_get_dimensions(&mut self.terminal.lock())
+    }
+
+    /// Single-lock snapshot for rendering (ghost-cursor-fix-plan Phase C;
+    /// investigation `2026-08-25-render-and-resource-bug-hunt` section 1.3,
+    /// bug B): dimensions, the hyperlink-rule pass, the cursor position and
+    /// the cloned viewport lines are all captured under ONE
+    /// `terminal.lock()` acquisition, so the pty parser thread cannot apply
+    /// output between them and a paint can no longer combine a cursor
+    /// position from moment t0 with line contents from t2. The lock is
+    /// still held only for the duration of the clone (one viewport's worth
+    /// of lines), not across shaping/quad-building: input handling and the
+    /// parser keep interleaving between frames exactly as before.
+    fn get_render_snapshot(
+        &self,
+        viewport: Option<StableRowIndex>,
+        hyperlink_rules: &[Rule],
+    ) -> PaneRenderSnapshot {
+        let mut snapshot = lock_terminal_timed(
+            &self.terminal,
+            "localpane.terminal_lock.wait.render_snapshot",
+            |term| {
+                let dims = terminal_get_dimensions(term);
+                let top = viewport.unwrap_or(dims.physical_top);
+                let lines = top..top + dims.viewport_rows as StableRowIndex;
+                // Same application of the hyperlink rules that the default
+                // (multi-lock) path performs via `Pane::apply_hyperlinks`,
+                // done here under the same lock acquisition.
+                terminal_for_each_logical_line_in_stable_range_mut(
+                    term,
+                    lines.clone(),
+                    &mut ApplyHyperlinksInLock {
+                        rules: hyperlink_rules,
+                    },
+                );
+                let cursor = terminal_get_cursor_position(term);
+                let (stable_top, lines) = terminal_get_lines(term, lines);
+                PaneRenderSnapshot {
+                    cursor,
+                    dims,
+                    stable_top,
+                    lines,
+                }
+            },
+        );
+        // Same tmux special case as `get_cursor_position` above.
+        if self.tmux_domain.lock().is_some() {
+            snapshot.cursor.visibility = termwiz::surface::CursorVisibility::Hidden;
+        }
+        snapshot
     }
 
     fn copy_user_vars(&self) -> HashMap<String, String> {

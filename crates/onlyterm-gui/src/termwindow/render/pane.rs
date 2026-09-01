@@ -97,14 +97,27 @@ impl crate::TermWindow {
         let border = self.get_os_border();
         let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
 
-        let cursor = pos.pane.get_cursor_position();
+        let pane_id = pos.pane.pane_id();
+        let current_viewport = self.get_viewport(pane_id);
+
+        // Bug B (investigation `2026-08-25-render-and-resource-bug-hunt`
+        // section 1.3): take the cursor position, dimensions, hyperlink
+        // pass and viewport line contents as ONE consistent snapshot under
+        // a single short terminal-lock acquisition, instead of separate
+        // `get_cursor_position` / `get_dimensions` / `apply_hyperlinks` /
+        // `get_lines` calls with windows between them where the pty parser
+        // thread can apply output -- that tearing is what put the cursor
+        // block on the old prompt row while the input box had already
+        // visually moved to a new row, for one frame.
+        let snapshot = pos
+            .pane
+            .get_render_snapshot(current_viewport, &self.config.hyperlink_rules);
+        let cursor = snapshot.cursor;
         if pos.is_active {
             self.prev_cursor.update(&cursor);
         }
 
-        let pane_id = pos.pane.pane_id();
-        let current_viewport = self.get_viewport(pane_id);
-        let dims = pos.pane.get_dimensions();
+        let dims = snapshot.dims;
 
         let gl_state = self.render_state.as_ref().unwrap();
 
@@ -327,14 +340,6 @@ impl crate::TermWindow {
             palette.cursor_fg == global_cursor_fg && palette.cursor_bg == global_cursor_bg;
 
         {
-            let stable_range = match current_viewport {
-                Some(top) => top..top + dims.viewport_rows as StableRowIndex,
-                None => dims.physical_top..dims.physical_top + dims.viewport_rows as StableRowIndex,
-            };
-
-            pos.pane
-                .apply_hyperlinks(stable_range.clone(), &self.config.hyperlink_rules);
-
             struct LineRender<'a, 'b> {
                 term_window: &'a mut crate::TermWindow,
                 selrange: Option<SelectionRange>,
@@ -405,9 +410,9 @@ impl crate::TermWindow {
             // Task #457: compute the cursor's visible row slot (0-indexed from viewport top),
             // if the cursor is within the current viewport.
             //
-            // The origin has to be the same one `stable_range` above uses,
-            // and that one is `current_viewport` when the pane is scrolled
-            // back. Indexing off `dims.physical_top` instead would hand
+            // The origin has to be the same one the `get_render_snapshot`
+            // call above uses, and that one is `current_viewport` when the
+            // pane is scrolled back. Indexing off `dims.physical_top` instead would hand
             // RowSweep a slot number belonging to a different row, so its
             // "always keep the cursor row live" exemption
             // (render::budget::RowSweep::decide) would protect an innocent
@@ -442,9 +447,23 @@ impl crate::TermWindow {
             // ALSO handle stamp mismatch by resetting the retained row entry.
             let work_start = {
                 let mut retained_rows = self.retained_rows.borrow_mut();
-                match retained_rows.get(&pane_id) {
+                match retained_rows.get_mut(&pane_id) {
                     Some(existing) => {
                         if existing.stamp == current_stamp {
+                            // Bug E (investigation
+                            // `2026-08-25-render-and-resource-bug-hunt`
+                            // section 2.1): the stamp covers everything that
+                            // invalidates the pixels of a retained row, but
+                            // the viewport origin is not a pixel change --
+                            // after scrolling by k rows the content recorded
+                            // at slot N belongs at slot N-k. Re-base the
+                            // recorded rows to the new origin so a
+                            // budget-deferred slot can't re-emit its own
+                            // prior content (duplicating the line now visible
+                            // at N-k) for a frame or two.
+                            if existing.viewport_top != viewport_top {
+                                existing.shift_origin(viewport_top);
+                            }
                             existing.resume_row
                         } else {
                             // Stamp mismatch: reset to a fresh RetainedPaneRows with work_start = 0
@@ -457,14 +476,12 @@ impl crate::TermWindow {
                                 cursor.y,
                                 viewport_top
                             );
-                            retained_rows.insert(
-                                pane_id,
-                                RetainedPaneRows {
-                                    stamp: current_stamp.clone(),
-                                    rows: vec![None; dims.viewport_rows],
-                                    resume_row: 0,
-                                },
-                            );
+                            *existing = RetainedPaneRows {
+                                stamp: current_stamp.clone(),
+                                viewport_top,
+                                rows: vec![None; dims.viewport_rows],
+                                resume_row: 0,
+                            };
                             0
                         }
                     }
@@ -474,6 +491,7 @@ impl crate::TermWindow {
                             pane_id,
                             RetainedPaneRows {
                                 stamp: current_stamp.clone(),
+                                viewport_top,
                                 rows: vec![None; dims.viewport_rows],
                                 resume_row: 0,
                             },
@@ -633,13 +651,40 @@ impl crate::TermWindow {
                     };
 
                     // Task #457: ask the sweep what to do with this row.
-                    let action = self.sweep.decide(
+                    let mut action = self.sweep.decide(
                         slot,
                         cache_hit,
                         has_retained,
                         retained_contains_cursor,
                         Instant::now(),
                     );
+
+                    // Minor fix (investigation
+                    // `2026-08-25-render-and-resource-bug-hunt` section 2.3):
+                    // an animated retained row whose `expires` has already
+                    // passed would be re-emitted showing a stale animation
+                    // frame. The sweep only sees the line_quad_cache entry's
+                    // expiry (via `cache_hit`), so re-check the retained
+                    // row's own expiry here and downgrade to a rebuild.
+                    // `decide` already counted this row as deferred, so
+                    // `built_count` can undercount by one and `deferred_any`
+                    // stays conservative (one extra budget repaint); both
+                    // are harmless.
+                    if action == RowAction::EmitRetained {
+                        let retained_expired = {
+                            let retained_rows = self.term_window.retained_rows.borrow();
+                            retained_rows
+                                .get(&self.pane_id)
+                                .and_then(|r| r.rows.get(slot))
+                                .and_then(|r| r.as_ref())
+                                .and_then(|row| row.expires)
+                                .map(|expires| Instant::now() >= expires)
+                                .unwrap_or(false)
+                        };
+                        if retained_expired {
+                            action = RowAction::Build;
+                        }
+                    }
 
                     match action {
                         RowAction::EmitCached => {
@@ -855,14 +900,13 @@ impl crate::TermWindow {
                 }
             }
 
-            // Snapshot the lines (a cheap clone of each `Line`) before doing
-            // any shaping/quad-building: `Pane::get_lines` only holds the
-            // pane's `Mutex<Terminal>` for the duration of that clone, unlike
-            // the old `with_lines_mut` callback, which held the lock for the
-            // whole render loop below and could starve the pty reader/parser
-            // and input handling for as long as a frame took to build.
-            let (stable_top, lines) = pos.pane.get_lines(stable_range.clone());
-            render.render_lines(stable_top, &lines);
+            // The lines were cloned as part of the single-lock
+            // `get_render_snapshot` above, so no pane lock is taken here:
+            // shaping/quad-building below runs entirely without holding the
+            // pane's `Mutex<Terminal>`, exactly as before, and cursor/dims/
+            // lines are mutually consistent because they were captured under
+            // one acquisition.
+            render.render_lines(snapshot.stable_top, &snapshot.lines);
             let sweep_outcome = render.sweep.finish();
 
             // Task #457: record how many rows were actually built this sweep for diagnostics.
