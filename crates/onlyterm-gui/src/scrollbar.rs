@@ -36,8 +36,14 @@ impl ScrollHit {
         }
         .ceil() as usize;
 
-        let scroll_percent =
-            1.0 - (scroll_top / (render_dims.physical_top - render_dims.scrollback_top) as f32);
+        let scrollable_rows = (render_dims.physical_top - render_dims.scrollback_top) as f32;
+        let scroll_percent = if scrollable_rows > 0.0 {
+            1.0 - (scroll_top / scrollable_rows)
+        } else {
+            // Nothing to scroll (e.g. alt-screen, which has no scrollback):
+            // pin the thumb to the top rather than dividing by zero.
+            0.0
+        };
         let thumb_top =
             (scroll_percent * (max_thumb_height.saturating_sub(thumb_size)) as f32).ceil() as usize;
 

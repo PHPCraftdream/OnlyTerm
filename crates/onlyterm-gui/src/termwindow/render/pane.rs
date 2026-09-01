@@ -246,7 +246,11 @@ impl crate::TermWindow {
         // do a per-pane scrollbar.  That will require more extensive
         // changes to ScrollHit, mouse positioning, PositionedPane
         // and tab size calculation.
-        if pos.is_active && self.show_scroll_bar {
+        let has_scrollback = pos.is_active && self.show_scroll_bar && {
+            let render_dims = pos.pane.get_dimensions();
+            render_dims.scrollback_rows > render_dims.viewport_rows
+        };
+        if has_scrollback {
             let thumb_y_offset = top_bar_height as usize + border.top.get();
 
             let min_height = self.min_scroll_bar_height();
