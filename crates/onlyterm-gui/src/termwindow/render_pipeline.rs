@@ -1625,9 +1625,23 @@ impl TermWindow {
                 MuxNotification::TabTitleChanged { .. } => {
                     self.update_title_post_status_coalesced();
                 }
+                MuxNotification::PaneRemoved(pane_id) => {
+                    // The pane is gone from the mux. This notification is broadcast to
+                    // every TermWindow in the process, so it also arrives for panes of
+                    // other OS windows; dropping an id this window never rendered is a
+                    // no-op. Nothing will ever paint this pane again -- drop everything
+                    // we cached for it (see forget_pane_caches).
+                    let mut pane_state = self.pane_state.borrow_mut();
+                    let mut retained_rows = self.retained_rows.borrow_mut();
+                    forget_pane_caches(
+                        &mut pane_state,
+                        &mut self.semantic_zones,
+                        &mut retained_rows,
+                        pane_id,
+                    );
+                }
                 MuxNotification::PaneAdded(_)
                 | MuxNotification::WorkspaceRenamed { .. }
-                | MuxNotification::PaneRemoved(_)
                 | MuxNotification::WindowWorkspaceChanged(_)
                 | MuxNotification::ActiveWorkspaceChanged(_)
                 | MuxNotification::Empty
@@ -2001,6 +2015,115 @@ impl TermWindow {
                 self.selection(pane.pane_id()).seqno = pane.get_current_seqno();
             }
         }
+    }
+}
+
+/// Drops every per-pane cache entry TermWindow keeps for `pane_id`.
+///
+/// These three maps used to be insert-only: entries were added when a pane
+/// was first painted and never removed when the pane closed, so a window
+/// accumulated one entry per pane ever opened for its whole lifetime --
+/// `retained_rows` entries alone hold a `Vec<Option<RetainedRow>>` of
+/// per-row GPU quad allocators (tens to hundreds of KB per pane). See
+/// docs/investigations/2026-08-25-render-and-resource-bug-hunt.md §3.5.
+///
+/// A free function rather than a `TermWindow` method so the cleanup
+/// semantics are unit-testable: constructing a `TermWindow` in a test would
+/// need a live OS window, which nothing in this crate's test suite can do.
+///
+/// Returns true if any entry was actually dropped.
+fn forget_pane_caches(
+    pane_state: &mut HashMap<PaneId, PaneState>,
+    semantic_zones: &mut HashMap<PaneId, SemanticZoneCache>,
+    retained_rows: &mut HashMap<PaneId, render::RetainedPaneRows>,
+    pane_id: PaneId,
+) -> bool {
+    let dropped_state = pane_state.remove(&pane_id).is_some();
+    let dropped_zones = semantic_zones.remove(&pane_id).is_some();
+    let dropped_rows = retained_rows.remove(&pane_id).is_some();
+    dropped_state || dropped_zones || dropped_rows
+}
+
+#[cfg(test)]
+mod pane_removed_cleanup_tests {
+    use super::*;
+
+    fn test_retained_rows() -> render::RetainedPaneRows {
+        render::RetainedPaneRows {
+            stamp: render::RetainedStamp {
+                config_generation: 0,
+                shape_generation: 0,
+                quad_generation: 0,
+                pixel_width: 800,
+                pixel_height: 600,
+                cell_height: 17,
+                left_pixel_x: ordered_float::NotNan::new(0.0).unwrap(),
+                top_pixel_y: ordered_float::NotNan::new(0.0).unwrap(),
+                num_rows: 3,
+                num_cols: 80,
+            },
+            rows: vec![None; 3],
+            resume_row: 0,
+        }
+    }
+
+    /// Regression test for docs/investigations/2026-08-25-render-and-resource-bug-hunt.md
+    /// §3.5: closing a pane must drop its entries from pane_state,
+    /// semantic_zones, and retained_rows (all three were insert-only and
+    /// grew by one entry per pane ever opened). Exercises the exact function
+    /// the `MuxNotification::PaneRemoved` dispatch arm calls.
+    #[test]
+    fn pane_removed_drops_all_three_per_pane_caches_and_only_those() {
+        let gone: PaneId = 0x5eed_0001;
+        let kept: PaneId = 0x5eed_0002;
+        let unknown: PaneId = 0x5eed_0003;
+
+        let mut pane_state = HashMap::new();
+        pane_state.insert(gone, PaneState::default());
+        pane_state.insert(kept, PaneState::default());
+        let mut semantic_zones = HashMap::new();
+        semantic_zones.insert(gone, SemanticZoneCache::default());
+        semantic_zones.insert(kept, SemanticZoneCache::default());
+        let mut retained_rows = HashMap::new();
+        retained_rows.insert(gone, test_retained_rows());
+        retained_rows.insert(kept, test_retained_rows());
+
+        assert!(
+            forget_pane_caches(
+                &mut pane_state,
+                &mut semantic_zones,
+                &mut retained_rows,
+                gone
+            ),
+            "closing a pane that had cached state must report dropping something"
+        );
+
+        assert!(
+            !pane_state.contains_key(&gone),
+            "pane_state must drop the closed pane's entry"
+        );
+        assert!(
+            !semantic_zones.contains_key(&gone),
+            "semantic_zones must drop the closed pane's entry"
+        );
+        assert!(
+            !retained_rows.contains_key(&gone),
+            "retained_rows must drop the closed pane's entry"
+        );
+
+        // Over-deletion guard: the still-live pane keeps every entry.
+        assert!(pane_state.contains_key(&kept));
+        assert!(semantic_zones.contains_key(&kept));
+        assert!(retained_rows.contains_key(&kept));
+
+        // PaneRemoved is broadcast to every window; an id this window never
+        // rendered must be a harmless no-op.
+        assert!(!forget_pane_caches(
+            &mut pane_state,
+            &mut semantic_zones,
+            &mut retained_rows,
+            unknown
+        ));
     }
 }
 
