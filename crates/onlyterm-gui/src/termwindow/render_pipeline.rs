@@ -2047,6 +2047,7 @@ mod pane_removed_cleanup_tests {
                 num_rows: 3,
                 num_cols: 80,
             },
+            viewport_top: 0,
             rows: vec![None; 3],
             resume_row: 0,
         }
