@@ -1,15 +1,25 @@
 use crate::quad::QuadInstance;
 use crate::termwindow::RenderFrame;
+use onlyterm_gpu_render::backpressure::LogRateLimiter;
 use onlyterm_gpu_render::{
     wire, FrameForm, GpuDraw, GpuFrame, ShaderUniform, SubmittableFrame, WebGpuTexture,
 };
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use window::WindowOps;
 
 fn atlas_reset_needed(full_resync: bool, last_generation: Option<u64>, generation: u64) -> bool {
     full_resync || last_generation != Some(generation)
 }
+
+/// Rate limit for the back-pressure/lost-wakeup diagnostics (added with the
+/// SeqCst handshake fix): these paths can fire on every colliding paint
+/// under sustained terminal output; their job is to leave a trace
+/// correlatable with the `activate_tab:`/`focus_changed:` logging after a
+/// real incident, not to record every occurrence.
+const HANDSHAKE_LOG_RATE: Duration = Duration::from_secs(1);
+static BACKPRESSURE_FRAME_DROPPED_LOG: LogRateLimiter = LogRateLimiter::new();
+static BACKPRESSURE_LOST_WAKEUP_FALLBACK_LOG: LogRateLimiter = LogRateLimiter::new();
 
 /// Computes a frame signature from its constituent parts.
 /// This is a pure function suitable for unit testing, extracted from
@@ -272,6 +282,12 @@ impl crate::TermWindow {
             if rt.is_in_flight() {
                 rt.set_repaint_pending();
                 metrics::counter!("gui.render_thread.frames_dropped").increment(1);
+                if BACKPRESSURE_FRAME_DROPPED_LOG.should_log(HANDSHAKE_LOG_RATE) {
+                    log::info!(
+                        "gui: dropped a freshly built frame: the previous frame is still \
+                         in flight and a repaint is now pending (rate-limited to 1/s)"
+                    );
+                }
                 // The render thread can finish (and check repaint_pending)
                 // in the gap between the is_in_flight() check above and the
                 // set_repaint_pending() call just now, observing it as not
@@ -281,12 +297,39 @@ impl crate::TermWindow {
                 // frame's content stuck on screen until an unrelated event
                 // happens to invalidate the window.
                 if !rt.is_in_flight() {
+                    if BACKPRESSURE_LOST_WAKEUP_FALLBACK_LOG.should_log(HANDSHAKE_LOG_RATE) {
+                        log::info!(
+                            "gui: lost-wakeup fallback fired: the in-flight frame finished \
+                             while this frame was being dropped; invalidating so its \
+                             content is repainted (rate-limited to 1/s)"
+                        );
+                    }
                     if let Some(win) = self.window.as_ref() {
                         win.invalidate();
                     }
                 }
                 return Ok(());
             }
+        }
+
+        // Ask the backend which frame shape it wants *before* the signature
+        // check below. `full_resync` means everything a previous signature
+        // could be compared against is invalid: the frame the signature was
+        // recorded from was never delivered (respawned child, a send that
+        // failed to queue, or a child-reported recoverable submit failure).
+        // Recording-then-skipping on that stale signature is what used to
+        // leave a respawned child without a first frame -- and therefore
+        // without a first ack and `swap_visual_content` -- until the screen
+        // content happened to change. Consuming the flag here is safe:
+        // when it is `true` the skip below is bypassed entirely, and when
+        // it is `false` the swap is a no-op.
+        let frame_form = self
+            .render_thread
+            .as_ref()
+            .map(|rt| rt.frame_form())
+            .unwrap_or(FrameForm::InProcess);
+        if matches!(frame_form, FrameForm::Wire { full_resync: true }) {
+            self.last_frame_signature = None;
         }
 
         // Computed once, shared by the signature check below and whichever
@@ -305,14 +348,6 @@ impl crate::TermWindow {
         }
         self.last_frame_signature = Some(signature);
         metrics::counter!("gui.frame.submitted").increment(1);
-
-        // Ask the backend which frame shape it wants *before* building
-        // anything -- see `onlyterm_gpu_render::FrameForm`'s doc comment.
-        let frame_form = self
-            .render_thread
-            .as_ref()
-            .map(|rt| rt.frame_form())
-            .unwrap_or(FrameForm::InProcess);
 
         match frame_form {
             FrameForm::InProcess => {

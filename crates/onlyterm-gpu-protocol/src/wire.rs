@@ -19,7 +19,7 @@
 //! The wire is bidirectional, carried on two separate byte streams (the
 //! child's stdin for parent->child, its stdout for child->parent -- see
 //! `HostProcessBackend`, task #651): `Frame`/`Resize`/`Shutdown`/
-//! `AttachSurface` flow parent->child; `Presented`/`Fatal` flow the other
+//! `AttachSurface` flow parent->child; `Presented`/`Failed`/`Fatal` flow the other
 //! way. Both directions share one `WireMessageKind`/`read_message` vocabulary
 //! since which physical pipe is being read already tells a caller which
 //! subset of kinds it can legally see -- there is no reason to duplicate the
@@ -102,6 +102,7 @@ pub enum WireMessageKind {
     AttachSurface = 4,
     Presented = 5,
     Fatal = 6,
+    Failed = 7,
 }
 
 impl WireMessageKind {
@@ -113,6 +114,7 @@ impl WireMessageKind {
             4 => Some(Self::AttachSurface),
             5 => Some(Self::Presented),
             6 => Some(Self::Fatal),
+            7 => Some(Self::Failed),
             _ => None,
         }
     }
@@ -182,6 +184,20 @@ pub struct WireAttachSurface {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct WirePresented {
+    pub seq: u64,
+}
+
+/// Child->parent: acknowledges a frame that was received but NOT presented,
+/// where the failure is recoverable in place (`submit_frame` returned
+/// `SurfaceError::Lost`/`Outdated`; the child reconfigured its surface and
+/// dropped exactly that one frame -- see `gpu_tab_host`'s submit handling).
+/// Tells the parent to release its back-pressure slot for this frame and
+/// force the next repaint past its frame-signature skip, so the dropped
+/// frame's content is rebuilt and resent instead of staying frozen
+/// off-screen. `seq` follows the same per-child counter as `WirePresented`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct WireFailed {
     pub seq: u64,
 }
 
@@ -345,6 +361,11 @@ pub fn write_presented(w: &mut impl Write, seq: u64) -> io::Result<()> {
     write_message(w, WireMessageKind::Presented, bytemuck::bytes_of(&payload))
 }
 
+pub fn write_failed(w: &mut impl Write, seq: u64) -> io::Result<()> {
+    let payload = WireFailed { seq };
+    write_message(w, WireMessageKind::Failed, bytemuck::bytes_of(&payload))
+}
+
 pub fn write_fatal(w: &mut impl Write, code: i32) -> io::Result<()> {
     let payload = WireFatal { code };
     write_message(w, WireMessageKind::Fatal, bytemuck::bytes_of(&payload))
@@ -359,6 +380,7 @@ pub enum WireMessage {
     Shutdown,
     AttachSurface(WireAttachSurface),
     Presented(WirePresented),
+    Failed(WireFailed),
     Fatal(WireFatal),
 }
 
@@ -371,6 +393,7 @@ pub enum WireMessageRef<'a> {
     Shutdown,
     AttachSurface(WireAttachSurface),
     Presented(WirePresented),
+    Failed(WireFailed),
     Fatal(WireFatal),
 }
 
@@ -430,6 +453,7 @@ pub fn read_message_into<'a>(
         }
         WireMessageKind::Presented => WireMessageRef::Presented(*bytemuck::from_bytes(body)),
         WireMessageKind::Fatal => WireMessageRef::Fatal(*bytemuck::from_bytes(body)),
+        WireMessageKind::Failed => WireMessageRef::Failed(*bytemuck::from_bytes(body)),
     }))
 }
 
@@ -462,6 +486,10 @@ pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
         WireMessageKind::Fatal => {
             let payload: WireFatal = *bytemuck::from_bytes(&body);
             Ok(Some(WireMessage::Fatal(payload)))
+        }
+        WireMessageKind::Failed => {
+            let payload: WireFailed = *bytemuck::from_bytes(&body);
+            Ok(Some(WireMessage::Failed(payload)))
         }
     }
 }
@@ -784,6 +812,21 @@ mod tests {
             panic!("expected a Fatal message");
         };
         assert_eq!(fatal.code, -1);
+    }
+
+    #[test]
+    fn failed_round_trips() {
+        let mut buf = Vec::new();
+        write_failed(&mut buf, 7).unwrap();
+
+        let mut cursor = std::io::Cursor::new(buf);
+        let decoded = read_message(&mut cursor)
+            .unwrap()
+            .expect("a message was written");
+        let WireMessage::Failed(failed) = decoded else {
+            panic!("expected a Failed message");
+        };
+        assert_eq!(failed.seq, 7);
     }
 
     #[test]

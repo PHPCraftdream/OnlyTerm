@@ -27,6 +27,7 @@
 //! rebuild via a plain in-process `RenderThreadHandle` instead -- demotion
 //! is a side effect of the existing rebuild path, not new machinery.
 
+use crate::backpressure::{in_flight_is_set, is_hung_given, mark_repaint_pending, LogRateLimiter};
 use crate::{rebuild_backoff_for_attempt, wire, FrameForm, RenderBackend, SubmittableFrame};
 use onlyterm_client::client::windows_job::assign_to_kill_on_close_job;
 use parking_lot::Mutex;
@@ -50,6 +51,16 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 const GENERIC_ALL: u32 = 0x1000_0000;
 const MAX_RESPAWNS_PER_WINDOW: usize = 3;
 const RESPAWN_WINDOW: Duration = Duration::from_secs(30);
+
+/// Rate limit for the handshake diagnostics (added with the SeqCst fix):
+/// these paths can fire on every colliding paint under sustained terminal
+/// output; their job is to leave a trace correlatable with the
+/// `activate_tab:`/`focus_changed:` logging after a real incident, not to
+/// record every occurrence.
+const HANDSHAKE_LOG_RATE: Duration = Duration::from_secs(1);
+static PRESENTED_PENDING_REPAINT_LOG: LogRateLimiter = LogRateLimiter::new();
+static FAILED_FRAME_LOG: LogRateLimiter = LogRateLimiter::new();
+static SEND_QUEUED_FAILED_LOG: LogRateLimiter = LogRateLimiter::new();
 
 /// Messages the writer thread relays to the child's stdin.
 enum HostToChildMsg {
@@ -113,6 +124,13 @@ struct Shared {
     needs_full_resync: AtomicBool,
     in_flight: Arc<AtomicBool>,
     repaint_pending: Arc<AtomicBool>,
+    /// True from the moment `handle_child_death` schedules a respawn
+    /// (immediately or after backoff) until that respawn attempt actually
+    /// runs. Gates `render_thread_is_hung`: the backoff window routinely
+    /// exceeds how long ago the last frame was sent, and the window's
+    /// supervisor piling a full renderer rebuild on top of a working
+    /// respawn would defeat the respawn.
+    respawn_pending: AtomicBool,
     window_destroyed: Arc<AtomicBool>,
     submit_started_at: Arc<Mutex<Option<Instant>>>,
     respawn_attempts: Mutex<Vec<Instant>>,
@@ -259,6 +277,7 @@ impl HostProcessBackend {
             needs_full_resync: AtomicBool::new(true),
             in_flight: Arc::new(AtomicBool::new(false)),
             repaint_pending: Arc::new(AtomicBool::new(false)),
+            respawn_pending: AtomicBool::new(false),
             window_destroyed: Arc::new(AtomicBool::new(false)),
             submit_started_at: Arc::new(Mutex::new(None)),
             respawn_attempts: Mutex::new(Vec::new()),
@@ -372,7 +391,8 @@ fn spawn_generation(shared: &Arc<Shared>) -> bool {
     // no `swap_visual_content`: a window frozen on the dead child's last
     // frame for good, which is exactly the outcome respawning exists to
     // avoid.
-    shared.in_flight.store(false, Ordering::Release);
+    // SeqCst: one of the ops of the shared in_flight/repaint_pending handshake -- see backpressure.rs.
+    shared.in_flight.store(false, Ordering::SeqCst);
     *shared.submit_started_at.lock() = None;
 
     log::info!(
@@ -496,6 +516,9 @@ fn reader_loop(shared: &Arc<Shared>, generation: u64, mut stdout: std::process::
             Ok(Some(wire::WireMessage::Presented(presented))) => {
                 on_presented(shared, generation, presented.seq);
             }
+            Ok(Some(wire::WireMessage::Failed(failed))) => {
+                on_failed(shared, generation, failed.seq);
+            }
             Ok(Some(wire::WireMessage::Fatal(fatal))) => {
                 log::error!(
                     "gpu-host generation {generation}: child reported Fatal({})",
@@ -527,7 +550,10 @@ fn on_presented(shared: &Arc<Shared>, generation: u64, _seq: u64) {
         }
     }
 
-    shared.in_flight.store(false, Ordering::Release);
+    // SeqCst (was Release): the first half of the shared handshake's finish
+    // step -- the exact two ops `backpressure::finish_in_flight_frame`
+    // performs, with the visual swap in between.
+    shared.in_flight.store(false, Ordering::SeqCst);
     *shared.submit_started_at.lock() = None;
 
     // First ack of a freshly (re)attached generation: swap the visual over
@@ -550,9 +576,64 @@ fn on_presented(shared: &Arc<Shared>, generation: u64, _seq: u64) {
         shared.respawn_attempts.lock().clear();
     }
 
-    if shared.repaint_pending.swap(false, Ordering::AcqRel) {
+    if shared.repaint_pending.swap(false, Ordering::SeqCst) {
+        // SeqCst (was AcqRel): the second half of the same handshake pair.
+        // With Release/Acquire this pairing had no StoreLoad ordering
+        // against the GUI thread's store to repaint_pending + re-check of
+        // in_flight (see draw.rs's call_draw_webgpu and the doc comment on
+        // `backpressure::in_flight_is_set`), so both sides could miss each
+        // other's update and the freshly built frame dropped for good.
+        if PRESENTED_PENDING_REPAINT_LOG.should_log(HANDSHAKE_LOG_RATE) {
+            log::info!(
+                "HostProcessBackend: ack from generation {generation} arrived with a \
+                 repaint pending; invalidating (rate-limited to 1/s)"
+            );
+        }
         (shared.invalidate)();
     }
+}
+
+/// A child-reported, recoverable frame failure: the child received the
+/// frame but `submit_frame` returned a recoverable surface error
+/// (`Lost`/`Outdated`), reconfigured its surface, and dropped exactly that
+/// frame -- see `gpu_tab_host`'s submit handling and `wire::WireFailed`.
+///
+/// Before this existed, the child logged and continued without acking
+/// anything, so the parent's `in_flight` (set by `send_frame`) stayed `true`
+/// forever: every later frame hit the back-pressure bailout and was
+/// dropped, and `render_thread_is_hung` unconditionally reported `false`,
+/// so nothing ever recovered -- the window froze for good.
+///
+/// Unlike `on_presented`, nothing was presented, so the visual must not be
+/// swapped. What must happen is what `handle_child_death` arranges for its
+/// own lost frame: release `in_flight`, and force the next repaint past the
+/// GUI's frame-signature skip (`needs_full_resync`) so the dropped frame's
+/// content is actually rebuilt and resent rather than skipped as
+/// "unchanged".
+fn on_failed(shared: &Arc<Shared>, generation: u64, _seq: u64) {
+    {
+        let current = shared.current.lock();
+        let Some(current) = current.as_ref() else {
+            return;
+        };
+        if current.generation != generation {
+            // A stale ack from a generation we've already moved past.
+            return;
+        }
+    }
+
+    shared.in_flight.store(false, Ordering::SeqCst);
+    *shared.submit_started_at.lock() = None;
+    shared.needs_full_resync.store(true, Ordering::Release);
+    metrics::counter!("gui.host_process.frames_failed_recovered").increment(1);
+    if FAILED_FRAME_LOG.should_log(HANDSHAKE_LOG_RATE) {
+        log::info!(
+            "HostProcessBackend: generation {generation} failed to submit a frame \
+             (recoverable surface error); requesting a full-resync repaint \
+             (rate-limited to 1/s)"
+        );
+    }
+    (shared.invalidate)();
 }
 
 fn swap_visual_content(shared: &Shared, handle: HANDLE) -> anyhow::Result<()> {
@@ -603,15 +684,24 @@ fn handle_child_death(shared: &Arc<Shared>, dead_generation: u64) {
         );
         metrics::counter!("gui.host_process.demoted_to_in_process").increment(1);
         shared.demoted.store(true, Ordering::Release);
-        shared.in_flight.store(false, Ordering::Release);
+        shared.in_flight.store(false, Ordering::SeqCst);
         (shared.invalidate)();
         return;
     }
 
+    // From here on a respawn is scheduled (immediately or after backoff):
+    // gate `render_thread_is_hung` off for its duration so the window's
+    // supervisor doesn't rebuild the whole renderer on top of it. The flag
+    // is cleared by the respawn closure below whether the spawn succeeds
+    // (the new generation resets the clock) or fails (the hang check then
+    // becomes the recovery path).
+    shared.respawn_pending.store(true, Ordering::SeqCst);
     let delay = rebuild_backoff_for_attempt(attempt);
     let shared = Arc::clone(shared);
     let respawn = move || {
-        if !spawn_generation(&shared) {
+        let spawned = spawn_generation(&shared);
+        shared.respawn_pending.store(false, Ordering::SeqCst);
+        if !spawned {
             log::error!("HostProcessBackend: respawn attempt failed to even launch a child");
         }
     };
@@ -651,7 +741,7 @@ impl RenderBackend for HostProcessBackend {
                 "HostProcessBackend: atlas mirror memory budget exhausted; demoting this window to the in-process renderer"
             );
             metrics::counter!("gui.host_process.demoted_to_in_process").increment(1);
-            self.shared.in_flight.store(false, Ordering::Release);
+            self.shared.in_flight.store(false, Ordering::SeqCst);
             (self.shared.invalidate)();
         }
     }
@@ -677,8 +767,9 @@ impl RenderBackend for HostProcessBackend {
             );
             return;
         };
-        if self.shared.in_flight.swap(true, Ordering::AcqRel) {
-            self.shared.repaint_pending.store(true, Ordering::Release);
+        // SeqCst: handshake op -- see backpressure.rs.
+        if self.shared.in_flight.swap(true, Ordering::SeqCst) {
+            mark_repaint_pending(&self.shared.repaint_pending);
             metrics::counter!("gui.host_process.frames_dropped").increment(1);
             return;
         }
@@ -690,35 +781,67 @@ impl RenderBackend for HostProcessBackend {
             .as_ref()
             .map(|c| c.writer_tx.clone())
         else {
-            self.shared.in_flight.store(false, Ordering::Release);
+            self.shared.in_flight.store(false, Ordering::SeqCst);
             return;
         };
         if current.send(HostToChildMsg::Frame(frame)).is_err() {
-            self.shared.in_flight.store(false, Ordering::Release);
+            // The writer thread for this generation is gone (it exits when
+            // a write to the child's stdin fails, i.e. the child is dying
+            // or dead). Clearing `in_flight` alone silently lost this
+            // frame: nothing set `repaint_pending`, nothing invalidated,
+            // and the GUI's `last_frame_signature` had already been
+            // recorded -- so when the respawn's invalidate produced a paint
+            // with identical content, the signature check skipped it and
+            // the new generation never received a first frame. Force the
+            // next paint past the signature skip. `submit_started_at` is
+            // deliberately left running: if no respawn ever lands, it is
+            // what makes `render_thread_is_hung` fire and the window's
+            // supervisor rebuild.
+            self.shared.in_flight.store(false, Ordering::SeqCst);
+            self.shared.needs_full_resync.store(true, Ordering::Release);
+            if SEND_QUEUED_FAILED_LOG.should_log(HANDSHAKE_LOG_RATE) {
+                log::warn!(
+                    "HostProcessBackend: frame could not be queued to this generation's \
+                     writer (child dying or dead); next repaint resends with a full resync"
+                );
+            }
         }
     }
 
     fn is_in_flight(&self) -> bool {
-        self.shared.in_flight.load(Ordering::Acquire)
+        in_flight_is_set(&self.shared.in_flight)
     }
 
     fn set_repaint_pending(&self) {
-        self.shared.repaint_pending.store(true, Ordering::Release);
+        mark_repaint_pending(&self.shared.repaint_pending)
     }
 
     fn shutdown(&self) {
         self.shared.window_destroyed.store(true, Ordering::Release);
+        // A torn-down backend must not leave a stale "submit in flight"
+        // timestamp behind for `render_thread_is_hung` to misread as a
+        // stall.
+        *self.shared.submit_started_at.lock() = None;
         if let Some(current) = self.shared.current.lock().take() {
             current.writer_tx.send(HostToChildMsg::Shutdown).ok();
         }
     }
 
     fn render_thread_is_hung(&self) -> bool {
-        // A respawn already in flight resolves its own stall; only a
-        // permanently-demoted backend can be "hung" in the sense the
-        // window's supervisor cares about, and that case is already
-        // reported via `render_thread_has_died`.
-        false
+        // A respawn already in flight resolves its own stall: the backoff
+        // window (up to 1s) routinely exceeds how long ago the last frame
+        // was sent, and the supervisor piling a full renderer rebuild on
+        // top of a working respawn would defeat it (and demote this window
+        // to the in-process renderer unnecessarily). The gate clears when
+        // the respawn attempt runs, either way: on success the new
+        // generation resets the clock, and on failure the check below
+        // becomes the recovery path.
+        if self.shared.respawn_pending.load(Ordering::SeqCst) {
+            return false;
+        }
+        let threshold =
+            Duration::from_millis(config::configuration().render_thread_hang_threshold_ms);
+        is_hung_given(&self.shared.submit_started_at, threshold)
     }
 
     fn render_thread_has_died(&self) -> bool {
@@ -949,6 +1072,81 @@ mod tests {
             MAX_RESPAWNS_PER_WINDOW,
             RESPAWN_WINDOW
         );
+    }
+
+    /// Finding C's parent-half contract: a submitted frame that never gets
+    /// an ack reads as hung once it outlives the configured hang threshold
+    /// (so the window's supervisor can rebuild), but a respawn that is
+    /// already in flight gates the check off -- its backoff window is what
+    /// resolves the stall, and a full rebuild piled on top of it would
+    /// defeat it.
+    #[test]
+    fn render_thread_is_hung_tracks_unacked_submit_unless_a_respawn_is_pending() {
+        let backend = spawn_test_backend();
+        let shared = &backend.shared;
+
+        // Nothing submitted: never hung.
+        assert!(!backend.render_thread_is_hung());
+
+        // A frame submitted longer ago than the configured hang threshold
+        // and never acked: hung.
+        let over_threshold =
+            Duration::from_millis(config::configuration().render_thread_hang_threshold_ms + 1_000);
+        *shared.submit_started_at.lock() = Some(Instant::now() - over_threshold);
+        assert!(
+            backend.render_thread_is_hung(),
+            "an un-acked frame older than the hang threshold must read as hung"
+        );
+
+        // ...unless a respawn is already in flight, which resets the clock
+        // itself and must not be stomped by the supervisor.
+        shared.respawn_pending.store(true, Ordering::SeqCst);
+        assert!(
+            !backend.render_thread_is_hung(),
+            "a pending respawn must gate the hang check off"
+        );
+
+        // Once the respawn attempt has run (gate cleared), the stale frame
+        // is what the supervisor sees again.
+        shared.respawn_pending.store(false, Ordering::SeqCst);
+        assert!(
+            backend.render_thread_is_hung(),
+            "the hang check must come back once the respawn gate clears"
+        );
+    }
+
+    /// Finding D's backend-half contract: a fresh generation must answer
+    /// `full_resync: true` until its first frame is built. The GUI skips
+    /// identical frames by signature, and that skip must never swallow the
+    /// first frame of a new generation -- it is what carries the atlas
+    /// reset and produces the first ack that swaps the DirectComposition
+    /// visual. The same flag is what the in-frame-loss paths (a send that
+    /// could not be queued, a child-reported recoverable submit failure)
+    /// re-arm, so the replacement frame also bypasses the signature skip.
+    #[test]
+    fn frame_form_requests_full_resync_until_the_first_frame_is_built() {
+        let backend = spawn_test_backend();
+
+        assert!(
+            matches!(backend.frame_form(), FrameForm::Wire { full_resync: true }),
+            "a fresh backend must request a full resync"
+        );
+        // Consumed by the ask: the next frame is a normal incremental one.
+        assert!(
+            matches!(backend.frame_form(), FrameForm::Wire { full_resync: false }),
+            "after the resync frame is built, frame_form must go back to normal"
+        );
+
+        // Re-arming the flag (what on_failed / send_frame's queue-failure
+        // path do) makes the next frame a full resync again.
+        backend
+            .shared
+            .needs_full_resync
+            .store(true, Ordering::Release);
+        assert!(matches!(
+            backend.frame_form(),
+            FrameForm::Wire { full_resync: true }
+        ));
     }
 
     /// Waits (briefly) for a child to actually be running and returns its

@@ -21,6 +21,9 @@
 //! path for GPU frame submission, not dormant scaffolding.
 
 use ::window::WindowOps;
+use onlyterm_gpu_render::backpressure::{
+    finish_in_flight_frame, in_flight_is_set, is_hung_given, mark_repaint_pending,
+};
 use onlyterm_gpu_render::{FrameForm, GpuFrame, RenderBackend, SubmittableFrame, WebGpuState};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -314,7 +317,9 @@ impl RenderThreadHandle {
     /// in-flight frame -- otherwise this frame's content would just be
     /// lost with nothing to trigger a replacement.
     pub fn send_frame(&self, frame: GpuFrame) {
-        if self.in_flight.swap(true, Ordering::AcqRel) {
+        // Same handshake as the shared backpressure helpers, so this swap
+        // must use the same total order (SeqCst).
+        if self.in_flight.swap(true, Ordering::SeqCst) {
             // A frame is already in flight; drop this one (its buffers are
             // released here) instead of queueing, and remember to ask for
             // a fresh repaint once the in-flight frame finishes.
@@ -332,7 +337,7 @@ impl RenderThreadHandle {
             // so we don't wedge back-pressure checks forever (there's
             // nothing else useful to do here -- the window is going
             // away).
-            self.in_flight.store(false, Ordering::Release);
+            self.in_flight.store(false, Ordering::SeqCst);
         }
     }
 
@@ -439,56 +444,6 @@ impl Drop for ClearSubmitStartedAtOnExit<'_> {
     fn drop(&mut self) {
         *self.0.lock() = None;
     }
-}
-
-/// The actual "is a call that's been running since `submit_started_at` older
-/// than `threshold`" predicate, split out from `render_thread_is_hung` so it
-/// can be unit tested with a synthetic threshold instead of depending on
-/// live global config state.
-fn is_hung_given(submit_started_at: &Mutex<Option<Instant>>, threshold: Duration) -> bool {
-    match *submit_started_at.lock() {
-        Some(start) => start.elapsed() >= threshold,
-        None => false,
-    }
-}
-
-/// GUI-thread side of the in-flight/repaint-pending handshake: is a frame
-/// still being processed by the render thread? Backs
-/// `RenderThreadHandle::is_in_flight`; split out so the two-thread stress
-/// test below calls this exact function rather than a hand-copied stand-in
-/// that could silently drift out of sync with it.
-///
-/// SeqCst (not Acquire): paired with `mark_repaint_pending` and
-/// `finish_in_flight_frame`'s SeqCst ops, this closes a store-buffer race in
-/// the lost-wakeup check in `call_draw_webgpu` (which stores to
-/// `repaint_pending` and then re-checks `in_flight`, a store followed by a
-/// load of a *different* location). Release/Acquire alone doesn't order a
-/// store against a later load of another location on the same thread (only
-/// SeqCst's total order does), which could let both this thread and the
-/// render thread simultaneously observe stale values and each assume the
-/// other will request the repaint.
-fn in_flight_is_set(in_flight: &AtomicBool) -> bool {
-    in_flight.load(Ordering::SeqCst)
-}
-
-/// GUI-thread side: record that a fresh repaint is needed once the
-/// currently in-flight frame finishes. Backs
-/// `RenderThreadHandle::set_repaint_pending`; see `in_flight_is_set` for why
-/// SeqCst and why this is split out as a standalone, directly-testable
-/// function.
-fn mark_repaint_pending(repaint_pending: &AtomicBool) {
-    repaint_pending.store(true, Ordering::SeqCst);
-}
-
-/// Render-thread side of the same handshake, run once a frame finishes
-/// submitting: clears `in_flight`, then observes-and-clears
-/// `repaint_pending`. Returns `true` if the caller should invalidate the
-/// window (a repaint was requested while this frame was in flight). Backs
-/// `submit_one_frame`'s tail; see `in_flight_is_set` for why SeqCst and why
-/// this is split out as a standalone, directly-testable function.
-fn finish_in_flight_frame(in_flight: &AtomicBool, repaint_pending: &AtomicBool) -> bool {
-    in_flight.store(false, Ordering::SeqCst);
-    repaint_pending.swap(false, Ordering::SeqCst)
 }
 
 /// The render thread's message loop. Runs until the channel disconnects

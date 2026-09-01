@@ -364,9 +364,57 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                             break;
                         }
                     }
-                    Ok(Err(err)) => {
-                        log::error!("gpu-tab-host: submit_frame failed: {err:?}");
-                    }
+                    Ok(Err(err)) => match &err {
+                        // Recoverable swapchain states (normal DXGI states
+                        // during resize/occlusion): reconfigure the surface
+                        // exactly like the in-process render thread does
+                        // (`submit_one_frame`'s Lost/Outdated arm), then ack
+                        // the frame as failed. Logging and continuing
+                        // without any ack used to leave the parent's
+                        // `in_flight` set forever -- every later frame then
+                        // hit its back-pressure bailout and was dropped, and
+                        // the parent's hang check never noticed, so the
+                        // window froze for good.
+                        wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => {
+                            log::warn!(
+                                "gpu-tab-host: surface {err:?}; reconfiguring and acking the \
+                                 frame as failed so the parent repaints it"
+                            );
+                            state.reconfigure();
+                            presented_seq += 1;
+                            if let Err(write_err) = wire::write_failed(&mut writer, presented_seq) {
+                                log::error!(
+                                    "gpu-tab-host: failed to write Failed ack: {write_err}; \
+                                     exiting"
+                                );
+                                break;
+                            }
+                            if let Err(flush_err) = writer.flush() {
+                                log::error!(
+                                    "gpu-tab-host: failed to flush ack channel: {flush_err}; \
+                                     exiting"
+                                );
+                                break;
+                            }
+                        }
+                        other => {
+                            // Everything else (OutOfMemory, Timeout, Other)
+                            // is not recoverable by a reconfigure here;
+                            // exit through the existing fatal path so the
+                            // parent's respawn logic (backoff + budget +
+                            // eventual demotion) kicks in. Fatal code 5 is
+                            // the new "unrecoverable submit error" case
+                            // (existing codes: 1 attach, 2 resize panic,
+                            // 3 submit panic, 4 frame build failure).
+                            log::error!(
+                                "gpu-tab-host: submit_frame failed: {other:?}; exiting so \
+                                 the parent can respawn us"
+                            );
+                            let _ = wire::write_fatal(&mut writer, 5);
+                            let _ = writer.flush();
+                            break;
+                        }
+                    },
                     Err(_) => {
                         log::error!(
                             "gpu-tab-host: submit_frame panicked; exiting so the parent can respawn us"
@@ -376,7 +424,9 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     }
                 }
             }
-            wire::WireMessageRef::Presented(_) | wire::WireMessageRef::Fatal(_) => {
+            wire::WireMessageRef::Presented(_)
+            | wire::WireMessageRef::Failed(_)
+            | wire::WireMessageRef::Fatal(_) => {
                 // These only ever flow child->parent; seeing one here would
                 // mean the parent's writer and this child's reader got
                 // wired to the wrong pipes.

@@ -7,6 +7,7 @@
 //! smaller compile unit. `onlyterm-gui` keeps everything `TermWindow`-shaped
 //! and talks to this crate through its public API.
 
+pub mod backpressure;
 pub mod gpu_tab_host;
 pub mod host_process_backend;
 mod quad;
@@ -127,13 +128,15 @@ pub trait RenderBackend {
     /// For `RenderThreadHandle`: stuck inside a single GPU call past the
     /// hang threshold, full stop (there is no recovery path other than the
     /// window's own supervisor rebuilding the renderer). For
-    /// `HostProcessBackend`: **not** true merely because the current child
-    /// hasn't acked in time -- a respawn already in flight handles that
-    /// itself; this must read `true` only once the backend's own recovery
-    /// is unable to make progress (see `render_thread_has_died`'s contract,
-    /// which this mirrors), so the window's supervisor
-    /// (`check_render_thread_hang_tick`) doesn't pile a full renderer
-    /// rebuild on top of a respawn that is already working.
+    /// `HostProcessBackend`: true once a submitted frame has gone un-acked
+    /// past the hang threshold while no respawn is already in flight -- the
+    /// child is alive but not making progress, so the window's supervisor
+    /// rebuilding the renderer is the only remaining recovery. A respawn in
+    /// flight is the one exception: it resets the clock itself (and its
+    /// backoff window routinely exceeds how long the last frame has been
+    /// running), so the supervisor must not pile a full rebuild on top of
+    /// it (see `render_thread_has_died`'s contract, which the demoted
+    /// end-state still mirrors).
     fn render_thread_is_hung(&self) -> bool;
     /// Whether this backend has died **permanently** -- not coming back on
     /// its own. For `RenderThreadHandle`: the thread exited without being
