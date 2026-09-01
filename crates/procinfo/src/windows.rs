@@ -10,6 +10,8 @@ use ntapi::ntwow64::RTL_USER_PROCESS_PARAMETERS32;
 use std::ffi::OsString;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use winapi::shared::minwindef::{DWORD, FILETIME, LPVOID, MAX_PATH};
 use winapi::shared::ntdef::{FALSE, NT_SUCCESS};
 use winapi::um::handleapi::CloseHandle;
@@ -39,13 +41,6 @@ impl Snapshot {
         ProcIter {
             snapshot: self,
             first: true,
-        }
-    }
-
-    pub fn entries() -> Vec<PROCESSENTRY32W> {
-        match Self::new() {
-            Some(snapshot) => snapshot.iter().collect(),
-            None => vec![],
         }
     }
 }
@@ -391,6 +386,61 @@ impl Drop for ProcHandle {
     }
 }
 
+/// How long the machine-wide process snapshot shared by all
+/// `with_root_pid` callers stays fresh. Matches the per-pane
+/// `PROC_INFO_CACHE_TTL` used by mux's `divine_process_list`, so each
+/// pane's background refresh almost always lands on an already-warm
+/// shared snapshot instead of taking its own.
+const PROC_SNAPSHOT_TTL: Duration = Duration::from_millis(300);
+
+/// The one field of `PROCESSENTRY32W` that `with_root_pid`'s tree
+/// building actually needs, copied out of the raw Win32 struct so the
+/// shared cache doesn't hand out Win32 handles or keep snapshot-shaped
+/// memory alive.
+#[derive(Clone)]
+struct ProcessEntry {
+    pid: u32,
+    ppid: u32,
+    exe: PathBuf,
+}
+
+/// Machine-wide process list shared by every `with_root_pid` caller.
+/// `with_root_pid` is called once per pane per `PROC_INFO_CACHE_TTL`
+/// (bidi foreground-process polling, title updates, cwd lookups); without
+/// this cache each caller took its own `CreateToolhelp32Snapshot` walk
+/// over every process on the machine, so the cost scaled with
+/// pane-count x machine process-count. Callers already treat the data as
+/// eventually-fresh (mux wraps it in its own 300ms stale-while-revalidate
+/// cache), so a shared snapshot up to `PROC_SNAPSHOT_TTL` old is within
+/// the staleness every caller tolerates. Concurrent refresher threads
+/// serialize on the mutex; the first one past expiry refreshes and the
+/// rest find it warm.
+static SNAPSHOT_CACHE: Mutex<Option<(Instant, Vec<ProcessEntry>)>> = Mutex::new(None);
+
+fn shared_snapshot_entries() -> Vec<ProcessEntry> {
+    // Deliberately poison-tolerant: the cache holds only plain data, so a
+    // panicking refresher must not permanently break process lookups.
+    let mut cache = SNAPSHOT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((updated, entries)) = cache.as_ref() {
+        if updated.elapsed() < PROC_SNAPSHOT_TTL {
+            return entries.clone();
+        }
+    }
+    let entries: Vec<ProcessEntry> = match Snapshot::new() {
+        Some(snapshot) => snapshot
+            .iter()
+            .map(|info| ProcessEntry {
+                pid: info.th32ProcessID,
+                ppid: info.th32ParentProcessID,
+                exe: wstr_to_path(&info.szExeFile),
+            })
+            .collect(),
+        None => vec![],
+    };
+    *cache = Some((Instant::now(), entries.clone()));
+    entries
+}
+
 impl LocalProcessInfo {
     pub fn current_working_dir(pid: u32) -> Option<PathBuf> {
         log::trace!("current_working_dir({})", pid);
@@ -407,17 +457,19 @@ impl LocalProcessInfo {
 
     pub fn with_root_pid(pid: u32) -> Option<Self> {
         log::trace!("LocalProcessInfo::with_root_pid({}), getting snapshot", pid);
-        let procs = Snapshot::entries();
+        // Shared machine-wide snapshot; may be up to PROC_SNAPSHOT_TTL
+        // old and is shared across all panes/callers.
+        let procs = shared_snapshot_entries();
         log::trace!("Got snapshot");
 
-        fn make_leaf(info: &PROCESSENTRY32W) -> LocalProcessInfo {
+        fn make_leaf(info: &ProcessEntry) -> LocalProcessInfo {
             let mut executable = None;
             let mut start_time = 0;
             let mut cwd = PathBuf::new();
             let mut argv = vec![];
             let mut console = 0;
 
-            if let Some(proc) = ProcHandle::new(info.th32ProcessID) {
+            if let Some(proc) = ProcHandle::new(info.pid) {
                 if let Some(exe) = proc.executable() {
                     executable.replace(exe);
                 }
@@ -431,15 +483,15 @@ impl LocalProcessInfo {
                 }
             }
 
-            let executable = executable.unwrap_or_else(|| wstr_to_path(&info.szExeFile));
+            let executable = executable.unwrap_or_else(|| info.exe.clone());
             let name = match executable.file_name() {
                 Some(name) => name.to_string_lossy().into_owned(),
                 None => String::new(),
             };
 
             LocalProcessInfo {
-                pid: info.th32ProcessID,
-                ppid: info.th32ParentProcessID,
+                pid: info.pid,
+                ppid: info.ppid,
                 name,
                 executable,
                 cwd,
@@ -451,12 +503,6 @@ impl LocalProcessInfo {
             }
         }
 
-        crate::build_tree_iterative(
-            &procs,
-            pid,
-            |info| info.th32ProcessID,
-            |info| info.th32ParentProcessID,
-            make_leaf,
-        )
+        crate::build_tree_iterative(&procs, pid, |info| info.pid, |info| info.ppid, make_leaf)
     }
 }

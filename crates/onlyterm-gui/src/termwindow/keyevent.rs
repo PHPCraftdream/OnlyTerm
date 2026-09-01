@@ -623,7 +623,6 @@ impl super::TermWindow {
         let modifier_and_leds = (key.modifiers, key.leds);
         if self.current_modifier_and_leds != modifier_and_leds {
             self.current_modifier_and_leds = modifier_and_leds;
-            self.schedule_next_status_update();
         }
 
         let pane = match self.get_active_pane_or_overlay() {

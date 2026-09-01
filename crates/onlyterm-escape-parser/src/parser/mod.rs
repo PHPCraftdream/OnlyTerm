@@ -8,7 +8,7 @@ use crate::{
 #[cfg(feature = "tmux_cc")]
 use core::borrow::BorrowMut;
 use core::cell::RefCell;
-use log::error;
+use log::debug;
 use num_traits::FromPrimitive;
 use vtparse::{CsiParam, VTActor, VTParser};
 
@@ -215,7 +215,7 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
     fn execute_c0_or_c1(&mut self, byte: u8) {
         match FromPrimitive::from_u8(byte) {
             Some(code) => (self.callback)(Action::Control(code)),
-            None => error!(
+            None => debug!(
                 "impossible C0/C1 control code {:?} 0x{:x} was dropped",
                 byte as char, byte
             ),

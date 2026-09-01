@@ -245,7 +245,6 @@ impl TermWindow {
                 |config| config.line_to_ele_shape_cache_size,
                 &config,
             )),
-            last_status_call: Instant::now(),
             title_update_coalescer: Default::default(),
             cursor_blink_state: RefCell::new(ColorEase::new(
                 config.cursor_blink_rate,
@@ -1647,9 +1646,6 @@ impl TermWindow {
                 | MuxNotification::Empty
                 | MuxNotification::WindowCreated(_) => {}
             },
-            TermWindowNotif::EmitStatusUpdate => {
-                self.emit_status_event();
-            }
             TermWindowNotif::Apply(func) => {
                 func(self);
             }
@@ -1721,12 +1717,6 @@ impl TermWindow {
             image.as_raw(),
         ));
         Ok(())
-    }
-
-    pub(super) fn schedule_status_update(&self) {
-        if let Some(window) = self.window.as_ref() {
-            window.notify(TermWindowNotif::EmitStatusUpdate);
-        }
     }
 
     fn is_pane_visible(&mut self, pane_id: PaneId) -> bool {
@@ -1895,11 +1885,6 @@ impl TermWindow {
             let mux_window_id = *mux_window_id.lock().unwrap();
             Self::mux_pane_output_event_callback(n, &window, mux_window_id, &dead)
         });
-    }
-
-    fn emit_status_event(&mut self) {
-        // update-right-status/update-status events were dispatched to rhai
-        // handlers; with the scripting layer removed they have no consumers.
     }
 
     /// Named window events (`window-resized`, the generic `EmitEvent(name)`

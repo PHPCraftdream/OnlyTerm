@@ -17,6 +17,34 @@ pub enum AllowImage {
 
 impl crate::TermWindow {
     pub fn paint_impl(&mut self, frame: &mut RenderFrame) {
+        // Check render-thread back-pressure BEFORE building the frame.
+        // `paint_pass` below is the expensive part -- shaping, quad
+        // building and signature hashing for every visible row -- and if
+        // the previously submitted frame is still in flight, `call_draw`
+        // would throw all of that work away (see the is_in_flight()
+        // bailout in call_draw_webgpu), only for identical work to be
+        // redone once the in-flight frame is acknowledged. When the
+        // render thread is backpressured, build nothing: mark the
+        // repaint as pending and return; the ack will invalidate the
+        // window and we will paint then.
+        if let Some(rt) = self.render_thread.as_ref() {
+            if rt.is_in_flight() {
+                rt.set_repaint_pending();
+                metrics::counter!("gui.render_thread.frames_dropped").increment(1);
+                // Same lost-wakeup double-check as in call_draw_webgpu:
+                // the render thread can finish (and check repaint_pending)
+                // in the gap between the two calls above, observing
+                // repaint_pending as not yet set and skipping its own
+                // invalidate(). Check again: if it's no longer in flight,
+                // request a repaint ourselves.
+                if !rt.is_in_flight() {
+                    if let Some(win) = self.window.as_ref() {
+                        win.invalidate();
+                    }
+                }
+                return;
+            }
+        }
         self.num_frames += 1;
         // If nothing on screen needs animating, then we can avoid
         // invalidating as frequently

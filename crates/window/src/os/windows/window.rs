@@ -3054,6 +3054,15 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
 
     if inner.paint_throttled {
         inner.invalidated = true;
+        // Mark the update region valid so Windows doesn't immediately
+        // re-synthesize WM_PAINT: leaving the region dirty makes the
+        // message loop spin without ever blocking until the throttle
+        // timer below fires (up to 1000/max_fps later). The timer's own
+        // InvalidateRect, or any invalidation arriving in the meantime,
+        // is what brings the next WM_PAINT.
+        // SAFETY: `hwnd` is the valid window handle this message was
+        // dispatched for; a null rect validates the whole client area.
+        unsafe { ValidateRect(hwnd, null()) };
         return Some(0);
     }
 

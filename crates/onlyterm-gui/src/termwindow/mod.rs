@@ -167,7 +167,6 @@ pub enum TermWindowNotif {
         pane_id: Option<PaneId>,
     },
     MuxNotification(MuxNotification),
-    EmitStatusUpdate,
     Apply(Box<dyn FnOnce(&mut TermWindow) + Send + Sync>),
     SwitchToMuxWindow(MuxWindowId),
 }
@@ -384,7 +383,6 @@ pub struct TermWindow {
     /// implements.
     retained_rows: RefCell<HashMap<mux::pane::PaneId, render::RetainedPaneRows>>,
 
-    last_status_call: Instant,
     /// Rate-limit state for title/tab-bar rebuilds; see
     /// TITLE_UPDATE_MIN_INTERVAL in actions.rs.
     title_update_coalescer: actions::TitleUpdateCoalescer,

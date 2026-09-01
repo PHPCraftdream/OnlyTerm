@@ -294,14 +294,21 @@ impl super::TermWindow {
 
         log::trace!("apply_dimensions computed size {:?}, dims {:?}", size, dims);
 
+        // Only push the resize down to the tabs (a ConPTY RPC per pane on
+        // this thread) when the computed terminal geometry actually
+        // changed; apply_dimensions also runs for events that leave it
+        // untouched, such as pure window_state changes.
+        let terminal_size_changed = self.terminal_size != size;
         self.terminal_size = size;
 
-        let mux = Mux::get();
-        if let Some(window) = mux.get_window(self.mux_window_id) {
-            for tab in window.iter() {
-                tab.resize(size);
-            }
-        };
+        if terminal_size_changed {
+            let mux = Mux::get();
+            if let Some(window) = mux.get_window(self.mux_window_id) {
+                for tab in window.iter() {
+                    tab.resize(size);
+                }
+            };
+        }
         self.resize_overlays();
         self.invalidate_fancy_tab_bar();
         self.update_title();

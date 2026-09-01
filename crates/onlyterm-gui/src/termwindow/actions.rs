@@ -337,23 +337,14 @@ impl TermWindow {
     }
 
     /// Called by various bits of code to update the title bar.
-    /// Let's also trigger the status event so that it can choose
-    /// to update the right-status.
     pub(super) fn update_title(&mut self) {
-        self.schedule_status_update();
         self.update_title_impl();
     }
 
     /// Same as `update_title`, but for callers that a running program can
     /// trigger arbitrarily often (mux alerts, user-var events). See
     /// TITLE_UPDATE_MIN_INTERVAL for why only these are rate-limited.
-    ///
-    /// Status emission stays outside the coalescing: posting the
-    /// EmitStatusUpdate notification is cheap (no terminal locks) and it
-    /// is the input pipeline that produces the left/right status text the
-    /// next rebuild will display.
     pub(super) fn update_title_coalesced(&mut self) {
-        self.schedule_status_update();
         self.request_title_update();
     }
 
@@ -536,25 +527,6 @@ impl TermWindow {
             // is what we're doing.
             if show_tab_bar != self.show_tab_bar {
                 self.config_was_reloaded();
-            }
-        }
-        self.schedule_next_status_update();
-    }
-
-    pub(super) fn schedule_next_status_update(&mut self) {
-        if let Some(window) = self.window.as_ref() {
-            let now = Instant::now();
-            if self.last_status_call <= now {
-                let interval = Duration::from_millis(self.config.status_update_interval);
-                let target = now + interval;
-                self.last_status_call = target;
-
-                let window = window.clone();
-                promise::spawn::spawn(async move {
-                    Timer::at(target).await;
-                    window.notify(TermWindowNotif::EmitStatusUpdate);
-                })
-                .detach();
             }
         }
     }
