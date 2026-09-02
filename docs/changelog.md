@@ -22,6 +22,9 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+* The default New Tab keybinding no longer includes bare `Ctrl+T` -- it commonly collides
+  with shell/readline bindings running inside the terminal itself. `Ctrl+Shift+T` (already
+  a default, synthesized from the `SUPER+T`/`CMD+T` binding on Windows/Linux) remains.
 * **Breaking**: the rhai scripting engine has been removed entirely, along
   with every `lua-api-crates/*` crate that backed it. The configuration
   language is now **ktav**, a static, engine-free `key: value` data format
@@ -608,6 +611,42 @@ As features stabilize some brief notes about them will accumulate here.
   the tab bar does the same. No context menu is involved.
 
 #### Fixed
+* The window could freeze on a stale, sometimes visually inconsistent frame -- most
+  noticeably the terminal cursor appearing on an old prompt row instead of the current
+  input line -- when running with the per-tab GPU host-process backend
+  (`webgpu_engine: PerTabProcess`). Root causes, all in `HostProcessBackend`: (1) its
+  `in_flight`/`repaint_pending` handshake used `Release`/`Acquire` atomics, silently
+  reintroducing a lost-wakeup race already found and fixed for the in-process render path;
+  a freshly built frame could be dropped with nothing left to trigger a repaint until an
+  unrelated event (a keypress, a focus change) happened to invalidate the window. (2) If
+  the child process's `submit_frame` hit a recoverable GPU surface error (normal during a
+  resize or window occlusion) it never acknowledged the frame, permanently wedging the
+  parent's back-pressure state with no supervisor recovery. (3) A frame's signature could
+  be recorded before delivery was confirmed, so a lost frame followed by a child respawn
+  could be silently skipped as "unchanged", leaving the window showing content from a
+  process that no longer exists. Independently, a torn read of cursor position/dimensions/
+  line contents across several separate terminal-lock acquisitions in the renderer could
+  combine a cursor position from one instant with line contents from a later one, producing
+  the same "cursor on the wrong row" symptom transiently even without the host-process
+  backend; that snapshot is now taken under a single lock acquisition.
+* The scrollbar thumb was invisible (indistinguishable from empty space) when nothing is
+  scrollable, notably while an alternate-screen application (`vim`, `htop`, and some newer
+  TUI-based CLI tools) is active -- the thumb geometry math was correct but filled the
+  entire track, and a `0 / 0` edge case in the same calculation was silently masked by a
+  saturating cast rather than surfaced. The scrollbar is no longer drawn at all when there
+  is nothing to scroll.
+* Scrolling quickly could very briefly flash a duplicated line of already-scrolled-past
+  text, because the renderer's retained-row cache didn't account for the viewport having
+  moved when reusing a not-yet-rebuilt row's cached content.
+* Sustained terminal output (a busy build log, a progress spinner, etc.) could keep the GUI
+  thread spinning continuously instead of sleeping between frames, and could build a whole
+  frame's worth of text shaping only to immediately discard it if the renderer was still
+  busy submitting the previous one -- both fixed, along with a redundant per-tab,
+  per-frame system-wide process list scan that scaled poorly with the number of open tabs
+  and processes running on the machine.
+* Closing a pane left its rendering caches (retained rows, semantic zone index, per-pane UI
+  state) allocated for the lifetime of the window, growing slowly with the total number of
+  panes ever opened in a session rather than the number currently open.
 * Many symbol codepoints (e.g. U+23BF and other Miscellaneous
   Technical/Dingbats characters, such as the tree-drawing glyphs some tools
   use) rendered as an empty "tofu" box: the fallback chain worked correctly
