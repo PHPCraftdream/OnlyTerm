@@ -137,8 +137,7 @@ fn render_snapshot_is_consistent_with_individual_getters() {
     // Print some text and move the cursor, so cursor position and line
     // contents are both non-trivial.
     use termwiz::escape::csi::{Cursor, CSI};
-    use termwiz::escape::OneBased;
-    use termwiz::escape::{Action, ControlCode};
+    use termwiz::escape::{Action, ControlCode, OneBased};
     // Print some lines (building a little scrollback so a scrolled-back
     // viewport range is meaningful) and then move the cursor, so cursor
     // position and line contents are both non-trivial.
