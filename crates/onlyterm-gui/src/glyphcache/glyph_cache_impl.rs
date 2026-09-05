@@ -23,6 +23,9 @@ use std::time::{Duration, Instant};
 use termwiz::color::RgbColor;
 use termwiz::image::{ImageData, ImageDataType};
 
+#[cfg(test)]
+mod image_cache_tests;
+
 // AHashMap: HashMap with ahash's RandomState for process-random keys
 type AHashMap<K, V> = HashMap<K, V, RandomState>;
 

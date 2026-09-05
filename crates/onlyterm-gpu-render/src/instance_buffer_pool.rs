@@ -20,7 +20,6 @@ pub(crate) struct InstanceBufferPool {
 
 struct InstanceBufferSlot {
     buffer: wgpu::Buffer,
-    capacity: u64,
 }
 
 /// Device-independent capacity bookkeeping shared by the real GPU pool and
@@ -79,20 +78,24 @@ impl InstanceBufferPool {
         slot: usize,
         required_bytes: usize,
     ) -> anyhow::Result<wgpu::Buffer> {
+        // The wire builder supplies contiguous slots. Reject a gap before
+        // mutating the capacity bookkeeper, rather than indexing a missing
+        // GPU slot if a future caller breaks that contract.
+        if slot > self.slots.len() {
+            anyhow::bail!("instance buffer slots must be requested contiguously");
+        }
         let required = required_capacity(required_bytes, device.limits().max_buffer_size)?;
         let (target, recreate) = self.core.prepare_slot(slot, required);
         let has_slot = self.slots.len() > slot;
         if !has_slot {
             self.slots.push(InstanceBufferSlot {
                 buffer: create_buffer(device, target)?,
-                capacity: target,
             });
         }
 
         let slot_state = &mut self.slots[slot];
         if has_slot && recreate {
             slot_state.buffer = create_buffer(device, target)?;
-            slot_state.capacity = target;
         }
         Ok(slot_state.buffer.clone())
     }
@@ -203,7 +206,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires a host GPU adapter; run explicitly on a GPU-enabled machine"]
     fn production_pool_reuses_distinct_buffers_and_releases_unused_slots() {
         let instance = wgpu::Instance::default();
         let adapter =
@@ -226,6 +228,7 @@ mod tests {
 
         let mut pool = super::InstanceBufferPool::new();
         pool.begin_frame(2);
+        assert!(pool.buffer_for(&device, 1, 64).is_err());
         let first = pool.buffer_for(&device, 0, 64).expect("first buffer");
         let second = pool.buffer_for(&device, 1, 128).expect("second buffer");
         assert_ne!(first, second, "different draw slots need different buffers");
@@ -242,9 +245,23 @@ mod tests {
             "stationary draw must not allocate again"
         );
 
+        assert!(pool.buffer_for(&device, 0, usize::MAX).is_err());
+        assert_eq!(first, pool.buffer_for(&device, 0, 64).unwrap());
+        let grown = pool.buffer_for(&device, 0, 1024).unwrap();
+        assert_ne!(first, grown, "growth must replace the undersized buffer");
+        assert!(grown.size() >= 1024);
+        let shrunk = pool.buffer_for(&device, 0, 64).unwrap();
+        assert_ne!(
+            grown, shrunk,
+            "a transient large allocation must be released"
+        );
+        assert_eq!(shrunk.size(), 64);
+
         pool.begin_frame(0);
         assert_eq!(pool.core.slot_count(), 0);
         assert!(pool.slots.is_empty());
+        let after_empty = pool.buffer_for(&device, 0, 64).unwrap();
+        assert_ne!(shrunk, after_empty);
     }
 
     fn prepare_frame(core: &mut BufferPoolCore, sizes: &[usize], max_capacity: u64) -> usize {

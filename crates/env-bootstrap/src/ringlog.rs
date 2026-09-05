@@ -201,9 +201,7 @@ impl log::Log for Logger {
                     target_color = target_color
                 );
                 let _ = stderr.write_all(logline.as_bytes());
-                if should_flush(record.level()) {
-                    let _ = stderr.flush();
-                }
+                let _ = stderr.flush();
             }
 
             let mut file = self.file.lock().unwrap();
@@ -226,9 +224,10 @@ impl log::Log for Logger {
                     entry.msg,
                     padding = padding
                 );
-                if should_flush(record.level()) {
-                    let _ = file.flush();
-                }
+                // Debug is opt-in, but its idle/shutdown tail is valuable
+                // during investigations too. The global logger is not
+                // dropped on process exit, so keep flushing every record.
+                let _ = file.flush();
             }
 
             // Move the already-formatted strings into the ring after the
@@ -237,10 +236,6 @@ impl log::Log for Logger {
             RINGS.lock().unwrap().log(entry);
         }
     }
-}
-
-fn should_flush(level: Level) -> bool {
-    matches!(level, Level::Info | Level::Warn | Level::Error)
 }
 
 /// Returns the current set of log information, sorted by time
@@ -388,13 +383,5 @@ mod tests {
             messages(&ring),
             (112..128).map(|i| i.to_string()).collect::<Vec<_>>()
         );
-    }
-
-    #[test]
-    fn startup_logs_are_flushed_without_flushing_debug_diagnostics() {
-        assert!(should_flush(Level::Info));
-        assert!(!should_flush(Level::Debug));
-        assert!(should_flush(Level::Warn));
-        assert!(should_flush(Level::Error));
     }
 }
