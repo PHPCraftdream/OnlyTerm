@@ -11,7 +11,7 @@ fn pending_decode_retries_on_cache_miss_hit_and_after_first_frame() {
     // Supply the decoder channel directly so readiness is controlled by the
     // test, without sleeping or depending on an image-decoding thread.
     let decoded = DecodedImage {
-        frame_start: RefCell::new(Instant::now()),
+        frame_start: RefCell::new(Instant::now() - Duration::from_secs(1)),
         current_frame: RefCell::new(0),
         image: Arc::new(ImageData::with_data(ImageDataType::EncodedLease(
             BlobManager::store(&[1]).unwrap(),
@@ -25,7 +25,8 @@ fn pending_decode_retries_on_cache_miss_hit_and_after_first_frame() {
     for _ in 0..2 {
         // First call misses the sprite cache; second hits the placeholder.
         // Both must request a future retry rather than an expired animation
-        // deadline. The old cache-miss path returned frame_start + 0 here.
+        // deadline. The old path returned frame_start + min_frame_duration;
+        // the deliberately old start makes that deadline unambiguously past.
         let before = Instant::now();
         let (_, next, state) = GlyphCache::cached_image_impl(
             &mut cache,
