@@ -431,11 +431,16 @@ impl crate::TermWindow {
             None,
             self.allow_images,
         )?;
-        self.update_next_frame_time(next_due);
-
         if load_state == LoadState::Loading {
+            if let Some(next_due) = next_due {
+                // Keep polling the bounded decoder channel without blocking
+                // the GUI thread. This timer is independent of focus so a
+                // background window is repainted when decoding completes.
+                self.schedule_budget_repaint(next_due);
+            }
             return Ok(false);
         }
+        self.update_next_frame_time(next_due);
 
         let pixel_width = self.dimensions.pixel_width as f32;
         let pixel_height = self.dimensions.pixel_height as f32;

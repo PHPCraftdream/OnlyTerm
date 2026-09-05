@@ -141,7 +141,7 @@ impl super::TermWindow {
     /// only for chords.
     fn pane_runs_any_of(&self, pane: &Arc<dyn Pane>, wanted: &[String], what: &str) -> bool {
         if wanted.is_empty() {
-            log::info!(
+            log::debug!(
                 "diag: key-compat {} pane={} disabled: empty process list",
                 what,
                 pane.pane_id(),
@@ -149,7 +149,7 @@ impl super::TermWindow {
             return false;
         }
         let Some(names) = pane.get_process_tree_exe_names(CachePolicy::AllowStale) else {
-            log::info!(
+            log::debug!(
                 "diag: key-compat {} pane={} wanted={:?} tree unavailable -> false",
                 what,
                 pane.pane_id(),
@@ -160,7 +160,7 @@ impl super::TermWindow {
         let matched = wanted
             .iter()
             .any(|want| names.iter().any(|have| have.eq_ignore_ascii_case(want)));
-        log::info!(
+        log::debug!(
             "diag: key-compat {} pane={} wanted={:?} tree={:?} -> {}",
             what,
             pane.pane_id(),
@@ -296,7 +296,7 @@ impl super::TermWindow {
             if is_newline_chord(keycode, effective_mods)
                 || is_ctrl_chord_of_interest(keycode, effective_mods)
             {
-                log::info!(
+                log::debug!(
                     "diag: chord {:?} {:?} pass={:?} -> key table lookup {}",
                     keycode,
                     effective_mods,
@@ -488,7 +488,7 @@ impl super::TermWindow {
         // input and there is no point looking at them. See
         // `is_ctrl_chord_of_interest`.
         if is_ctrl_chord_of_interest(&key.key, key.modifiers) {
-            log::info!(
+            log::debug!(
                 "diag: raw key event key={:?} phys_code={:?} vk={:#04x} sc={:#04x} \
                  mods={:?} down={} pane_encoding={:?}",
                 key.key,
@@ -747,7 +747,7 @@ impl super::TermWindow {
                 let res = if let Some(encoded) = self.encode_win32_input(&pane, &window_key) {
                     log::trace!("diag: chose win32-input-mode path, encoded={:?}", encoded);
                     if diag_ctrl {
-                        log::info!(
+                        log::debug!(
                             "diag: passthrough via win32-input-mode, key={:?} mods={:?} \
                              win32_uni_char={:?} encoded={:?}",
                             window_key.key,
@@ -765,7 +765,7 @@ impl super::TermWindow {
                 } else if let Some(encoded) = self.encode_kitty_input(&pane, &window_key) {
                     log::trace!("diag: chose kitty path, encoded={:?}", encoded);
                     if diag_ctrl {
-                        log::info!(
+                        log::debug!(
                             "diag: passthrough via kitty, key={:?} mods={:?} encoded={:?}",
                             window_key.key,
                             modifiers,
@@ -781,7 +781,7 @@ impl super::TermWindow {
                 } else {
                     log::trace!("diag: chose legacy pane.key_down/key_up path");
                     if diag_ctrl {
-                        log::info!(
+                        log::debug!(
                             "diag: passthrough via legacy pane.key_{}, key={:?} mods={:?} \
                              (pane negotiated {:?}, allow_win32_input_mode={}, \
                              enable_kitty_keyboard={})",
