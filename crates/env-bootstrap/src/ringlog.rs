@@ -30,6 +30,7 @@ struct LevelRing {
     entries: Vec<Entry>,
     first: usize,
     last: usize,
+    len: usize,
 }
 
 impl LevelRing {
@@ -48,17 +49,13 @@ impl LevelRing {
             entries,
             first: 0,
             last: 0,
+            len: 0,
         }
     }
 
     // Returns the number of entries in the ring
     fn len(&self) -> usize {
-        if self.last >= self.first {
-            self.last - self.first
-        } else {
-            // Wrapped around.
-            (self.entries.len() - self.first) + self.last
-        }
+        self.len
     }
 
     fn rolling_inc(&self, value: usize) -> usize {
@@ -78,12 +75,16 @@ impl LevelRing {
             self.first = self.rolling_inc(self.first);
         } else {
             self.entries[self.last] = entry;
+            self.len += 1;
         }
         self.last = self.rolling_inc(self.last);
     }
 
     fn append_to_vec(&self, target: &mut Vec<Entry>) {
-        if self.last >= self.first {
+        if self.len == 0 {
+            return;
+        }
+        if self.first < self.last {
             target.extend_from_slice(&self.entries[self.first..self.last]);
         } else {
             target.extend_from_slice(&self.entries[self.first..]);
@@ -119,14 +120,9 @@ impl Rings {
         results
     }
 
-    fn log(&mut self, record: &Record) {
-        if let Some(ring) = self.rings.get_mut(&record.level()) {
-            ring.push(Entry {
-                then: Local::now(),
-                level: record.level(),
-                target: record.target().to_string(),
-                msg: record.args().to_string(),
-            });
+    fn log(&mut self, entry: Entry) {
+        if let Some(ring) = self.rings.get_mut(&entry.level) {
+            ring.push(entry);
         }
     }
 }
@@ -159,13 +155,16 @@ impl log::Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.filter.matches(record) {
-            RINGS.lock().unwrap().log(record);
-            let ts = Local::now().format("%H:%M:%S%.3f").to_string();
+            let entry = Entry {
+                then: Local::now(),
+                level: record.level(),
+                target: record.target().to_string(),
+                msg: record.args().to_string(),
+            };
+            let ts = entry.then.format("%H:%M:%S%.3f").to_string();
             let level = record.level().as_str();
-            let target = record.target().to_string();
-            let msg = record.args().to_string();
 
-            let padding = self.padding.fetch_max(target.len(), Ordering::SeqCst);
+            let padding = self.padding.fetch_max(entry.target.len(), Ordering::SeqCst);
 
             let level_color = if self.is_tty {
                 match record.level() {
@@ -194,15 +193,17 @@ impl log::Log for Logger {
                     "{}  {level_color}{:6}{reset} {target_color}{:padding$}{reset} > {}\n",
                     ts,
                     level,
-                    target,
-                    msg,
+                    entry.target,
+                    entry.msg,
                     padding = padding,
                     level_color = level_color,
                     reset = reset,
                     target_color = target_color
                 );
                 let _ = stderr.write_all(logline.as_bytes());
-                let _ = stderr.flush();
+                if should_flush(record.level()) {
+                    let _ = stderr.flush();
+                }
             }
 
             let mut file = self.file.lock().unwrap();
@@ -221,14 +222,25 @@ impl log::Log for Logger {
                     "{}  {:6} {:padding$} > {}",
                     ts,
                     level,
-                    target,
-                    msg,
+                    entry.target,
+                    entry.msg,
                     padding = padding
                 );
-                let _ = file.flush();
+                if should_flush(record.level()) {
+                    let _ = file.flush();
+                }
             }
+
+            // Move the already-formatted strings into the ring after the
+            // output paths have borrowed them. This avoids formatting the
+            // target and message a second time just for the in-memory log.
+            RINGS.lock().unwrap().log(entry);
         }
     }
+}
+
+fn should_flush(level: Level) -> bool {
+    matches!(level, Level::Info | Level::Warn | Level::Error)
 }
 
 /// Returns the current set of log information, sorted by time
@@ -314,5 +326,75 @@ pub fn setup_logger() {
     let (max_level, logger) = setup_pretty();
     if log::set_boxed_logger(Box::new(logger)).is_ok() {
         log::set_max_level(max_level);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(index: usize) -> Entry {
+        Entry {
+            then: Local::now(),
+            level: Level::Info,
+            target: "test".to_string(),
+            msg: index.to_string(),
+        }
+    }
+
+    fn messages(ring: &LevelRing) -> Vec<String> {
+        let mut entries = Vec::new();
+        ring.append_to_vec(&mut entries);
+        entries.into_iter().map(|entry| entry.msg).collect()
+    }
+
+    #[test]
+    fn level_ring_keeps_exactly_sixteen_entries_before_wrapping() {
+        let mut ring = LevelRing::new(Level::Info);
+        for index in 0..16 {
+            ring.push(entry(index));
+        }
+
+        assert_eq!(ring.len(), 16);
+        assert_eq!(
+            messages(&ring),
+            (0..16).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn level_ring_retains_the_latest_entries_after_wrapping() {
+        let mut ring = LevelRing::new(Level::Info);
+        for index in 0..17 {
+            ring.push(entry(index));
+        }
+
+        assert_eq!(ring.len(), 16);
+        assert_eq!(
+            messages(&ring),
+            (1..17).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn level_ring_stays_bounded_for_long_runs() {
+        let mut ring = LevelRing::new(Level::Info);
+        for index in 0..128 {
+            ring.push(entry(index));
+        }
+
+        assert_eq!(ring.len(), 16);
+        assert_eq!(
+            messages(&ring),
+            (112..128).map(|i| i.to_string()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn startup_logs_are_flushed_without_flushing_debug_diagnostics() {
+        assert!(should_flush(Level::Info));
+        assert!(!should_flush(Level::Debug));
+        assert!(should_flush(Level::Warn));
+        assert!(should_flush(Level::Error));
     }
 }

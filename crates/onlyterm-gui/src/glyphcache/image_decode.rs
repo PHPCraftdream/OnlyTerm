@@ -8,7 +8,7 @@ use image::{
 use onlyterm_blob_leases::{BlobLease, BlobManager, BoxedReader};
 use std::cell::RefCell;
 use std::io::Seek;
-use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, LazyLock, MutexGuard};
 use std::time::{Duration, Instant};
 use termwiz::image::{ImageData, ImageDataType};
@@ -56,6 +56,8 @@ pub(super) struct DecodedFrame {
     pub(super) width: usize,
     pub(super) height: usize,
 }
+
+pub(super) const IMAGE_DECODE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 pub(super) struct FrameDecoder {}
 
@@ -241,9 +243,24 @@ pub(super) enum FrameSource {
     FrameIndex(usize),
 }
 
+enum DecoderPoll {
+    Frame(DecodedFrame),
+    Empty,
+    Disconnected,
+}
+
+fn poll_decoder(rx: &Receiver<DecodedFrame>) -> DecoderPoll {
+    match rx.try_recv() {
+        Ok(frame) => DecoderPoll::Frame(frame),
+        Err(TryRecvError::Empty) => DecoderPoll::Empty,
+        Err(TryRecvError::Disconnected) => DecoderPoll::Disconnected,
+    }
+}
+
 pub(super) struct FrameState {
     pub(super) source: FrameSource,
     pub(super) current_frame: DecodedFrame,
+    current_index: usize,
     pub(super) frames: Vec<DecodedFrame>,
     pub(super) load_state: LoadState,
 }
@@ -268,60 +285,41 @@ impl FrameState {
                 height: BLACK_SIZE,
                 duration: Duration::from_millis(0),
             },
+            current_index: 0,
             load_state: LoadState::Loading,
-        }
-    }
-
-    pub(super) fn wait_for_first_frame(&mut self, duration: Duration) {
-        if !self.frames.is_empty() {
-            // Already decoded the first frame
-            return;
-        }
-
-        match &mut self.source {
-            FrameSource::Decoder(rx) => match rx.recv_timeout(duration) {
-                Ok(frame) => {
-                    self.frames.push(frame.clone());
-                    self.current_frame = frame;
-                    self.load_state = LoadState::Loaded;
-                }
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => {
-                    self.source = FrameSource::FrameIndex(0);
-                    log::warn!("image decoder thread terminated");
-                    self.current_frame.duration = Duration::from_secs(86400);
-                    self.frames.push(self.current_frame.clone());
-                }
-            },
-            FrameSource::FrameIndex(_) => {}
         }
     }
 
     pub(super) fn load_next_frame(&mut self) -> bool {
         match &mut self.source {
-            FrameSource::Decoder(rx) => match rx.try_recv() {
-                Ok(frame) => {
+            FrameSource::Decoder(rx) => match poll_decoder(rx) {
+                DecoderPoll::Frame(frame) => {
                     self.frames.push(frame.clone());
                     self.current_frame = frame;
+                    self.current_index = self.frames.len() - 1;
                     self.load_state = LoadState::Loaded;
                     true
                 }
-                Err(TryRecvError::Empty) => false,
-                Err(TryRecvError::Disconnected) => {
-                    self.source = FrameSource::FrameIndex(0);
+                DecoderPoll::Empty => false,
+                DecoderPoll::Disconnected => {
+                    self.source = FrameSource::FrameIndex(self.current_index);
                     if self.frames.is_empty() {
                         log::warn!("image decoder thread terminated");
                         self.current_frame.duration = Duration::from_secs(86400);
                         self.frames.push(self.current_frame.clone());
+                        self.current_index = 0;
+                        self.load_state = LoadState::Loaded;
                         false
                     } else if self.frames.len() == 1 {
                         // If there's only a single frame, we may as well ensure
                         // that it has a long duration so that we don't waste
                         // resources ticking to the same frame over and over
-                        self.frames[0].duration = Duration::from_secs(86400);
-                        true
+                        let duration = Duration::from_secs(86400);
+                        self.frames[0].duration = duration;
+                        self.current_frame.duration = duration;
+                        false
                     } else {
-                        true
+                        false
                     }
                 }
             },
@@ -331,6 +329,7 @@ impl FrameState {
                     *idx = 0;
                 }
                 self.current_frame = self.frames[*idx].clone();
+                self.current_index = *idx;
                 true
             }
         }
@@ -419,5 +418,97 @@ impl DecodedImage {
                 frames: RefCell::new(None),
             },
         }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn ensure_test_storage() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        onlyterm_blob_leases::register_storage(Arc::new(
+            onlyterm_blob_leases::simple_tempdir::SimpleTempDir::new()
+                .expect("create temp blob storage"),
+        ))
+        .expect("register blob storage");
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoder_poll_returns_immediately_when_no_frame_is_ready() {
+        let (_tx, rx) = sync_channel(1);
+
+        assert!(matches!(poll_decoder(&rx), DecoderPoll::Empty));
+    }
+
+    #[test]
+    fn decoder_poll_reports_completion_without_waiting() {
+        let (tx, rx) = sync_channel::<DecodedFrame>(1);
+        drop(tx);
+
+        assert!(matches!(poll_decoder(&rx), DecoderPoll::Disconnected));
+    }
+
+    #[test]
+    fn loading_retry_is_bounded_and_nonzero() {
+        assert!(IMAGE_DECODE_POLL_INTERVAL > Duration::ZERO);
+        assert!(IMAGE_DECODE_POLL_INTERVAL <= Duration::from_millis(100));
+    }
+
+    #[test]
+    fn disconnected_decoder_leaves_loading_state() {
+        super::ensure_test_storage();
+        let (tx, rx) = sync_channel(1);
+        drop(tx);
+        let mut state = FrameState::new(rx);
+
+        assert_eq!(state.load_state, LoadState::Loading);
+        assert!(!state.load_next_frame());
+        assert_eq!(state.load_state, LoadState::Loaded);
+        assert!(matches!(state.source, FrameSource::FrameIndex(0)));
+        assert_eq!(state.frames.len(), 1);
+    }
+
+    #[test]
+    fn disconnected_decoder_resumes_at_frame_zero_without_skipping_it() {
+        super::ensure_test_storage();
+        let (tx, rx) = sync_channel(2);
+        let frame_zero = DecodedFrame {
+            lease: BlobManager::store(&[0, 0, 0, 0]).expect("store first frame"),
+            duration: Duration::from_millis(100),
+            width: 1,
+            height: 1,
+        };
+        let frame_one = DecodedFrame {
+            lease: BlobManager::store(&[255, 255, 255, 255]).expect("store second frame"),
+            duration: Duration::from_millis(100),
+            width: 1,
+            height: 1,
+        };
+        tx.send(frame_zero.clone()).expect("send first frame");
+        tx.send(frame_one.clone()).expect("send second frame");
+
+        let mut state = FrameState::new(rx);
+        assert!(state.load_next_frame());
+        assert!(state.load_next_frame());
+        assert_eq!(state.current_index, 1);
+        drop(tx);
+
+        assert!(!state.load_next_frame());
+        assert!(state.load_next_frame());
+        assert_eq!(state.current_index, 0);
+        assert_eq!(
+            state.current_frame.lease.content_id().as_hash_bytes(),
+            frame_zero.lease.content_id().as_hash_bytes()
+        );
+        assert!(state.load_next_frame());
+        assert_eq!(state.current_index, 1);
+        assert_eq!(
+            state.current_frame.lease.content_id().as_hash_bytes(),
+            frame_one.lease.content_id().as_hash_bytes()
+        );
     }
 }

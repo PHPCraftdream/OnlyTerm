@@ -1,3 +1,4 @@
+use super::image_decode::IMAGE_DECODE_POLL_INTERVAL;
 use super::*;
 
 use crate::renderstate::RenderContext;
@@ -24,6 +25,10 @@ use termwiz::image::{ImageData, ImageDataType};
 
 // AHashMap: HashMap with ahash's RandomState for process-random keys
 type AHashMap<K, V> = HashMap<K, V, RandomState>;
+
+fn decoder_poll_deadline(now: Instant) -> Instant {
+    now + IMAGE_DECODE_POLL_INTERVAL
+}
 
 impl GlyphCache {
     pub fn new_in_memory(fonts: &Rc<FontConfiguration>, size: usize) -> anyhow::Result<Self> {
@@ -449,43 +454,64 @@ impl GlyphCache {
                 let mut frames = decoded.frames.borrow_mut();
                 let frames = frames.as_mut().expect("to have frames");
 
-                let mut next = None;
                 let mut decoded_frame_start = decoded.frame_start.borrow_mut();
                 let mut decoded_current_frame = decoded.current_frame.borrow_mut();
 
-                // Wait up to the approx limit of human tolerable delay for
-                // the first frame to be decoded, so that we can avoid showing
-                // a flash of the black frame in the common case
-                let max_duration = Duration::from_millis(125).max(min_frame_duration);
-                if let Some(remain) = max_duration.checked_sub(decoded_frame_start.elapsed()) {
-                    frames.wait_for_first_frame(remain);
-                }
-
                 let now = Instant::now();
-                // We round up the frame duration to at least the minimum
-                // frame duration that onlyterm can use when rendering.
-                // There's no point trying to deal with smaller intervals
-                // because we simply cannot render them without dropping
-                // frames.
-                // In addition, with a 1ms frame delay, there's a good chance
-                // that any given cell may switch to a different frame from
-                // its neighbor while we are rendering the entire terminal
-                // frame, so we want to avoid that.
-                // <https://github.com/wezterm/wezterm/issues/3260>
-                let mut next_due =
-                    *decoded_frame_start + frames.frame_duration().max(min_frame_duration);
-                if now >= next_due {
-                    // Advance to next frame
-                    if frames.load_next_frame() {
-                        *decoded_current_frame += 1;
-                        *decoded_frame_start = now;
-                        next_due =
-                            *decoded_frame_start + frames.frame_duration().max(min_frame_duration);
-                        handle.current_frame = *decoded_current_frame;
-                    }
+                let was_loading = frames.load_state == LoadState::Loading;
+                if was_loading {
+                    // The decoder runs on its own thread. Polling the bounded
+                    // channel keeps the GUI responsive while the first frame
+                    // is being decoded; the caller schedules the next repaint
+                    // from the returned deadline below.
+                    frames.load_next_frame();
                 }
 
-                next.replace(next_due);
+                let mut next = None;
+                if frames.load_state == LoadState::Loading {
+                    next.replace(decoder_poll_deadline(now));
+                } else {
+                    if was_loading {
+                        // The first frame became available during this poll.
+                        // Start its animation clock when it is actually shown,
+                        // rather than counting decoder time as display time.
+                        *decoded_current_frame = 0;
+                        *decoded_frame_start = now;
+                        handle.current_frame = 0;
+                    }
+
+                    // We round up the frame duration to at least the minimum
+                    // frame duration that onlyterm can use when rendering.
+                    // There's no point trying to deal with smaller intervals
+                    // because we simply cannot render them without dropping
+                    // frames.
+                    // In addition, with a 1ms frame delay, there's a good chance
+                    // that any given cell may switch to a different frame from
+                    // its neighbor while we are rendering the entire terminal
+                    // frame, so we want to avoid that.
+                    // <https://github.com/wezterm/wezterm/issues/3260>
+                    let mut next_due =
+                        *decoded_frame_start + frames.frame_duration().max(min_frame_duration);
+                    if !was_loading && now >= next_due {
+                        // Advance to next frame
+                        if frames.load_next_frame() {
+                            *decoded_current_frame += 1;
+                            *decoded_frame_start = now;
+                            next_due = *decoded_frame_start
+                                + frames.frame_duration().max(min_frame_duration);
+                            handle.current_frame = *decoded_current_frame;
+                        } else {
+                            // An animated decoder can finish the first frame
+                            // before the next one is available. Keep the GUI
+                            // responsive while waiting for that bounded
+                            // channel without repeatedly scheduling an
+                            // already-expired deadline.
+                            next_due = decoder_poll_deadline(now);
+                        }
+                    }
+
+                    next.replace(next_due);
+                }
 
                 let hash = frames.frame_hash();
 
@@ -527,11 +553,7 @@ impl GlyphCache {
 
                 frame_cache.insert(hash, sprite.clone());
 
-                Ok((
-                    sprite,
-                    Some(*decoded_frame_start + frames.frame_duration().max(min_frame_duration)),
-                    frames.load_state,
-                ))
+                Ok((sprite, next, frames.load_state))
             }
         }
     }
@@ -864,11 +886,7 @@ mod tests {
         );
 
         // FrameDecoder relies on BlobManager storage; register a temp backend.
-        onlyterm_blob_leases::register_storage(Arc::new(
-            onlyterm_blob_leases::simple_tempdir::SimpleTempDir::new()
-                .expect("create temp blob storage"),
-        ))
-        .expect("register blob storage");
+        super::super::image_decode::ensure_test_storage();
 
         let lease =
             onlyterm_blob_leases::BlobManager::store(&webp_bytes).expect("store webp bytes");
@@ -887,5 +905,14 @@ mod tests {
             (w * h * 4) as usize,
             "decoded frame should be RGBA8"
         );
+    }
+
+    #[test]
+    fn decoder_poll_deadline_is_strictly_after_now() {
+        let now = Instant::now();
+        let deadline = decoder_poll_deadline(now);
+
+        assert_eq!(deadline.duration_since(now), IMAGE_DECODE_POLL_INTERVAL);
+        assert!(deadline > now);
     }
 }

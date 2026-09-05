@@ -1,6 +1,6 @@
 use crate::colorease::ColorEase;
 use crate::customglyph::{BlockKey, *};
-use crate::glyphcache::{CachedGlyph, GlyphCache};
+use crate::glyphcache::{CachedGlyph, GlyphCache, LoadState};
 use crate::quad::{
     HeapQuadAllocator, QuadAllocator, QuadImpl, QuadTrait, TripleLayerQuadAllocator,
     TripleLayerQuadAllocatorTrait,
@@ -690,12 +690,20 @@ impl crate::TermWindow {
             padding.next_power_of_two()
         };
 
-        let (sprite, next_due, _load_state) = gl_state
+        let (sprite, next_due, load_state) = gl_state
             .glyph_cache
             .borrow_mut()
             .cached_image(image.image_data(), Some(padding), self.allow_images)
             .context("cached_image")?;
-        self.update_next_frame_time(next_due);
+        if load_state == LoadState::Loading {
+            if let Some(next_due) = next_due {
+                // Keep loading images progressing in unfocused windows too;
+                // the ordinary animation timer is intentionally focus-bound.
+                self.schedule_budget_repaint(next_due);
+            }
+        } else {
+            self.update_next_frame_time(next_due);
+        }
         let width = sprite.coords.size.width;
         let height = sprite.coords.size.height;
 
