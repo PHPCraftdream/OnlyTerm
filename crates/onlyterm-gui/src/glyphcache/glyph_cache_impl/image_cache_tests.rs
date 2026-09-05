@@ -1,4 +1,6 @@
-use super::super::image_decode::{ensure_test_storage, DecodedFrame, FrameState};
+use super::super::image_decode::{
+    decoded_frame_for_test, ensure_test_storage, frame_state_for_test,
+};
 use super::*;
 use onlyterm_blob_leases::BlobManager;
 use std::cell::RefCell;
@@ -16,7 +18,7 @@ fn pending_decode_retries_on_cache_miss_hit_and_after_first_frame() {
         image: Arc::new(ImageData::with_data(ImageDataType::EncodedLease(
             BlobManager::store(&[1]).unwrap(),
         ))),
-        frames: RefCell::new(Some(FrameState::new(rx))),
+        frames: RefCell::new(Some(frame_state_for_test(rx))),
     };
     let texture: Rc<dyn Texture2d> = Rc::new(ImageTexture::new(64, 64));
     let mut atlas = Atlas::new(&texture).unwrap();
@@ -41,12 +43,12 @@ fn pending_decode_retries_on_cache_miss_hit_and_after_first_frame() {
         assert!(next.unwrap() > before);
     }
 
-    tx.send(DecodedFrame {
-        lease: BlobManager::store(&[255, 255, 255, 255]).unwrap(),
-        duration: Duration::from_millis(100),
-        width: 1,
-        height: 1,
-    })
+    tx.send(decoded_frame_for_test(
+        BlobManager::store(&[255, 255, 255, 255]).unwrap(),
+        Duration::from_millis(100),
+        1,
+        1,
+    ))
     .unwrap();
     let (sprite, _, state) = GlyphCache::cached_image_impl(
         &mut cache,

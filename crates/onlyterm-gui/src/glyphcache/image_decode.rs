@@ -422,6 +422,26 @@ impl DecodedImage {
 }
 
 #[cfg(test)]
+pub(super) fn frame_state_for_test(rx: Receiver<DecodedFrame>) -> FrameState {
+    FrameState::new(rx)
+}
+
+#[cfg(test)]
+pub(super) fn decoded_frame_for_test(
+    lease: BlobLease,
+    duration: Duration,
+    width: usize,
+    height: usize,
+) -> DecodedFrame {
+    DecodedFrame {
+        lease,
+        duration,
+        width,
+        height,
+    }
+}
+
+#[cfg(test)]
 pub(super) fn ensure_test_storage() {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
