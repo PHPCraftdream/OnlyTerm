@@ -1,3 +1,6 @@
+mod key_table;
+pub use key_table::{KeyTableArgs, KeyTableState};
+
 use crate::termwindow::InputMap;
 use ::window::{
     DeadKeyStatus, KeyCode, KeyEvent, KeyboardLedStatus, Modifiers, PhysKeyCode, RawKeyEvent,
@@ -10,170 +13,6 @@ use smol::Timer;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use termwiz::input::KeyboardEncoding;
-
-#[derive(Debug, Clone)]
-pub struct KeyTableStateEntry {
-    name: String,
-    /// If this activation expires, when it should expire
-    expiration: Option<Instant>,
-    /// Whether this activation pops itself after recognizing a key press
-    one_shot: bool,
-    until_unknown: bool,
-    prevent_fallback: bool,
-    /// The timeout duration; used when updating the expiration
-    timeout_milliseconds: Option<u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct KeyTableArgs<'a> {
-    pub name: &'a str,
-    pub timeout_milliseconds: Option<u64>,
-    pub replace_current: bool,
-    pub one_shot: bool,
-    pub until_unknown: bool,
-    pub prevent_fallback: bool,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct KeyTableState {
-    stack: Vec<KeyTableStateEntry>,
-}
-
-impl KeyTableState {
-    pub fn activate(&mut self, args: KeyTableArgs) {
-        if args.replace_current {
-            self.pop();
-        }
-        self.stack.push(KeyTableStateEntry {
-            name: args.name.to_string(),
-            expiration: args
-                .timeout_milliseconds
-                .map(|ms| Instant::now() + Duration::from_millis(ms)),
-            one_shot: args.one_shot,
-            until_unknown: args.until_unknown,
-            prevent_fallback: args.prevent_fallback,
-            timeout_milliseconds: args.timeout_milliseconds,
-        });
-    }
-
-    pub fn pop(&mut self) {
-        self.stack.pop();
-    }
-
-    pub fn clear_stack(&mut self) {
-        self.stack.clear();
-    }
-
-    pub fn process_expiration(&mut self) -> bool {
-        let should_pop = self
-            .stack
-            .last()
-            .map(|entry| match entry.expiration {
-                Some(deadline) => Instant::now() >= deadline,
-                None => false,
-            })
-            .unwrap_or(false);
-        if !should_pop {
-            return false;
-        }
-        self.pop();
-        true
-    }
-
-    pub fn pop_until_unknown(&mut self) {
-        while self
-            .stack
-            .last()
-            .map(|entry| entry.until_unknown)
-            .unwrap_or(false)
-        {
-            self.pop();
-        }
-    }
-
-    pub fn current_table(&mut self) -> Option<&str> {
-        while self.process_expiration() {}
-        self.stack.last().map(|entry| entry.name.as_str())
-    }
-
-    fn lookup_key(
-        &mut self,
-        input_map: &InputMap,
-        key: &KeyCode,
-        mods: Modifiers,
-        only_key_bindings: OnlyKeyBindings,
-    ) -> Option<(KeyTableEntry, Option<String>)> {
-        while self.process_expiration() {}
-
-        let mut pop_count = 0;
-        let mut result = None;
-
-        for stack_entry in self.stack.iter_mut().rev() {
-            let name = stack_entry.name.as_str();
-            if let Some(entry) = input_map.lookup_key(key, mods, Some(name)) {
-                if let Some(timeout) = stack_entry.timeout_milliseconds {
-                    stack_entry
-                        .expiration
-                        .replace(Instant::now() + Duration::from_millis(timeout));
-                }
-                result = Some((entry, Some(name.to_string())));
-                break;
-            }
-
-            if stack_entry.until_unknown {
-                pop_count += 1;
-            }
-
-            if stack_entry.prevent_fallback {
-                // If we've passed the key-bindings-only phase, then we want
-                // to prevent the default action of passing the key through.
-                // Prior to that, we mustn't prevent subsequent phases.
-                if only_key_bindings == OnlyKeyBindings::No {
-                    result = Some((
-                        KeyTableEntry {
-                            action: KeyAssignment::Nop,
-                        },
-                        Some(name.to_string()),
-                    ));
-                }
-
-                // Whether we explicitly map Nop or not, prevent looking
-                // in later key tables on the stack.
-                break;
-            }
-        }
-
-        // This is a little bit tricky: until_unknown needs to
-        // pop entries if we didn't match, but since we need to
-        // make three separate passes to resolve a key using its
-        // various physical, mapped and raw forms, we cannot
-        // unilaterally pop here without breaking a later pass.
-        // It is only safe to pop here if we did match something:
-        // in that case we know that we won't make additional
-        // passes.
-        // It is important that `pop_until_unknown` is called
-        // in the final "no keys matched" case to correctly
-        // manage that state transition.
-        if result.is_some() {
-            for _ in 0..pop_count {
-                self.pop();
-            }
-        }
-
-        result
-    }
-
-    pub fn did_process_key(&mut self) {
-        let should_pop = self
-            .stack
-            .last()
-            .map(|entry| entry.one_shot)
-            .unwrap_or(false);
-        if should_pop {
-            self.pop();
-        }
-    }
-}
 
 #[derive(Debug)]
 pub enum Key {
@@ -258,16 +97,15 @@ impl super::TermWindow {
         key.encode_win32_input_mode(ctrl_letter_as_char)
     }
 
-    /// Whether this pane's foreground process is one of the applications
+    /// Whether this pane's process tree contains one of the applications
     /// that need a Ctrl+<letter> chord to carry the plain letter rather
     /// than the ASCII control code; see
     /// `Config::win32_input_ctrl_letter_as_char_processes` and
     /// docs/codex-cyrillic-ctrl-chords.md.
     ///
-    /// Re-derived per call rather than cached here: the underlying
-    /// `get_foreground_process_name` has its own short-lived cache, and the
-    /// answer has to follow the foreground process, so that leaving Codex
-    /// restores the faithful encoding without any bookkeeping of ours. The
+    /// Re-derived per call from a fresh name-only snapshot on Windows, so
+    /// starting/leaving Codex changes the encoding on the next chord, without
+    /// waiting for the asynchronous title/cwd process cache to catch up. The
     /// cost is only paid for CTRL chords, which arrive at human speed --
     /// this deliberately does not run on ordinary typing.
     fn ctrl_letter_as_char_for(&self, pane: &Arc<dyn Pane>) -> bool {
@@ -298,23 +136,35 @@ impl super::TermWindow {
     /// silently never fires.
     ///
     /// Callers must gate this on the chord actually being one that could be
-    /// affected. It walks a process tree (cached, but not free), and
+    /// affected. It reads a process snapshot (lightweight, but not free), and
     /// `encode_win32_input` runs for every key that reaches passthrough, not
     /// only for chords.
     fn pane_runs_any_of(&self, pane: &Arc<dyn Pane>, wanted: &[String], what: &str) -> bool {
         if wanted.is_empty() {
+            log::info!(
+                "diag: key-compat {} pane={} disabled: empty process list",
+                what,
+                pane.pane_id(),
+            );
             return false;
         }
         let Some(names) = pane.get_process_tree_exe_names(CachePolicy::AllowStale) else {
+            log::info!(
+                "diag: key-compat {} pane={} wanted={:?} tree unavailable -> false",
+                what,
+                pane.pane_id(),
+                wanted,
+            );
             return false;
         };
         let matched = wanted
             .iter()
             .any(|want| names.iter().any(|have| have.eq_ignore_ascii_case(want)));
-        log::debug!(
-            "{} pane {} tree={:?} -> {}",
+        log::info!(
+            "diag: key-compat {} pane={} wanted={:?} tree={:?} -> {}",
             what,
             pane.pane_id(),
+            wanted,
             names,
             matched,
         );
@@ -754,20 +604,16 @@ impl super::TermWindow {
                     .current_table()
                     .map(|s| s.to_string());
 
-                if let Some(entry) = overlay.key_table_state.stack.last() {
-                    if let Some(expiry) = entry.expiration {
-                        self.update_next_frame_time(Some(expiry));
-                    }
+                if let Some(expiry) = overlay.key_table_state.current_expiration() {
+                    self.update_next_frame_time(Some(expiry));
                 }
             }
         }
         if name.is_none() {
             name = self.key_table_state.current_table().map(|s| s.to_string());
         }
-        if let Some(entry) = self.key_table_state.stack.last() {
-            if let Some(expiry) = entry.expiration {
-                self.update_next_frame_time(Some(expiry));
-            }
+        if let Some(expiry) = self.key_table_state.current_expiration() {
+            self.update_next_frame_time(Some(expiry));
         }
         name
     }

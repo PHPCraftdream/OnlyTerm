@@ -8,13 +8,15 @@ use ntapi::ntpsapi::{
 use ntapi::ntrtl::RTL_USER_PROCESS_PARAMETERS;
 use ntapi::ntwow64::RTL_USER_PROCESS_PARAMETERS32;
 use std::ffi::OsString;
+use std::io;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use winapi::shared::minwindef::{DWORD, FILETIME, LPVOID, MAX_PATH};
 use winapi::shared::ntdef::{FALSE, NT_SUCCESS};
-use winapi::um::handleapi::CloseHandle;
+use winapi::shared::winerror::ERROR_NO_MORE_FILES;
+use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::memoryapi::ReadProcessMemory;
 use winapi::um::processthreadsapi::{GetCurrentProcessId, GetProcessTimes, OpenProcess};
 use winapi::um::shellapi::CommandLineToArgvW;
@@ -26,14 +28,14 @@ use winapi::um::winnt::{HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 struct Snapshot(HANDLE);
 
 impl Snapshot {
-    pub fn new() -> Option<Self> {
+    pub fn new() -> io::Result<Self> {
         // SAFETY: TH32CS_SNAPPROCESS and 0 are valid arguments; the returned
         // handle is stored in `Self` and closed on drop.
         let handle = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
-        if handle.is_null() {
-            None
+        if handle == INVALID_HANDLE_VALUE {
+            Err(io::Error::last_os_error())
         } else {
-            Some(Self(handle))
+            Ok(Self(handle))
         }
     }
 
@@ -41,6 +43,7 @@ impl Snapshot {
         ProcIter {
             snapshot: self,
             first: true,
+            finished: false,
         }
     }
 }
@@ -56,12 +59,16 @@ impl Drop for Snapshot {
 struct ProcIter<'a> {
     snapshot: &'a Snapshot,
     first: bool,
+    finished: bool,
 }
 
 impl<'a> Iterator for ProcIter<'a> {
-    type Item = PROCESSENTRY32W;
+    type Item = io::Result<PROCESSENTRY32W>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.finished {
+            return None;
+        }
         // SAFETY: PROCESSENTRY32W is a `repr(C)` struct of primitive types;
         // zero-initialization is valid. `dwSize` is set immediately after.
         let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
@@ -76,9 +83,18 @@ impl<'a> Iterator for ProcIter<'a> {
             unsafe { Process32NextW(self.snapshot.0, &mut entry) }
         };
         if res == 0 {
-            None
+            // Capture the OS error before logging/allocation can overwrite
+            // it. Only NO_MORE_FILES means a complete snapshot; a partial
+            // list must not be accepted as evidence that Codex has exited.
+            let err = io::Error::last_os_error();
+            self.finished = true;
+            if err.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                None
+            } else {
+                Some(Err(err))
+            }
         } else {
-            Some(entry)
+            Some(Ok(entry))
         }
     }
 }
@@ -426,22 +442,74 @@ fn shared_snapshot_entries() -> Vec<ProcessEntry> {
             return entries.clone();
         }
     }
-    let entries: Vec<ProcessEntry> = match Snapshot::new() {
-        Some(snapshot) => snapshot
-            .iter()
-            .map(|info| ProcessEntry {
-                pid: info.th32ProcessID,
-                ppid: info.th32ParentProcessID,
-                exe: wstr_to_path(&info.szExeFile),
-            })
-            .collect(),
-        None => vec![],
+    let entries = match fresh_snapshot_entries() {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!("process snapshot failed: {err}");
+            // Keep the last complete snapshot, without making it fresh.
+            return cache
+                .as_ref()
+                .map_or_else(Vec::new, |(_, entries)| entries.clone());
+        }
     };
     *cache = Some((Instant::now(), entries.clone()));
     entries
 }
 
+fn fresh_snapshot_entries() -> io::Result<Vec<ProcessEntry>> {
+    Snapshot::new()?
+        .iter()
+        .map(|info| {
+            info.map(|info| ProcessEntry {
+                pid: info.th32ProcessID,
+                ppid: info.th32ParentProcessID,
+                exe: wstr_to_path(&info.szExeFile),
+            })
+        })
+        .collect()
+}
+
+fn exe_names_from_entries(entries: &[ProcessEntry], root_pid: u32) -> io::Result<HashSet<String>> {
+    let root = entries
+        .iter()
+        .find(|entry| entry.pid == root_pid)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "pane root PID missing from process snapshot",
+            )
+        })?;
+    let mut children: HashMap<u32, Vec<&ProcessEntry>> = HashMap::new();
+    for entry in entries {
+        children.entry(entry.ppid).or_default().push(entry);
+    }
+    let mut names = HashSet::new();
+    let mut visited = HashSet::new();
+    let mut stack = vec![root];
+    while let Some(entry) = stack.pop() {
+        if !visited.insert(entry.pid) {
+            continue;
+        }
+        if let Some(name) = entry.exe.file_name() {
+            names.insert(name.to_string_lossy().into_owned());
+        }
+        if let Some(children) = children.get(&entry.pid) {
+            stack.extend(children.iter().copied());
+        }
+    }
+    Ok(names)
+}
+
 impl LocalProcessInfo {
+    /// Fresh executable base names for a pane's process tree. Unlike
+    /// `with_root_pid`, this only reads Toolhelp's PID/PPID/name records:
+    /// no OpenProcess, remote memory reads, or asynchronous cache refresh.
+    /// Keyboard compatibility decisions must see programs started/stopped
+    /// since the last title/render refresh, including on the very first key.
+    pub fn fresh_process_tree_exe_names(pid: u32) -> io::Result<HashSet<String>> {
+        exe_names_from_entries(&fresh_snapshot_entries()?, pid)
+    }
+
     pub fn current_working_dir(pid: u32) -> Option<PathBuf> {
         log::trace!("current_working_dir({})", pid);
         let proc = ProcHandle::new(pid)?;
@@ -506,3 +574,6 @@ impl LocalProcessInfo {
         crate::build_tree_iterative(&procs, pid, |info| info.pid, |info| info.ppid, make_leaf)
     }
 }
+
+#[cfg(test)]
+mod key_compat_tests;
