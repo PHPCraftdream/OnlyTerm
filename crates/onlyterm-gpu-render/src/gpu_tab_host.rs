@@ -37,7 +37,9 @@
 //! goes through `log::` as usual, which writes to this process's own per-PID
 //! log file, not stdout.
 
-use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
+use crate::{
+    instance_buffer_pool::InstanceBufferPool, wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture,
+};
 use config::ConfigHandle;
 use std::convert::TryFrom;
 use std::io::{self, Write};
@@ -172,6 +174,7 @@ impl BitmapImage for BorrowedAtlasImage<'_> {
 fn build_gpu_frame(
     state: &WebGpuState,
     atlas: &mut Option<MirroredAtlas>,
+    instance_buffers: &mut InstanceBufferPool,
     frame: &wire::WireFrameRef<'_>,
 ) -> anyhow::Result<GpuFrame> {
     if let Some((width, height)) = frame.atlas_reset {
@@ -182,26 +185,26 @@ fn build_gpu_frame(
     })?;
     mirrored.apply_updates(&frame.atlas_updates)?;
 
+    instance_buffers.begin_frame(frame.draws.len());
     let draws = frame
         .draws
         .iter()
-        .map(|instances| {
-            use wgpu::util::DeviceExt;
+        .enumerate()
+        .map(|(slot, instances)| {
             let instance_count = instances.len() as u32;
-            let vertex_buffer =
-                state
-                    .device()
-                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                        label: Some("gpu-tab-host wire instance buffer"),
-                        usage: wgpu::BufferUsages::VERTEX,
-                        contents: bytemuck::cast_slice(instances),
-                    });
-            GpuDraw {
+            let bytes = bytemuck::cast_slice(instances);
+            let vertex_buffer = instance_buffers.buffer_for(state.device(), slot, bytes.len())?;
+            // Queue writes and command submissions are ordered by wgpu.  The
+            // next frame may reuse this buffer even while the previous draw
+            // is in flight: its write is queued after the previous submit and
+            // therefore cannot race the GPU's read.
+            state.queue().write_buffer(&vertex_buffer, 0, bytes);
+            Ok(GpuDraw {
                 vertex_buffer,
                 instance_count,
-            }
+            })
         })
-        .collect();
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(GpuFrame {
         draws,
@@ -255,6 +258,7 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
         dpi: ::window::default_dpi() as usize,
     };
     let mut atlas: Option<MirroredAtlas> = None;
+    let mut instance_buffers = InstanceBufferPool::new();
     let mut presented_seq: u64 = 0;
     // One buffer serves every message for this process's lifetime, and each
     // frame is consumed as borrowed views straight out of it (see
@@ -284,6 +288,10 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
             }
             wire::WireMessageRef::AttachSurface(attach) => {
                 atlas = None;
+                // Buffer handles belong to the old device.  The attach path
+                // may replace the entire WebGPU state after recovery, so do
+                // not carry resources across that boundary.
+                instance_buffers = InstanceBufferPool::new();
                 match attach_surface(&config, attach) {
                     Ok((new_state, new_dimensions)) => {
                         state = Some(new_state);
@@ -324,20 +332,23 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     log::warn!("gpu-tab-host: ignoring Frame before any AttachSurface");
                     continue;
                 };
-                let gpu_frame = match build_gpu_frame(state, &mut atlas, &frame) {
-                    Ok(gpu_frame) => gpu_frame,
-                    Err(err) => {
-                        log::error!("gpu-tab-host: failed to build a frame from the wire: {err:#}");
-                        // Continuing would leave the child rendering against
-                        // a stale/partial atlas and would repeat the same
-                        // validation failure on every frame. Exit cleanly so
-                        // the parent can respawn us and force a full atlas
-                        // resync instead.
-                        let _ = wire::write_fatal(&mut writer, 4);
-                        let _ = writer.flush();
-                        break;
-                    }
-                };
+                let gpu_frame =
+                    match build_gpu_frame(state, &mut atlas, &mut instance_buffers, &frame) {
+                        Ok(gpu_frame) => gpu_frame,
+                        Err(err) => {
+                            log::error!(
+                                "gpu-tab-host: failed to build a frame from the wire: {err:#}"
+                            );
+                            // Continuing would leave the child rendering against
+                            // a stale/partial atlas and would repeat the same
+                            // validation failure on every frame. Exit cleanly so
+                            // the parent can respawn us and force a full atlas
+                            // resync instead.
+                            let _ = wire::write_fatal(&mut writer, 4);
+                            let _ = writer.flush();
+                            break;
+                        }
+                    };
 
                 // A Rust panic inside GPU submission should not kill a
                 // process that could keep serving the next frame; a raw SEH
@@ -380,6 +391,12 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                                 "gpu-tab-host: surface {err:?}; reconfiguring and acking the \
                                  frame as failed so the parent repaints it"
                             );
+                            // `build_gpu_frame` queues the reusable-buffer
+                            // writes before `get_current_texture` can report
+                            // Lost/Outdated.  Submit an empty command list so
+                            // those writes are flushed instead of accumulating
+                            // staging allocations while the surface recovers.
+                            state.queue().submit(std::iter::empty());
                             state.reconfigure();
                             presented_seq += 1;
                             if let Err(write_err) = wire::write_failed(&mut writer, presented_seq) {
