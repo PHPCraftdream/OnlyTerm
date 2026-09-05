@@ -109,8 +109,8 @@ impl LocalPane {
         // user's real interactive shell) -- its own cwd only changes when
         // the user runs `cd` at that shell's own prompt, which is exactly
         // the tab-rename trigger the user actually wants.
-        if let Some(root) = self.divine_root_process(policy) {
-            return Url::from_directory_path(root.cwd.clone()).ok();
+        if let Some(info) = self.divine_process_list(policy) {
+            return Url::from_directory_path(info.root.cwd.clone()).ok();
         }
 
         None
@@ -153,8 +153,7 @@ impl LocalPane {
                 stack.push(child);
             }
         }
-        let mut foreground = youngest.clone();
-        foreground.children.clear();
+        let foreground = youngest.clone_without_children();
 
         log::trace!("CachedProcInfo updated");
         Some(CachedProcInfo {
@@ -312,14 +311,5 @@ impl LocalPane {
     ) -> Option<LocalProcessInfo> {
         self.divine_process_list(policy)
             .map(|info| info.foreground.clone())
-    }
-
-    /// The process the pty itself spawned for this pane -- the user's
-    /// actual interactive shell -- as opposed to `divine_foreground_process`'s
-    /// "youngest process anywhere in the tree". See `divine_current_working_dir`
-    /// for why cwd tracking needs this one instead of the foreground pick.
-    pub(super) fn divine_root_process(&self, policy: CachePolicy) -> Option<LocalProcessInfo> {
-        self.divine_process_list(policy)
-            .map(|info| info.root.clone())
     }
 }
