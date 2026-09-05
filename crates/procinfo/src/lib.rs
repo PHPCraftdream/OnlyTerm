@@ -79,19 +79,7 @@ impl Clone for LocalProcessInfo {
         // overall) that walking a stored path from the root for every
         // node would cost.
         fn shallow_clone(item: &LocalProcessInfo) -> LocalProcessInfo {
-            LocalProcessInfo {
-                pid: item.pid,
-                ppid: item.ppid,
-                name: item.name.clone(),
-                executable: item.executable.clone(),
-                argv: item.argv.clone(),
-                cwd: item.cwd.clone(),
-                status: item.status,
-                start_time: item.start_time,
-                #[cfg(windows)]
-                console: item.console,
-                children: HashMap::new(),
-            }
+            item.clone_without_children()
         }
 
         let mut arena: Vec<LocalProcessInfo> = vec![shallow_clone(self)];
@@ -148,6 +136,26 @@ impl Drop for LocalProcessInfo {
 }
 
 impl LocalProcessInfo {
+    /// Clone the process metadata without cloning its descendants.
+    ///
+    /// Callers that only need a single selected process (for example the
+    /// foreground process summary) must not pay for copying the whole tree.
+    pub fn clone_without_children(&self) -> Self {
+        Self {
+            pid: self.pid,
+            ppid: self.ppid,
+            name: self.name.clone(),
+            executable: self.executable.clone(),
+            argv: self.argv.clone(),
+            cwd: self.cwd.clone(),
+            status: self.status,
+            start_time: self.start_time,
+            #[cfg(windows)]
+            console: self.console,
+            children: HashMap::new(),
+        }
+    }
+
     /// Walk this sub-tree of processes and return a unique set
     /// of executable base names. eg: `foo/bar` and `woot/bar`
     /// produce a set containing just `bar`.
@@ -202,6 +210,18 @@ where
 {
     let root_item = items.iter().find(|item| pid_of(item) == root_pid)?;
 
+    // Index the flat snapshot once. The previous implementation scanned the
+    // entire input for every discovered process, which made a tree rooted in
+    // a large process list O(N * K). Keeping references preserves the source
+    // slice's order without cloning platform records.
+    let mut children_by_parent: HashMap<u32, Vec<&T>> = HashMap::with_capacity(items.len());
+    for item in items {
+        children_by_parent
+            .entry(ppid_of(item))
+            .or_default()
+            .push(item);
+    }
+
     let mut visited: HashSet<u32> = HashSet::new();
     visited.insert(root_pid);
 
@@ -225,18 +245,19 @@ where
     while let Some((item, this_index)) = stack.pop() {
         let this_pid = pid_of(item);
 
-        // Preserve the original recursive scan's ordering: iterate the
-        // full record list in order, and for each match, push it before
-        // moving on, so that a child's own descendants are discovered
-        // (and thus arena-indexed) before its later siblings, matching
-        // what the equivalent recursive `build_proc` would have done.
-        for kid in items.iter().rev() {
-            if ppid_of(kid) == this_pid && !visited.contains(&pid_of(kid)) {
-                visited.insert(pid_of(kid));
-                let kid_index = arena.len();
-                arena.push(make_leaf(kid));
-                parent_of.push(Some(this_index));
-                stack.push((kid, kid_index));
+        // Preserve the original recursive scan's ordering: the indexed
+        // children are in source order, and pushing them in reverse makes
+        // the explicit stack visit the first child first. This is the same
+        // depth-first order as scanning the whole input for every node.
+        if let Some(children) = children_by_parent.get(&this_pid) {
+            for kid in children.iter().rev() {
+                if !visited.contains(&pid_of(kid)) {
+                    visited.insert(pid_of(kid));
+                    let kid_index = arena.len();
+                    arena.push(make_leaf(kid));
+                    parent_of.push(Some(this_index));
+                    stack.push((kid, kid_index));
+                }
             }
         }
     }
@@ -262,6 +283,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     /// Build a synthetic, purely linear chain of `LocalProcessInfo`
     /// `depth` levels deep: root -> child -> grandchild -> ... This
@@ -473,5 +495,121 @@ mod tests {
         // must still appear via its COMM name rather than vanishing.
         assert!(names.contains("sudo"));
         assert_eq!(names.len(), 2);
+    }
+
+    #[test]
+    fn clone_without_children_preserves_metadata_without_descendants() {
+        let root = make_deep_chain(2);
+        let child_count = root.children.len();
+        let shallow = root.clone_without_children();
+
+        assert_eq!(shallow.pid, root.pid);
+        assert_eq!(shallow.name, root.name);
+        assert_eq!(shallow.children.len(), 0);
+        assert_eq!(child_count, 1);
+
+        // Keep the source tree alive long enough to prove this operation did
+        // not move or clear its descendants.
+        assert_eq!(root.children.len(), child_count);
+    }
+
+    #[test]
+    fn indexed_tree_preserves_depth_first_source_order() {
+        #[derive(Clone, Copy)]
+        struct Record {
+            pid: u32,
+            ppid: u32,
+        }
+
+        let records = [
+            Record { pid: 1, ppid: 0 },
+            Record { pid: 3, ppid: 1 },
+            Record { pid: 2, ppid: 1 },
+            Record { pid: 4, ppid: 2 },
+            // A stale cycle back to the root must be ignored by `visited`.
+            Record { pid: 1, ppid: 4 },
+        ];
+        let order = std::cell::RefCell::new(Vec::new());
+        let tree = build_tree_iterative(
+            &records,
+            1,
+            |record| record.pid,
+            |record| record.ppid,
+            |record| {
+                order.borrow_mut().push(record.pid);
+                LocalProcessInfo {
+                    pid: record.pid,
+                    ppid: record.ppid,
+                    name: format!("p{}", record.pid),
+                    executable: PathBuf::new(),
+                    argv: vec![],
+                    cwd: PathBuf::new(),
+                    status: LocalProcessStatus::Run,
+                    start_time: 0,
+                    #[cfg(windows)]
+                    console: 0,
+                    children: HashMap::new(),
+                }
+            },
+        )
+        .expect("root is present");
+
+        // `make_leaf` runs when a child is discovered and pushed onto the
+        // explicit stack. Reverse pushing therefore preserves the old
+        // implementation's discovery order, even though DFS pops the last
+        // child first.
+        assert_eq!(*order.borrow(), [1, 2, 3, 4]);
+        assert_eq!(tree.children.len(), 2);
+        assert_eq!(tree.children[&2].children.len(), 1);
+        assert!(tree.children[&3].children.is_empty());
+    }
+
+    #[test]
+    fn indexed_tree_reads_parent_ids_once_per_input_record() {
+        #[derive(Clone, Copy)]
+        struct Record {
+            pid: u32,
+            ppid: u32,
+        }
+
+        const INPUT_SIZE: usize = 5_000;
+        const REACHABLE_CHILDREN: u32 = 100;
+        let mut records = Vec::with_capacity(INPUT_SIZE);
+        records.push(Record { pid: 1, ppid: 0 });
+        records.extend((2..=REACHABLE_CHILDREN + 1).map(|pid| Record { pid, ppid: 1 }));
+        records.extend(
+            (REACHABLE_CHILDREN + 2..=INPUT_SIZE as u32).map(|pid| Record { pid, ppid: 0 }),
+        );
+
+        let parent_reads = Cell::new(0);
+        let tree = build_tree_iterative(
+            &records,
+            1,
+            |record| record.pid,
+            |record| {
+                parent_reads.set(parent_reads.get() + 1);
+                record.ppid
+            },
+            |record| LocalProcessInfo {
+                pid: record.pid,
+                ppid: record.ppid,
+                name: String::new(),
+                executable: PathBuf::new(),
+                argv: vec![],
+                cwd: PathBuf::new(),
+                status: LocalProcessStatus::Run,
+                start_time: 0,
+                #[cfg(windows)]
+                console: 0,
+                children: HashMap::new(),
+            },
+        )
+        .expect("root is present");
+
+        // The old implementation called ppid_of once for every input record
+        // for every reachable node. The indexed implementation performs one
+        // parent-index insertion per record regardless of tree size.
+        assert_eq!(parent_reads.get(), INPUT_SIZE);
+        assert_eq!(tree.children.len(), REACHABLE_CHILDREN as usize);
     }
 }

@@ -117,6 +117,25 @@ struct ProcParams {
     console: HANDLE,
 }
 
+fn wchar_read_len(byte_size: usize) -> Option<usize> {
+    let max_bytes = MAX_PATH * 4;
+    (byte_size <= max_bytes && byte_size.is_multiple_of(2)).then_some(byte_size / 2)
+}
+
+fn finish_wchar_read(mut buf: Vec<u16>, bytes_read: usize) -> Vec<u16> {
+    // The API normally reports an exact byte count, but clamp defensively and
+    // discard a possible trailing half code unit from a short read.
+    let bytes_read = bytes_read.min(buf.len().saturating_mul(2));
+    buf.truncate(bytes_read / 2);
+
+    if let Some(nul) = buf.iter().position(|&c| c == 0) {
+        buf.truncate(nul + 1);
+    } else {
+        buf.push(0);
+    }
+    buf
+}
+
 /// A handle to an opened process
 struct ProcHandle {
     pid: u32,
@@ -293,20 +312,27 @@ impl ProcHandle {
         })
     }
 
-    /// Copies a sized WSTR from the address in the process
+    /// Copies a sized WSTR from the address in the process.
+    ///
+    /// `UNICODE_STRING::Length` is a byte count and must be even. Rejecting
+    /// malformed sizes before the FFI call keeps the destination allocation
+    /// exactly as large as the requested read, while the explicit upper bound
+    /// prevents a corrupt remote structure from causing an oversized
+    /// allocation.
     fn read_process_wchar(&self, ptr: LPVOID, byte_size: usize) -> Option<Vec<u16>> {
-        if byte_size > MAX_PATH * 4 {
-            // Defend against implausibly large paths, just in
-            // case we're reading the wrong offset into a kernel struct
-            return None;
+        let wchar_count = wchar_read_len(byte_size)?;
+        if wchar_count == 0 {
+            return Some(vec![0]);
         }
 
-        let mut buf = vec![0u16; byte_size / 2];
+        let mut buf = vec![0u16; wchar_count];
         let mut bytes_read = 0;
 
         // SAFETY: `self.proc` is a valid process handle with PROCESS_VM_READ;
         // `ptr` is an address in the target process; `buf.as_mut_ptr()` is a
         // valid writable buffer; `&mut bytes_read` is a valid out-pointer.
+        // `wchar_read_len` rejected odd/oversized lengths before this call,
+        // so `buf.len() * size_of::<u16>() == byte_size` for this read.
         let res = unsafe {
             ReadProcessMemory(
                 self.proc,
@@ -320,24 +346,7 @@ impl ProcHandle {
             return None;
         }
 
-        // In the unlikely event that we have a short read,
-        // truncate the buffer to fit.
-        let wide_chars_read = bytes_read / 2;
-        buf.resize(wide_chars_read, 0);
-
-        // Ensure that it is NUL terminated
-        match buf.iter().position(|&c| c == 0) {
-            Some(n) => {
-                // Truncate to include existing NUL but no later chars
-                buf.resize(n + 1, 0);
-            }
-            None => {
-                // Add a NUL
-                buf.push(0);
-            }
-        }
-
-        Some(buf)
+        Some(finish_wchar_read(buf, bytes_read))
     }
 
     /// Retrieves the start time of the process
@@ -420,6 +429,16 @@ struct ProcessEntry {
     exe: PathBuf,
 }
 
+/// Lightweight snapshot entry used only by fresh keyboard compatibility
+/// checks. Keeping the Toolhelp executable name in its source UTF-16 shape
+/// avoids a PathBuf allocation for every process in the machine-wide snapshot.
+#[derive(Clone)]
+struct SnapshotExeEntry {
+    pid: u32,
+    ppid: u32,
+    exe: [u16; MAX_PATH],
+}
+
 /// Machine-wide process list shared by every `with_root_pid` caller.
 /// `with_root_pid` is called once per pane per `PROC_INFO_CACHE_TTL`
 /// (bidi foreground-process polling, title updates, cwd lookups); without
@@ -469,7 +488,23 @@ fn fresh_snapshot_entries() -> io::Result<Vec<ProcessEntry>> {
         .collect()
 }
 
-fn exe_names_from_entries(entries: &[ProcessEntry], root_pid: u32) -> io::Result<HashSet<String>> {
+fn fresh_snapshot_exe_entries() -> io::Result<Vec<SnapshotExeEntry>> {
+    Snapshot::new()?
+        .iter()
+        .map(|info| {
+            info.map(|info| SnapshotExeEntry {
+                pid: info.th32ProcessID,
+                ppid: info.th32ParentProcessID,
+                exe: info.szExeFile,
+            })
+        })
+        .collect()
+}
+
+fn exe_names_from_entries(
+    entries: &[SnapshotExeEntry],
+    root_pid: u32,
+) -> io::Result<HashSet<String>> {
     let root = entries
         .iter()
         .find(|entry| entry.pid == root_pid)
@@ -479,7 +514,7 @@ fn exe_names_from_entries(entries: &[ProcessEntry], root_pid: u32) -> io::Result
                 "pane root PID missing from process snapshot",
             )
         })?;
-    let mut children: HashMap<u32, Vec<&ProcessEntry>> = HashMap::new();
+    let mut children: HashMap<u32, Vec<&SnapshotExeEntry>> = HashMap::new();
     for entry in entries {
         children.entry(entry.ppid).or_default().push(entry);
     }
@@ -490,14 +525,23 @@ fn exe_names_from_entries(entries: &[ProcessEntry], root_pid: u32) -> io::Result
         if !visited.insert(entry.pid) {
             continue;
         }
-        if let Some(name) = entry.exe.file_name() {
-            names.insert(name.to_string_lossy().into_owned());
+        if let Some(name) = entry_exe_name(&entry.exe) {
+            names.insert(name);
         }
         if let Some(children) = children.get(&entry.pid) {
             stack.extend(children.iter().copied());
         }
     }
     Ok(names)
+}
+
+fn entry_exe_name(exe: &[u16]) -> Option<String> {
+    let end = exe.iter().position(|&c| c == 0).unwrap_or(exe.len());
+    if end == 0 {
+        None
+    } else {
+        Some(String::from_utf16_lossy(&exe[..end]))
+    }
 }
 
 impl LocalProcessInfo {
@@ -507,7 +551,7 @@ impl LocalProcessInfo {
     /// Keyboard compatibility decisions must see programs started/stopped
     /// since the last title/render refresh, including on the very first key.
     pub fn fresh_process_tree_exe_names(pid: u32) -> io::Result<HashSet<String>> {
-        exe_names_from_entries(&fresh_snapshot_entries()?, pid)
+        exe_names_from_entries(&fresh_snapshot_exe_entries()?, pid)
     }
 
     pub fn current_working_dir(pid: u32) -> Option<PathBuf> {

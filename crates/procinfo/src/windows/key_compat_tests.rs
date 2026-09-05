@@ -1,11 +1,36 @@
 use super::*;
 
-fn entry(pid: u32, ppid: u32, exe: &str) -> ProcessEntry {
-    ProcessEntry {
+fn entry(pid: u32, ppid: u32, exe: &str) -> SnapshotExeEntry {
+    let mut encoded = [0u16; MAX_PATH];
+    let wide: Vec<u16> = exe.encode_utf16().collect();
+    let copy_len = wide.len().min(encoded.len().saturating_sub(1));
+    encoded[..copy_len].copy_from_slice(&wide[..copy_len]);
+    SnapshotExeEntry {
         pid,
         ppid,
-        exe: exe.into(),
+        exe: encoded,
     }
+}
+
+#[test]
+fn wchar_read_size_validation_rejects_malformed_or_oversized_lengths() {
+    assert_eq!(wchar_read_len(0), Some(0));
+    assert_eq!(wchar_read_len(MAX_PATH * 4), Some(MAX_PATH * 2));
+    assert_eq!(wchar_read_len(1), None);
+    assert_eq!(wchar_read_len(MAX_PATH * 4 + 2), None);
+}
+
+#[test]
+fn short_wchar_reads_are_truncated_to_complete_code_units_and_terminated() {
+    assert_eq!(
+        finish_wchar_read(vec![b'a' as u16, b'b' as u16], 3),
+        vec![b'a' as u16, 0]
+    );
+    assert_eq!(
+        finish_wchar_read(vec![b'a' as u16, 0, b'b' as u16], 6),
+        vec![b'a' as u16, 0]
+    );
+    assert_eq!(finish_wchar_read(Vec::new(), 0), vec![0]);
 }
 
 #[test]
