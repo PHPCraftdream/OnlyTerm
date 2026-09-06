@@ -82,9 +82,10 @@ impl TestTerm {
         scrollback: usize,
         writer: Box<dyn std::io::Write + Send>,
     ) -> Self {
-        let _ = env_logger::Builder::new()
+        // Per-cell trace output can exhaust the test harness capture buffer
+        // during profiling tests. Enable it explicitly with RUST_LOG=trace.
+        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
             .is_test(true)
-            .filter_level(log::LevelFilter::Trace)
             .try_init();
 
         let mut term = Terminal::new(

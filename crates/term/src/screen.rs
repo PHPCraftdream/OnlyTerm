@@ -284,8 +284,6 @@ impl Screen {
             self.lines.push_back(line);
         }
 
-        let new_cursor_y;
-
         // true if a resize operation should consider rows that have
         // made it to scrollback as being immutable.
         // When immutable, the resize operation will pad out the screen height
@@ -309,7 +307,7 @@ impl Screen {
         let resize_preserves_scrollback = is_conpty;
 
         if resize_preserves_scrollback {
-            new_cursor_y = cursor
+            let preserved_cursor_y = cursor
                 .y
                 .saturating_add(cursor_y as i64)
                 .saturating_sub(cursor_phys as i64)
@@ -321,21 +319,20 @@ impl Screen {
             // temporarily violated that, which can result in the cursor unintentionally
             // moving up into the scrollback and damaging the output
             let required_num_rows_after_cursor =
-                physical_rows.saturating_sub(new_cursor_y as usize);
+                physical_rows.saturating_sub(preserved_cursor_y as usize);
             let actual_num_rows_after_cursor = self.lines.len().saturating_sub(cursor_y);
             for _ in actual_num_rows_after_cursor..required_num_rows_after_cursor {
                 let mut line = Line::new(seqno);
                 bidi_mode.apply_to_line(&mut line, seqno);
                 self.lines.push_back(line);
             }
-        } else {
-            // Compute the new cursor location; this is logically the inverse
-            // of the phys_row() function, but given the revised cursor_y
-            // (the rewrap adjusted physical row of the cursor).  This
-            // computes its new VisibleRowIndex given the new viewport size.
-            new_cursor_y = cursor_y as VisibleRowIndex
-                - (self.lines.len() as VisibleRowIndex - physical_rows as VisibleRowIndex);
         }
+
+        // Padding preserves ConPTY's viewport on growth. On shrink, nonblank
+        // rows below the cursor can still move its line toward the top; derive
+        // the cursor from that line, not its pre-resize visible row number.
+        let new_cursor_y = cursor_y as VisibleRowIndex
+            - (self.lines.len() as VisibleRowIndex - physical_rows as VisibleRowIndex);
 
         self.physical_rows = physical_rows;
         self.physical_cols = physical_cols;

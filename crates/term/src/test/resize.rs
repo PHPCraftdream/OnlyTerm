@@ -2,6 +2,67 @@
 //! Split out from the parent test module; helpers come from `super::*`.
 use super::*;
 
+#[test]
+fn conpty_shrink_keeps_cursor_attached_to_its_visible_text() {
+    for cols in [145, 100] {
+        let mut term = TestTerm::new(53, 145, 1000);
+        term.enable_conpty_quirks();
+        for row in 0..53 {
+            term.cup(0, row);
+            term.print(format!("row {}", row));
+        }
+        term.cup(0, 13);
+        term.print("prompt> input");
+        term.resize(TerminalSize {
+            rows: 40,
+            cols,
+            ..Default::default()
+        });
+        let visible = term.screen().visible_lines();
+        let prompt_row = visible
+            .iter()
+            .position(|line| line.as_str().starts_with("prompt> input"))
+            .unwrap();
+        std::assert_eq!(prompt_row, 0);
+        std::assert_eq!(term.cursor_pos().y as usize, prompt_row);
+        term.print("X");
+        std::assert_eq!(
+            term.screen().visible_lines()[prompt_row].as_str(),
+            "prompt> inputX"
+        );
+    }
+}
+
+/// ConPTY preserves the existing visible cursor row when a window grows.
+/// This mirrors the common PSReadLine redraw sequence after a resize: clear,
+/// home, then rewrite the prompt/input. Covers the reported 40-to-53-row
+/// geometry; this is not yet a reproducer of the observed mismatch.
+#[test]
+fn test_conpty_resize_grow_then_psreadline_redraw_keeps_cursor_row() {
+    let mut term = TestTerm::new(40, 120, 1000);
+    term.enable_conpty_quirks();
+    for row in 0..80 {
+        term.print(format!("history {}\r\n", row));
+    }
+    term.cup(0, 39);
+    term.print("prompt> input");
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (13, 39));
+
+    term.resize(TerminalSize {
+        rows: 53,
+        cols: 120,
+        ..Default::default()
+    });
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (13, 39));
+
+    term.print("\x1b[2J\x1b[Hprompt>\r\ninput");
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (5, 1));
+    let visible = term.screen().visible_lines();
+    std::assert_eq!(visible.len(), 53);
+    std::assert_eq!(visible[0].as_str().trim_end(), "prompt>");
+    std::assert_eq!(visible[1].as_str().trim_end(), "input");
+}
+
 /// This test skips over an edge case with cursor positioning,
 /// while sizing down, but tries to trip over the same edge
 /// case while sizing back up again
