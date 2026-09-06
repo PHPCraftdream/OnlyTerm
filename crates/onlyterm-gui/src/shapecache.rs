@@ -9,6 +9,7 @@ use std::rc::Rc;
 pub struct ShapeCacheKey {
     pub style: TextStyle,
     pub text: String,
+    pub fallback_generation: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,6 +63,7 @@ impl ShapedInfo {
 pub struct BorrowedShapeCacheKey<'a> {
     pub style: &'a TextStyle,
     pub text: &'a str,
+    pub fallback_generation: u64,
 }
 
 impl<'a> BorrowedShapeCacheKey<'a> {
@@ -69,6 +71,7 @@ impl<'a> BorrowedShapeCacheKey<'a> {
         ShapeCacheKey {
             style: self.style.clone(),
             text: self.text.to_owned(),
+            fallback_generation: self.fallback_generation,
         }
     }
 }
@@ -82,6 +85,7 @@ impl ShapeCacheKeyTrait for ShapeCacheKey {
         BorrowedShapeCacheKey {
             style: &self.style,
             text: &self.text,
+            fallback_generation: self.fallback_generation,
         }
     }
 }
@@ -114,6 +118,7 @@ impl<'a> std::hash::Hash for dyn ShapeCacheKeyTrait + 'a {
 
 #[cfg(test)]
 mod test {
+    use super::BorrowedShapeCacheKey;
     use crate::glyphcache::GlyphCache;
     use crate::shapecache::{GlyphPosition, ShapedInfo};
     use crate::utilsprites::RenderMetrics;
@@ -124,6 +129,29 @@ mod test {
     use std::rc::Rc;
     use termwiz::cell::CellAttributes;
     use termwiz::surface::{Line, SEQ_ZERO};
+
+    #[test]
+    fn fallback_generation_only_changes_dependent_shape_keys() {
+        let style = TextStyle::default();
+        let latin = BorrowedShapeCacheKey {
+            style: &style,
+            text: "latin",
+            fallback_generation: 0,
+        };
+        let cjk_before = BorrowedShapeCacheKey {
+            style: &style,
+            text: "界",
+            fallback_generation: 0,
+        };
+        let cjk_after = BorrowedShapeCacheKey {
+            style: &style,
+            text: "界",
+            fallback_generation: 1,
+        };
+        assert_eq!(latin, latin);
+        assert_ne!(cjk_before, cjk_after);
+        assert_eq!(latin.fallback_generation, 0);
+    }
 
     fn cluster_and_shape(
         render_metrics: &RenderMetrics,
@@ -142,7 +170,7 @@ mod test {
             let mut infos = font
                 .shape(
                     &cluster.text,
-                    || {},
+                    |_| {},
                     |_| {},
                     None,
                     Direction::LeftToRight,
@@ -288,7 +316,7 @@ mod test {
                     let _x = font
                         .shape(
                             &cluster.text,
-                            || {},
+                            |_| {},
                             |_| {},
                             None,
                             Direction::LeftToRight,

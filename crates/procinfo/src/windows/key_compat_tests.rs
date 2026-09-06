@@ -1,5 +1,49 @@
 use super::*;
 
+#[test]
+fn cached_snapshots_share_storage_and_failed_refresh_preserves_generation() {
+    let cache = Mutex::new(None);
+    let now = Instant::now();
+    let first = snapshot_entries_with(
+        &cache,
+        || now,
+        || {
+            Ok(vec![ProcessEntry {
+                pid: 1,
+                ppid: 0,
+                exe: PathBuf::from("shell.exe"),
+            }])
+        },
+    );
+    let warm = snapshot_entries_with(&cache, || now, || panic!("warm snapshot must not refresh"));
+    assert!(Arc::ptr_eq(&first, &warm));
+    let later = now + PROC_SNAPSHOT_TTL;
+    let stale = snapshot_entries_with(
+        &cache,
+        || later,
+        || Err(io::Error::other("snapshot unavailable")),
+    );
+    assert!(Arc::ptr_eq(&first, &stale));
+    let replaced = snapshot_entries_with(&cache, || later, || Ok(Vec::new()));
+    assert!(replaced.is_empty());
+    assert_eq!(first[0].exe, PathBuf::from("shell.exe"));
+}
+
+#[test]
+fn cwd_only_lookup_does_not_read_command_line() {
+    assert!(
+        read_optional_argv(false, || panic!("cwd lookup must not read argv"))
+            .unwrap()
+            .is_empty()
+    );
+    assert!(read_optional_argv(true, || None).is_none());
+    let command = "shell.exe arg\0".encode_utf16().collect();
+    assert_eq!(
+        read_optional_argv(true, || Some(command)).unwrap(),
+        ["shell.exe", "arg"]
+    );
+}
+
 fn entry(pid: u32, ppid: u32, exe: &str) -> SnapshotExeEntry {
     let mut encoded = [0u16; MAX_PATH];
     let wide: Vec<u16> = exe.encode_utf16().collect();

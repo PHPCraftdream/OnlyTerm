@@ -81,6 +81,46 @@ fn fallback_only_runs_keep_parsed_primary_font() {
 }
 
 #[test]
+fn appending_fallback_keeps_existing_face_and_plan_cache() {
+    let handles = primary_then_hebrew_fallback_handles();
+    let mut shaper = RustybuzzShaper::new(&config::configuration(), &handles).unwrap();
+    let mut missing = Vec::new();
+    shaper
+        .shape(
+            "plain text",
+            14.,
+            96,
+            &mut missing,
+            None,
+            Direction::LeftToRight,
+            None,
+            None,
+        )
+        .unwrap();
+    let primary = shaper.fonts[0].borrow();
+    let pair = primary.as_ref().expect("primary face loaded");
+    let face_ptr = pair
+        .rb_face
+        .borrow()
+        .as_ref()
+        .expect("rustybuzz face loaded")
+        ._data
+        .as_ptr();
+    let plan_count = pair.shape_plans.borrow().len();
+    drop(primary);
+
+    shaper.append_handles(&[jetbrains_handle()]).unwrap();
+    assert_eq!(shaper.fonts.len(), 3);
+    let primary = shaper.fonts[0].borrow();
+    let pair = primary.as_ref().unwrap();
+    assert_eq!(
+        face_ptr,
+        pair.rb_face.borrow().as_ref().unwrap()._data.as_ptr()
+    );
+    assert_eq!(plan_count, pair.shape_plans.borrow().len());
+}
+
+#[test]
 #[ignore = "manual CJK measurement; requires ONLYTERM_CJK_FONT pointing at a font file"]
 fn cjk_repeated_shape_probe() {
     let path = std::env::var_os("ONLYTERM_CJK_FONT").expect("set ONLYTERM_CJK_FONT");

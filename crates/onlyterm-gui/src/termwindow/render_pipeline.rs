@@ -219,6 +219,8 @@ impl TermWindow {
             current_highlight: None,
             quad_generation: 0,
             shape_generation: 0,
+            fallback_generations: RefCell::new(HashMap::new()),
+            fallback_epoch: std::cell::Cell::new(0),
             shape_cache: RefCell::new(LfuCache::new(
                 "shape_cache.hit.rate",
                 "shape_cache.miss.rate",
@@ -1461,12 +1463,22 @@ impl TermWindow {
 
     fn dispatch_notif(&mut self, notif: TermWindowNotif, window: &Window) -> anyhow::Result<()> {
         match notif {
-            TermWindowNotif::InvalidateShapeCache => {
-                self.shape_generation += 1;
-                self.shape_cache.borrow_mut().clear();
-                // Task #439: clear shape_hash_cache on shape cache invalidation
-                self.shape_hash_cache.borrow_mut().clear();
+            TermWindowNotif::InvalidateShapeCache(chars) => {
+                self.bump_fallback_epoch();
+                if chars.is_empty() {
+                    self.shape_generation += 1;
+                    self.shape_cache.borrow_mut().clear();
+                    self.line_to_ele_shape_cache.borrow_mut().clear();
+                    self.shape_hash_cache.borrow_mut().clear();
+                } else {
+                    let mut generations = self.fallback_generations.borrow_mut();
+                    for ch in chars {
+                        let generation = generations.entry(ch).or_insert(0);
+                        *generation = generation.wrapping_add(1);
+                    }
+                }
                 self.invalidate_modal();
+                self.invalidate_fancy_tab_bar();
                 window.invalidate();
             }
             TermWindowNotif::PerformAssignment {
@@ -1538,7 +1550,7 @@ impl TermWindow {
                     // Shape cache includes color information, so
                     // ensure that we invalidate that as part of
                     // this overall invalidation for the palette
-                    self.dispatch_notif(TermWindowNotif::InvalidateShapeCache, window)?;
+                    self.dispatch_notif(TermWindowNotif::InvalidateShapeCache(Vec::new()), window)?;
                     self.mux_pane_output_event(pane_id);
                 }
                 MuxNotification::Alert {

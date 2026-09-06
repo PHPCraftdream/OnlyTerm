@@ -31,9 +31,9 @@ onlyterm-input-types.workspace = true
 default = []
 std = ["fancy-regex/std", "onlyterm-cell/std", "onlyterm-dynamic/std", "onlyterm-escape-parser/std", "fixedbitset/std", "fancy-regex/perf", "fancy-regex/unicode"]
 appdata = ["std"]
-use_serde = ["serde"] #, "onlyterm-color-types/use_serde", "onlyterm-blob-leases/serde", "bitflags/serde", "onlyterm-input-types/serde", "onlyterm-escape-parser/use_serde", "onlyterm-cell/use_serde"]
+use_serde = ["dep:serde", "serde/rc", "bitflags/serde", "onlyterm-color-types/use_serde", "onlyterm-input-types/serde", "onlyterm-escape-parser/use_serde", "onlyterm-cell/use_serde", "onlyterm-blob-leases?/serde"]
 use_image = ["onlyterm-cell/use_image"] # "image", "dep:image", "onlyterm-escape-parser/use_image", "onlyterm-escape-parser/kitty-shm", "onlyterm-cell/use_image"]
 
 [dev-dependencies]
 k9.workspace = true
-
+serde_json.workspace = true

@@ -9,8 +9,9 @@ use crate::line::vecstorage::{VecStorage, VecStorageIter};
 use crate::line::zone::ZoneRange;
 use crate::{Change, SequenceNo, SEQ_ZERO};
 use alloc::borrow::Cow;
+use alloc::sync::Arc;
 #[cfg(feature = "appdata")]
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Weak;
 #[cfg(feature = "appdata")]
 use core::any::Any;
 use core::hash::Hash;
@@ -30,10 +31,14 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[cfg(test)]
+#[path = "cow_test.rs"]
+mod cow_test;
+
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 pub struct Line {
     pub(crate) cells: CellStorage,
-    zones: Vec<ZoneRange>,
+    zones: Arc<Vec<ZoneRange>>,
     seqno: SequenceNo,
     bits: LineBits,
     #[cfg(feature = "appdata")]
@@ -86,7 +91,7 @@ impl Clone for Line {
     fn clone(&self) -> Self {
         Self {
             cells: self.cells.clone(),
-            zones: self.zones.clone(),
+            zones: Arc::clone(&self.zones),
             seqno: self.seqno,
             bits: self.bits,
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(
@@ -116,9 +121,9 @@ impl Line {
         let bits = LineBits::NONE;
         Self {
             bits,
-            cells: CellStorage::V(VecStorage::new(cells)),
+            cells: CellStorage::V(Arc::new(VecStorage::new(cells))),
             seqno,
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -130,9 +135,9 @@ impl Line {
         let bits = LineBits::NONE;
         Self {
             bits,
-            cells: CellStorage::V(VecStorage::new(cells)),
+            cells: CellStorage::V(Arc::new(VecStorage::new(cells))),
             seqno,
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -147,9 +152,9 @@ impl Line {
     pub fn new(seqno: SequenceNo) -> Self {
         Self {
             bits: LineBits::NONE,
-            cells: CellStorage::C(ClusteredLine::new()),
+            cells: CellStorage::C(Arc::new(ClusteredLine::new())),
             seqno,
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -180,9 +185,9 @@ impl Line {
         let bits = LineBits::NONE;
         Self {
             bits,
-            cells: CellStorage::V(VecStorage::new(cells)),
+            cells: CellStorage::V(Arc::new(VecStorage::new(cells))),
             seqno,
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -208,10 +213,10 @@ impl Line {
         }
 
         Line {
-            cells: CellStorage::V(VecStorage::new(cells)),
+            cells: CellStorage::V(Arc::new(VecStorage::new(cells))),
             bits: LineBits::NONE,
             seqno,
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -478,7 +483,16 @@ impl Line {
     }
 
     fn invalidate_zones(&mut self) {
-        self.zones.clear();
+        if !self.zones.is_empty() {
+            if let Some(zones) = Arc::get_mut(&mut self.zones) {
+                zones.clear();
+            } else {
+                // This is a cache, not line content. When a snapshot still
+                // owns the populated cache, detach with an empty allocation
+                // rather than cloning the cache solely to discard it.
+                self.zones = Arc::new(vec![]);
+            }
+        }
     }
 
     fn compute_zones(&mut self) {
@@ -530,7 +544,7 @@ impl Line {
         if let Some(zone) = current_zone.take() {
             zones.push(zone);
         }
-        self.zones = zones;
+        self.zones = Arc::new(zones);
     }
 
     pub fn semantic_zone_ranges(&mut self) -> &[ZoneRange] {
@@ -714,9 +728,9 @@ impl Line {
             .store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
         Self {
             bits: self.bits,
-            cells: CellStorage::V(VecStorage::new(cells)),
+            cells: CellStorage::V(Arc::new(VecStorage::new(cells))),
             seqno,
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -807,9 +821,9 @@ impl Line {
         }
         Self {
             bits: LineBits::NONE,
-            cells: CellStorage::V(VecStorage::new(cells)),
+            cells: CellStorage::V(Arc::new(VecStorage::new(cells))),
             seqno: self.current_seqno(),
-            zones: vec![],
+            zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
             #[cfg(feature = "appdata")]
@@ -849,12 +863,21 @@ impl Line {
                 // implicitly blank
                 return;
             }
-            while cl.len() < idx {
-                // Fill out any implied blanks until we can append
-                // their intended cell content
-                cl.append_grapheme(" ", 1, CellAttributes::blank());
-            }
             if idx == cl.len() {
+                let cl = Arc::make_mut(cl);
+                cl.append_grapheme(text, width, attr);
+                self.invalidate_implicit_hyperlinks(seqno);
+                self.invalidate_zones();
+                self.update_last_change_seqno(seqno);
+                return;
+            }
+            if idx > cl.len() {
+                let cl = Arc::make_mut(cl);
+                while cl.len() < idx {
+                    // Fill out any implied blanks until we can append
+                    // their intended cell content
+                    cl.append_grapheme(" ", 1, CellAttributes::blank());
+                }
                 cl.append_grapheme(text, width, attr);
                 self.invalidate_implicit_hyperlinks(seqno);
                 self.invalidate_zones();
@@ -902,12 +925,13 @@ impl Line {
                 // implicitly blank
                 return;
             }
-            while cl.len() < idx {
-                // Fill out any implied blanks until we can append
-                // their intended cell content
-                cl.append_grapheme(" ", 1, CellAttributes::blank());
-            }
-            if idx == cl.len() {
+            if idx >= cl.len() {
+                let cl = Arc::make_mut(cl);
+                while cl.len() < idx {
+                    // Fill out any implied blanks until we can append
+                    // their intended cell content
+                    cl.append_grapheme(" ", 1, CellAttributes::blank());
+                }
                 cl.append(cell);
                 return;
             }
@@ -1051,7 +1075,7 @@ impl Line {
 
     pub fn prune_trailing_blanks(&mut self, seqno: SequenceNo) {
         if let CellStorage::C(cl) = &mut self.cells {
-            if cl.prune_trailing_blanks() {
+            if cl.has_prunable_trailing_blanks() && Arc::make_mut(cl).prune_trailing_blanks() {
                 self.update_last_change_seqno(seqno);
                 self.invalidate_zones();
             }
@@ -1181,14 +1205,14 @@ impl Line {
             CellStorage::C(cl) => cl.to_cell_vec(),
         };
         // log::info!("make_cells\n{:?}", backtrace::Backtrace::new());
-        self.cells = CellStorage::V(VecStorage::new(cells));
+        self.cells = CellStorage::V(Arc::new(VecStorage::new(cells)));
     }
 
     pub(crate) fn coerce_vec_storage(&mut self) -> &mut VecStorage {
         self.make_cells();
 
         match &mut self.cells {
-            CellStorage::V(c) => c,
+            CellStorage::V(c) => Arc::make_mut(c),
             CellStorage::C(_) => unreachable!(),
         }
     }
@@ -1202,7 +1226,7 @@ impl Line {
             CellStorage::V(v) => ClusteredLine::from_cell_vec(v.len(), self.visible_cells()),
             CellStorage::C(_) => return,
         };
-        self.cells = CellStorage::C(cv);
+        self.cells = CellStorage::C(Arc::new(cv));
     }
 
     pub fn cells_mut(&mut self) -> &mut [Cell] {
@@ -1238,6 +1262,7 @@ impl Line {
         use core::sync::atomic::Ordering::Relaxed;
         self.update_last_change_seqno(seqno);
         if let CellStorage::C(cl) = &mut self.cells {
+            let cl = Arc::make_mut(cl);
             if cl.len() == 0 {
                 // Need to mark that implicit space as wrapped, so
                 // explicitly add it
@@ -1277,6 +1302,7 @@ impl Line {
     pub fn append_line(&mut self, other: Line, seqno: SequenceNo) {
         match &mut self.cells {
             CellStorage::V(cells) => {
+                let cells = Arc::make_mut(cells);
                 for cell in other.visible_cells() {
                     cells.push(cell.as_cell());
                     for _ in 1..cell.width() {
@@ -1285,6 +1311,7 @@ impl Line {
                 }
             }
             CellStorage::C(cl) => {
+                let cl = Arc::make_mut(cl);
                 for cell in other.visible_cells() {
                     cl.append(cell.as_cell());
                 }

@@ -7,6 +7,34 @@ use std::fmt::Display;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Immutable font-file storage shared by all parser, shaper and rasterizer
+/// users of a [`FontDataSource`]. Runtime consumers use owned bytes so the
+/// backing remains stable even if an on-disk font is rewritten.
+#[derive(Clone)]
+pub(crate) enum SharedFontData {
+    Static(&'static [u8]),
+    Owned(Arc<Box<[u8]>>),
+}
+
+impl std::ops::Deref for SharedFontData {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Static(data) => data,
+            Self::Owned(data) => data,
+        }
+    }
+}
+
+type SharedFontFileCache =
+    std::collections::HashMap<(PathBuf, u64, std::time::SystemTime), std::sync::Weak<Box<[u8]>>>;
+
+lazy_static::lazy_static! {
+    static ref SHARED_FONT_FILES: std::sync::Mutex<SharedFontFileCache> =
+        std::sync::Mutex::new(SharedFontFileCache::new());
+}
+
 pub mod gdi;
 
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
@@ -66,6 +94,41 @@ impl FontDataSource {
             }
             Self::BuiltIn { data, .. } => Ok(Cow::Borrowed(data)),
             Self::Memory { data, .. } => Ok(Cow::Borrowed(data)),
+        }
+    }
+
+    /// Returns immutable backing storage shared by every runtime consumer of
+    /// this source. The weak cache makes separately cloned `OnDisk` sources
+    /// converge on one owned read while allowing it to be reclaimed after
+    /// the last parsed/shaping/rasterizing face is dropped.
+    pub(crate) fn shared_data(&self) -> anyhow::Result<SharedFontData> {
+        match self {
+            Self::BuiltIn { data, .. } => Ok(SharedFontData::Static(data)),
+            Self::Memory { data, .. } => Ok(SharedFontData::Owned(Arc::clone(data))),
+            Self::OnDisk(path) => {
+                let metadata = std::fs::metadata(path)?;
+                let cache_key = (
+                    path.clone(),
+                    metadata.len(),
+                    metadata.modified().unwrap_or(std::time::UNIX_EPOCH),
+                );
+                let mut cache = SHARED_FONT_FILES.lock().unwrap();
+                // Keep at most the current metadata generation for each path;
+                // removing a weak entry does not affect existing consumers,
+                // which hold their own strong Arc. This bounds key growth
+                // across repeated font rewrites/config reloads.
+                cache.retain(|(cached_path, key_len, key_mtime), data| {
+                    data.strong_count() != 0
+                        && (cached_path != path
+                            || (*key_len, *key_mtime) == (cache_key.1, cache_key.2))
+                });
+                if let Some(data) = cache.get(&cache_key).and_then(std::sync::Weak::upgrade) {
+                    return Ok(SharedFontData::Owned(data));
+                }
+                let data = Arc::new(std::fs::read(path)?.into_boxed_slice());
+                cache.insert(cache_key, Arc::downgrade(&data));
+                Ok(SharedFontData::Owned(data))
+            }
         }
     }
 }
@@ -280,5 +343,38 @@ mod test {
             name: "hello!".to_string(),
         };
         eprintln!("{:?}", source);
+    }
+
+    #[test]
+    fn on_disk_sources_share_one_owned_read() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/fonts/JetBrainsMono-Regular.ttf");
+        let source = FontDataSource::OnDisk(path);
+        let first = source.shared_data().unwrap();
+        let second = source.shared_data().unwrap();
+        match (first, second) {
+            (SharedFontData::Owned(first), SharedFontData::Owned(second)) => {
+                assert!(Arc::ptr_eq(&first, &second));
+            }
+            _ => panic!("expected an on-disk font to use shared owned bytes"),
+        }
+    }
+
+    #[test]
+    fn old_shared_bytes_survive_font_rewrite() {
+        let path =
+            std::env::temp_dir().join(format!("onlyterm-font-shared-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        std::fs::write(&path, [1u8, 2, 3]).unwrap();
+        let source = FontDataSource::OnDisk(path.clone());
+        let old = source.shared_data().unwrap();
+
+        // A changed length guarantees a distinct metadata cache key even on
+        // filesystems with coarse modification timestamps.
+        std::fs::write(&path, [4u8, 5, 6, 7]).unwrap();
+        let new = source.shared_data().unwrap();
+        assert_eq!(&*old, &[1, 2, 3]);
+        assert_eq!(&*new, &[4, 5, 6, 7]);
+        std::fs::remove_file(path).unwrap();
     }
 }

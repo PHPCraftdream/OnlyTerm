@@ -2,6 +2,36 @@ use super::*;
 use ordered_float::NotNan;
 use std::rc::Rc;
 
+#[test]
+fn fallback_completion_keeps_latin_rows_but_rebuilds_dependent_cjk() {
+    let mut generations = std::collections::HashMap::new();
+    let mut rows = make_rows(0, &[false, false]);
+    for (row, text) in rows.rows.iter_mut().zip(["ordinary Latin", "中文"]) {
+        row.as_mut().unwrap().fallback_generation = fallback_text_generation(&generations, text);
+    }
+    generations.insert('中', 1);
+    let latin = rows.rows[0].as_ref().unwrap();
+    let cjk = rows.rows[1].as_ref().unwrap();
+    let latin_valid = retained_row_matches_fallback(
+        latin,
+        fallback_text_generation(&generations, "ordinary Latin"),
+    );
+    let cjk_valid =
+        retained_row_matches_fallback(cjk, fallback_text_generation(&generations, "中文"));
+    assert!(latin_valid);
+    assert!(!cjk_valid);
+    let now = Instant::now();
+    let mut sweep = budget::RowSweep::new(Some(now), 2, 3, None);
+    assert_eq!(
+        sweep.decide(0, false, latin_valid, false, now),
+        budget::RowAction::EmitRetained
+    );
+    assert_eq!(
+        sweep.decide(1, false, cjk_valid, false, now),
+        budget::RowAction::Build
+    );
+}
+
 /// Build a RetainedPaneRows with one retained row per slot, whose
 /// `contains_cursor` flags are taken from `flags`.
 fn make_rows(viewport_top: StableRowIndex, flags: &[bool]) -> RetainedPaneRows {
@@ -23,6 +53,7 @@ fn make_rows(viewport_top: StableRowIndex, flags: &[bool]) -> RetainedPaneRows {
             .iter()
             .map(|&contains_cursor| {
                 Some(RetainedRow {
+                    fallback_generation: 0,
                     quads: Rc::new(HeapQuadAllocator::default()),
                     expires: None,
                     contains_cursor,

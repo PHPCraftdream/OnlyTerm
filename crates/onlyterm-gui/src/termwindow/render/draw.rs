@@ -556,13 +556,8 @@ impl crate::TermWindow {
             atlas_tex.drain_dirty_updates()
         };
 
-        // Take draw buffers from the backend's shared pool (preserving
-        // capacity from a previous frame) instead of cloning into fresh
-        // allocations every frame.  The writer thread returns them after
-        // serialization -- see `spawn_writer_thread` in
-        // `host_process_backend.rs`.  Without this pool the allocator sees a
-        // relentless stream of ~300-435 KB never-reused allocations that
-        // accumulate as retained arenas, causing the 4 GB OOM crash.
+        // Transfer each accumulator without copying its instances. The writer
+        // returns its buffer to the shared pool after serialization.
         let pool = self
             .render_thread
             .as_ref()
@@ -572,13 +567,7 @@ impl crate::TermWindow {
             for idx in 0..3 {
                 let vb = &layer.vb.borrow()[idx];
                 if vb.instance_count() > 0 {
-                    let instances = vb.instances.borrow();
-                    let mut buf = match pool {
-                        Some(ref p) => wire::pool_take(p),
-                        None => Vec::new(),
-                    };
-                    buf.extend_from_slice(&instances);
-                    draws.push(buf);
+                    draws.push(vb.take_instances_for_wire(pool.as_ref()));
                 }
                 vb.next_index();
             }

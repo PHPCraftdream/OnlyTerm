@@ -1,10 +1,10 @@
-use super::image_decode::IMAGE_DECODE_POLL_INTERVAL;
+use super::image_decode::{decoded_pixels, DecodedPixelsHandle, IMAGE_DECODE_POLL_INTERVAL};
 use super::*;
 
 use crate::renderstate::RenderContext;
 use crate::termwindow::render::paint::AllowImage;
 use crate::utilsprites::RenderMetrics;
-use ::window::bitmaps::atlas::{Atlas, OutOfTextureSpace, Sprite};
+use ::window::bitmaps::atlas::{Atlas, Sprite};
 use ::window::bitmaps::{BitmapImage, Image, ImageTexture, Texture2d};
 use ::window::color::SrgbaPixel;
 use ::window::{Point, Rect};
@@ -13,7 +13,7 @@ use anyhow::Context;
 use config::{AllowSquareGlyphOverflow, TextStyle};
 use euclid::num::Zero;
 use lfucache::LfuCache;
-use onlyterm_font::{FontConfiguration, GlyphInfo, LoadedFont};
+use onlyterm_font::{FontConfiguration, GlyphInfo, LoadedFont, RasterizedGlyph};
 use onlyterm_term::Underline;
 use ordered_float::NotNan;
 use std::collections::HashMap;
@@ -29,44 +29,29 @@ mod image_cache_tests;
 // AHashMap: HashMap with ahash's RandomState for process-random keys
 type AHashMap<K, V> = HashMap<K, V, RandomState>;
 
+const PLACEHOLDER_FRAME_HASH: [u8; 32] = [0x4f; 32];
+
 fn decoder_poll_deadline(now: Instant) -> Instant {
     now + IMAGE_DECODE_POLL_INTERVAL
 }
 
 impl GlyphCache {
     pub fn new_in_memory(fonts: &Rc<FontConfiguration>, size: usize) -> anyhow::Result<Self> {
-        let surface: Rc<dyn Texture2d> = Rc::new(ImageTexture::new(size, size));
-        let atlas = Atlas::new(&surface).expect("failed to create new texture atlas");
-
-        Ok(Self {
-            fonts: Rc::clone(fonts),
-            glyph_cache: AHashMap::default(),
-            glyph_cache_hit: metrics::histogram!("glyph_cache.glyph_cache.hit.rate"),
-            glyph_cache_miss: metrics::histogram!("glyph_cache.glyph_cache.miss.rate"),
-            image_cache: LfuCache::new(
-                "glyph_cache.image_cache.hit.rate",
-                "glyph_cache.image_cache.miss.rate",
-                |config| config.glyph_cache_image_cache_size,
-                &fonts.config(),
-            ),
-            frame_cache: HashMap::new(),
-            atlas,
-            line_glyphs: AHashMap::default(),
-            block_glyphs: AHashMap::default(),
-            cursor_glyphs: HashMap::new(),
-            color: HashMap::new(),
-            min_frame_duration: Duration::from_millis(1000 / fonts.config().max_fps),
-        })
+        Self::from_texture(fonts, Rc::new(ImageTexture::new(size, size)))
     }
-}
 
-impl GlyphCache {
     pub fn new_gl(
         backend: &RenderContext,
         fonts: &Rc<FontConfiguration>,
         size: usize,
     ) -> anyhow::Result<Self> {
-        let surface = backend.allocate_texture_atlas(size)?;
+        Self::from_texture(fonts, backend.allocate_texture_atlas(size)?)
+    }
+
+    fn from_texture(
+        fonts: &Rc<FontConfiguration>,
+        surface: Rc<dyn Texture2d>,
+    ) -> anyhow::Result<Self> {
         let atlas = Atlas::new(&surface).expect("failed to create new texture atlas");
 
         Ok(Self {
@@ -119,41 +104,7 @@ impl GlyphCache {
         }
         self.glyph_cache_miss.record(1.);
 
-        let glyph = match self.load_glyph(info, font, followed_by_space, num_cells) {
-            Ok(g) => g,
-            Err(err) => {
-                if err
-                    .root_cause()
-                    .downcast_ref::<OutOfTextureSpace>()
-                    .is_some()
-                {
-                    // Ensure that we propagate this signal to expand
-                    // our available teexture space
-                    return Err(err);
-                }
-
-                // But otherwise: don't allow glyph loading errors to propagate,
-                // as that will result in incomplete window painting.
-                // Log the error and substitute instead.
-                log::error!(
-                    "load_glyph failed; using blank instead. Error: {:#}. {:?} {:?}",
-                    err,
-                    info,
-                    style
-                );
-                Rc::new(CachedGlyph {
-                    brightness_adjust: 1.0,
-                    has_color: false,
-                    texture: None,
-                    x_advance: PixelLength::zero(),
-                    x_offset: PixelLength::zero(),
-                    y_offset: PixelLength::zero(),
-                    bearing_x: PixelLength::zero(),
-                    bearing_y: PixelLength::zero(),
-                    scale: 1.0,
-                })
-            }
-        };
+        let glyph = self.load_glyph_sync(info, font, followed_by_space, num_cells)?;
         self.glyph_cache.insert(key.to_owned(), Rc::clone(&glyph));
         Ok(glyph)
     }
@@ -166,22 +117,20 @@ impl GlyphCache {
 
     /// Perform the load and render of a glyph
     #[allow(clippy::float_cmp)]
-    fn load_glyph(
+    pub(super) fn load_glyph_with_raster(
         &mut self,
         info: &GlyphInfo,
         font: &Rc<LoadedFont>,
         followed_by_space: bool,
         num_cells: u8,
+        glyph: &RasterizedGlyph,
     ) -> anyhow::Result<Rc<CachedGlyph>> {
         let base_metrics;
         let idx_metrics;
         let brightness_adjust;
-        let glyph;
 
         {
             base_metrics = font.metrics();
-            glyph = font.rasterize_glyph(info.glyph_pos, info.font_idx)?;
-
             idx_metrics = font.metrics_for_idx(info.font_idx)?;
             brightness_adjust = font.brightness_adjust(info.font_idx);
         }
@@ -456,6 +405,7 @@ impl GlyphCache {
             ImageDataType::EncodedLease(_) | ImageDataType::EncodedFile(_) => {
                 let mut frames = decoded.frames.borrow_mut();
                 let frames = frames.as_mut().expect("to have frames");
+                frames.poll_refills();
 
                 let mut decoded_frame_start = decoded.frame_start.borrow_mut();
                 let mut decoded_current_frame = decoded.current_frame.borrow_mut();
@@ -519,44 +469,60 @@ impl GlyphCache {
                 let hash = frames.frame_hash();
 
                 if let Some(sprite) = frame_cache.get(&hash) {
+                    drop(frames.take_refilled_pixels(hash));
                     return Ok((sprite.clone(), next, frames.load_state));
                 }
 
-                let expected_byte_size =
-                    frames.current_frame.width * frames.current_frame.height * 4;
+                let expected_byte_size = frames
+                    .current_frame
+                    .width
+                    .checked_mul(frames.current_frame.height)
+                    .and_then(|pixels| pixels.checked_mul(4))
+                    .context("decoded image dimensions overflow pixel length")?;
 
-                let frame_data = match frames.current_frame.lease.get_data() {
-                    Ok(data) => {
-                        // If the size isn't right, ignore this frame and replace
-                        // it with a blank one instead. This might happen if
-                        // some process is truncating the files, or perhaps if
-                        // the disk is full.
-                        // We need to check for this because the consequence of
-                        // a mismatched size is a panic in a layer where we
-                        // cannot handle the error case.
-                        if data.len() != expected_byte_size {
-                            report_frame_error(format!("frame data is corrupted: expected size {expected_byte_size} but have {}", data.len()));
-                            vec![0u8; expected_byte_size]
-                        } else {
-                            data
-                        }
+                let transient_pixels = frames.take_refilled_pixels(hash);
+                let pixels = decoded_pixels(hash)
+                    .filter(|pixels| pixels.len() == expected_byte_size)
+                    .or_else(|| {
+                        transient_pixels
+                            .as_ref()
+                            .map(|pixels| Arc::clone(&pixels.pixels))
+                    });
+
+                if let Some(pixels) = pixels {
+                    if let Ok(frame) = DecodedPixelsHandle::new(
+                        pixels,
+                        frames.current_frame.width,
+                        frames.current_frame.height,
+                    ) {
+                        let sprite = atlas.allocate_with_padding(&frame, padding, scale_down)?;
+                        frame_cache.insert(hash, sprite.clone());
+                        return Ok((sprite, next, frames.load_state));
                     }
-                    Err(err) => {
-                        report_frame_error(format!("frame data error: {err:#}"));
-                        vec![0u8; expected_byte_size]
-                    }
+                }
+
+                // Never read the blob from the GUI thread. The decoder worker
+                // refills the bounded RAM cache (or returns a transient large
+                // frame) and this call schedules a repaint when it responds.
+                let sprite = if let Some(sprite) = frame_cache.get(&PLACEHOLDER_FRAME_HASH) {
+                    sprite.clone()
+                } else {
+                    let placeholder = Image::from_raw(1, 1, vec![0, 0, 0, 0xff]);
+                    let sprite = atlas.allocate_with_padding(&placeholder, padding, scale_down)?;
+                    frame_cache.insert(PLACEHOLDER_FRAME_HASH, sprite.clone());
+                    sprite
                 };
-
-                let frame = Image::from_raw(
-                    frames.current_frame.width,
-                    frames.current_frame.height,
-                    frame_data,
-                );
-                let sprite = atlas.allocate_with_padding(&frame, padding, scale_down)?;
-
-                frame_cache.insert(hash, sprite.clone());
-
-                Ok((sprite, next, frames.load_state))
+                if frames.refill_failed(hash) {
+                    frame_cache.insert(hash, sprite.clone());
+                    return Ok((sprite, next, LoadState::Loaded));
+                }
+                let frame_to_refill = frames.current_frame.clone();
+                frames.request_refill(&frame_to_refill);
+                Ok((
+                    sprite,
+                    Some(Instant::now() + IMAGE_DECODE_POLL_INTERVAL),
+                    LoadState::Loading,
+                ))
             }
         }
     }
@@ -893,7 +859,7 @@ mod tests {
 
         let lease =
             onlyterm_blob_leases::BlobManager::store(&webp_bytes).expect("store webp bytes");
-        let rx = FrameDecoder::start(lease).expect("start decoder");
+        let (rx, _refill_tx, _refill_rx) = FrameDecoder::start(lease).expect("start decoder");
 
         let frame = rx
             .recv_timeout(Duration::from_secs(15))
@@ -907,6 +873,10 @@ mod tests {
             decoded.len(),
             (w * h * 4) as usize,
             "decoded frame should be RGBA8"
+        );
+        assert_eq!(
+            decoded, rgba,
+            "the first WebP frame must contain decoded pixels"
         );
     }
 

@@ -21,7 +21,7 @@ impl LocalPane {
             // Use only lightweight snapshot names, outside the process lock.
             let start = Instant::now();
             let result = LocalProcessInfo::fresh_process_tree_exe_names(pid);
-            log::info!(
+            log::debug!(
                 "diag: key-compat LocalPane pane={} process_pid={} source=fresh-snapshot elapsed_us={}",
                 self.pane_id,
                 pid,

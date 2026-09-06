@@ -87,26 +87,28 @@ impl LoadedFont {
     }
 
     fn insert_fallback_handles(&self, extra_handles: Vec<ParsedFont>) -> anyhow::Result<bool> {
-        let mut loaded = false;
-        {
-            let mut handles = self.handles.borrow_mut();
-            for h in extra_handles {
-                if !handles.contains(&h) {
-                    handles.push(h);
-                    loaded = true;
+        let additions = {
+            let handles = self.handles.borrow();
+            let mut additions = Vec::new();
+            for candidate in extra_handles {
+                if !handles.contains(&candidate) && !additions.contains(&candidate) {
+                    additions.push(candidate);
                 }
             }
-            if loaded {
-                log::trace!("revised fallback: {:#?}", handles);
-            }
+            additions
+        };
+        if additions.is_empty() {
+            return Ok(false);
         }
-        if loaded {
-            if let Some(font_config) = self.font_config.upgrade() {
-                *self.shaper.borrow_mut() =
-                    new_shaper(&font_config.config.borrow(), &self.handles.borrow())?;
-            }
-        }
-        Ok(loaded)
+
+        // Append to the existing shaper first.  This keeps every existing
+        // FontPair, ShapePlan and metrics entry alive; all existing indices
+        // remain stable and the new handles retain resolver order.
+        self.shaper.borrow_mut().append_handles(&additions)?;
+        let mut handles = self.handles.borrow_mut();
+        handles.extend(additions);
+        log::trace!("revised fallback: {:#?}", handles);
+        Ok(true)
     }
 
     pub fn blocking_shape(
@@ -122,7 +124,7 @@ impl LoadedFont {
 
             let (async_resolve, res) = match self.shape_impl(
                 text,
-                move || {
+                move |_| {
                     let _ = tx.send(());
                 },
                 |_| {},
@@ -151,7 +153,7 @@ impl LoadedFont {
     // options; bundling the non-callback options into a struct would still
     // have to be generic over F and FS, so keep the flat signature.
     #[allow(clippy::too_many_arguments)]
-    pub fn shape<F: FnOnce() + Send + 'static, FS: FnOnce(&mut Vec<char>)>(
+    pub fn shape<F: FnOnce(Vec<char>) + Send + 'static, FS: FnOnce(&mut Vec<char>)>(
         &self,
         text: &str,
         completion: F,
@@ -175,7 +177,7 @@ impl LoadedFont {
 
     // Mirrors `shape` above; the same flat-signature trade-off applies.
     #[allow(clippy::too_many_arguments)]
-    fn shape_impl<F: FnOnce() + Send + 'static, FS: FnOnce(&mut Vec<char>)>(
+    fn shape_impl<F: FnOnce(Vec<char>) + Send + 'static, FS: FnOnce(&mut Vec<char>)>(
         &self,
         text: &str,
         completion: F,
@@ -191,7 +193,12 @@ impl LoadedFont {
             let mut pending = self.pending_fallback.lock().unwrap();
             if !pending.is_empty() {
                 match self.insert_fallback_handles(pending.split_off(0)) {
-                    Ok(true) => return Err(ClearShapeCache {})?,
+                    // The shaper was extended in place, so its existing
+                    // parsed faces/plans/metrics remain valid. Continue the
+                    // current shape immediately; GUI cache dependencies are
+                    // invalidated by the completed unresolved-codepoint
+                    // signal, avoiding a global cache clear.
+                    Ok(true) => {}
                     Ok(false) => {}
                     Err(err) => {
                         log::error!("Error adding fallback: {:#}", err);
@@ -373,7 +380,7 @@ impl FontConfigInner {
         Ok(())
     }
 
-    fn schedule_fallback_resolve<F: FnOnce() + Send + 'static>(
+    fn schedule_fallback_resolve<F: FnOnce(Vec<char>) + Send + 'static>(
         &self,
         no_glyphs: Vec<char>,
         pending: &Arc<Mutex<Vec<ParsedFont>>>,

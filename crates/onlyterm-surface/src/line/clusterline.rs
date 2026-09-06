@@ -306,6 +306,15 @@ impl ClusteredLine {
         pruned
     }
 
+    pub(crate) fn has_prunable_trailing_blanks(&self) -> bool {
+        self.text.chars().rev().take_while(|&c| c == ' ').count() > 0
+            && self
+                .clusters
+                .last()
+                .map(|cluster| cluster.attrs == CellAttributes::blank())
+                .unwrap_or(false)
+    }
+
     fn compute_last_cell_width(&mut self) -> Option<NonZeroU8> {
         if self.last_cell_width.is_none() {
             if let Some(last_cell) = self.iter().last() {

@@ -41,6 +41,7 @@
 //!   way but do not force them to integral pixels (FreeType doesn't either;
 //!   only the *advance* is grid-fit, offsets follow the outline hinting and
 //!   can be fractional).
+use crate::locator::SharedFontData;
 use crate::parser::ParsedFont;
 use crate::shaper::{FallbackIdx, FontMetrics, FontShaper, GlyphInfo, PresentationWidth};
 use crate::units::*;
@@ -55,29 +56,27 @@ use std::collections::HashMap;
 use std::ops::Range;
 use termwiz::cell::{unicode_column_width, Presentation};
 
-/// Owns the raw font bytes backing a `rustybuzz::Face<'static>`.
+/// Keeps shared immutable raw storage alive for a `rustybuzz::Face<'static>`.
 ///
 /// `rustybuzz::Face<'a>` borrows its input buffer, so we need something to
 /// keep the bytes alive for exactly as long as the `Face` that references
-/// them. We box the bytes (a stable heap allocation that never moves once
-/// created) and hand `rustybuzz` a pointer with an unsafely-extended
-/// `'static` lifetime; the `Face` and the owning `Box<[u8]>` are stored
-/// side by side in this struct and dropped together, so the borrow is
-/// always valid for as long as anyone can observe it.
+/// them. We hand `rustybuzz` a pointer with an unsafely-extended `'static`
+/// lifetime; the face and its shared backing are stored side by side, so the
+/// borrow is valid for as long as anyone can observe it.
 struct OwnedRbFace {
     // Order matters for drop safety in spirit (though neither type's Drop
     // impl actually touches the other's memory): the face borrows from
     // `_data`, so we keep them paired in a single struct rather than ever
     // handing the `Face` out on its own.
     face: rustybuzz::Face<'static>,
-    _data: Box<[u8]>,
+    _data: SharedFontData,
 }
 
 impl OwnedRbFace {
-    fn from_bytes(data: Box<[u8]>, face_index: u32) -> anyhow::Result<Self> {
+    fn from_bytes(data: SharedFontData, face_index: u32) -> anyhow::Result<Self> {
         let slice: &[u8] = &data;
-        // Safety: `data` is heap-allocated (`Box<[u8]>`) and its address is
-        // stable; we keep `_data` alive alongside `face` for the lifetime of
+        // Safety: `data` owns immutable storage whose address is stable; we
+        // keep `_data` alive alongside `face` for the lifetime of
         // this struct, and never expose `face` in a way that could outlive
         // `_data` (it's private and only accessed through methods on
         // `OwnedRbFace`). This extends the borrow from the true lifetime of
@@ -381,7 +380,7 @@ impl RustybuzzShaper {
         }
 
         let handle = &self.handles[font_idx];
-        let data = handle.handle.source.load_data().with_context(|| {
+        let data = handle.handle.source.shared_data().with_context(|| {
             format!(
                 "loading raw font bytes for rustybuzz face {:?}",
                 handle.handle
@@ -394,8 +393,7 @@ impl RustybuzzShaper {
         // way FreeType's own face-index convention used to require).
         let face_index = handle.handle.index;
 
-        let mut owned =
-            OwnedRbFace::from_bytes(data.clone().into_owned().into_boxed_slice(), face_index)?;
+        let mut owned = OwnedRbFace::from_bytes(data.clone(), face_index)?;
 
         // Resolve named-instance coordinates (if any) using the same raw
         // bytes, via a transient `ttf_parser::Face` purely to read
@@ -796,6 +794,13 @@ impl RustybuzzShaper {
 }
 
 impl FontShaper for RustybuzzShaper {
+    fn append_handles(&mut self, handles: &[ParsedFont]) -> anyhow::Result<()> {
+        self.handles.extend_from_slice(handles);
+        self.fonts
+            .extend(handles.iter().map(|_| RefCell::new(None)));
+        Ok(())
+    }
+
     fn shape(
         &self,
         text: &str,

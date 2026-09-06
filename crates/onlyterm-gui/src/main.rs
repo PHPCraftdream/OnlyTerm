@@ -22,6 +22,7 @@ use onlyterm_font::shaper::PresentationWidth;
 use onlyterm_font::FontConfiguration;
 use onlyterm_gui_subcommands::*;
 use onlyterm_mux_server_impl::update_mux_domains;
+use onlyterm_term::TerminalSize;
 use onlyterm_toast_notification::*;
 use portable_pty::cmdbuilder::CommandBuilder;
 use std::borrow::Cow;
@@ -295,6 +296,7 @@ async fn spawn_startup_layout(
     domain: Option<Arc<dyn Domain>>,
     workspace: Option<String>,
 ) -> anyhow::Result<()> {
+    let layout = Arc::new(layout.clone());
     let mux = Mux::get();
     let domain = domain.unwrap_or_else(|| mux.default_domain());
 
@@ -315,8 +317,75 @@ async fn spawn_startup_layout(
     let dpi = config.dpi.unwrap_or_else(::window::default_dpi);
     let size = config.initial_size(dpi as u32, Some(cell_pixel_dims(&config, dpi)?));
 
+    const NON_ELEVATED_STARTUP_CONCURRENCY: usize = 4;
+    let mut pending_non_elevated = Vec::new();
+    let mut previous_isolated = Vec::new();
     for (idx, tab_conf) in layout.tabs.iter().enumerate() {
         let options = layout.tab_options(tab_conf);
+        let startup_order = if !options.admin && config.per_tab_process_isolation {
+            let (order, done) = crate::spawn::StartupOrder::after(&previous_isolated);
+            previous_isolated.push(done);
+            Some(order)
+        } else {
+            None
+        };
+        if !options.admin {
+            if config.per_tab_process_isolation {
+                let layout = Arc::clone(&layout);
+                let domain = domain.clone();
+                let config = config.clone();
+                pending_non_elevated.push(promise::spawn::spawn(async move {
+                    spawn_startup_non_elevated_tab(
+                        &layout,
+                        idx,
+                        domain,
+                        window_id,
+                        size,
+                        config,
+                        startup_order,
+                    )
+                    .await
+                }));
+                if pending_non_elevated.len() == NON_ELEVATED_STARTUP_CONCURRENCY {
+                    for result in futures::future::join_all(pending_non_elevated.drain(..)).await {
+                        result?;
+                    }
+                    previous_isolated.clear();
+                }
+            } else {
+                // `Domain::spawn` materializes its tab as part of the call;
+                // there is no reserve/commit API, so concurrent calls could
+                // reorder visible tabs when remote process startup completes
+                // out of order. Keep this path ordered; isolated tabs use
+                // prepare/ordered-commit above to overlap the expensive work.
+                spawn_startup_non_elevated_tab(
+                    &layout,
+                    idx,
+                    domain.clone(),
+                    window_id,
+                    size,
+                    config.clone(),
+                    None,
+                )
+                .await?;
+            }
+            continue;
+        }
+
+        if config.per_tab_process_isolation {
+            for result in futures::future::join_all(pending_non_elevated.drain(..)).await {
+                result?;
+            }
+            if options.admin {
+                previous_isolated.clear();
+            }
+        }
+
+        // Elevated startup tabs intentionally remain ordered: each one may
+        // display a UAC prompt and the next prompt must not race it.
+        for result in futures::future::join_all(pending_non_elevated.drain(..)).await {
+            result?;
+        }
         // A tab's own `root_dir` wins over the layout-wide one, which in
         // turn wins over `config.default_cwd` that `build_prog` applies --
         // the same override order `run_terminal_gui` already uses for the
@@ -324,7 +393,7 @@ async fn spawn_startup_layout(
         let cwd = tab_conf.root_dir.as_ref().or(layout.root_dir.as_ref());
         let shell_argv = options.shell.map(|shell| shell.argv());
 
-        let tab = if options.admin {
+        let tab = {
             // Elevation can only go through the hosting-process path, which
             // takes an argv rather than a `CommandBuilder`. It also cannot
             // carry this tab's `vars`: the elevated child is launched by
@@ -360,90 +429,6 @@ async fn spawn_startup_layout(
                     layout.tabs.len()
                 )
             })?
-        } else if config.per_tab_process_isolation {
-            // Same isolation the interactive "new tab" path gets. Without
-            // this branch a layout's tabs stayed inside the GUI process even
-            // with the option on, so one window could hold isolated tabs
-            // opened by hand and non-isolated ones from the layout -- and the
-            // long-lived tabs a startup layout creates are precisely the ones
-            // worth containing.
-            //
-            // The tab's `vars` travel to the hosting process as a real
-            // environment (see `UnixDomain::proxy_env`), not as command-line
-            // arguments, so they are not exposed to other processes.
-            let spawn = config::keyassignment::SpawnCommand {
-                args: shell_argv.clone(),
-                cwd: cwd.map(|c| c.to_path_buf()),
-                set_environment_variables: layout
-                    .vars
-                    .iter()
-                    .chain(tab_conf.vars.iter())
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
-                priority: Some(options.priority),
-                ..Default::default()
-            };
-            // Run as its own task rather than awaiting inline, and that is
-            // not a style choice. An `async fn` keeps its state *inside*
-            // whichever future awaits it, so holding this one (which in turn
-            // holds `attach_with_spinner`) inside `spawn_startup_layout` grew
-            // that future past what the main thread's stack could carry: the
-            // GUI died during startup with "thread 'main' has overflowed its
-            // stack", after the hosting child had already come up fine.
-            // `Box::pin` around the call is NOT enough in a debug build --
-            // the future is still materialised on the stack before it is
-            // moved into the box. Spawning leaves only a small `Task` handle
-            // here and lets the executor own the future, which is exactly
-            // what the interactive caller in spawn.rs already does.
-            let term_config = Arc::new(config::TermConfig::with_config(config.clone()));
-            promise::spawn::spawn(async move {
-                crate::spawn::spawn_single_pane_tab(
-                    spawn,
-                    crate::spawn::SpawnWhere::NewTab,
-                    size,
-                    Some(window_id),
-                    term_config,
-                )
-                .await
-            })
-            .await
-            .with_context(|| {
-                format!(
-                    "spawning isolated tab {} of {} (--start-conf)",
-                    idx + 1,
-                    layout.tabs.len()
-                )
-            })?
-        } else {
-            let prog = shell_argv
-                .as_ref()
-                .map(|argv| argv.iter().map(OsStr::new).collect());
-            let mut builder = config.build_prog(
-                prog,
-                config.default_prog.as_ref(),
-                config.default_cwd.as_ref(),
-            )?;
-            if let Some(cwd) = cwd {
-                builder.cwd(cwd);
-            }
-            for (k, v) in layout.vars.iter().chain(tab_conf.vars.iter()) {
-                builder.env(k, v);
-            }
-            #[cfg(windows)]
-            builder.set_priority_class(options.priority.to_win32_flag());
-
-            Some(
-                domain
-                    .spawn(size, Some(builder), None, window_id)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "spawning tab {} of {} (--start-conf)",
-                            idx + 1,
-                            layout.tabs.len()
-                        )
-                    })?,
-            )
         };
 
         // `None` means the spawn was debounced away or its tab could not be
@@ -505,6 +490,128 @@ async fn spawn_startup_layout(
         }
     }
 
+    for result in futures::future::join_all(pending_non_elevated.drain(..)).await {
+        result?;
+    }
+
+    // Every startup tab is attached to the new empty window. Select the last
+    // configured tab explicitly so completion timing cannot change which tab
+    // receives focus after bounded concurrent startup.
+    if let Some(mut window) = mux.get_window_mut(window_id) {
+        let tab_count = window.len();
+        if tab_count > 0 {
+            window.set_active_without_saving(tab_count - 1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn spawn_startup_non_elevated_tab(
+    layout: &config::StartupLayout,
+    idx: usize,
+    domain: Arc<dyn Domain>,
+    window_id: mux::window::WindowId,
+    size: TerminalSize,
+    config: config::ConfigHandle,
+    startup_order: Option<crate::spawn::StartupOrder>,
+) -> anyhow::Result<()> {
+    let tab_conf = &layout.tabs[idx];
+    let options = layout.tab_options(tab_conf);
+    let cwd = tab_conf.root_dir.as_ref().or(layout.root_dir.as_ref());
+    let shell_argv = options.shell.map(|shell| shell.argv());
+    let tab = if config.per_tab_process_isolation {
+        let spawn = config::keyassignment::SpawnCommand {
+            args: shell_argv.clone(),
+            cwd: cwd.map(|c| c.to_path_buf()),
+            set_environment_variables: layout
+                .vars
+                .iter()
+                .chain(tab_conf.vars.iter())
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            priority: Some(options.priority),
+            ..Default::default()
+        };
+        crate::spawn::spawn_single_pane_tab_for_startup(
+            spawn,
+            crate::spawn::SpawnWhere::NewTab,
+            size,
+            Some(window_id),
+            Arc::new(config::TermConfig::with_config(config.clone())),
+            startup_order,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "spawning isolated tab {} of {} (--start-conf)",
+                idx + 1,
+                layout.tabs.len()
+            )
+        })?
+    } else {
+        let prog = shell_argv
+            .as_ref()
+            .map(|argv| argv.iter().map(OsStr::new).collect());
+        let mut builder = config.build_prog(
+            prog,
+            config.default_prog.as_ref(),
+            config.default_cwd.as_ref(),
+        )?;
+        if let Some(cwd) = cwd {
+            builder.cwd(cwd);
+        }
+        for (k, v) in layout.vars.iter().chain(tab_conf.vars.iter()) {
+            builder.env(k, v);
+        }
+        #[cfg(windows)]
+        builder.set_priority_class(options.priority.to_win32_flag());
+        Some(
+            domain
+                .spawn(size, Some(builder), None, window_id)
+                .await
+                .with_context(|| {
+                    format!(
+                        "spawning tab {} of {} (--start-conf)",
+                        idx + 1,
+                        layout.tabs.len()
+                    )
+                })?,
+        )
+    };
+
+    let Some(tab) = tab else {
+        return Ok(());
+    };
+    if let Some(title) = &tab_conf.title {
+        tab.set_title(title);
+    }
+    if let Some(pane) = tab.get_active_pane() {
+        let mut writer = pane.writer();
+        for (cmd_idx, command) in layout
+            .commands
+            .iter()
+            .chain(tab_conf.commands.iter())
+            .enumerate()
+        {
+            if let Err(err) = write!(writer, "{command}\r") {
+                let layout_command_count = layout.commands.len();
+                let (source, source_idx) = if cmd_idx < layout_command_count {
+                    ("layout-wide", cmd_idx)
+                } else {
+                    ("tab", cmd_idx - layout_command_count)
+                };
+                log::warn!(
+                    "--start-conf: failed to send {} startup command {} of tab {} ({} bytes): {:#}",
+                    source,
+                    source_idx + 1,
+                    idx + 1,
+                    command.len(),
+                    err
+                );
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1224,7 +1331,7 @@ fn run() -> anyhow::Result<()> {
         }
     };
 
-    env_bootstrap::bootstrap();
+    let _log_guard = env_bootstrap::bootstrap();
     // Startup-latency diagnostics: every `log::info!("startup: ...")` line
     // in this crate (grep for `"startup:` to find them all) is a checkpoint,
     // and the per-PID log file's own timestamps (see `env_bootstrap::ringlog`,

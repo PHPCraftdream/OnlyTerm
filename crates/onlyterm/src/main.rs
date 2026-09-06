@@ -230,7 +230,7 @@ fn init_config(opts: &Opt) -> anyhow::Result<ConfigHandle> {
 }
 
 fn run() -> anyhow::Result<()> {
-    env_bootstrap::bootstrap();
+    let _log_guard = env_bootstrap::bootstrap();
 
     let _saver = UmaskSaver::new();
 

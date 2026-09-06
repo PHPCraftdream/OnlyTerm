@@ -793,3 +793,36 @@ fn test_shape_hash_lookup_never_stale_under_top_anchored_scroll_region() {
         render_frame(&term, &mut cache, &format!("region scroll {}", step));
     }
 }
+
+#[test]
+fn fallback_fingerprint_reuses_seqno_and_epoch_cache() {
+    let mut cache = lfucache::LfuCache::new(
+        "fallback_fingerprint_hit",
+        "fallback_fingerprint_miss",
+        test_cache_capacity,
+        &ConfigHandle::default_config(),
+    );
+    let key = ShapeHashCacheKey {
+        pane_id: 7,
+        stable_row: 3,
+    };
+    let mut computes = 0;
+    let first = shape_hash_and_fallback_lookup(&mut cache, key, 1, 0, || {
+        computes += 1;
+        ([1; 16], 9)
+    });
+    let second = shape_hash_and_fallback_lookup(&mut cache, key, 1, 0, || {
+        computes += 1;
+        ([2; 16], 10)
+    });
+    assert_eq!(first.shape_hash, second.shape_hash);
+    assert_eq!(first.fallback_fingerprint, second.fallback_fingerprint);
+    assert_eq!(computes, 1);
+
+    let third = shape_hash_and_fallback_lookup(&mut cache, key, 1, 1, || {
+        computes += 1;
+        ([3; 16], 11)
+    });
+    assert_eq!(third.fallback_fingerprint, 11);
+    assert_eq!(computes, 2);
+}

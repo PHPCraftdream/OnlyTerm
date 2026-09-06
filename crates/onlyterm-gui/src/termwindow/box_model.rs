@@ -584,7 +584,7 @@ impl super::TermWindow {
                 let direction = onlyterm_bidi::Direction::LeftToRight;
                 let infos = element.font.shape(
                     s,
-                    move || window.notify(TermWindowNotif::InvalidateShapeCache),
+                    move |chars| window.notify(TermWindowNotif::InvalidateShapeCache(chars)),
                     BlockKey::filter_out_synthetic,
                     element.presentation,
                     direction,

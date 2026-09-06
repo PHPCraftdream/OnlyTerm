@@ -61,6 +61,7 @@
 //! `PaintOp::PushGlyphClip { draw, .. }` already carried a pre-resolved
 //! draw-op list from HarfBuzz's own equivalent callback.
 
+use crate::locator::SharedFontData;
 use crate::rasterizer::colr::{
     apply_draw_ops_to_context, paint_linear_gradient, paint_radial_gradient, paint_sweep_gradient,
     ColorLine, ColorStop, DrawOp,
@@ -79,7 +80,7 @@ pub struct ColrRasterizer {
     /// (like `OwnedRbFace` in `shaper/rustybuzz.rs`), so we re-parse a
     /// short-lived `Face` from it on every call rather than trying to
     /// store a self-referential `Face` alongside its backing bytes.
-    data: Box<[u8]>,
+    data: SharedFontData,
     face_index: u32,
     units_per_em: f64,
     synthesize_italic: bool,
@@ -88,8 +89,18 @@ pub struct ColrRasterizer {
 impl ColrRasterizer {
     pub fn from_locator(parsed: &ParsedFont) -> anyhow::Result<Self> {
         let handle = &parsed.handle;
-        let data = handle.source.load_data()?.into_owned().into_boxed_slice();
-        let face_index = handle.index;
+        Self::from_shared_data(
+            handle.source.shared_data()?,
+            handle.index,
+            parsed.synthesize_italic,
+        )
+    }
+
+    pub(crate) fn from_shared_data(
+        data: SharedFontData,
+        face_index: u32,
+        synthesize_italic: bool,
+    ) -> anyhow::Result<Self> {
         let face = Face::parse(&data, face_index)
             .map_err(|e| anyhow::anyhow!("ttf-parser failed to parse font face: {e:?}"))?;
         let units_per_em = face.units_per_em() as f64;
@@ -98,7 +109,7 @@ impl ColrRasterizer {
             data,
             face_index,
             units_per_em,
-            synthesize_italic: parsed.synthesize_italic,
+            synthesize_italic,
         })
     }
 

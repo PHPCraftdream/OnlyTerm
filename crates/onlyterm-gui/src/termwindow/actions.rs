@@ -1965,17 +1965,8 @@ impl TermWindow {
         position: Option<StableRowIndex>,
         dims: RenderableDimensions,
     ) {
-        let pos = match position {
-            Some(pos) => {
-                // Drop out of scrolling mode if we're off the bottom
-                if pos >= dims.physical_top {
-                    None
-                } else {
-                    Some(pos.max(dims.scrollback_top))
-                }
-            }
-            None => None,
-        };
+        let pos =
+            crate::scrollbar::normalize_viewport(position, dims.scrollback_top, dims.physical_top);
 
         let mut state = self.pane_state(pane_id);
         if pos != state.viewport {

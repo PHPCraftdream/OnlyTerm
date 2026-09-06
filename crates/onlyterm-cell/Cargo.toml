@@ -25,8 +25,7 @@ onlyterm-dynamic.workspace = true
 
 [features]
 std = ["serde/std", "onlyterm-char-props/std", "onlyterm-color-types/std", "onlyterm-escape-parser/std", "onlyterm-dynamic/std", "finl_unicode/std"]
-use_serde = ["dep:serde", "onlyterm-color-types/use_serde"]
+use_serde = ["dep:serde", "onlyterm-color-types/use_serde", "onlyterm-blob-leases?/serde"]
 use_image = ["dep:image", "dep:onlyterm-blob-leases", "dep:log", "dep:ordered-float", "dep:sha2", "dep:thiserror"]
 
 [dev-dependencies]
-

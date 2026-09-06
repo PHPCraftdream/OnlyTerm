@@ -1,12 +1,28 @@
 use mux::pane::Pane;
 use onlyterm_term::StableRowIndex;
 
+pub(crate) fn normalize_viewport(
+    position: Option<StableRowIndex>,
+    scrollback_top: StableRowIndex,
+    physical_top: StableRowIndex,
+) -> Option<StableRowIndex> {
+    // Clamp before testing the bottom. A screen without scrollback must
+    // never leave an explicit zero anchor behind for the primary screen.
+    position
+        .map(|pos| pos.max(scrollback_top))
+        .filter(|&pos| pos < physical_top)
+}
+
 pub struct ScrollHit {
     /// Offset from the top of the window in pixels
     pub top: usize,
     /// Height of the thumb, in pixels.
     pub height: usize,
 }
+
+#[cfg(test)]
+#[path = "scrollbar_test.rs"]
+mod viewport_tests;
 
 impl ScrollHit {
     /// Compute the y-coordinate for the top of the scrollbar thumb

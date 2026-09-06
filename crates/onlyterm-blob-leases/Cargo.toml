@@ -18,5 +18,5 @@ uuid = {workspace=true, features=["v4", "rng"]}
 
 [features]
 default = []
-serde = ["dep:serde", "uuid/serde"]
+serde = ["dep:serde", "serde/std", "uuid/serde"]
 simple_tempdir = ["dep:tempfile"]

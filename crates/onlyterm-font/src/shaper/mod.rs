@@ -114,6 +114,13 @@ impl<'a> PresentationWidth<'a> {
 }
 
 pub trait FontShaper {
+    /// Append fallback faces without discarding already parsed faces, shaping
+    /// plans, or metrics.  Fallback resolution only grows the ordered list,
+    /// so existing font indices remain stable.
+    fn append_handles(&mut self, _handles: &[ParsedFont]) -> anyhow::Result<()> {
+        anyhow::bail!("this font shaper does not support incremental fallbacks")
+    }
+
     /// Shape text and return a vector of GlyphInfo
     // Public trait entry point; its signature is the shaper API consumed
     // across crates, and a parameter struct would ripple through every

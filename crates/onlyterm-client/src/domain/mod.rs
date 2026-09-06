@@ -34,6 +34,12 @@ pub struct ClientDomain {
     spawnable: bool,
 }
 
+pub struct PreparedAttach {
+    domain_id: DomainId,
+    client: Client,
+    panes: ListPanesResponse,
+}
+
 async fn update_remote_workspace(
     local_domain_id: DomainId,
     pdu: codec::SetWindowWorkspace,
@@ -173,6 +179,64 @@ fn mux_notify_client_domain(local_domain_id: DomainId, notif: MuxNotification) -
 }
 
 impl ClientDomain {
+    /// Perform the expensive child-process/connection/version/pane-list work
+    /// without materializing local tabs. Startup layouts use this to overlap
+    /// bounded isolated launches, then commit each prepared connection in
+    /// configured order.
+    pub async fn prepare_attach(&self) -> anyhow::Result<PreparedAttach> {
+        if self.state() == DomainState::Attached {
+            anyhow::bail!("domain is already attached");
+        }
+        let domain_id = self.local_domain_id;
+        let config = self.config.clone();
+        let ui = ConnectionUI::with_params(Default::default());
+        let result = ui
+            .async_run_and_log_error({
+                let ui = ui.clone();
+                async move {
+                    let mut cloned_ui = ui.clone();
+                    let client = spawn_into_new_thread(move || match &config {
+                        ClientDomainConfig::Unix(unix) => Client::new_unix_domain(
+                            Some(domain_id),
+                            unix,
+                            true,
+                            &mut cloned_ui,
+                            false,
+                        ),
+                    })
+                    .await?;
+                    client.verify_version_compat(&ui).await?;
+                    let panes = client.list_panes().await?;
+                    Ok((client, panes))
+                }
+            })
+            .await;
+        ui.close();
+        let (client, panes) = result?;
+        Ok(PreparedAttach {
+            domain_id,
+            client,
+            panes,
+        })
+    }
+
+    pub fn commit_prepared_attach(
+        &self,
+        prepared: PreparedAttach,
+        window_id: Option<WindowId>,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            prepared.domain_id == self.local_domain_id,
+            "prepared connection belongs to another domain"
+        );
+        Self::finish_attach(
+            prepared.domain_id,
+            prepared.client,
+            prepared.panes,
+            window_id,
+        )
+    }
+
     pub fn new(config: ClientDomainConfig) -> Self {
         Self::new_impl(config, true)
     }

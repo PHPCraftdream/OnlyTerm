@@ -99,11 +99,14 @@ impl BlobStorage for SimpleTempDir {
     }
 
     fn lease_by_content(&self, content_id: ContentId, _lease_id: LeaseId) -> Result<(), Error> {
-        let _refs = self.refs.lock().unwrap();
-
+        // Hold the same lock while checking the path and incrementing the
+        // reference count. This serializes the check with `del_ref`, which
+        // may remove the file when the last lease is dropped. Do not call
+        // `add_ref` here: it acquires this mutex again and deadlocks.
+        let mut refs = self.refs.lock().unwrap();
         let path = self.path_for_content(content_id)?;
         if path.exists() {
-            self.add_ref(content_id);
+            *refs.entry(content_id).or_insert(0) += 1;
             Ok(())
         } else {
             Err(Error::ContentNotFound(content_id))
@@ -223,5 +226,19 @@ mod tests {
             .advise_lease_dropped(second_lease, content_id)
             .unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn lease_by_content_increments_the_reference_without_reentrant_locking() {
+        let storage = SimpleTempDir::new().unwrap();
+        let data = b"leased content";
+        let content_id = ContentId::for_bytes(data);
+
+        storage.store(content_id, data, LeaseId::new()).unwrap();
+        storage
+            .lease_by_content(content_id, LeaseId::new())
+            .unwrap();
+
+        assert_eq!(storage.refs.lock().unwrap().get(&content_id), Some(&2));
     }
 }

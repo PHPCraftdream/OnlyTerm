@@ -585,9 +585,19 @@ impl crate::TermWindow {
                         (None, None, false)
                     };
 
-                    let shape_hash =
-                        self.term_window
-                            .shape_hash_for_line(line, self.pane_id, stable_row);
+                    let shape_entry = self.term_window.shape_hash_and_fallback_for_line(
+                        line,
+                        self.pane_id,
+                        stable_row,
+                    );
+                    let shape_hash = shape_entry.shape_hash;
+                    let mut fallback_generation = shape_entry.fallback_fingerprint;
+                    if let Some(text) = &composing {
+                        fallback_generation ^= self
+                            .term_window
+                            .fallback_generation_for_text(text)
+                            .rotate_left(1);
+                    }
                     // Computed once per pane per frame in `paint_pane`, not
                     // per row -- see `LineRender::bidi_process_override`.
                     let bidi_process_override = self.bidi_process_override;
@@ -603,6 +613,7 @@ impl crate::TermWindow {
                         selection: selrange.clone(),
                         cursor,
                         shape_hash,
+                        fallback_generation,
                         reverse_video: self.dims.reverse_video,
                         is_wrap_continuation,
                         bidi_process_override,
@@ -620,7 +631,14 @@ impl crate::TermWindow {
                             .get(&self.pane_id)
                             .and_then(|r| r.rows.get(slot).and_then(|row| row.as_ref()));
                         (
-                            retained.is_some(),
+                            retained
+                                .map(|r| {
+                                    crate::termwindow::render::retained_row_matches_fallback(
+                                        r,
+                                        fallback_generation,
+                                    )
+                                })
+                                .unwrap_or(false),
                             retained.map(|r| r.contains_cursor).unwrap_or(false),
                         )
                     };
@@ -706,6 +724,7 @@ impl crate::TermWindow {
                                 quads: Rc::clone(&cached_quad.layers),
                                 expires: cached_quad.expires,
                                 contains_cursor: self.cursor.y == stable_row,
+                                fallback_generation,
                             };
                             if let Some(slot_ref) = self
                                 .term_window
@@ -724,6 +743,7 @@ impl crate::TermWindow {
 
                             let shape_key = LineToEleShapeCacheKey {
                                 shape_hash,
+                                fallback_generation,
                                 shape_generation: quad_key.shape_generation,
                                 composing: if self.cursor.y == stable_row && self.pos.is_active {
                                     if let DeadKeyStatus::Composing(composing) =
@@ -819,6 +839,7 @@ impl crate::TermWindow {
                                 quads,
                                 expires,
                                 contains_cursor: self.cursor.y == stable_row,
+                                fallback_generation,
                             };
                             if let Some(slot_ref) = self
                                 .term_window

@@ -1,5 +1,5 @@
 use super::super::image_decode::{
-    decoded_frame_for_test, ensure_test_storage, frame_state_for_test,
+    decoded_frame_for_test, ensure_test_storage, frame_state_for_test, retain_decoded_pixels,
 };
 use super::*;
 use onlyterm_blob_leases::BlobManager;
@@ -43,13 +43,20 @@ fn pending_decode_retries_on_cache_miss_hit_and_after_first_frame() {
         assert!(next.unwrap() > before);
     }
 
-    tx.send(decoded_frame_for_test(
+    let decoded_frame = decoded_frame_for_test(
         BlobManager::store(&[255, 255, 255, 255]).unwrap(),
         Duration::from_millis(100),
         1,
         1,
-    ))
-    .unwrap();
+    );
+    // The worker-backed refill test lives beside FrameDecoder. This focused
+    // cache test seeds the shared decoded-pixel cache explicitly so its
+    // successful-frame assertion is deterministic and does not race a worker.
+    retain_decoded_pixels(
+        decoded_frame.lease.content_id().as_hash_bytes(),
+        vec![255, 255, 255, 255],
+    );
+    tx.send(decoded_frame).unwrap();
     let (sprite, _, state) = GlyphCache::cached_image_impl(
         &mut cache,
         &mut atlas,

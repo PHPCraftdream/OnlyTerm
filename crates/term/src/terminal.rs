@@ -196,10 +196,18 @@ impl Terminal {
     }
 
     pub fn perform_actions(&mut self, actions: Vec<onlyterm_escape_parser::Action>) {
+        let mut actions = actions;
+        self.perform_actions_reusing(&mut actions);
+    }
+
+    /// Apply actions from a reusable buffer, draining it without cloning the
+    /// individual escape actions. This is useful to callers that must split a
+    /// large parser batch into smaller lock-holding chunks.
+    pub fn perform_actions_reusing(&mut self, actions: &mut Vec<onlyterm_escape_parser::Action>) {
         self.state.increment_seqno();
         {
             let mut performer = Performer::new(&mut self.state);
-            for action in actions {
+            for action in actions.drain(..) {
                 performer.perform(action);
             }
         }

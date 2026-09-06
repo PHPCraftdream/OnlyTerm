@@ -107,7 +107,7 @@ fn main() {
 }
 
 fn run() -> anyhow::Result<()> {
-    env_bootstrap::bootstrap();
+    let _log_guard = env_bootstrap::bootstrap();
 
     //stats::Stats::init()?;
     // `config::designate_this_as_the_main_thread()` used to be called here

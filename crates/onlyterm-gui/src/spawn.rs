@@ -1,6 +1,8 @@
 use anyhow::{anyhow, bail, Context};
 use config::keyassignment::SpawnCommand;
 use config::{ProcessPriority, TermConfig, UnixDomain};
+use futures::channel::oneshot;
+use futures::future::{BoxFuture, FutureExt, Shared};
 use mux::activity::Activity;
 use mux::domain::{alloc_domain_id, Domain, SplitSource};
 use mux::tab::{SplitRequest, Tab};
@@ -14,6 +16,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+
+type StartupCompletion = Shared<BoxFuture<'static, ()>>;
 
 /// Windows this function is currently spawning a single-pane hosting
 /// process for. Guards against the case where the connect takes a few
@@ -33,6 +37,43 @@ struct PendingSpawnGuard(MuxWindowId);
 impl Drop for PendingSpawnGuard {
     fn drop(&mut self) {
         pending_single_pane_spawns().lock().unwrap().remove(&self.0);
+    }
+}
+
+pub(crate) struct StartupOrder {
+    waits: Vec<StartupCompletion>,
+    done: Option<oneshot::Sender<()>>,
+}
+
+impl StartupOrder {
+    pub(crate) fn after(previous: &[StartupCompletion]) -> (Self, StartupCompletion) {
+        let (tx, rx) = oneshot::channel();
+        let completion = async move {
+            let _ = rx.await;
+        }
+        .boxed()
+        .shared();
+        (
+            Self {
+                waits: previous.to_vec(),
+                done: Some(tx),
+            },
+            completion,
+        )
+    }
+
+    pub(crate) async fn wait_turn(&mut self) {
+        for wait in self.waits.drain(..) {
+            wait.await;
+        }
+    }
+}
+
+impl Drop for StartupOrder {
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            let _ = done.send(());
+        }
     }
 }
 
@@ -56,6 +97,51 @@ pub(crate) async fn spawn_single_pane_tab(
     src_window_id: Option<MuxWindowId>,
     term_config: Arc<TermConfig>,
 ) -> anyhow::Result<Option<Arc<Tab>>> {
+    spawn_single_pane_tab_inner(
+        spawn,
+        spawn_where,
+        _size,
+        src_window_id,
+        term_config,
+        true,
+        None,
+    )
+    .await
+}
+
+/// Startup layouts already serialize their configured ordering and own their
+/// bounded concurrency. They must not use the interactive per-window debounce:
+/// dropping one of two startup tabs would silently lose a configured tab.
+pub(crate) async fn spawn_single_pane_tab_for_startup(
+    spawn: SpawnCommand,
+    spawn_where: SpawnWhere,
+    size: TerminalSize,
+    src_window_id: Option<MuxWindowId>,
+    term_config: Arc<TermConfig>,
+    startup_order: Option<StartupOrder>,
+) -> anyhow::Result<Option<Arc<Tab>>> {
+    spawn_single_pane_tab_inner(
+        spawn,
+        spawn_where,
+        size,
+        src_window_id,
+        term_config,
+        false,
+        startup_order,
+    )
+    .await
+}
+
+async fn spawn_single_pane_tab_inner(
+    spawn: SpawnCommand,
+    spawn_where: SpawnWhere,
+    _size: TerminalSize,
+    src_window_id: Option<MuxWindowId>,
+    term_config: Arc<TermConfig>,
+    debounce: bool,
+    mut startup_order: Option<StartupOrder>,
+) -> anyhow::Result<Option<Arc<Tab>>> {
+    let is_startup = startup_order.is_some();
     if matches!(spawn_where, SpawnWhere::SplitPane(_)) {
         // Splitting through single-pane domains is NOT supported in Phase B
         // (explicitly out of scope per task requirements)
@@ -65,15 +151,19 @@ pub(crate) async fn spawn_single_pane_tab(
     // See `pending_single_pane_spawns`'s doc comment: silently drop a
     // repeat "new tab" trigger for a window that already has one of these
     // spawns in flight, instead of piling up another hosting process.
-    let _pending_guard = if let Some(window_id) = src_window_id {
-        if !pending_single_pane_spawns()
-            .lock()
-            .unwrap()
-            .insert(window_id)
-        {
-            return Ok(None);
+    let _pending_guard = if debounce {
+        if let Some(window_id) = src_window_id {
+            if !pending_single_pane_spawns()
+                .lock()
+                .unwrap()
+                .insert(window_id)
+            {
+                return Ok(None);
+            }
+            Some(PendingSpawnGuard(window_id))
+        } else {
+            None
         }
-        Some(PendingSpawnGuard(window_id))
     } else {
         None
     };
@@ -163,7 +253,21 @@ pub(crate) async fn spawn_single_pane_tab(
     // workspace doesn't match). `attach_with_spinner` (rather than the plain
     // `Domain::attach`) shows a quiet animated spinner in that placeholder
     // tab instead of a raw connection-progress log -- see its doc comment.
-    client_domain.attach_with_spinner(attach_window_id).await?;
+    let prepared = if is_startup {
+        Some(client_domain.prepare_attach().await?)
+    } else {
+        None
+    };
+    if let Some(order) = startup_order.as_mut() {
+        order.wait_turn().await;
+    }
+    let attach_result = if let Some(prepared) = prepared {
+        client_domain.commit_prepared_attach(prepared, attach_window_id)
+    } else {
+        client_domain.attach_with_spinner(attach_window_id).await
+    };
+    attach_result?;
+    drop(startup_order);
 
     // Resolve the tab that now hosts this pane, so callers that need to act
     // on it -- `--start-conf` applies a title and types its startup commands
@@ -526,4 +630,32 @@ pub async fn spawn_command_internal(
     drop(activity);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+
+    #[test]
+    fn failed_middle_preparation_preserves_earlier_ordering() {
+        let (first, first_done) = StartupOrder::after(&[]);
+        let (second, second_done) = StartupOrder::after(std::slice::from_ref(&first_done));
+        let (mut third, _third_done) = StartupOrder::after(&[first_done, second_done]);
+        let mut third_turn = Box::pin(third.wait_turn());
+        let waker = futures::task::noop_waker();
+        let mut cx = std::task::Context::from_waker(&waker);
+        assert!(matches!(
+            third_turn.as_mut().poll(&mut cx),
+            std::task::Poll::Pending
+        ));
+
+        drop(second);
+        assert!(matches!(
+            third_turn.as_mut().poll(&mut cx),
+            std::task::Poll::Pending
+        ));
+        drop(first);
+        promise::spawn::block_on(third_turn);
+    }
 }

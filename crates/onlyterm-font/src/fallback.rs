@@ -14,7 +14,7 @@ lazy_static::lazy_static! {
 pub(super) struct FallbackResolveInfo {
     pub(super) no_glyphs: Vec<char>,
     pub(super) pending: Arc<Mutex<Vec<ParsedFont>>>,
-    pub(super) completion: Box<dyn FnOnce() + Send>,
+    pub(super) completion: Box<dyn FnOnce(Vec<char>) + Send>,
     pub(super) font_dirs: Arc<FontDatabase>,
     pub(super) built_in: Arc<FontDatabase>,
     pub(super) locator: Arc<dyn FontLocator + Send + Sync>,
@@ -24,6 +24,7 @@ pub(super) struct FallbackResolveInfo {
 impl FallbackResolveInfo {
     pub(super) fn process(self) {
         let fallback_str = self.no_glyphs.iter().collect::<String>();
+        let requested_glyphs = self.no_glyphs.clone();
         let mut extra_handles = vec![];
 
         log::trace!(
@@ -147,7 +148,7 @@ impl FallbackResolveInfo {
         if !extra_handles.is_empty() {
             let mut pending = self.pending.lock().unwrap();
             pending.append(&mut extra_handles);
-            (self.completion)();
+            (self.completion)(requested_glyphs);
         }
 
         if !wanted.is_empty() {

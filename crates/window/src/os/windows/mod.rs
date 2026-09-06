@@ -5,6 +5,7 @@ mod ime;
 mod keyboard_layout;
 mod keycodes;
 pub mod watchdog;
+mod wheel;
 pub mod window;
 
 pub use self::window::*;

@@ -48,7 +48,19 @@ fn register_panic_hook() {
     }));
 }
 
-pub fn bootstrap() {
+/// Keeps the process logger alive through normal shutdown and performs the
+/// final worker flush when dropped. The global `log` logger itself is leaked
+/// by `set_boxed_logger`, so relying on the logger's `Drop` implementation
+/// would never drain the GUI diagnostic worker.
+pub struct LogGuard;
+
+impl Drop for LogGuard {
+    fn drop(&mut self) {
+        log::logger().flush();
+    }
+}
+
+pub fn bootstrap() -> LogGuard {
     config::assign_version_info(
         onlyterm_version::onlyterm_version(),
         onlyterm_version::onlyterm_target_triple(),
@@ -91,4 +103,5 @@ pub fn bootstrap() {
     // it so that pty::CommandBuilder::get_shell will resolve the
     // shell from the password database instead.
     std::env::remove_var("SHELL");
+    LogGuard
 }

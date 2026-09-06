@@ -89,7 +89,7 @@
 //! `swash_metrics::tests`), so that cell-grid alignment in the terminal
 //! is unaffected regardless of which rasterizer produced the bitmap.
 
-use crate::locator::FontDataHandle;
+use crate::locator::{FontDataHandle, SharedFontData};
 use crate::parser::ParsedFont;
 use crate::rasterizer::colr_paint::ColrRasterizer;
 use crate::rasterizer::{FontRasterizer, FAKE_ITALIC_SKEW};
@@ -104,15 +104,10 @@ use swash::{CacheKey, FontRef};
 /// Non-COLR-glyph rasterizer built on `swash::scale`. See the module doc
 /// comment for exactly what this does and does not cover.
 pub struct SwashRasterizer {
-    /// Owned raw font bytes; mirrors `swash_metrics::SwashFontInfo`'s
-    /// approach of keeping its own copy rather than sharing
-    /// `ftwrap::Face`/`rustybuzz::Face`, so this type has zero shared
-    /// state with the FreeType/HarfBuzz code paths (relevant to the
-    /// BUG7 thread-safety note in the migration plan, even though that
-    /// bug was specifically about vendored harfbuzz's now-fixed
-    /// `HB_NO_MT` build flag -- this module simply never touches that
-    /// global state in the first place).
-    data: Box<[u8]>,
+    /// Shared immutable raw font bytes. The backing is common with metrics,
+    /// shaping and COLR rasterization, while each consumer keeps its own
+    /// parser state and caches.
+    data: SharedFontData,
     offset: u32,
     key: CacheKey,
     context: RefCell<ScaleContext>,
@@ -121,14 +116,15 @@ pub struct SwashRasterizer {
     scale: f64,
     /// Fallback for glyphs with no plain scalable outline (color
     /// glyphs: COLR/COLRv1/CBDT/sbix). See module doc comment.
-    color_fallback: ColrRasterizer,
+    color_fallback: RefCell<Option<ColrRasterizer>>,
+    color_face_index: u32,
 }
 
 impl SwashRasterizer {
     pub fn from_locator(parsed: &ParsedFont) -> anyhow::Result<Self> {
         log::trace!("SwashRasterizer wants {:?}", parsed);
         let handle: &FontDataHandle = &parsed.handle;
-        let data = handle.source.load_data()?.into_owned().into_boxed_slice();
+        let data = handle.source.shared_data()?;
         let font = FontRef::from_index(&data, handle.index as usize).ok_or_else(|| {
             anyhow::anyhow!("swash failed to parse font face at index {}", handle.index)
         })?;
@@ -143,7 +139,8 @@ impl SwashRasterizer {
             synthesize_bold: parsed.synthesize_bold,
             synthesize_italic: parsed.synthesize_italic,
             scale: parsed.scale.unwrap_or(1.),
-            color_fallback: ColrRasterizer::from_locator(parsed)?,
+            color_fallback: RefCell::new(None),
+            color_face_index: handle.index,
         })
     }
 
@@ -253,7 +250,18 @@ impl FontRasterizer for SwashRasterizer {
             // round-trip for every whitespace character.
             if has_any_color_data {
                 drop(context);
-                return self.color_fallback.rasterize_glyph(glyph_pos, size, dpi);
+                let mut color_fallback = self.color_fallback.borrow_mut();
+                if color_fallback.is_none() {
+                    *color_fallback = Some(ColrRasterizer::from_shared_data(
+                        self.data.clone(),
+                        self.color_face_index,
+                        self.synthesize_italic,
+                    )?);
+                }
+                return color_fallback
+                    .as_ref()
+                    .expect("color fallback initialized")
+                    .rasterize_glyph(glyph_pos, size, dpi);
             }
             return Ok(RasterizedGlyph {
                 data: vec![],

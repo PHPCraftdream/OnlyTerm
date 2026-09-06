@@ -10,27 +10,12 @@ use onlyterm_term::Underline;
 use ordered_float::NotNan;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use termwiz::color::RgbColor;
 use termwiz::surface::CursorShape;
 
 // AHashMap: HashMap with ahash's RandomState for process-random keys
 type AHashMap<K, V> = HashMap<K, V, RandomState>;
-
-static FRAME_ERROR_REPORTED: AtomicBool = AtomicBool::new(false);
-
-/// We only want to report a frame error once at error level, because
-/// if it is triggering it is likely in a animated image and will continue
-/// to trigger multiple times per second as the frames are cycled.
-fn report_frame_error<S: Into<String>>(message: S) {
-    if FRAME_ERROR_REPORTED.load(Ordering::Relaxed) {
-        log::debug!("{}", message.into());
-    } else {
-        log::error!("{}", message.into());
-        FRAME_ERROR_REPORTED.store(true, Ordering::Relaxed);
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoadState {
@@ -209,8 +194,10 @@ pub struct GlyphCache {
     min_frame_duration: Duration,
 }
 
+mod decoded_refill;
 mod glyph_cache_impl;
 mod image_decode;
+mod raster_cache;
 
 pub use image_decode::DecodedImage;
 use image_decode::DecodedImageHandle;

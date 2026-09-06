@@ -1,5 +1,6 @@
 mod pane_impl;
 mod process_info;
+mod search;
 
 use crate::domain::DomainId;
 use crate::pane::{
@@ -13,7 +14,6 @@ use anyhow::Error;
 use async_trait::async_trait;
 use config::keyassignment::ScrollbackEraseMode;
 use config::{configuration, ExitBehavior, ExitBehaviorMessaging};
-use fancy_regex::Regex;
 use onlyterm_dynamic::Value;
 use onlyterm_term::color::ColorPalette;
 use onlyterm_term::{
@@ -25,7 +25,6 @@ use portable_pty::{Child, ChildKiller, ExitStatus, MasterPty, PtySize};
 use procinfo::LocalProcessInfo;
 use rangeset::RangeSet;
 use smol::channel::{bounded, Receiver, TryRecvError};
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::TryInto;
 use std::io::{Result as IoResult, Write};
@@ -620,11 +619,23 @@ impl LocalPane {
         }
 
         let _resize_guard = self.resize_guard.lock();
-        for chunk in actions.chunks(chunk_size.max(1)) {
+        let chunk_size = chunk_size.max(1);
+        let mut chunk = Vec::with_capacity(chunk_size);
+        for action in actions {
+            chunk.push(action);
+            if chunk.len() == chunk_size {
+                lock_terminal_timed(
+                    &self.terminal,
+                    "localpane.terminal_lock.wait.perform_actions",
+                    |term| term.perform_actions_reusing(&mut chunk),
+                );
+            }
+        }
+        if !chunk.is_empty() {
             lock_terminal_timed(
                 &self.terminal,
                 "localpane.terminal_lock.wait.perform_actions",
-                |term| term.perform_actions(chunk.to_vec()),
+                |term| term.perform_actions_reusing(&mut chunk),
             );
         }
     }
@@ -684,12 +695,25 @@ impl LocalPane {
     ) -> Vec<(Duration, Duration)> {
         let mut samples = Vec::new();
         let _resize_guard = self.resize_guard.lock();
-        for chunk in actions.chunks(chunk_size.max(1)) {
+        let chunk_size = chunk_size.max(1);
+        let mut chunk = Vec::with_capacity(chunk_size);
+        for action in actions {
+            chunk.push(action);
+            if chunk.len() == chunk_size {
+                let wait_start = Instant::now();
+                let mut term = self.terminal.lock();
+                let waited = wait_start.elapsed();
+                let hold_start = Instant::now();
+                term.perform_actions_reusing(&mut chunk);
+                samples.push((waited, hold_start.elapsed()));
+            }
+        }
+        if !chunk.is_empty() {
             let wait_start = Instant::now();
             let mut term = self.terminal.lock();
             let waited = wait_start.elapsed();
             let hold_start = Instant::now();
-            term.perform_actions(chunk.to_vec());
+            term.perform_actions_reusing(&mut chunk);
             samples.push((waited, hold_start.elapsed()));
         }
         samples

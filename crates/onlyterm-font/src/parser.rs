@@ -499,7 +499,7 @@ impl ParsedFont {
     /// charstring glyph-name data FreeType did, just without a C library
     /// in the loop).
     pub fn glyph_name(&self, glyph_pos: u32) -> Option<String> {
-        let data = self.handle.source.load_data().ok()?;
+        let data = self.handle.source.shared_data().ok()?;
         let face = ttf_parser::Face::parse(&data, self.handle.index).ok()?;
         face.glyph_name(ttf_parser::GlyphId(glyph_pos as u16))
             .map(|s| s.to_string())

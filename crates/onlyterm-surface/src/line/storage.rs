@@ -1,14 +1,15 @@
 use crate::line::cellref::CellRef;
 use crate::line::clusterline::{ClusterLineCellIter, ClusteredLine};
 use crate::line::vecstorage::{VecStorage, VecStorageIter};
+use alloc::sync::Arc;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum CellStorage {
-    V(VecStorage),
-    C(ClusteredLine),
+    V(Arc<VecStorage>),
+    C(Arc<ClusteredLine>),
 }
 
 pub(crate) enum VisibleCellIter<'a> {
@@ -34,7 +35,7 @@ mod test {
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn memory_usage() {
-        assert_eq!(std::mem::size_of::<CellStorage>(), 64);
+        assert!(std::mem::size_of::<CellStorage>() <= 16);
         assert_eq!(std::mem::size_of::<VecStorage>(), 24);
     }
 }

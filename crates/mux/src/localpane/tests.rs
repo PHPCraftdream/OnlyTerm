@@ -1,4 +1,5 @@
 mod process_info;
+mod search;
 
 use super::*;
 use onlyterm_term::color::ColorPalette;

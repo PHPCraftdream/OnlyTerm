@@ -11,7 +11,7 @@ use std::ffi::OsString;
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winapi::shared::minwindef::{DWORD, FILETIME, LPVOID, MAX_PATH};
 use winapi::shared::ntdef::{FALSE, NT_SUCCESS};
@@ -248,9 +248,13 @@ impl ProcHandle {
 
     /// Returns the cwd and args for the process
     pub fn get_params(&self) -> Option<ProcParams> {
+        self.get_params_impl(true)
+    }
+
+    fn get_params_impl(&self, include_argv: bool) -> Option<ProcParams> {
         match self.get_peb32_addr() {
-            Some(peb32) => self.get_params_32(peb32),
-            None => self.get_params_64(),
+            Some(peb32) => self.get_params_32(peb32, include_argv),
+            None => self.get_params_64(include_argv),
         }
     }
 
@@ -267,22 +271,24 @@ impl ProcHandle {
     }
 
     /// Returns the cwd and args for a 64 bit process
-    fn get_params_64(&self) -> Option<ProcParams> {
+    fn get_params_64(&self, include_argv: bool) -> Option<ProcParams> {
         let info = self.get_basic_info()?;
         let peb = self.get_peb(&info)?;
         let params = self.get_proc_params(&peb)?;
 
-        let cmdline = self.read_process_wchar(
-            params.CommandLine.Buffer as _,
-            params.CommandLine.Length as _,
-        )?;
+        let argv = read_optional_argv(include_argv, || {
+            self.read_process_wchar(
+                params.CommandLine.Buffer as _,
+                params.CommandLine.Length as _,
+            )
+        })?;
         let cwd = self.read_process_wchar(
             params.CurrentDirectory.DosPath.Buffer as _,
             params.CurrentDirectory.DosPath.Length as _,
         )?;
 
         Some(ProcParams {
-            argv: cmd_line_to_argv(&cmdline),
+            argv,
             cwd: wstr_to_path(&cwd),
             console: params.ConsoleHandle,
         })
@@ -293,20 +299,22 @@ impl ProcHandle {
     }
 
     /// Returns the cwd and args for a 32 bit process
-    fn get_params_32(&self, peb32: LPVOID) -> Option<ProcParams> {
+    fn get_params_32(&self, peb32: LPVOID, include_argv: bool) -> Option<ProcParams> {
         let params = self.get_proc_params_32(peb32)?;
 
-        let cmdline = self.read_process_wchar(
-            params.CommandLine.Buffer as _,
-            params.CommandLine.Length as _,
-        )?;
+        let argv = read_optional_argv(include_argv, || {
+            self.read_process_wchar(
+                params.CommandLine.Buffer as _,
+                params.CommandLine.Length as _,
+            )
+        })?;
         let cwd = self.read_process_wchar(
             params.CurrentDirectory.DosPath.Buffer as _,
             params.CurrentDirectory.DosPath.Length as _,
         )?;
 
         Some(ProcParams {
-            argv: cmd_line_to_argv(&cmdline),
+            argv,
             cwd: wstr_to_path(&cwd),
             console: params.ConsoleHandle as _,
         })
@@ -372,6 +380,18 @@ impl ProcHandle {
         }
 
         Some((start.dwHighDateTime as u64) << 32 | start.dwLowDateTime as u64)
+    }
+}
+
+/// Cwd-only lookups must not read or parse the remote command line.
+fn read_optional_argv(
+    include: bool,
+    read: impl FnOnce() -> Option<Vec<u16>>,
+) -> Option<Vec<String>> {
+    if include {
+        Some(cmd_line_to_argv(&read()?))
+    } else {
+        Some(Vec::new())
     }
 }
 
@@ -450,28 +470,37 @@ struct SnapshotExeEntry {
 /// the staleness every caller tolerates. Concurrent refresher threads
 /// serialize on the mutex; the first one past expiry refreshes and the
 /// rest find it warm.
-static SNAPSHOT_CACHE: Mutex<Option<(Instant, Vec<ProcessEntry>)>> = Mutex::new(None);
+type ProcessSnapshotCache = Mutex<Option<(Instant, Arc<[ProcessEntry]>)>>;
+static SNAPSHOT_CACHE: ProcessSnapshotCache = Mutex::new(None);
 
-fn shared_snapshot_entries() -> Vec<ProcessEntry> {
+fn shared_snapshot_entries() -> Arc<[ProcessEntry]> {
+    snapshot_entries_with(&SNAPSHOT_CACHE, Instant::now, fresh_snapshot_entries)
+}
+
+fn snapshot_entries_with(
+    cache: &ProcessSnapshotCache,
+    now: impl Fn() -> Instant,
+    fetch: impl FnOnce() -> io::Result<Vec<ProcessEntry>>,
+) -> Arc<[ProcessEntry]> {
     // Deliberately poison-tolerant: the cache holds only plain data, so a
     // panicking refresher must not permanently break process lookups.
-    let mut cache = SNAPSHOT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((updated, entries)) = cache.as_ref() {
-        if updated.elapsed() < PROC_SNAPSHOT_TTL {
-            return entries.clone();
+        if now().saturating_duration_since(*updated) < PROC_SNAPSHOT_TTL {
+            return Arc::clone(entries);
         }
     }
-    let entries = match fresh_snapshot_entries() {
-        Ok(entries) => entries,
+    let entries = match fetch() {
+        Ok(entries) => Arc::<[ProcessEntry]>::from(entries),
         Err(err) => {
             log::warn!("process snapshot failed: {err}");
             // Keep the last complete snapshot, without making it fresh.
             return cache
                 .as_ref()
-                .map_or_else(Vec::new, |(_, entries)| entries.clone());
+                .map_or_else(|| Arc::from([]), |(_, entries)| Arc::clone(entries));
         }
     };
-    *cache = Some((Instant::now(), entries.clone()));
+    *cache = Some((now(), Arc::clone(&entries)));
     entries
 }
 
@@ -557,7 +586,7 @@ impl LocalProcessInfo {
     pub fn current_working_dir(pid: u32) -> Option<PathBuf> {
         log::trace!("current_working_dir({})", pid);
         let proc = ProcHandle::new(pid)?;
-        let params = proc.get_params()?;
+        let params = proc.get_params_impl(false)?;
         Some(params.cwd)
     }
 

@@ -8,17 +8,15 @@ use window::{Clipboard, WindowOps};
 
 impl TermWindow {
     pub fn copy_to_clipboard(&self, clipboard: ClipboardCopyDestination, text: String) {
-        let clipboard = match clipboard {
-            ClipboardCopyDestination::Clipboard => [Some(Clipboard::Clipboard), None],
-            ClipboardCopyDestination::PrimarySelection => [Some(Clipboard::PrimarySelection), None],
-            ClipboardCopyDestination::ClipboardAndPrimarySelection => [
-                Some(Clipboard::Clipboard),
-                Some(Clipboard::PrimarySelection),
-            ],
-        };
-        for &c in &clipboard {
-            if let Some(c) = c {
-                self.window.as_ref().unwrap().set_clipboard(c, text.clone());
+        let window = self.window.as_ref().unwrap();
+        match clipboard {
+            ClipboardCopyDestination::Clipboard => window.set_clipboard(Clipboard::Clipboard, text),
+            ClipboardCopyDestination::PrimarySelection => {
+                window.set_clipboard(Clipboard::PrimarySelection, text)
+            }
+            ClipboardCopyDestination::ClipboardAndPrimarySelection => {
+                window.set_clipboard(Clipboard::Clipboard, text.clone());
+                window.set_clipboard(Clipboard::PrimarySelection, text);
             }
         }
     }

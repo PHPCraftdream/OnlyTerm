@@ -25,6 +25,7 @@ use onlyterm_font::{ClearShapeCache, GlyphInfo, LoadedFont};
 use onlyterm_term::color::{ColorAttribute, ColorPalette};
 use onlyterm_term::{CellAttributes, Line, StableRowIndex};
 use ordered_float::NotNan;
+use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -64,6 +65,9 @@ pub struct CachedLineState {
 pub struct ShapeHashEntry {
     pub seqno: SequenceNo,
     pub shape_hash: [u8; 16],
+    pub fallback_epoch: u64,
+    pub fallback_fingerprint: u64,
+    pub fallback_valid: bool,
 }
 
 /// Task #439: Cache key for shape hash - pane_id and stable_row are stable
@@ -83,6 +87,7 @@ pub struct LineQuadCacheKey {
     pub composing: Option<String>,
     pub selection: Range<usize>,
     pub shape_hash: [u8; 16],
+    pub fallback_generation: u64,
     // Position-independent: lines are built at origin (0,0) and translated
     // at emission time, so absolute screen position and physical line index
     // are no longer part of the cache key. This enables cache hits during scrolling.
@@ -203,6 +208,11 @@ pub struct RetainedRow {
     pub quads: Rc<HeapQuadAllocator>,
     pub expires: Option<Instant>,
     pub contains_cursor: bool,
+    pub fallback_generation: u64,
+}
+
+pub fn retained_row_matches_fallback(row: &RetainedRow, generation: u64) -> bool {
+    row.fallback_generation == generation
 }
 
 /// Fail-safe stamp for retained rows - anything that would invalidate the
@@ -241,6 +251,7 @@ pub struct LineToElementParams<'a> {
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 pub struct LineToEleShapeCacheKey {
     pub shape_hash: [u8; 16],
+    pub fallback_generation: u64,
     pub composing: Option<(usize, String)>,
     pub shape_generation: usize,
     pub is_wrap_continuation: bool,
@@ -399,6 +410,20 @@ pub struct ClusterStyleCache<'a> {
 }
 
 impl crate::TermWindow {
+    pub(crate) fn bump_fallback_epoch(&self) {
+        self.fallback_epoch
+            .set(self.fallback_epoch.get().wrapping_add(1));
+    }
+
+    fn fallback_epoch(&self) -> u64 {
+        self.fallback_epoch.get()
+    }
+
+    fn fallback_generation_for_text(&self, text: &str) -> u64 {
+        let generations = self.fallback_generations.borrow();
+        fallback_text_generation(&generations, text)
+    }
+
     pub fn update_next_frame_time(&self, next_due: Option<Instant>) {
         if next_due.is_some() {
             update_next_frame_time(&mut self.has_animation.borrow_mut(), next_due);
@@ -547,6 +572,7 @@ impl crate::TermWindow {
         let key = BorrowedShapeCacheKey {
             style,
             text: &cluster.text,
+            fallback_generation: self.fallback_generation_for_text(&cluster.text),
         };
         let glyph_info = match self.lookup_cached_shape(&key) {
             Some(Ok(info)) => info,
@@ -562,7 +588,7 @@ impl crate::TermWindow {
 
                 match font.shape(
                     &cluster.text,
-                    move || window.notify(TermWindowNotif::InvalidateShapeCache),
+                    move |chars| window.notify(TermWindowNotif::InvalidateShapeCache(chars)),
                     BlockKey::filter_out_synthetic,
                     Some(cluster.presentation),
                     cluster.direction,
@@ -686,26 +712,35 @@ impl crate::TermWindow {
 
     /// Task #439: Core cache lookup logic extracted for testability.
     /// Returns cached shape_hash if seqno matches, otherwise computes via closure.
-    fn shape_hash_for_line(
+    fn shape_hash_and_fallback_for_line(
         &mut self,
         line: &Line,
         pane_id: PaneId,
         stable_row: StableRowIndex,
-    ) -> [u8; 16] {
+    ) -> ShapeHashEntry {
         let seqno = line.current_seqno();
+        let fallback_epoch = self.fallback_epoch();
         let key = ShapeHashCacheKey {
             pane_id,
             stable_row,
         };
-        shape_hash_lookup(&mut self.shape_hash_cache.borrow_mut(), key, seqno, || {
-            line.compute_shape_hash()
-        })
+        shape_hash_and_fallback_lookup(
+            &mut self.shape_hash_cache.borrow_mut(),
+            key,
+            seqno,
+            fallback_epoch,
+            || {
+                (
+                    line.compute_shape_hash(),
+                    self.fallback_generation_for_text(line.as_str().as_ref()),
+                )
+            },
+        )
     }
 }
 
-/// Task #439: Extracted cache lookup logic for testing.
-/// This function contains the actual production cache decision logic.
-/// Takes a closure that computes the hash on miss/seqno-mismatch.
+/// Exercise production lookup with no fallback changes in legacy cache tests.
+#[cfg(test)]
 pub fn shape_hash_lookup<F>(
     cache: &mut lfucache::LfuCache<ShapeHashCacheKey, ShapeHashEntry>,
     key: ShapeHashCacheKey,
@@ -715,20 +750,43 @@ pub fn shape_hash_lookup<F>(
 where
     F: FnOnce() -> [u8; 16],
 {
-    // Try to hit the cache
-    if let Some(entry) = cache.get(&key) {
-        if entry.seqno == seqno {
-            // Cache hit! seqno matches, return cached hash
-            return entry.shape_hash;
-        }
-        // Seqno mismatch: line changed, need to recompute
-    }
+    shape_hash_and_fallback_lookup(cache, key, seqno, 0, || (compute(), 0)).shape_hash
+}
 
-    // Cache miss or seqno mismatch: compute and store
-    let shape_hash = compute();
-    let entry = ShapeHashEntry { seqno, shape_hash };
-    cache.put(key, entry);
-    shape_hash
+fn fallback_text_generation(generations: &std::collections::HashMap<char, u64>, text: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for ch in text.chars() {
+        ch.hash(&mut hasher);
+        generations.get(&ch).copied().unwrap_or(0).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+pub fn shape_hash_and_fallback_lookup<F>(
+    cache: &mut lfucache::LfuCache<ShapeHashCacheKey, ShapeHashEntry>,
+    key: ShapeHashCacheKey,
+    seqno: SequenceNo,
+    fallback_epoch: u64,
+    compute: F,
+) -> ShapeHashEntry
+where
+    F: FnOnce() -> ([u8; 16], u64),
+{
+    if let Some(entry) = cache.get(&key) {
+        if entry.seqno == seqno && entry.fallback_valid && entry.fallback_epoch == fallback_epoch {
+            return entry.clone();
+        }
+    }
+    let (shape_hash, fallback_fingerprint) = compute();
+    let entry = ShapeHashEntry {
+        seqno,
+        shape_hash,
+        fallback_epoch,
+        fallback_fingerprint,
+        fallback_valid: true,
+    };
+    cache.put(key, entry.clone());
+    entry
 }
 
 fn resolve_fg_color_attr(

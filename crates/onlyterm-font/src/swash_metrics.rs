@@ -56,19 +56,14 @@
 //! not the H2 metrics-only pass), `set_transform` (rendering-time glyph
 //! transform).
 
-use crate::locator::FontDataSource;
+use crate::locator::{FontDataSource, SharedFontData};
 use rangeset::RangeSet;
 use std::ops::Deref;
 use std::sync::Arc;
 use swash::{Attributes, CacheKey, FontRef, Style};
 
-/// Backing storage for [`SwashFontInfo`]'s raw font bytes: either a
-/// heap-allocated owned buffer (the historical path, still used when the
-/// caller already has the bytes some other way, e.g. `BuiltIn`/`Memory`
-/// sources, or when the data needs to outlive a transient scan) or a
-/// read-only memory map of an on-disk file, shared via `Arc` so that every
-/// sub-face of a `.ttc`/`.otc` collection can reuse the same mapping
-/// without re-mapping or copying.
+/// Backing storage for [`SwashFontInfo`]'s raw font bytes: either an owned
+/// API/test buffer or immutable shared storage from [`FontDataSource`].
 ///
 /// Enumerating font directories (`ls-fonts --list-system`,
 /// `FontDatabase::with_font_dirs`) only needs a handful of small tables
@@ -84,6 +79,7 @@ use swash::{Attributes, CacheKey, FontRef, Style};
 /// `parse_and_collect_font_info`).
 enum FontBytes {
     Owned(Box<[u8]>),
+    Shared(SharedFontData),
     Mapped(Arc<memmap2::Mmap>),
 }
 
@@ -92,7 +88,8 @@ impl Deref for FontBytes {
     fn deref(&self) -> &[u8] {
         match self {
             FontBytes::Owned(b) => b,
-            FontBytes::Mapped(m) => m,
+            FontBytes::Shared(data) => data,
+            FontBytes::Mapped(data) => data,
         }
     }
 }
@@ -276,8 +273,7 @@ impl SwashFontInfo {
     /// instance", named instances are only reachable via
     /// [`SwashFontInfo::instances`]/`normalized_coords`).
     pub fn from_locator(source: &FontDataSource, index: u32) -> anyhow::Result<Self> {
-        let data = source.load_data()?.into_owned().into_boxed_slice();
-        Self::from_data(data, index)
+        Self::from_shared_data(source.shared_data()?, index)
     }
 
     fn from_font_bytes(data: FontBytes, index: u32) -> anyhow::Result<Self> {
@@ -308,6 +304,11 @@ impl SwashFontInfo {
     /// again.
     pub(crate) fn from_mmap(mmap: Arc<memmap2::Mmap>, index: u32) -> anyhow::Result<Self> {
         Self::from_font_bytes(FontBytes::Mapped(mmap), index)
+    }
+
+    /// Share immutable font bytes with other runtime font consumers.
+    pub(crate) fn from_shared_data(data: SharedFontData, index: u32) -> anyhow::Result<Self> {
+        Self::from_font_bytes(FontBytes::Shared(data), index)
     }
 
     /// Like [`SwashFontInfo::from_locator`], but takes already-loaded font

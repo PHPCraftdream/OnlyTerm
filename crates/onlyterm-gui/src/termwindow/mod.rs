@@ -155,7 +155,7 @@ pub enum MouseCapture {
 // notification type that isn't sent at any meaningful rate.
 #[allow(clippy::large_enum_variant)]
 pub enum TermWindowNotif {
-    InvalidateShapeCache,
+    InvalidateShapeCache(Vec<char>),
     PerformAssignment {
         pane_id: PaneId,
         assignment: KeyAssignment,
@@ -364,6 +364,8 @@ pub struct TermWindow {
 
     quad_generation: usize,
     shape_generation: usize,
+    fallback_generations: RefCell<HashMap<char, u64>>,
+    fallback_epoch: std::cell::Cell<u64>,
     shape_cache: RefCell<LfuCache<ShapeCacheKey, anyhow::Result<Rc<Vec<ShapedInfo>>>>>,
     line_to_ele_shape_cache: RefCell<LfuCache<LineToEleShapeCacheKey, LineToElementShapeItem>>,
 

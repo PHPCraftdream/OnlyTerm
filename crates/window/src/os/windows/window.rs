@@ -3542,27 +3542,14 @@ unsafe fn mouse_wheel(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
     let screen_coords = ScreenPoint::new(coords.x, coords.y);
     let coords = screen_to_client(hwnd, screen_coords);
     let delta = GET_WHEEL_DELTA_WPARAM(wparam);
-    let scaled_delta = if msg == WM_MOUSEWHEEL {
-        delta * (*WHEEL_SCROLL_LINES)
-    } else {
-        delta * (*WHEEL_SCROLL_CHARS)
-    };
-    let mut position = scaled_delta / WHEEL_DELTA;
-    let remainder = scaled_delta % WHEEL_DELTA;
     let event = MouseEvent {
         kind: if msg == WM_MOUSEHWHEEL {
             let mut inner = inner.borrow_mut();
-            if inner.hscroll_remainder.signum() != remainder.signum() {
-                // Reset remainder when changing scroll direction
-                inner.hscroll_remainder = 0;
-            }
-            inner.hscroll_remainder += remainder;
-            position += inner.hscroll_remainder / WHEEL_DELTA;
-            inner.hscroll_remainder %= WHEEL_DELTA;
+            let position =
+                super::wheel::lines(delta, *WHEEL_SCROLL_CHARS, &mut inner.hscroll_remainder);
             log::trace!(
-                "mouse_hwheel delta={} scaled={} remainder={} pos={}",
+                "mouse_hwheel delta={} remainder={} pos={}",
                 delta,
-                scaled_delta,
                 inner.hscroll_remainder,
                 position
             );
@@ -3572,17 +3559,11 @@ unsafe fn mouse_wheel(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
             MouseEventKind::HorzWheel(position)
         } else {
             let mut inner = inner.borrow_mut();
-            if inner.vscroll_remainder.signum() != remainder.signum() {
-                // Reset remainder when changing scroll direction
-                inner.vscroll_remainder = 0;
-            }
-            inner.vscroll_remainder += remainder;
-            position += inner.vscroll_remainder / WHEEL_DELTA;
-            inner.vscroll_remainder %= WHEEL_DELTA;
+            let position =
+                super::wheel::lines(delta, *WHEEL_SCROLL_LINES, &mut inner.vscroll_remainder);
             log::trace!(
-                "mouse_wheel delta={} scaled={} remainder={} pos={}",
+                "mouse_wheel delta={} remainder={} pos={}",
                 delta,
-                scaled_delta,
                 inner.vscroll_remainder,
                 position
             );

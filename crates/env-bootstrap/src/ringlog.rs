@@ -5,14 +5,19 @@
 //! within the application.
 use chrono::prelude::*;
 use env_logger::filter::{Builder as FilterBuilder, Filter};
-use log::{Level, LevelFilter, Log, Record};
+use log::{Level, LevelFilter, Record};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError, TrySendError};
+use std::sync::{mpsc, Mutex};
+use std::thread::JoinHandle;
 use termwiz::istty::IsTty;
+
+const ASYNC_QUEUE_CAPACITY: usize = 256;
+const MAX_QUEUED_LINE_BYTES: usize = 64 * 1024;
 
 lazy_static::lazy_static! {
     static ref RINGS: Mutex<Rings> = Mutex::new(Rings::new());
@@ -127,9 +132,157 @@ impl Rings {
     }
 }
 
+#[derive(Clone)]
+struct FormattedRecord {
+    stderr: String,
+    file: String,
+}
+
+enum AsyncMessage {
+    Record(FormattedRecord),
+    Flush(mpsc::Sender<()>),
+    Shutdown(mpsc::Sender<()>),
+}
+
+struct AsyncOutput {
+    tx: SyncSender<AsyncMessage>,
+    join: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl AsyncOutput {
+    fn new(file_name: PathBuf) -> Option<Self> {
+        let (tx, rx) = sync_channel(ASYNC_QUEUE_CAPACITY);
+        let join = std::thread::Builder::new()
+            .name("onlyterm-diagnostic-log".to_string())
+            .spawn(move || async_output_worker(rx, file_name))
+            .ok()?;
+        Some(Self {
+            tx,
+            join: Mutex::new(Some(join)),
+        })
+    }
+
+    fn send(&self, record: FormattedRecord) -> Result<(), FormattedRecord> {
+        match self.tx.try_send(AsyncMessage::Record(record)) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(AsyncMessage::Record(record)))
+            | Err(TrySendError::Disconnected(AsyncMessage::Record(record))) => Err(record),
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                unreachable!("only Record messages are sent through AsyncOutput::send")
+            }
+        }
+    }
+
+    fn flush(&self) {
+        let (tx, rx) = mpsc::channel();
+        if self.tx.send(AsyncMessage::Flush(tx)).is_ok() {
+            let _ = rx.recv();
+        }
+    }
+
+    fn shutdown(&self) {
+        let (tx, rx) = mpsc::channel();
+        if self.tx.send(AsyncMessage::Shutdown(tx)).is_ok() {
+            let _ = rx.recv();
+        }
+        if let Some(join) = self.join.lock().unwrap().take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl Drop for AsyncOutput {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
+fn async_output_worker(rx: Receiver<AsyncMessage>, file_name: PathBuf) {
+    let mut file: Option<BufWriter<File>> = None;
+    let mut stderr = std::io::stderr();
+    loop {
+        let first = match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(message) => message,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                flush_outputs(&mut file, &mut stderr);
+                continue;
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+
+        let mut should_exit = false;
+        process_async_message(first, &file_name, &mut file, &mut stderr, &mut should_exit);
+        while !should_exit {
+            match rx.try_recv() {
+                Ok(message) => {
+                    process_async_message(
+                        message,
+                        &file_name,
+                        &mut file,
+                        &mut stderr,
+                        &mut should_exit,
+                    );
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    should_exit = true;
+                }
+            }
+        }
+        flush_outputs(&mut file, &mut stderr);
+        if should_exit {
+            break;
+        }
+    }
+    flush_outputs(&mut file, &mut stderr);
+}
+
+fn process_async_message(
+    message: AsyncMessage,
+    file_name: &PathBuf,
+    file: &mut Option<BufWriter<File>>,
+    stderr: &mut std::io::Stderr,
+    should_exit: &mut bool,
+) {
+    match message {
+        AsyncMessage::Record(record) => {
+            let _ = stderr.write_all(record.stderr.as_bytes());
+            if file.is_none() {
+                if let Ok(handle) = std::fs::OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(file_name)
+                {
+                    file.replace(BufWriter::new(handle));
+                }
+            }
+            if let Some(file) = file.as_mut() {
+                let _ = file.write_all(record.file.as_bytes());
+            }
+        }
+        AsyncMessage::Flush(done) => {
+            flush_outputs(file, stderr);
+            let _ = done.send(());
+        }
+        AsyncMessage::Shutdown(done) => {
+            flush_outputs(file, stderr);
+            let _ = done.send(());
+            *should_exit = true;
+        }
+    }
+}
+
+fn flush_outputs(file: &mut Option<BufWriter<File>>, stderr: &mut std::io::Stderr) {
+    if let Some(file) = file.as_mut() {
+        let _ = file.flush();
+    }
+    let _ = stderr.flush();
+}
+
 struct Logger {
     file_name: PathBuf,
     file: Mutex<Option<BufWriter<File>>>,
+    async_output: Option<AsyncOutput>,
     filter: Filter,
     padding: AtomicUsize,
     is_tty: bool,
@@ -137,7 +290,10 @@ struct Logger {
 
 impl Drop for Logger {
     fn drop(&mut self) {
-        self.flush();
+        if let Some(async_output) = self.async_output.take() {
+            async_output.shutdown();
+        }
+        self.flush_direct();
     }
 }
 
@@ -147,10 +303,10 @@ impl log::Log for Logger {
     }
 
     fn flush(&self) {
-        if let Some(file) = self.file.lock().unwrap().as_mut() {
-            let _ = file.flush();
+        if let Some(async_output) = &self.async_output {
+            async_output.flush();
         }
-        let _ = std::io::stderr().flush();
+        self.flush_direct();
     }
 
     fn log(&self, record: &Record) {
@@ -181,15 +337,8 @@ impl log::Log for Logger {
             let reset = if self.is_tty { "\u{1b}[0m" } else { "" };
             let target_color = if self.is_tty { "\u{1b}[1m" } else { "" };
 
-            {
-                // We use writeln! here rather than eprintln! so that we can ignore
-                // a failed log write in the case that stderr has been redirected
-                // to a device that is out of disk space.
-                // <https://github.com/wezterm/wezterm/issues/1839>
-                let mut stderr = std::io::stderr();
-                // Direct `write!` will `write()` every single padding space as individual syscall
-                // which makes terminal with tracing logs enabled unusably slow.
-                let logline = format!(
+            let output = FormattedRecord {
+                stderr: format!(
                     "{}  {level_color}{:6}{reset} {target_color}{:padding$}{reset} > {}\n",
                     ts,
                     level,
@@ -199,35 +348,30 @@ impl log::Log for Logger {
                     level_color = level_color,
                     reset = reset,
                     target_color = target_color
-                );
-                let _ = stderr.write_all(logline.as_bytes());
-                let _ = stderr.flush();
-            }
-
-            let mut file = self.file.lock().unwrap();
-            if file.is_none() {
-                if let Ok(f) = std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(&self.file_name)
-                {
-                    file.replace(BufWriter::new(f));
-                }
-            }
-            if let Some(file) = file.as_mut() {
-                let _ = writeln!(
-                    file,
-                    "{}  {:6} {:padding$} > {}",
+                ),
+                file: format!(
+                    "{}  {:6} {:padding$} > {}\n",
                     ts,
                     level,
                     entry.target,
                     entry.msg,
                     padding = padding
-                );
-                // Debug is opt-in, but its idle/shutdown tail is valuable
-                // during investigations too. The global logger is not
-                // dropped on process exit, so keep flushing every record.
-                let _ = file.flush();
+                ),
+            };
+
+            let critical = matches!(record.level(), Level::Error | Level::Warn);
+            let direct_output = if let Some(async_output) = &self.async_output {
+                if critical {
+                    async_output.flush();
+                    Some(output)
+                } else {
+                    async_output.send(limit_queued_record(output)).err()
+                }
+            } else {
+                Some(output)
+            };
+            if let Some(output) = direct_output {
+                self.write_direct(output);
             }
 
             // Move the already-formatted strings into the ring after the
@@ -235,6 +379,55 @@ impl log::Log for Logger {
             // target and message a second time just for the in-memory log.
             RINGS.lock().unwrap().log(entry);
         }
+    }
+}
+
+impl Logger {
+    fn flush_direct(&self) {
+        if let Some(file) = self.file.lock().unwrap().as_mut() {
+            let _ = file.flush();
+        }
+        let _ = std::io::stderr().flush();
+    }
+
+    fn write_direct(&self, output: FormattedRecord) {
+        // We use write_all rather than eprintln! so a redirected stderr or
+        // file failure is ignored without panicking from inside log().
+        let mut stderr = std::io::stderr();
+        let _ = stderr.write_all(output.stderr.as_bytes());
+        let _ = stderr.flush();
+        let mut file = self.file.lock().unwrap();
+        if file.is_none() {
+            if let Ok(handle) = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&self.file_name)
+            {
+                file.replace(BufWriter::new(handle));
+            }
+        }
+        if let Some(file) = file.as_mut() {
+            let _ = file.write_all(output.file.as_bytes());
+            let _ = file.flush();
+        }
+    }
+}
+
+fn limit_queued_record(mut record: FormattedRecord) -> FormattedRecord {
+    truncate_utf8(&mut record.stderr, MAX_QUEUED_LINE_BYTES);
+    truncate_utf8(&mut record.file, MAX_QUEUED_LINE_BYTES);
+    record
+}
+
+fn truncate_utf8(value: &mut String, max_bytes: usize) {
+    if value.len() > max_bytes {
+        const SUFFIX: &str = "...[truncated]\n";
+        let mut cut = max_bytes.saturating_sub(SUFFIX.len()).min(value.len());
+        while cut > 0 && !value.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        value.truncate(cut);
+        value.push_str(SUFFIX);
     }
 }
 
@@ -305,11 +498,18 @@ fn setup_pretty() -> (LevelFilter, Logger) {
     let filter = filters.build();
     let max_level = filter.filter();
 
+    let async_output = if base_name.contains("gui") {
+        AsyncOutput::new(log_file_name.clone())
+    } else {
+        None
+    };
+
     (
         max_level,
         Logger {
             file_name: log_file_name,
             file: Mutex::new(None),
+            async_output,
             filter,
             padding: AtomicUsize::new(0),
             is_tty: std::io::stderr().is_tty(),
@@ -383,5 +583,72 @@ mod tests {
             messages(&ring),
             (112..128).map(|i| i.to_string()).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn queued_records_are_bounded_and_flushable() {
+        let long = FormattedRecord {
+            stderr: String::new(),
+            file: "x".repeat(MAX_QUEUED_LINE_BYTES + 32),
+        };
+        let limited = limit_queued_record(long);
+        assert!(limited.file.len() <= MAX_QUEUED_LINE_BYTES);
+        assert!(limited.file.ends_with("...[truncated]\n"));
+    }
+
+    #[test]
+    fn queued_utf8_records_truncate_at_a_character_boundary() {
+        let mut value = "界".repeat(32);
+        truncate_utf8(&mut value, 17);
+        assert!(value.is_char_boundary(value.len()));
+        assert!(value.ends_with("...[truncated]\n"));
+        assert!(value.len() <= 17);
+    }
+
+    #[test]
+    fn bounded_queue_reports_backpressure_without_blocking() {
+        let (tx, _rx) = sync_channel(1);
+        let record = || {
+            AsyncMessage::Record(FormattedRecord {
+                stderr: String::new(),
+                file: "record\n".to_string(),
+            })
+        };
+        assert!(tx.try_send(record()).is_ok());
+        assert!(matches!(tx.try_send(record()), Err(TrySendError::Full(_))));
+    }
+
+    #[test]
+    fn async_output_flush_barrier_writes_short_lived_logs() {
+        let path =
+            std::env::temp_dir().join(format!("onlyterm-ringlog-{}.log", std::process::id()));
+        let output = AsyncOutput::new(path.clone()).unwrap();
+        assert!(output
+            .send(FormattedRecord {
+                stderr: String::new(),
+                file: "startup\n".to_string(),
+            })
+            .is_ok());
+        output.flush();
+        output.shutdown();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "startup\n");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn async_output_ignores_file_open_failures_and_still_flushes() {
+        let path = std::env::temp_dir()
+            .join(format!("onlyterm-ringlog-missing-{}", std::process::id()))
+            .join("log.txt");
+        let output = AsyncOutput::new(path).unwrap();
+        assert!(output
+            .send(FormattedRecord {
+                stderr: String::new(),
+                file: "diagnostic\n".to_string(),
+            })
+            .is_ok());
+        output.flush();
+        output.shutdown();
     }
 }

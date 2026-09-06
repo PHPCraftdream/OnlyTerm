@@ -349,6 +349,18 @@ impl TripleVertexBuffer {
         self.instances.borrow().len()
     }
 
+    /// Transfer this frame's accumulator to the wire writer. The replacement
+    /// buffer is already empty and will collect the next frame's instances.
+    pub(crate) fn take_instances_for_wire(
+        &self,
+        pool: Option<&onlyterm_gpu_render::wire::WireDrawPool>,
+    ) -> Vec<crate::quad::QuadInstance> {
+        let replacement = pool
+            .map(onlyterm_gpu_render::wire::pool_take)
+            .unwrap_or_default();
+        std::mem::replace(&mut *self.instances.borrow_mut(), replacement)
+    }
+
     /// Creates an instance-based view for allocation. The view collects into
     /// its own fresh, owned `Vec` (not a live view into any pre-existing GPU
     /// or accumulator state), so its internal bump-allocator counter starts
@@ -705,6 +717,10 @@ impl RenderState {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "renderstate_wire_test.rs"]
+mod wire_transfer_tests;
 
 #[cfg(test)]
 mod tests {
