@@ -934,6 +934,10 @@ impl TerminalState {
     /// the cursor positions of both accordingly.
     pub fn resize(&mut self, size: TerminalSize) {
         self.increment_seqno();
+        let discard_new_blank_history = self.enable_conpty_quirks
+            && !self.screen.alt_screen_is_active
+            && size.rows.max(1) < self.screen.screen.physical_rows
+            && self.screen.screen.scrollback_rows() == self.screen.screen.physical_rows;
         let (cursor_main, cursor_alt) = if self.screen.alt_screen_is_active {
             (
                 self.screen
@@ -965,6 +969,10 @@ impl TerminalState {
             self.enable_conpty_quirks,
             bidi_mode,
         );
+        if discard_new_blank_history {
+            let palette = self.palette();
+            self.screen.screen.discard_blank_resize_history(&palette);
+        }
         self.top_and_bottom_margins = 0..size.rows as i64;
         self.left_and_right_margins = 0..size.cols;
         self.pixel_height = size.pixel_height;

@@ -81,3 +81,22 @@ and correctly remained scrollable.
 This empty-history scrollbar issue is recorded, not fixed in this release. Any
 follow-up should preserve real scrollback and the validated cursor/resize
 behavior, without adding a full history scan to each rendered frame.
+
+## Unreleased follow-up: blank-history scrollbar
+
+On a primary ConPTY screen with no pre-existing scrollback, a shrinking resize
+now discards the visually empty prefix newly moved into history. This runs only
+at resize, stops at the first meaningful row and does not scan existing history
+in the paint path. Stable row offsets advance by the removed count, keeping
+remaining text and cursor identities unchanged.
+
+Rows with text, images, hyperlinks, visible backgrounds, underline, overline or
+strikethrough are preserved. Background comparisons use the active terminal
+palette, including palette overrides. Existing history is not pruned.
+
+The reproducer failed before the fix (24 stored rows for a 23-row viewport) and
+passes afterward. All 90 terminal tests and strict all-target Clippy pass,
+including both cursor resize regressions, repeated shrink/grow, stable row
+identity, existing history, decorated whitespace, active palette and images.
+This follow-up still requires GUI runtime acceptance and is not in the existing
+`v0.0.20-alpha` tag.

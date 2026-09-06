@@ -6,6 +6,27 @@ use super::*;
 /// Taken from the reproduction in <https://github.com/wezterm/wezterm/issues/6344>.
 const TINY_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAsAAAALCAYAAACprHcmAAAACXBIWXMAAAGKAAABigEzlzBYAAAAOUlEQVQYlZXOwQ0AMAzCQEdi7yaT0xWAN7JuDCac2PQKYxflycOoICOKtPIuqFCg4/LzKxiz6xjyAYh9DR1sLUN1AAAAAElFTkSuQmCC";
 
+#[test]
+fn conpty_resize_keeps_history_images_on_whitespace_cells() {
+    let mut term = TestTerm::new(24, 80, 1000);
+    term.enable_conpty_quirks();
+    term.print(format!("\x1b_Ga=T,t=d,f=100;{}\x1b\\", TINY_PNG_BASE64));
+    term.cup(0, 1);
+    term.print("prompt> ");
+    let original = term.screen().all_lines()[0].clone();
+    std::assert!(original
+        .visible_cells()
+        .any(|cell| cell.attrs().images().is_some()));
+    term.resize(TerminalSize {
+        rows: 23,
+        cols: 80,
+        ..Default::default()
+    });
+    std::assert_eq!(term.screen().scrollback_rows(), 24);
+    std::assert_eq!(term.screen().all_lines()[0], original);
+    std::assert_eq!(term.cursor_pos().y, 0);
+}
+
 /// Feeding a Kitty graphics escape that requests a zero-sized placement (here `r=0,h=0`)
 /// must not panic the terminal.
 /// Prior to the fix for <https://github.com/wezterm/wezterm/issues/6344> this divided by zero

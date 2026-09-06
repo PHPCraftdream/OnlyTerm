@@ -1,5 +1,6 @@
 #![allow(clippy::range_plus_one)]
 use super::*;
+use crate::color::ColorPalette;
 use crate::config::BidiMode;
 use log::debug;
 use onlyterm_surface::SequenceNo;
@@ -97,6 +98,29 @@ impl Screen {
 
     fn scrollback_size(&self) -> usize {
         scrollback_size(&self.config, self.allow_scrollback)
+    }
+
+    pub(crate) fn discard_blank_resize_history(&mut self, palette: &ColorPalette) {
+        while self.lines.len() > self.physical_rows {
+            let line = &self.lines[0];
+            if !line.is_whitespace()
+                || !line.visible_cells().all(|cell| {
+                    let attrs = cell.attrs();
+                    !attrs.reverse()
+                        && attrs.underline() == Underline::None
+                        && !attrs.overline()
+                        && !attrs.strikethrough()
+                        && attrs.hyperlink().is_none()
+                        && attrs.images().is_none()
+                        && palette.resolve_bg(attrs.background()) == palette.background
+                })
+            {
+                break;
+            }
+            self.lines.pop_front();
+            // Preserve the stable identities of every remaining row.
+            self.stable_row_index_offset += 1;
+        }
     }
 
     fn rewrap_lines(

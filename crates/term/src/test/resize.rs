@@ -3,6 +3,98 @@
 use super::*;
 
 #[test]
+fn conpty_resize_does_not_create_blank_only_scrollback() {
+    let mut term = TestTerm::new(24, 80, 1000);
+    term.enable_conpty_quirks();
+    term.print("\r\nprompt> ");
+    let stable_cursor = term.screen().visible_row_to_stable_row(term.cursor_pos().y);
+    for rows in [23, 18, 30, 24] {
+        term.resize(TerminalSize {
+            rows,
+            cols: 80,
+            ..Default::default()
+        });
+        std::assert_eq!(term.screen().scrollback_rows(), rows);
+        std::assert_eq!(term.cursor_pos().y, 0);
+        std::assert_eq!(
+            term.screen().visible_row_to_stable_row(term.cursor_pos().y),
+            stable_cursor
+        );
+        std::assert_eq!(term.screen().visible_lines()[0].as_str(), "prompt> ");
+    }
+    term.print("input");
+    std::assert_eq!(term.screen().visible_lines()[0].as_str(), "prompt> input");
+}
+
+#[test]
+fn conpty_resize_preserves_text_and_visible_blank_row_decoration() {
+    for prefix in [
+        "history",
+        "\x1b[41m   \x1b[0m",
+        "\x1b[4m   \x1b[0m",
+        "\x1b]8;;https://example.invalid/\x1b\\ \x1b]8;;\x1b\\",
+    ] {
+        let mut term = TestTerm::new(24, 80, 1000);
+        term.enable_conpty_quirks();
+        term.print(format!("{}\r\nprompt> ", prefix));
+        let original = term.screen().all_lines()[0].clone();
+        term.resize(TerminalSize {
+            rows: 23,
+            cols: 80,
+            ..Default::default()
+        });
+        std::assert_eq!(term.screen().scrollback_rows(), 24);
+        std::assert_eq!(term.screen().all_lines()[0], original);
+        std::assert_eq!(term.cursor_pos().y, 0);
+    }
+}
+
+#[test]
+fn conpty_resize_uses_active_palette_for_blank_background() {
+    for palette_override in [false, true] {
+        let mut term = TestTerm::new(24, 80, 1000);
+        term.enable_conpty_quirks();
+        let white = term.palette().colors.0[15];
+        let red = term.palette().colors.0[1];
+        term.palette_mut().background = white;
+        if palette_override {
+            term.palette_mut().colors.0[15] = red;
+        }
+        term.print("\x1b[107m   \x1b[0m\r\nprompt> ");
+        term.resize(TerminalSize {
+            rows: 23,
+            cols: 80,
+            ..Default::default()
+        });
+        std::assert_eq!(
+            term.screen().scrollback_rows(),
+            if palette_override { 24 } else { 23 }
+        );
+        std::assert_eq!(term.cursor_pos().y, 0);
+    }
+}
+
+#[test]
+fn conpty_resize_does_not_discard_preexisting_blank_history() {
+    let mut term = TestTerm::new(24, 80, 1000);
+    term.enable_conpty_quirks();
+    for _ in 0..25 {
+        term.print("\r\n");
+    }
+    term.print("prompt> ");
+    let before_top = term.screen().phys_to_stable_row_index(0);
+    let before_rows = term.screen().scrollback_rows();
+    std::assert!(before_rows > 24);
+    term.resize(TerminalSize {
+        rows: 23,
+        cols: 80,
+        ..Default::default()
+    });
+    std::assert_eq!(term.screen().phys_to_stable_row_index(0), before_top);
+    std::assert_eq!(term.screen().scrollback_rows(), before_rows);
+}
+
+#[test]
 fn conpty_shrink_moves_prompt_over_leading_blank_like_native_console() {
     let mut term = TestTerm::new(24, 80, 1000);
     term.enable_conpty_quirks();
