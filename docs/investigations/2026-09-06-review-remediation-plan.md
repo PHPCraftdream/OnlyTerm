@@ -20,9 +20,12 @@ test unrelated to the reviewed path.
 | Avoid unnecessary clipboard text clone | root | single destination moves; dual destination clones once then moves | verified |
 | Reduce hot-path logging I/O without losing critical diagnostics | hl startup | 8 logger tests passed: backpressure, flush barriers, UTF-8 truncation and I/O failure | verified |
 | Reduce serialized startup layout latency | hl startup | bounded isolated preparation, shared predecessor completion regression passed; non-isolated/UAC remain ordered | verified |
-| Integration gates and runtime acceptance | root | scoped tests and strict Clippy passed; user confirmed glyph rain and downward cursor displacement fixed; upward-displacement follow-up has 85 passing terminal tests | latest runtime verification pending |
-| Final commits and launch with the same ten-page Chinese fixture | root | commit history, optimized executable, all page markers, repeat scrolling and memory/error logs | pending |
+| Integration gates and runtime acceptance | root | scoped tests and strict Clippy passed; user confirmed glyph rain and downward cursor displacement fixed; upward-displacement follow-up has 85 passing terminal tests | verified; user confirmed input alignment and CJK rendering |
+| Final commits and launch with the same ten-page Chinese fixture | root | committed changes; successful sccache build; normal-config launch with all ten page markers; user acceptance | complete |
 | Rare wheel jump to history start | root | 2 viewport boundary/empty-history tests and 2 Windows wheel arithmetic tests passed | candidate fixed; runtime acceptance pending |
 
 The preceding CJK fix is already committed separately. Unrelated checkpoints
 and existing worktrees are not part of this remediation.
+
+Remaining low-priority follow-up: a blank history row can expose the scrollbar
+following window shrink; fresh tabs at the same size do not have that row.

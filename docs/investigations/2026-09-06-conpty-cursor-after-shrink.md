@@ -65,3 +65,19 @@ follow-up is still required.
 
 The separate diagnostic GUI used `--skip-config`, which explained its different
 font. No user font configuration was changed.
+
+## Runtime acceptance and remaining cosmetic issue
+
+The user subsequently confirmed that input stays aligned in the new build;
+the previous first-use CJK glyph-rain regression is also gone.
+
+One low-priority difference remains: shrinking a window can expose a scrollbar
+while opening a fresh tab at that same size does not. Read-only inspection of
+the running build found one history line containing only whitespace in each of
+the sampled non-CJK tabs. The scrollbar condition counts history rows, including
+blank ones (`scrollback_rows > viewport_rows`). The CJK tab had real text history
+and correctly remained scrollable.
+
+This empty-history scrollbar issue is recorded, not fixed in this release. Any
+follow-up should preserve real scrollback and the validated cursor/resize
+behavior, without adding a full history scan to each rendered frame.

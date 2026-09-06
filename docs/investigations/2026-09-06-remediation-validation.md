@@ -66,6 +66,12 @@ glyph rain and downward input displacement were fixed. The upward-displacement
 follow-up (`8d24239e0`) passes all 85 terminal tests and still requires a fresh
 GUI build/runtime check. A separate first-glyph lookup regression also passes.
 
+Final acceptance: the committed tree built successfully with sccache and one
+Cargo job in 5m44s. It launched with the user's normal configuration and all ten
+CJK page markers. The user confirmed that input remains aligned and the glyph
+rain is gone. The remaining blank-history scrollbar issue is documented in the
+cursor investigation; no scrollbar follow-up is included in this release.
+
 The unchanged ten-page/500-line CJK fixture has SHA-256
 `a46d1214e7986ff0dcc43a8e93ddeb502ba566d67e9ca90e1715e09b00ef1d71`.
 
