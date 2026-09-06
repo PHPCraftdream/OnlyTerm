@@ -3,6 +3,25 @@
 use super::*;
 
 #[test]
+fn conpty_shrink_moves_prompt_over_leading_blank_like_native_console() {
+    let mut term = TestTerm::new(24, 80, 1000);
+    term.enable_conpty_quirks();
+    term.print("\r\nprompt> ");
+    for rows in [23, 22, 18] {
+        term.resize(TerminalSize {
+            rows,
+            cols: 80,
+            ..Default::default()
+        });
+        std::assert_eq!(term.cursor_pos().y, 0);
+        std::assert_eq!(term.screen().visible_lines()[0].as_str(), "prompt> ");
+    }
+    // ConPTY sends only the edit and its absolute position, not the prompt.
+    term.print("\x1b[1;9Hinput");
+    std::assert_eq!(term.screen().visible_lines()[0].as_str(), "prompt> input");
+}
+
+#[test]
 fn conpty_shrink_keeps_cursor_attached_to_its_visible_text() {
     for cols in [145, 100] {
         let mut term = TestTerm::new(53, 145, 1000);

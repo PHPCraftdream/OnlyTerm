@@ -40,3 +40,28 @@ No renderer cache reset or arbitrary 13-row adjustment is involved.
 The corrected GUI binary still needs runtime verification. This proves a
 matching resize defect; it does not assert that every previous cursor report
 had the same cause.
+
+## Follow-up: input above a retained prompt
+
+After the first fix, a second case was observed in `cmd.exe`. Read-only native
+console inspection showed prompt and input together on native row 0, while
+OnlyTerm retained the prompt on row 1 and displayed the input on row 0.
+The diagnostic trace contained height reductions followed by absolute row-0
+cursor/edit updates, without a repeated prompt. Tab switching could expose it,
+but a separate tab-switch rendering defect was not established.
+
+The pre-resize cleanup removed every blank row below the cursor. That pinned
+the prompt's visible row instead of matching ConPTY's upward shift on shrink.
+For primary ConPTY screens, cleanup now retains enough trailing rows for that
+shift, bounded by the cursor's distance from the top. Excess trailing blanks
+are still removed once the cursor reaches the top. Growth retains the previous
+padding behavior.
+
+The new regression starts with a blank line and a prompt, applies repeated
+height reductions, then replays a ConPTY absolute-position edit without
+reprinting the prompt. It failed before the change (cursor row 1 instead of 0)
+and passes afterward. All 85 terminal tests pass; GUI runtime acceptance of this
+follow-up is still required.
+
+The separate diagnostic GUI used `--skip-config`, which explained its different
+font. No user font configuration was changed.

@@ -237,7 +237,18 @@ impl Screen {
         // this avoids growing the scrollback size when rapidly switching between normal and
         // maximized states.
         let cursor_phys = self.phys_row(cursor.y);
-        for _ in cursor_phys + 1..self.lines.len() {
+        let prune_limit =
+            if is_conpty && self.allow_scrollback && physical_rows < self.physical_rows {
+                // Native ConPTY shifts rows upward on shrink until the cursor
+                // reaches the top. Pruning all trailing blanks would instead
+                // pin the prompt while subsequent absolute cursor updates move.
+                let shrink = self.physical_rows - physical_rows;
+                let shift = shrink.min(cursor.y.max(0) as usize);
+                self.lines.len().saturating_sub(shrink - shift)
+            } else {
+                cursor_phys + 1
+            };
+        for _ in prune_limit..self.lines.len() {
             if self.lines.back().map(Line::is_whitespace).unwrap_or(false) {
                 self.lines.pop_back();
             }
