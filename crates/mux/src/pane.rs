@@ -440,7 +440,7 @@ pub trait Pane: Downcast + Send + Sync {
         &self,
         _policy: CachePolicy,
     ) -> Option<std::collections::HashSet<String>> {
-        log::info!(
+        log::debug!(
             "diag: key-compat pane={} type={} process tree unsupported",
             self.pane_id(),
             std::any::type_name::<Self>(),

@@ -207,14 +207,9 @@ mod tests {
 
     #[test]
     fn production_pool_reuses_distinct_buffers_and_releases_unused_slots() {
-        let instance = wgpu::Instance::default();
-        let adapter =
-            futures::executor::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::LowPower,
-                compatible_surface: None,
-                force_fallback_adapter: false,
-            }))
-            .expect("a GPU adapter is required for this integration test");
+        let Some(adapter) = crate::test_gpu::adapter() else {
+            return;
+        };
         let (device, _queue) =
             futures::executor::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 required_features: wgpu::Features::empty(),

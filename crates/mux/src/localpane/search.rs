@@ -189,39 +189,39 @@ pub(super) async fn search(
     Ok(results)
 }
 
-fn snapshot_physical_batch(
+// Waiting is cancellation-safe: no lock is held across an await.
+async fn snapshot_physical_batch(
     pane: &LocalPane,
     cursor: StableRowIndex,
     end: StableRowIndex,
 ) -> anyhow::Result<Option<PhysicalSnapshot>> {
-    try_lock_terminal_for(
-        &pane.terminal,
-        &pane.unresponsive,
-        "localpane.terminal_lock.wait.search",
-        |term| {
-            let screen = term.screen();
-            let start = cursor.max(screen.phys_to_stable_row_index(0));
-            let end = end.min(screen.phys_to_stable_row_index(screen.scrollback_rows()));
-            if start >= end {
-                return None;
-            }
-            // stable_range deliberately shifts out-of-bounds viewports;
-            // search must intersect bounds instead of replaying earlier rows.
-            let phys_range = screen.stable_range(&(start..end));
-            if phys_range.start >= phys_range.end {
-                return None;
-            }
-            let chunk_end = (phys_range.start + SEARCH_BATCH_MAX_PHYSICAL_ROWS).min(phys_range.end);
-            Some(PhysicalSnapshot {
-                stable_start: term.screen().phys_to_stable_row_index(phys_range.start),
-                next_cursor: term.screen().phys_to_stable_row_index(chunk_end),
-                lines: term
-                    .screen()
-                    .lines_in_phys_range(phys_range.start..chunk_end),
+    loop {
+        let captured = {
+            pane.terminal.try_lock().map(|term| {
+                let screen = term.screen();
+                let start = cursor.max(screen.phys_to_stable_row_index(0));
+                let end = end.min(screen.phys_to_stable_row_index(screen.scrollback_rows()));
+                if start >= end {
+                    return None;
+                }
+                let phys_range = screen.stable_range(&(start..end));
+                if phys_range.start >= phys_range.end {
+                    return None;
+                }
+                let chunk_end =
+                    (phys_range.start + SEARCH_BATCH_MAX_PHYSICAL_ROWS).min(phys_range.end);
+                Some(PhysicalSnapshot {
+                    stable_start: screen.phys_to_stable_row_index(phys_range.start),
+                    next_cursor: screen.phys_to_stable_row_index(chunk_end),
+                    lines: screen.lines_in_phys_range(phys_range.start..chunk_end),
+                })
             })
-        },
-    )
-    .ok_or_else(|| anyhow::anyhow!("timed out acquiring terminal for search"))
+        };
+        if let Some(captured) = captured {
+            return Ok(captured);
+        }
+        smol::Timer::after(std::time::Duration::from_millis(2)).await;
+    }
 }
 
 async fn capture_logical_batch(
@@ -229,7 +229,7 @@ async fn capture_logical_batch(
     cursor: StableRowIndex,
     end: StableRowIndex,
 ) -> anyhow::Result<(SnapshotBatch, StableRowIndex)> {
-    let Some(snapshot) = snapshot_physical_batch(pane, cursor, end)? else {
+    let Some(snapshot) = snapshot_physical_batch(pane, cursor, end).await? else {
         return Ok((Vec::new(), cursor));
     };
     let mut next_cursor = snapshot.next_cursor;
@@ -261,14 +261,16 @@ async fn capture_logical_batch(
         smol::future::yield_now().await;
         // Preserve the old logical-line range semantics: a requested physical
         // range may end inside a wrapped line, whose suffix must also match.
-        let Some(snapshot) = snapshot_physical_batch(pane, next_cursor, isize::MAX)? else {
+        let Some(snapshot) = snapshot_physical_batch(pane, next_cursor, isize::MAX).await? else {
             complete.push((pending_start..next_cursor, pending));
             return Ok((complete, next_cursor));
         };
-        anyhow::ensure!(
-            snapshot.stable_start == next_cursor,
-            "scrollback changed while capturing a wrapped search line"
-        );
+        if snapshot.stable_start != next_cursor {
+            // The old prefix was evicted while yielded. Do not join it to an
+            // unrelated surviving suffix or fail the rest of the search.
+            pending.clear();
+            pending_start = snapshot.stable_start;
+        }
         stable_start = snapshot.stable_start;
         next_cursor = snapshot.next_cursor;
         lines = snapshot.lines;
@@ -292,7 +294,8 @@ async fn prepend_wrapped_prefix(
                 .saturating_sub(SEARCH_BATCH_MAX_PHYSICAL_ROWS as StableRowIndex)
                 .max(0),
             start,
-        )?;
+        )
+        .await?;
         let Some(previous) = previous else {
             break;
         };
@@ -492,6 +495,42 @@ fn haystack_idx_to_coord(idx: usize, coords: &[Coord], end: bool) -> (usize, Sta
 #[cfg(test)]
 mod tests {
     use super::{lowercase_with_offsets, search_limit_allows_result};
+    use std::future::Future;
+
+    #[test]
+    fn snapshot_waits_cooperatively_and_can_be_cancelled_while_locked() {
+        let (pane, _) = super::super::tests::make_pane();
+        let guard = pane.terminal.lock();
+        let mut snapshot = Box::pin(super::snapshot_physical_batch(&pane, 0, 1));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(snapshot.as_mut().poll(&mut cx).is_pending());
+        drop(snapshot);
+        drop(guard);
+        assert!(smol::block_on(super::snapshot_physical_batch(&pane, 0, 1))
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn history_eviction_during_wrapped_capture_keeps_surviving_suffix() {
+        let (pane, _) = super::super::tests::make_pane();
+        pane.terminal
+            .lock()
+            .advance_bytes(format!("{}END", "a".repeat(80 * 300)).as_bytes());
+        let mut capture = Box::pin(super::capture_logical_batch(&pane, 0, isize::MAX));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(capture.as_mut().poll(&mut cx).is_pending());
+        pane.terminal.lock().erase_scrollback();
+        let earliest = pane.terminal.lock().screen().phys_to_stable_row_index(0);
+        assert!(earliest > 256);
+        let (batch, next) = smol::block_on(capture).unwrap();
+        assert!(next > earliest);
+        assert!(batch.iter().all(|(range, _)| range.start >= earliest));
+        assert!(batch
+            .iter()
+            .flat_map(|(_, lines)| lines)
+            .any(|line| line.as_str().contains("END")));
+    }
 
     #[test]
     fn cancelling_a_running_worker_keeps_its_admission_until_it_finishes() {

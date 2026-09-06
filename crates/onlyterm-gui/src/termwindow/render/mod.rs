@@ -732,7 +732,11 @@ impl crate::TermWindow {
             || {
                 (
                     line.compute_shape_hash(),
-                    self.fallback_generation_for_text(line.as_str().as_ref()),
+                    fallback_fragments_generation(
+                        &self.fallback_generations.borrow(),
+                        line.visible_cells(),
+                        |cell| cell.str(),
+                    ),
                 )
             },
         )
@@ -754,12 +758,37 @@ where
 }
 
 fn fallback_text_generation(generations: &std::collections::HashMap<char, u64>, text: &str) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for ch in text.chars() {
-        ch.hash(&mut hasher);
-        generations.get(&ch).copied().unwrap_or(0).hash(&mut hasher);
+    fallback_fragments_generation(generations, std::iter::once(text), |text| *text)
+}
+
+fn fallback_fragments_generation<I, T, F>(
+    generations: &std::collections::HashMap<char, u64>,
+    fragments: I,
+    text: F,
+) -> u64
+where
+    I: IntoIterator<Item = T>,
+    F: Fn(&T) -> &str,
+{
+    if generations.is_empty() {
+        return 0;
     }
-    hasher.finish()
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut affected = false;
+    for fragment in fragments {
+        for ch in text(&fragment).chars() {
+            if let Some(generation) = generations.get(&ch) {
+                affected = true;
+                ch.hash(&mut hasher);
+                generation.hash(&mut hasher);
+            }
+        }
+    }
+    if affected {
+        hasher.finish()
+    } else {
+        0
+    }
 }
 
 pub fn shape_hash_and_fallback_lookup<F>(

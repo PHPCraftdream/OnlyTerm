@@ -3,6 +3,25 @@ use ordered_float::NotNan;
 use std::rc::Rc;
 
 #[test]
+fn fallback_fingerprint_ignores_unaffected_text_and_does_not_scan_an_empty_map() {
+    let mut generations = std::collections::HashMap::new();
+    let never_scan =
+        std::iter::from_fn(|| -> Option<&str> { panic!("empty fallback map must not scan text") });
+    std::assert_eq!(
+        fallback_fragments_generation(&generations, never_scan, |text| *text),
+        0
+    );
+    let before = fallback_text_generation(&generations, "Latin");
+    generations.insert('中', 1);
+    std::assert_eq!(fallback_text_generation(&generations, "Latin"), before);
+    let first = fallback_text_generation(&generations, "a中b");
+    let fragmented = fallback_fragments_generation(&generations, ["a", "中", "b"], |text| *text);
+    std::assert_eq!(first, fragmented);
+    generations.insert('中', 2);
+    std::assert_ne!(fallback_text_generation(&generations, "a中b"), first);
+}
+
+#[test]
 fn fallback_completion_keeps_latin_rows_but_rebuilds_dependent_cjk() {
     let mut generations = std::collections::HashMap::new();
     let mut rows = make_rows(0, &[false, false]);

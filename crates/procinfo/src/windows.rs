@@ -456,7 +456,26 @@ struct ProcessEntry {
 struct SnapshotExeEntry {
     pid: u32,
     ppid: u32,
-    exe: [u16; MAX_PATH],
+    exe: std::ops::Range<usize>,
+}
+
+#[derive(Default)]
+struct SnapshotExeEntries {
+    entries: Vec<SnapshotExeEntry>,
+    names: Vec<u16>,
+}
+
+impl SnapshotExeEntries {
+    fn push(&mut self, pid: u32, ppid: u32, exe: &[u16]) {
+        let len = exe.iter().position(|&unit| unit == 0).unwrap_or(exe.len());
+        let start = self.names.len();
+        self.names.extend_from_slice(&exe[..len]);
+        self.entries.push(SnapshotExeEntry {
+            pid,
+            ppid,
+            exe: start..self.names.len(),
+        });
+    }
 }
 
 /// Machine-wide process list shared by every `with_root_pid` caller.
@@ -517,23 +536,24 @@ fn fresh_snapshot_entries() -> io::Result<Vec<ProcessEntry>> {
         .collect()
 }
 
-fn fresh_snapshot_exe_entries() -> io::Result<Vec<SnapshotExeEntry>> {
-    Snapshot::new()?
-        .iter()
-        .map(|info| {
-            info.map(|info| SnapshotExeEntry {
-                pid: info.th32ProcessID,
-                ppid: info.th32ParentProcessID,
-                exe: info.szExeFile,
-            })
-        })
-        .collect()
+fn fresh_snapshot_exe_entries() -> io::Result<SnapshotExeEntries> {
+    let mut entries = SnapshotExeEntries::default();
+    for info in Snapshot::new()?.iter() {
+        let info = info?;
+        entries.push(
+            info.th32ProcessID,
+            info.th32ParentProcessID,
+            &info.szExeFile,
+        );
+    }
+    Ok(entries)
 }
 
 fn exe_names_from_entries(
-    entries: &[SnapshotExeEntry],
+    snapshot: &SnapshotExeEntries,
     root_pid: u32,
 ) -> io::Result<HashSet<String>> {
+    let entries = &snapshot.entries;
     let root = entries
         .iter()
         .find(|entry| entry.pid == root_pid)
@@ -554,7 +574,7 @@ fn exe_names_from_entries(
         if !visited.insert(entry.pid) {
             continue;
         }
-        if let Some(name) = entry_exe_name(&entry.exe) {
+        if let Some(name) = entry_exe_name(&snapshot.names[entry.exe.clone()]) {
             names.insert(name);
         }
         if let Some(children) = children.get(&entry.pid) {

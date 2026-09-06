@@ -3,6 +3,38 @@
 use super::*;
 
 #[test]
+fn conpty_resize_clamps_cursor_when_its_old_line_leaves_the_viewport() {
+    let mut term = TestTerm::new(53, 80, 1000);
+    term.enable_conpty_quirks();
+    for row in 0..53 {
+        term.cup(0, row);
+        term.print(format!("row {}", row));
+    }
+    term.cup(0, 5);
+    term.print("old prompt");
+    term.resize(TerminalSize {
+        rows: 40,
+        cols: 80,
+        ..Default::default()
+    });
+    // Full rows below the cursor leave no removable padding. Preserve text
+    // in history and constrain the live cursor to the surviving viewport.
+    std::assert_eq!(term.cursor_pos().y, 0);
+    std::assert!(term.screen().all_lines()[5]
+        .as_str()
+        .starts_with("old prompt"));
+    std::assert!(term.screen().visible_lines()[0]
+        .as_str()
+        .starts_with("row 13"));
+    term.print("\x1b[H\x1b[2Kprompt> input");
+    std::assert_eq!(
+        term.screen().visible_lines()[0].as_str().trim_end(),
+        "prompt> input"
+    );
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (13, 0));
+}
+
+#[test]
 fn conpty_resize_does_not_create_blank_only_scrollback() {
     let mut term = TestTerm::new(24, 80, 1000);
     term.enable_conpty_quirks();

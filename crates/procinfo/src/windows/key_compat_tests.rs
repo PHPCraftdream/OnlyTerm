@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn packed_names_copy_only_live_utf16_and_keep_unicode_names() {
+    let mut snapshot = SnapshotExeEntries::default();
+    let raw = entry(1, 0, "程序😀.exe");
+    snapshot.push(raw.pid, raw.ppid, &raw.exe);
+    let expected: Vec<u16> = "程序😀.exe".encode_utf16().collect();
+    assert_eq!(snapshot.names, expected);
+    for pid in 2..302 {
+        snapshot.push(pid, 1, &entry(pid, 1, "cmd.exe").exe);
+    }
+    let names = super::exe_names_from_entries(&snapshot, 1).unwrap();
+    assert!(names.contains("程序😀.exe"));
+    assert!(names.contains("cmd.exe"));
+    let packed_bytes = snapshot.entries.capacity() * std::mem::size_of::<SnapshotExeEntry>()
+        + snapshot.names.capacity() * std::mem::size_of::<u16>();
+    assert!(packed_bytes < snapshot.entries.len() * std::mem::size_of::<[u16; MAX_PATH]>());
+}
+
+#[test]
 fn cached_snapshots_share_storage_and_failed_refresh_preserves_generation() {
     let cache = Mutex::new(None);
     let now = Instant::now();
@@ -44,12 +62,26 @@ fn cwd_only_lookup_does_not_read_command_line() {
     );
 }
 
-fn entry(pid: u32, ppid: u32, exe: &str) -> SnapshotExeEntry {
+struct TestExeEntry {
+    pid: u32,
+    ppid: u32,
+    exe: [u16; MAX_PATH],
+}
+
+fn names_for_entries(entries: &[TestExeEntry], root: u32) -> io::Result<HashSet<String>> {
+    let mut snapshot = SnapshotExeEntries::default();
+    for entry in entries {
+        snapshot.push(entry.pid, entry.ppid, &entry.exe);
+    }
+    super::exe_names_from_entries(&snapshot, root)
+}
+
+fn entry(pid: u32, ppid: u32, exe: &str) -> TestExeEntry {
     let mut encoded = [0u16; MAX_PATH];
     let wide: Vec<u16> = exe.encode_utf16().collect();
     let copy_len = wide.len().min(encoded.len().saturating_sub(1));
     encoded[..copy_len].copy_from_slice(&wide[..copy_len]);
-    SnapshotExeEntry {
+    TestExeEntry {
         pid,
         ppid,
         exe: encoded,
@@ -94,7 +126,7 @@ fn name_lookup_follows_wrappers_but_excludes_other_panes() {
         entry(6, 5, "cmd.exe"),
         entry(7, 6, "node.exe"),
     ];
-    let names = exe_names_from_entries(&entries, 2).unwrap();
+    let names = names_for_entries(&entries, 2).unwrap();
     assert_eq!(
         names,
         [
@@ -108,7 +140,7 @@ fn name_lookup_follows_wrappers_but_excludes_other_panes() {
         .map(String::from)
         .collect()
     );
-    let names = exe_names_from_entries(&entries, 10).unwrap();
+    let names = names_for_entries(&entries, 10).unwrap();
     assert_eq!(
         names,
         ["cmd.exe", "claude.exe"]
@@ -121,15 +153,15 @@ fn name_lookup_follows_wrappers_but_excludes_other_panes() {
 #[test]
 fn name_lookup_tracks_start_and_exit_in_each_snapshot() {
     let mut entries = vec![entry(1, 0, "cmd.exe")];
-    assert!(!exe_names_from_entries(&entries, 1)
+    assert!(!names_for_entries(&entries, 1)
         .unwrap()
         .contains("codex.exe"));
     entries.push(entry(2, 1, "codex.exe"));
-    assert!(exe_names_from_entries(&entries, 1)
+    assert!(names_for_entries(&entries, 1)
         .unwrap()
         .contains("codex.exe"));
     entries.pop();
-    assert!(!exe_names_from_entries(&entries, 1)
+    assert!(!names_for_entries(&entries, 1)
         .unwrap()
         .contains("codex.exe"));
 }
@@ -138,7 +170,7 @@ fn name_lookup_tracks_start_and_exit_in_each_snapshot() {
 fn name_lookup_missing_root_is_unknown_not_empty_tree() {
     let entries = [entry(2, 1, "codex.exe")];
     assert_eq!(
-        exe_names_from_entries(&entries, 1).unwrap_err().kind(),
+        names_for_entries(&entries, 1).unwrap_err().kind(),
         io::ErrorKind::NotFound
     );
 }
@@ -150,7 +182,7 @@ fn name_lookup_handles_cycles_and_deep_wrapper_chains() {
         entries.push(entry(pid, pid - 1, "powershell.exe"));
     }
     entries.push(entry(10_000, 9_999, "node_repl.exe"));
-    let names = exe_names_from_entries(&entries, 1).unwrap();
+    let names = names_for_entries(&entries, 1).unwrap();
     assert!(names.contains("codex.exe"));
     assert!(names.contains("node_repl.exe"));
     assert_eq!(names.len(), 4);

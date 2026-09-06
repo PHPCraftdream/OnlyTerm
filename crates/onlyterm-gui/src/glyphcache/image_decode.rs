@@ -527,26 +527,13 @@ impl FrameState {
     }
 
     fn accept_frame(&mut self, frame: DecodedFrame) -> bool {
-        let key = frame.lease.content_id().as_hash_bytes();
-        if self.pending_refills.remove(&key) {
-            if let Some(existing) = self
-                .frames
-                .iter_mut()
-                .find(|existing| existing.lease.content_id().as_hash_bytes() == key)
-            {
-                *existing = frame.clone();
-            }
-            if self.current_frame.lease.content_id().as_hash_bytes() == key {
-                self.current_frame = frame;
-            }
-            false
-        } else {
-            self.frames.push(frame.clone());
-            self.current_frame = frame;
-            self.current_index = self.frames.len() - 1;
-            self.load_state = LoadState::Loaded;
-            true
-        }
+        // Decoder frames are timeline entries, even when their pixels match.
+        // Disk refill completions have their own channel and do not enter here.
+        self.frames.push(frame.clone());
+        self.current_frame = frame;
+        self.current_index = self.frames.len() - 1;
+        self.load_state = LoadState::Loaded;
+        true
     }
 
     pub(super) fn poll_refills(&mut self) {
@@ -736,6 +723,39 @@ pub(super) fn ensure_test_storage() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_animation_pixels_keep_distinct_timing_during_refill() {
+        ensure_test_storage();
+        let (tx, rx) = sync_channel(2);
+        let first = DecodedFrame {
+            lease: BlobManager::store(&[1, 2, 3, 4]).unwrap(),
+            duration: Duration::from_millis(10),
+            width: 1,
+            height: 1,
+        };
+        let second = DecodedFrame {
+            duration: Duration::from_millis(30),
+            ..first.clone()
+        };
+        tx.send(first.clone()).unwrap();
+        tx.send(second).unwrap();
+        let mut state = frame_state_for_test(rx);
+        assert!(state.load_next_frame());
+        let key = first.lease.content_id().as_hash_bytes();
+        state.pending_refills.insert(key);
+        assert!(state.load_next_frame());
+        assert_eq!(state.frames.len(), 2);
+        assert_eq!(state.frames[0].duration, Duration::from_millis(10));
+        assert_eq!(state.current_frame.duration, Duration::from_millis(30));
+        assert!(state.pending_refills.contains(&key));
+        drop(tx);
+        assert!(!state.load_next_frame());
+        assert!(state.load_next_frame());
+        assert_eq!(state.current_frame.duration, Duration::from_millis(10));
+        assert!(state.load_next_frame());
+        assert_eq!(state.current_frame.duration, Duration::from_millis(30));
+    }
 
     #[test]
     fn decoded_pixel_cache_evicts_old_frames_at_the_byte_budget() {

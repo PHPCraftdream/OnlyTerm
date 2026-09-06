@@ -12,6 +12,8 @@ pub mod gpu_tab_host;
 pub mod host_process_backend;
 mod instance_buffer_pool;
 mod quad;
+#[cfg(test)]
+mod test_gpu;
 pub mod webgpu;
 
 pub use host_process_backend::HostProcessBackend;

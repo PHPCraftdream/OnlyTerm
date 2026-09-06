@@ -22,6 +22,18 @@ usually the best available version.
 As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
+
+* Process-provided tab/window titles are opt-in via `allow_process_title_updates`.
+  Explicit UI and configured titles retain priority.
+* CJK fallback faces and shaping plans stay cached; mirrored atlas uploads no
+  longer accumulate unused parent-process GPU transfers.
+* ConPTY resize handling keeps the cursor aligned and avoids creating empty-only
+  scrollback when shrinking a fresh pane.
+* Keyboard compatibility detection uses fresh descendant process names so
+  Ctrl+J/Ctrl+Enter/Shift+Enter do not depend on stale process-tree snapshots.
+* Explicit Debug/Trace diagnostics use synchronous output; ordinary buffered
+  logging flushes earlier records before falling back on a full queue.
+* Repeated animation frames keep their timing when a disk pixel refill is pending.
 * The default New Tab keybinding no longer includes bare `Ctrl+T` -- it commonly collides
   with shell/readline bindings running inside the terminal itself. `Ctrl+Shift+T` (already
   a default, synthesized from the `SUPER+T`/`CMD+T` binding on Windows/Linux) remains.

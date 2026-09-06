@@ -1,6 +1,14 @@
 //! Pane trait implementation: terminal I/O, rendering and lifecycle.
 use super::*;
 
+fn process_exit_brief(cmd: &str, success: bool) -> String {
+    if success {
+        format!("\u{1f44d} Process {cmd} completed.")
+    } else {
+        format!("\u{26a0}\u{fe0f}  Process {cmd} didn't exit cleanly")
+    }
+}
+
 #[async_trait(?Send)]
 impl Pane for LocalPane {
     fn pane_id(&self) -> PaneId {
@@ -348,7 +356,7 @@ impl Pane for LocalPane {
                     ) {
                         (ExitBehavior::Close, _, _) => *proc = ProcessState::Dead,
                         (ExitBehavior::CloseOnCleanExit, false, _) => {
-                            brief = format!("âš ï¸  Process {cmd} didn't exit cleanly");
+                            brief = process_exit_brief(cmd, false);
                             terse = format!("{status}.");
                             trailer = format!("{EXIT_BEHAVIOR}=\"CloseOnCleanExit\"");
 
@@ -359,10 +367,10 @@ impl Pane for LocalPane {
                             trailer = format!("{EXIT_BEHAVIOR}=\"Hold\"");
 
                             if success {
-                                brief = format!("ðŸ‘ Process {cmd} completed.");
+                                brief = process_exit_brief(cmd, true);
                                 terse = "done".to_string();
                             } else {
-                                brief = format!("âš ï¸  Process {cmd} didn't exit cleanly");
+                                brief = process_exit_brief(cmd, false);
                                 terse = format!("{status}");
                             }
                             *proc = ProcessState::DeadPendingClose { killed: false }
@@ -755,5 +763,20 @@ impl Pane for LocalPane {
         limit: Option<u32>,
     ) -> anyhow::Result<Vec<SearchResult>> {
         search::search(self, pattern, range, limit).await
+    }
+}
+
+#[cfg(test)]
+mod exit_message_tests {
+    #[test]
+    fn exit_messages_keep_unicode_symbols_and_command_text() {
+        assert_eq!(
+            super::process_exit_brief("shell", true),
+            "👍 Process shell completed."
+        );
+        assert_eq!(
+            super::process_exit_brief("程序", false),
+            "⚠️  Process 程序 didn't exit cleanly"
+        );
     }
 }

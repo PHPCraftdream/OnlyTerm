@@ -188,7 +188,7 @@ impl TerminalConfiguration for TestConfig {
 const ROWS: usize = 24;
 const COLS: usize = 80;
 
-fn make_pane() -> (Arc<LocalPane>, Arc<std::sync::atomic::AtomicBool>) {
+pub(super) fn make_pane() -> (Arc<LocalPane>, Arc<std::sync::atomic::AtomicBool>) {
     let size = TerminalSize {
         rows: ROWS,
         cols: COLS,

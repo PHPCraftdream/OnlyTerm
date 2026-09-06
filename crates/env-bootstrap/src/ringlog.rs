@@ -19,6 +19,11 @@ use termwiz::istty::IsTty;
 const ASYNC_QUEUE_CAPACITY: usize = 256;
 const MAX_QUEUED_LINE_BYTES: usize = 64 * 1024;
 
+fn use_background_output(is_gui: bool, max_level: LevelFilter) -> bool {
+    // Explicit diagnostics need their tail written before returning to callers.
+    is_gui && max_level == LevelFilter::Info
+}
+
 lazy_static::lazy_static! {
     static ref RINGS: Mutex<Rings> = Mutex::new(Rings::new());
 }
@@ -171,6 +176,12 @@ impl AsyncOutput {
                 unreachable!("only Record messages are sent through AsyncOutput::send")
             }
         }
+    }
+
+    fn flush_before_direct(&self, result: Result<(), FormattedRecord>) -> Option<FormattedRecord> {
+        let record = result.err()?;
+        self.flush();
+        Some(record)
     }
 
     fn flush(&self) {
@@ -365,7 +376,7 @@ impl log::Log for Logger {
                     async_output.flush();
                     Some(output)
                 } else {
-                    async_output.send(limit_queued_record(output)).err()
+                    async_output.flush_before_direct(async_output.send(limit_queued_record(output)))
                 }
             } else {
                 Some(output)
@@ -498,7 +509,7 @@ fn setup_pretty() -> (LevelFilter, Logger) {
     let filter = filters.build();
     let max_level = filter.filter();
 
-    let async_output = if base_name.contains("gui") {
+    let async_output = if use_background_output(base_name.contains("gui"), max_level) {
         AsyncOutput::new(log_file_name.clone())
     } else {
         None
@@ -634,6 +645,53 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert_eq!(content, "startup\n");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicit_diagnostics_are_synchronous() {
+        assert!(use_background_output(true, LevelFilter::Info));
+        for level in [
+            LevelFilter::Off,
+            LevelFilter::Error,
+            LevelFilter::Warn,
+            LevelFilter::Debug,
+            LevelFilter::Trace,
+        ] {
+            assert!(!use_background_output(true, level));
+        }
+        assert!(!use_background_output(false, LevelFilter::Info));
+    }
+
+    #[test]
+    fn queue_overflow_flushes_earlier_records_before_direct_fallback() {
+        let (tx, rx) = sync_channel(1);
+        let output = AsyncOutput {
+            tx,
+            join: Mutex::new(None),
+        };
+        assert!(output
+            .send(FormattedRecord {
+                stderr: String::new(),
+                file: "first".into()
+            })
+            .is_ok());
+        let unsent = output.send(FormattedRecord {
+            stderr: String::new(),
+            file: "second".into(),
+        });
+        assert!(unsent.is_err());
+        let worker = std::thread::spawn(move || {
+            match rx.recv().unwrap() {
+                AsyncMessage::Record(record) => assert_eq!(record.file, "first"),
+                _ => panic!("expected earlier record"),
+            }
+            match rx.recv().unwrap() {
+                AsyncMessage::Flush(done) => done.send(()).unwrap(),
+                _ => panic!("expected flush barrier before direct fallback"),
+            }
+        });
+        assert_eq!(output.flush_before_direct(unsent).unwrap().file, "second");
+        worker.join().unwrap();
     }
 
     #[test]
