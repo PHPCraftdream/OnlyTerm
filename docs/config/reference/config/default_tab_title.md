@@ -11,8 +11,7 @@ given an explicit title some other way.
 
 OnlyTerm always shows one of, in priority order:
 
-1. An explicit rename -- `onlyterm cli set-tab-title`, or the tab-bar rename
-   UI. This is a live user action and always wins.
+1. An explicit rename from the tab-bar UI. This live user action always wins.
 2. [`SpawnCommand.title`](../SpawnCommand.md), if the launch that
    created the tab specified one -- a per-launch override, for example on a
    keybinding or a `onlyterm cli spawn` invocation.
@@ -22,6 +21,6 @@ OnlyTerm always shows one of, in priority order:
    shell's own OSC 7/0/2 escape sequences, so nothing running inside the
    pane can spoof or flicker the title by printing one.
 
-There is no way back to the old "use the program's own title" behavior --
-OnlyTerm deliberately never displays a title that the running program
-chose for itself.
+Process-provided OSC titles are ignored by default. They can be restored with
+[`allow_process_title_updates`](allow_process_title_updates.md), although this
+also allows shells and TUI applications to trigger frequent title refreshes.

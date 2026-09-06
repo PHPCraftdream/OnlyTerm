@@ -161,7 +161,21 @@ Outputs the pane-id for the newly created pane on success"
     ZoomPane(zoom_pane::ZoomPane),
 }
 
+fn is_process_title_command(command: &CliSubCommand) -> bool {
+    matches!(
+        command,
+        CliSubCommand::SetTabTitle(_) | CliSubCommand::SetWindowTitle(_)
+    )
+}
+
 async fn run_cli_async(opts: &crate::Opt, cli: CliCommand) -> anyhow::Result<()> {
+    if is_process_title_command(&cli.sub) && !crate::init_config(opts)?.allow_process_title_updates
+    {
+        anyhow::bail!(
+            "process title updates are disabled; set allow_process_title_updates: true to enable this command"
+        );
+    }
+
     let mut ui = mux::connui::ConnectionUI::new_headless();
     let initial = true;
 
@@ -237,5 +251,24 @@ pub fn resolve_relative_cwd(cwd: Option<OsString>) -> anyhow::Result<Option<Stri
                 .ok_or_else(|| anyhow!("path is not representable as String"))?
                 .to_string(),
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn title_commands_are_classified_as_process_updates() {
+        for args in [
+            ["onlyterm-cli", "set-tab-title", "tab"],
+            ["onlyterm-cli", "set-window-title", "window"],
+        ] {
+            let cli = CliCommand::try_parse_from(args).unwrap();
+            assert!(is_process_title_command(&cli.sub));
+        }
+
+        let cli = CliCommand::try_parse_from(["onlyterm-cli", "list"]).unwrap();
+        assert!(!is_process_title_command(&cli.sub));
     }
 }

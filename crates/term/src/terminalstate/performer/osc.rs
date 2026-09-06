@@ -5,6 +5,12 @@ impl<'a> Performer<'a> {
         self.pop_tmux_title_state();
         self.flush_print();
         match osc {
+            OperatingSystemCommand::SetIconNameSun(_)
+            | OperatingSystemCommand::SetIconName(_)
+            | OperatingSystemCommand::SetIconNameAndWindowTitle(_)
+            | OperatingSystemCommand::SetWindowTitleSun(_)
+            | OperatingSystemCommand::SetWindowTitle(_)
+                if !self.config.allow_process_title_updates() => {}
             OperatingSystemCommand::SetIconNameSun(title)
             | OperatingSystemCommand::SetIconName(title) => {
                 if title.is_empty() {
@@ -25,7 +31,6 @@ impl<'a> Performer<'a> {
                     handler.alert(Alert::IconTitleChanged(Some(title)));
                 }
             }
-
             OperatingSystemCommand::SetWindowTitleSun(title)
             | OperatingSystemCommand::SetWindowTitle(title) => {
                 self.title = title.clone();

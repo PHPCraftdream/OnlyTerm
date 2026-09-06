@@ -88,6 +88,10 @@ impl onlyterm_term::TerminalConfiguration for TermConfig {
         self.configuration().enable_title_reporting
     }
 
+    fn allow_process_title_updates(&self) -> bool {
+        self.configuration().allow_process_title_updates
+    }
+
     fn enable_checksum_rectangular_area(&self) -> bool {
         self.configuration().enable_checksum_rectangular_area
     }
@@ -133,5 +137,23 @@ impl onlyterm_term::TerminalConfiguration for TermConfig {
             enabled: config.bidi_enabled,
             hint: config.bidi_direction,
         }
+    }
+}
+
+#[cfg(test)]
+mod title_update_tests {
+    use onlyterm_dynamic::FromDynamic;
+
+    #[test]
+    fn process_title_updates_are_disabled_by_default() {
+        assert!(!crate::Config::default().allow_process_title_updates);
+    }
+
+    #[test]
+    fn process_title_updates_can_be_enabled_from_root_config() {
+        let parsed = ktav::parse("allow_process_title_updates: true").unwrap();
+        let value = crate::ktav_value::ktav_value_to_dynamic(&parsed);
+        let config = crate::Config::from_dynamic(&value, Default::default()).unwrap();
+        assert!(config.allow_process_title_updates);
     }
 }

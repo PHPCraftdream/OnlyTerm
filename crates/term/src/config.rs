@@ -220,6 +220,11 @@ pub trait TerminalConfiguration: Downcast + std::fmt::Debug + Send + Sync {
         false
     }
 
+    /// Whether applications may change titles with OSC 0/1/2.
+    fn allow_process_title_updates(&self) -> bool {
+        false
+    }
+
     fn enable_checksum_rectangular_area(&self) -> bool {
         false
     }

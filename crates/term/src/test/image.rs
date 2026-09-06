@@ -54,7 +54,10 @@ fn kitty_image_with_zero_pixel_dimensions_does_not_panic() {
             pixel_height: 0,
             dpi: 0,
         },
-        Arc::new(TestTermConfig { scrollback: 0 }),
+        Arc::new(TestTermConfig {
+            scrollback: 0,
+            allow_process_title_updates: false,
+        }),
         "OnlyTerm",
         "O_o",
         Box::new(Vec::new()),

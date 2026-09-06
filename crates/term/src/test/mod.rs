@@ -11,6 +11,7 @@ mod mouse;
 mod perf_probe;
 mod resize;
 mod stable_seqno;
+mod title;
 // mod selection; FIXME: port to render layer
 use crate::color::ColorPalette;
 use k9::assert_equal as assert_eq;
@@ -50,6 +51,7 @@ struct TestTerm {
 #[derive(Debug)]
 struct TestTermConfig {
     scrollback: usize,
+    allow_process_title_updates: bool,
 }
 impl TerminalConfiguration for TestTermConfig {
     fn scrollback_size(&self) -> usize {
@@ -58,6 +60,10 @@ impl TerminalConfiguration for TestTermConfig {
 
     fn color_palette(&self) -> ColorPalette {
         ColorPalette::default()
+    }
+
+    fn allow_process_title_updates(&self) -> bool {
+        self.allow_process_title_updates
     }
 
     fn enable_kitty_graphics(&self) -> bool {
@@ -89,7 +95,10 @@ impl TestTerm {
                 pixel_height: height * 16,
                 dpi: 0,
             },
-            Arc::new(TestTermConfig { scrollback }),
+            Arc::new(TestTermConfig {
+                scrollback,
+                allow_process_title_updates: false,
+            }),
             "OnlyTerm",
             "O_o",
             writer,

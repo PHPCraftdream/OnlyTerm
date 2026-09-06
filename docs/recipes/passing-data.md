@@ -130,8 +130,9 @@ specific information in a pane.
 
 ## OSC 0, 1, 2 for setting the Window/Pane Title
 
-onlyterm, like many other terminals, will interpret Operating System Command
-(OSC) escape sequences for codes 0, 1 and 2 as updating the title:
+When [`allow_process_title_updates`](../config/reference/config/allow_process_title_updates.md)
+is enabled, OnlyTerm interprets Operating System Command (OSC) escape sequences
+for codes 0, 1 and 2 as title updates. They are ignored by default:
 
 |OSC|Description|Action|Example|
 |---|-----------|------|-------|
@@ -143,11 +144,9 @@ onlyterm, like many other terminals, will interpret Operating System Command
 [PaneInformation](../config/reference/PaneInformation.md) `title` field can be used
 to retrieve the effective title that has been set for a pane.
 
-It is common practice for shells in many distributions to arrange to set OSC 2
-prior to executing a command. onlyterm doesn't currently set this up
-automatically. Note that onlyterm will attempt to determine the foreground
-process and substitute its title if the pane is a local pane and no title has
-been set by an OSC escape sequence.
+Many shells emit OSC 2 before executing a command. Keeping process title
+updates disabled prevents those sequences from replacing configured/UI titles
+or repeatedly invalidating the tab bar.
 
 ## OSC 7 for setting the current working directory
 

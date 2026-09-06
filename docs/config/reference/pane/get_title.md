@@ -15,18 +15,16 @@
 
 {{since('20201031-154415-9614e117')}}
 
-Returns the title of the pane.  This will typically be `onlyterm` by default but
-can be modified by applications that send `OSC 1` (Icon/Tab title changing)
-and/or `OSC 2` (Window title changing) escape sequences.
+Returns the title of the pane. Process-supplied OSC 1/2 titles are ignored by
+default and are accepted only when `allow_process_title_updates` is enabled.
 
 The value returned by this method is the same as that used to display the
 tab title if this pane were the only pane in the tab; if `OSC 1` was used
 to set a non-empty string then that string will be returned.  Otherwise the
 value for `OSC 2` will be returned.
 
-Note that on Microsoft Windows the default behavior of the OS level PTY is to
-implicitly send `OSC 2` sequences to the terminal as new programs attach to the
-console.
+On Microsoft Windows the OS-level PTY may emit OSC 2 as programs attach to the
+console; the default setting prevents those updates from affecting the title.
 
 If the title text is `onlyterm` and the pane is a local pane, then onlyterm will
 attempt to resolve the executable path of the foreground process that is

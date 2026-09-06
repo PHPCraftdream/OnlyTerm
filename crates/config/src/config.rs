@@ -272,6 +272,11 @@ pub struct Config {
     #[dynamic(default)]
     pub enable_title_reporting: bool,
 
+    /// Whether programs may change tab/window titles with OSC 0/1/2.
+    /// Disabled by default to keep titles stable and avoid update storms.
+    #[dynamic(default)]
+    pub allow_process_title_updates: bool,
+
     /// Whether the terminal should respond to DECRQCRA checksum requests.
     /// Disabled by default as it allows programs to read screen contents.
     /// <https://vt100.net/docs/vt510-rm/DECRQCRA.html>
@@ -522,7 +527,7 @@ pub struct Config {
     pub tab_and_split_indices_are_zero_based: bool,
 
     /// Fallback tab title (used when a tab hasn't been explicitly renamed
-    /// via F2 / `onlyterm cli set-tab-title`, and `SpawnCommand::title`
+    /// via F2 / the tab-bar rename UI, and `SpawnCommand::title`
     /// wasn't set for that particular launch) applied to every newly
     /// spawned tab. If unset, the tab title tracks the cwd basename
     /// instead. See `SpawnCommand::title` for the per-launch override that

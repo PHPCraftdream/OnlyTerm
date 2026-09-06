@@ -200,18 +200,11 @@ fn compute_tab_title(tab: &TabInformation, config: &ConfigHandle) -> TitleText {
             // most recently wins here.
             tab.tab_title.clone()
         } else {
-            // Otherwise: the cwd basename, as observed directly from the
-            // OS rather than the pane's own OSC 0/2 "set title" escape
-            // sequence -- nothing running inside the pane gets to choose
-            // the tab's title. `pane.current_working_dir` is only empty
-            // for panes that have no notion of a cwd at all (internal
-            // overlays like search/copy-mode), where falling back to the
-            // pane's own (internally assigned, not shell-controlled)
-            // title is harmless.
-            match &pane.current_working_dir {
-                Some(cwd) if !cwd.is_empty() => basename_of_path(cwd),
-                _ => pane.title.clone(),
-            }
+            automatic_title(
+                pane.current_working_dir.as_deref(),
+                &pane.title,
+                config.allow_process_title_updates,
+            )
         };
 
         let classic_spacing = if config.use_fancy_tab_bar { "" } else { " " };
@@ -282,6 +275,21 @@ fn compute_tab_title(tab: &TabInformation, config: &ConfigHandle) -> TitleText {
         len,
         items,
         has_indeterminate,
+    }
+}
+
+pub(crate) fn automatic_title(
+    cwd: Option<&str>,
+    process_title: &str,
+    allow_process_title_updates: bool,
+) -> String {
+    if allow_process_title_updates {
+        process_title.to_string()
+    } else {
+        match cwd {
+            Some(cwd) if !cwd.is_empty() => basename_of_path(cwd),
+            _ => process_title.to_string(),
+        }
     }
 }
 
@@ -894,7 +902,23 @@ mod tests {
         );
     }
 
-    use super::basename_of_path;
+    use super::{automatic_title, basename_of_path};
+
+    #[test]
+    fn automatic_title_prefers_cwd_when_process_updates_are_disabled() {
+        assert_eq!(
+            automatic_title(Some("file:///C:/work/project"), "shell-title", false),
+            "project"
+        );
+    }
+
+    #[test]
+    fn automatic_title_uses_process_title_when_updates_are_enabled() {
+        assert_eq!(
+            automatic_title(Some("file:///C:/work/project"), "shell-title", true),
+            "shell-title"
+        );
+    }
 
     #[test]
     fn basename_of_unix_style_url() {

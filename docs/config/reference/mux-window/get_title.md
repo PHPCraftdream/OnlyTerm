@@ -15,7 +15,6 @@
 
 {{since('20220807-113146-c2fee766')}}
 
-Returns the window title as set by `OSC 0`, `OSC 2` in a contained pane, or through
-`window:set_title()`.
-
+Historically returned a window title set by OSC 0/2 or `window:set_title()`.
+Process OSC titles now require `allow_process_title_updates: true`.
 

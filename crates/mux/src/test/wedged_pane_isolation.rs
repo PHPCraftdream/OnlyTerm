@@ -131,6 +131,10 @@ impl Write for BlockingWriter {
 #[derive(Debug)]
 struct TestConfig;
 impl TerminalConfiguration for TestConfig {
+    fn allow_process_title_updates(&self) -> bool {
+        true
+    }
+
     fn color_palette(&self) -> ColorPalette {
         ColorPalette::default()
     }
