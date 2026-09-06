@@ -184,7 +184,6 @@ struct FontPair {
     /// instances.
     font_info: crate::swash_metrics::SwashFontInfo,
     rb_face: RefCell<Option<OwnedRbFace>>,
-    shaped_any: bool,
     presentation: Presentation,
     features: Vec<rustybuzz::Feature>,
     variations: RefCell<Option<Vec<rustybuzz::Variation>>>,
@@ -353,7 +352,6 @@ impl RustybuzzShaper {
                     *opt_pair = Some(FontPair {
                         font_info,
                         rb_face: RefCell::new(None),
-                        shaped_any: false,
                         presentation: if handle.assume_emoji_presentation {
                             Presentation::Emoji
                         } else {
@@ -465,7 +463,6 @@ impl RustybuzzShaper {
         let plan_direction = buf.direction();
         let plan_script = buf.script();
 
-        let shaped_any;
         let mut no_more_fallbacks = false;
 
         let glyph_buffer;
@@ -544,8 +541,6 @@ impl RustybuzzShaper {
 
                     let pixel_size = point_size * dpi as f64 / 72.0;
                     scale = pixel_size / units_per_em;
-
-                    shaped_any = pair.shaped_any;
 
                     let rb_face = pair.rb_face.borrow();
                     let face = &rb_face.as_ref().unwrap().face;
@@ -684,8 +679,6 @@ impl RustybuzzShaper {
         }
         log::debug!("font_idx={font_idx} info_clusters: {:#?}", info_clusters);
 
-        let mut direct_clusters = 0;
-
         for infos in &info_clusters {
             let cluster_info = cluster_resolver
                 .get(infos[0].cluster)
@@ -779,7 +772,6 @@ impl RustybuzzShaper {
                     zeroed.y_advance = 0.;
                     let glyph = make_glyphinfo(substr, 0, font_idx, &zeroed);
                     cluster.push(glyph);
-                    direct_clusters += 1;
                     continue;
                 }
 
@@ -794,24 +786,11 @@ impl RustybuzzShaper {
                 let glyph = make_glyphinfo(substr, weighted_cell_width, font_idx, info);
 
                 cluster.push(glyph);
-                direct_clusters += 1;
             }
         }
 
-        if !shaped_any {
-            if let Some(opt_pair) = self.fonts.get(font_idx) {
-                if direct_clusters == 0 {
-                    log::trace!(
-                        "Shaper didn't resolve glyphs from {:?}, so unload it",
-                        self.handles[font_idx]
-                    );
-                    opt_pair.borrow_mut().take();
-                } else if let Some(pair) = &mut *opt_pair.borrow_mut() {
-                    pair.shaped_any = true;
-                }
-            }
-        }
-
+        // Coverage misses recur on every fallback-only run. Keep parsed
+        // fonts and plans until this shaper (and its fixed font set) is dropped.
         Ok(cluster)
     }
 }

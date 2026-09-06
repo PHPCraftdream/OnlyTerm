@@ -1,4 +1,5 @@
 use super::*;
+mod fallback_cache;
 use crate::locator::{FontDataHandle, FontDataSource};
 use crate::FontDatabase;
 use config::FontAttributes;

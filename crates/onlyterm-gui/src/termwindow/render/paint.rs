@@ -15,6 +15,16 @@ pub enum AllowImage {
     No,
 }
 
+fn atlas_retry_size(pass: usize, current: usize, requested: usize) -> usize {
+    // Retain glyphs across CJK pages before falling back to eviction.
+    // A 2048-square RGBA atlas costs 16 MiB on the rendering device.
+    if pass > 0 || (current < 2048 && requested <= 2048) {
+        requested
+    } else {
+        current
+    }
+}
+
 impl crate::TermWindow {
     pub fn paint_impl(&mut self, frame: &mut RenderFrame) {
         // Check render-thread back-pressure BEFORE building the frame.
@@ -100,15 +110,9 @@ impl crate::TermWindow {
                         current_size,
                     }) = err.root_cause().downcast_ref::<OutOfTextureSpace>()
                     {
-                        let result = if pass == 0 {
-                            // Let's try clearing out the atlas and trying again
-                            // self.clear_texture_atlas()
-                            log::trace!("recreate_texture_atlas");
-                            self.recreate_texture_atlas(Some(current_size))
-                        } else {
-                            log::trace!("grow texture atlas to {}", size);
-                            self.recreate_texture_atlas(Some(size))
-                        };
+                        let retry_size = atlas_retry_size(pass, current_size, size);
+                        log::debug!("recreate glyph atlas {} -> {}", current_size, retry_size);
+                        let result = self.recreate_texture_atlas(Some(retry_size));
                         self.invalidate_fancy_tab_bar();
                         self.invalidate_modal();
 
@@ -121,7 +125,11 @@ impl crate::TermWindow {
                                 _ => {
                                     log::error!(
                                         "Failed to {} texture: {}",
-                                        if pass == 0 { "clear" } else { "resize" },
+                                        if retry_size == current_size {
+                                            "clear"
+                                        } else {
+                                            "resize"
+                                        },
                                         err
                                     );
                                     break 'pass;
@@ -484,5 +492,23 @@ impl crate::TermWindow {
         )));
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod atlas_retry_tests {
+    use super::atlas_retry_size;
+
+    #[test]
+    fn grows_small_glyph_atlases_before_evicting() {
+        assert_eq!(atlas_retry_size(0, 128, 256), 256);
+        assert_eq!(atlas_retry_size(0, 1024, 2048), 2048);
+    }
+
+    #[test]
+    fn caps_opportunistic_growth_but_preserves_large_frame_retry() {
+        assert_eq!(atlas_retry_size(0, 2048, 4096), 2048);
+        assert_eq!(atlas_retry_size(0, 1024, 4096), 1024);
+        assert_eq!(atlas_retry_size(1, 2048, 4096), 4096);
     }
 }

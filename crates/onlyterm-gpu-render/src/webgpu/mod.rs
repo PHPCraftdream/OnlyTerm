@@ -220,7 +220,7 @@ pub struct WebGpuTexture {
     width: u32,
     height: u32,
     queue: Arc<wgpu::Queue>,
-    /// Whether `write()` should also record into `dirty_updates`, for a
+    /// Whether `write()` records only into the CPU replay log, for a
     /// window using `webgpu_engine: HostProcess` to mirror this atlas in a
     /// child process without ever sharing the GPU resource itself -- see
     /// `termwindow::webgpu::wire`. `false` for every other window, at the
@@ -356,6 +356,22 @@ impl Texture2d for WebGpuTexture {
     fn write(&self, rect: Rect, im: &dyn BitmapImage) {
         let (im_width, im_height) = im.image_dimensions();
 
+        if self
+            .mirroring_enabled
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            self.mirror.lock().record(
+                (
+                    rect.min_x() as u32,
+                    rect.min_y() as u32,
+                    im_width as u32,
+                    im_height as u32,
+                ),
+                im.pixel_data_slice(),
+            );
+            return;
+        }
+
         self.queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -379,21 +395,6 @@ impl Texture2d for WebGpuTexture {
                 depth_or_array_layers: 1,
             },
         );
-
-        if self
-            .mirroring_enabled
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            self.mirror.lock().record(
-                (
-                    rect.min_x() as u32,
-                    rect.min_y() as u32,
-                    im_width as u32,
-                    im_height as u32,
-                ),
-                im.pixel_data_slice(),
-            );
-        }
     }
 
     fn read(&self, _rect: Rect, _im: &mut dyn BitmapImage) {
@@ -464,16 +465,22 @@ impl WebGpuTexture {
     }
 
     /// Turns on atlas-write mirroring for a `HostProcess` backend: every
-    /// subsequent `write()` also appends its `(rect, pixel bytes)` to the
+    /// subsequent `write()` appends its `(rect, pixel bytes)` only to the
     /// internal log, which `drain_dirty_updates` hands to the caller (e.g.
     /// once per frame, before shipping a `wire::WireFrame` to the child
-    /// process). Idempotent. Must be called before this atlas texture is
-    /// written to for the first time (typically: immediately after
-    /// construction, see `renderstate.rs`'s `enable_atlas_mirroring_if_needed`)
-    /// -- turning it on any later would miss whatever was already written.
+    /// process). Idempotent. Enable immediately after the atlas's initial
+    /// clear and before writing any glyphs: earlier glyphs cannot be replayed.
+    /// The local texture is not used for rendering in this mode; switching
+    /// backends must create a fresh atlas, as the GUI rebuild path does.
     pub fn enable_mirroring(&self) {
-        self.mirroring_enabled
-            .store(true, std::sync::atomic::Ordering::Relaxed);
+        if !self
+            .mirroring_enabled
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            // Atlas::new queued its initial clear before mirroring was enabled.
+            // HostProcess windows never submit local draws to drain that upload.
+            self.queue.submit(std::iter::empty());
+        }
     }
 
     /// Takes everything recorded since the last call (or since
@@ -613,6 +620,9 @@ const _: fn() = || {
     fn assert_send<T: Send>() {}
     assert_send::<GpuFrame>();
 };
+
+#[cfg(test)]
+mod atlas_upload_test;
 
 #[cfg(test)]
 mod tests {
