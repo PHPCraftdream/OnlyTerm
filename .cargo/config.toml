@@ -12,6 +12,9 @@
 lint = "run --quiet -p xtask --"
 lint-check = "run --quiet -p xtask -- --no-fix --deny"
 
+[build]
+target-dir = "target"
+
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
 ar = "x86_64-w64-mingw32-gcc-ar"

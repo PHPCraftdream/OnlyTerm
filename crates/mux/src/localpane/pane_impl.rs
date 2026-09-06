@@ -688,23 +688,34 @@ impl Pane for LocalPane {
             return Some(cwd);
         }
 
-        // Nothing to divine from (most commonly: the foreground-process
-        // cache is cold and a background fetch is already in flight, see
-        // task #247) -- fall back to the shell's own OSC 7 announcement,
-        // bounded the same way as the other terminal-lock accessors below.
+        // Keep the spawn/last cwd while the OS cache warms up. Refresh OSC 7
+        // only if immediately available; never wait just to show a tab name.
+        let known_cwd = self.last_known_good.lock().cwd.clone();
+        if let Some(known_cwd) = known_cwd {
+            let announced = self
+                .terminal
+                .try_lock()
+                .and_then(|term| term.get_current_dir().cloned());
+            if let Some(cwd) = announced {
+                self.last_known_good.lock().cwd = Some(cwd.clone());
+                return Some(cwd);
+            }
+            return Some(known_cwd);
+        }
+
+        // No OS/spawn cwd is known: try OSC 7 as a final fallback, bounded
+        // the same way as the other terminal-lock accessors below.
         match try_lock_terminal_for(
             &self.terminal,
             &self.unresponsive,
             "localpane.terminal_lock.timeout.get_current_working_dir",
             |term| term.get_current_dir().cloned(),
         ) {
-            Some(cwd) => {
-                if cwd.is_some() {
-                    self.last_known_good.lock().cwd = cwd.clone();
-                }
-                cwd
+            Some(Some(cwd)) => {
+                self.last_known_good.lock().cwd = Some(cwd.clone());
+                Some(cwd)
             }
-            None => self.last_known_good.lock().cwd.clone(),
+            Some(None) | None => self.last_known_good.lock().cwd.clone(),
         }
     }
 

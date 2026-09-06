@@ -119,14 +119,21 @@ try {
 
 # ---------------------------------------------------------------------------
 # Locate the repo root (this script lives in <repo>\ci\dev-install.ps1) and
-# the build output directory. Respects a CARGO_TARGET_DIR override, since
-# this machine's cargo config points the whole workspace at a shared
-# out-of-tree target dir.
+# the build output directory resolved by Cargo.
 # ---------------------------------------------------------------------------
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 if (-not $ReleaseDir) {
-    $TargetDir = if ($Env:CARGO_TARGET_DIR) { $Env:CARGO_TARGET_DIR } else { Join-Path $RepoRoot "target" }
+    Push-Location $RepoRoot
+    try {
+        $metadata = & cargo metadata --no-deps --format-version 1
+        if ($LASTEXITCODE -ne 0) {
+            throw "cargo metadata failed with exit code $LASTEXITCODE"
+        }
+        $TargetDir = ($metadata | ConvertFrom-Json).target_directory
+    } finally {
+        Pop-Location
+    }
     $ReleaseDir = Join-Path $TargetDir "dev-install"
 }
 
@@ -297,9 +304,7 @@ function Remove-StaleRetiredGenerations {
 # The app genuinely can't run without these; a missing one means we're
 # pointed at the wrong directory (or at a tree that was never built in
 # release mode), which must be a hard error rather than a warning -- silently
-# copying nothing and still reporting success is the worst possible outcome
-# here, especially since a stale <repo>\target usually exists alongside a
-# real out-of-tree CARGO_TARGET_DIR.
+# copying nothing and still reporting success would hide missing artifacts.
 $requiredFiles = @(
     "onlyterm.exe",
     "onlyterm-gui.exe",
@@ -321,10 +326,7 @@ if ($missingRequired) {
 Release build not found in: $ReleaseDir
 Missing required file(s): $($missingRequired -join ', ')
 
-Check that the release build actually completed, and that the release
-directory above is the right one. This machine builds out of tree via
-CARGO_TARGET_DIR (currently: $(if ($Env:CARGO_TARGET_DIR) { $Env:CARGO_TARGET_DIR } else { '<unset>' })),
-so a stale <repo>\target can look plausible while containing nothing useful.
+Check that the build completed and the directory above matches Cargo's output.
 You can point this script explicitly with:  -ReleaseDir <path>
 "@
 }

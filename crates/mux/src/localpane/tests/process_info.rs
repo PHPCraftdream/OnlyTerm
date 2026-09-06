@@ -1,6 +1,53 @@
 //! Cache and keyboard process-discovery regressions.
 use super::*;
 
+#[test]
+fn initial_cwd_survives_a_cold_process_cache_without_osc7() {
+    let (pane, _) = make_pane();
+    let cwd = Url::parse("file:///C:/dev/project/").unwrap();
+    // Domain spawning seeds this field before the shell has produced output.
+    pane.last_known_good.lock().cwd = Some(cwd.clone());
+    assert!(pane.terminal.lock().get_current_dir().is_none());
+    assert_eq!(
+        pane.get_current_working_dir(CachePolicy::AllowStale),
+        Some(cwd)
+    );
+}
+
+#[test]
+fn known_cwd_does_not_wait_on_the_terminal_or_mark_it_unresponsive() {
+    let (pane, _) = make_pane();
+    let cwd = Url::parse("file:///C:/dev/project/").unwrap();
+    pane.last_known_good.lock().cwd = Some(cwd.clone());
+    // Deterministically simulate an output parser holding the terminal lock.
+    // Assert the timeout side effect, not an unreliable wall-clock threshold.
+    let _held = pane.terminal.lock();
+    assert_eq!(
+        pane.get_current_working_dir(CachePolicy::AllowStale),
+        Some(cwd)
+    );
+    assert!(!pane.unresponsive.load(Ordering::Relaxed));
+}
+
+#[test]
+fn osc7_can_refresh_the_fallback_when_os_cwd_is_unavailable() {
+    struct Quiet;
+    impl AlertHandler for Quiet {
+        fn alert(&mut self, _: Alert) {}
+    }
+    let (pane, _) = make_pane();
+    pane.last_known_good.lock().cwd = Some(Url::parse("file:///C:/initial/").unwrap());
+    {
+        let mut terminal = pane.terminal.lock();
+        terminal.set_notification_handler(Box::new(Quiet));
+        terminal.advance_bytes(b"\x1b]7;file:///C:/changed/\x1b\\");
+    }
+    assert_eq!(
+        pane.get_current_working_dir(CachePolicy::AllowStale),
+        Some(Url::parse("file:///C:/changed/").unwrap()),
+    );
+}
+
 /// Task #247: once a `CachedProcInfo` entry already exists, a
 /// subsequent `divine_process_list(AllowStale)` call against an
 /// *expired* entry must return immediately with the OLD (stale) data
@@ -249,6 +296,7 @@ fn current_working_dir_tracks_root_process_not_foreground_pick() {
     use std::path::PathBuf;
 
     let pane = make_pane_with_real_pid();
+    pane.last_known_good.lock().cwd = Some(Url::parse("file:///C:/initial-directory/").unwrap());
 
     let user_shell_dir = if cfg!(windows) {
         PathBuf::from("C:\\Users\\test\\project")
