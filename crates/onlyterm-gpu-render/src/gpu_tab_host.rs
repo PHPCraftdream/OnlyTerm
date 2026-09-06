@@ -37,9 +37,8 @@
 //! goes through `log::` as usual, which writes to this process's own per-PID
 //! log file, not stdout.
 
-use crate::{
-    instance_buffer_pool::InstanceBufferPool, wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture,
-};
+use crate::instance_buffer_pool::InstanceBufferPool;
+use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
 use config::ConfigHandle;
 use std::convert::TryFrom;
 use std::io::{self, Write};
