@@ -28,7 +28,10 @@ As features stabilize some brief notes about them will accumulate here.
 * CJK fallback faces and shaping plans stay cached; mirrored atlas uploads no
   longer accumulate unused parent-process GPU transfers.
 * ConPTY resize handling keeps the cursor aligned and avoids creating empty-only
-  scrollback when shrinking a fresh pane.
+  scrollback when shrinking a fresh pane. Blank prompt/input zones and wrapped
+  prefixes are preserved.
+* Closing or changing search cancels obsolete work. Terminal-lock waits are
+  bounded, and stale results cannot enter a reopened search overlay.
 * Keyboard compatibility detection uses fresh descendant process names so
   Ctrl+J/Ctrl+Enter/Shift+Enter do not depend on stale process-tree snapshots.
 * Explicit Debug/Trace diagnostics use synchronous output; ordinary buffered

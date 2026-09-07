@@ -69,8 +69,7 @@ struct CopyRenderable {
     editing_search: bool,
     result_pos: Option<usize>,
     tab_id: TabId,
-    /// Used to debounce queries while the user is typing
-    typing_cookie: usize,
+    search_jobs: search_jobs::SearchJobs,
     searching: Option<Searching>,
     pending_jump: Option<PendingJump>,
     last_jump: Option<Jump>,
@@ -160,7 +159,7 @@ impl CopyOverlay {
             selection_mode: SelectionMode::Cell,
             selection_range: None,
             selection_rectangular: false,
-            typing_cookie: 0,
+            search_jobs: search_jobs::SearchJobs::default(),
             searching: None,
             pending_jump: None,
             last_jump: None,
@@ -258,5 +257,6 @@ impl std::io::Write for SearchOverlayPatternWriter {
 mod key_tables;
 mod pane;
 mod render;
+mod search_jobs;
 
 pub use key_tables::{copy_key_table, search_key_table};

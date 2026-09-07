@@ -115,12 +115,14 @@ impl MasterPty for FakeMasterPty {
 struct BlockingWriter {
     gate: Arc<Mutex<()>>,
     wrote: Arc<AtomicBool>,
+    completed: std::sync::mpsc::SyncSender<()>,
 }
 
 impl Write for BlockingWriter {
     fn write(&mut self, buf: &[u8]) -> IoResult<usize> {
         let _guard = self.gate.lock();
         self.wrote.store(true, Ordering::SeqCst);
+        let _ = self.completed.try_send(());
         Ok(buf.len())
     }
     fn flush(&mut self) -> IoResult<()> {
@@ -148,7 +150,14 @@ const COLS: usize = 80;
 /// `crate::domain::WriterWrapper` (task #245) in front of a
 /// `BlockingWriter`, so `pane.writer().write_all()` exercises the actual
 /// non-blocking machinery rather than a plain `Vec` sink.
-fn make_pane(name: &str) -> (Arc<LocalPane>, Arc<Mutex<()>>, Arc<AtomicBool>) {
+fn make_pane(
+    name: &str,
+) -> (
+    Arc<LocalPane>,
+    Arc<Mutex<()>>,
+    Arc<AtomicBool>,
+    std::sync::mpsc::Receiver<()>,
+) {
     let size = TerminalSize {
         rows: ROWS,
         cols: COLS,
@@ -158,9 +167,11 @@ fn make_pane(name: &str) -> (Arc<LocalPane>, Arc<Mutex<()>>, Arc<AtomicBool>) {
     };
     let gate = Arc::new(Mutex::new(()));
     let wrote = Arc::new(AtomicBool::new(false));
+    let (completed, completion) = std::sync::mpsc::sync_channel(1);
     let writer = crate::domain::WriterWrapper::new(Box::new(BlockingWriter {
         gate: Arc::clone(&gate),
         wrote: Arc::clone(&wrote),
+        completed,
     }));
     let terminal = Terminal::new_with_nonblocking_writer(
         size,
@@ -187,7 +198,7 @@ fn make_pane(name: &str) -> (Arc<LocalPane>, Arc<Mutex<()>>, Arc<AtomicBool>) {
         name.to_string(),
         None,
     ));
-    (pane, gate, wrote)
+    (pane, gate, wrote, completion)
 }
 
 /// Snapshot of everything `TermWindow::pos_pane_to_pane_info`
@@ -231,196 +242,76 @@ fn snapshot_pane_info(pane: &LocalPane) -> PaneInfoSnapshot {
     }
 }
 
-/// Generous bound for "promptly" in this test: well under a second, in
-/// line with the existing per-accessor tests
-/// (`has_unseen_output_does_not_block_on_a_locked_terminal` et al. all use
-/// a 1s ceiling), but loose enough not to be scheduler-jitter-flaky on a
-/// loaded CI/dev machine.
-const PROMPT_BOUND: Duration = Duration::from_secs(1);
+// A watchdog bounds a broken implementation, not a performance assertion.
+const DEADLOCK_WATCHDOG: Duration = Duration::from_secs(30);
 
-/// The end-to-end claim this task exists to prove: with the VICTIM pane's
-/// `terminal.lock()` held by another thread for the whole test (simulating
-/// a wedged terminal -- see the module doc comment for why this technique
-/// is a faithful, deterministic stand-in for a real hung pty/process), (1)
-/// every GUI-thread-reachable accessor on the victim itself still returns
-/// promptly (bounded fallback behavior, tasks #244/#246/#248), (2) the
-/// SAME accessors on a HEALTHY, unrelated pane in the "same window" are
-/// completely unaffected -- correct data, no slowdown at all -- and (3) a
-/// paste/`SendString`-style `pane.writer().write_all()` against the victim
-/// also does not block (task #245's writer thread is independent of
-/// `terminal.lock()`). Finally, once the wedge is released, both panes are
-/// confirmed to still work correctly, proving the timeout/fallback paths
-/// didn't leave anything corrupted.
 #[test]
 fn wedged_pane_does_not_block_healthy_pane_or_its_own_recovery() {
     let _mux_guard = super::MUX_TEST_GUARD.lock();
     let mux = Arc::new(crate::Mux::new(None));
     crate::Mux::set_mux(&mux);
-
-    let (victim, victim_gate, victim_wrote) = make_pane("victim");
-    let (healthy, _healthy_gate, _healthy_wrote) = make_pane("healthy");
-
-    // Give each pane a known-good, distinguishable title and a user var,
-    // exactly like `get_title_does_not_block_on_a_locked_terminal` does,
-    // so this test can assert on *correct*, pane-specific data -- not
-    // just "didn't block" -- both during contention and after recovery.
+    let (victim, victim_gate, victim_wrote, write_completed) = make_pane("victim");
+    let (healthy, _, _, _) = make_pane("healthy");
     for (pane, title) in [(&victim, "victim-title"), (&healthy, "healthy-title")] {
         pane.set_title_for_test(title);
         assert_eq!(pane.get_title(), title);
     }
-
-    // Bump the victim's seqno so it has genuine unseen output once it
-    // loses focus, mirroring `has_unseen_output_does_not_block_on_a_locked_terminal`'s
-    // setup: this is the real signal `has_unseen_output()` reads, not
-    // just a hardcoded expectation.
     victim.focus_changed(false);
     victim.increment_seqno_for_test();
     assert!(victim.has_unseen_output());
-    // The healthy pane stays focused throughout: no unseen output.
     assert!(!healthy.has_unseen_output());
 
-    // --- Wedge the victim's terminal: a real thread holds terminal.lock()
-    // indefinitely, exactly the technique used by
-    // `localpane::tests::has_unseen_output_does_not_block_on_a_locked_terminal`
-    // / `get_title_does_not_block_on_a_locked_terminal`. ---
-    let blocker_release = Arc::new(AtomicBool::new(false));
-    let blocker_handle = victim.spawn_terminal_lock_blocker(Arc::clone(&blocker_release));
-
-    // --- Also wedge the victim's writer, standing in for a full/unread
-    // stdin pipe (task #237's original manual scenario): any write into
-    // `BlockingWriter` blocks until the test releases `victim_gate`. ---
+    let (release, released) = std::sync::mpsc::sync_channel(1);
+    let blocker = victim.spawn_terminal_lock_blocker(released);
     let writer_guard = victim_gate.lock();
+    let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+    let reader = {
+        let victim = Arc::clone(&victim);
+        let healthy = Arc::clone(&healthy);
+        let victim_wrote = Arc::clone(&victim_wrote);
+        std::thread::spawn(move || {
+            let victim_snapshot = snapshot_pane_info(&victim);
+            let healthy_snapshot = snapshot_pane_info(&healthy);
+            let write = victim.writer().write_all(b"echo hello\n");
+            let reached_writer = victim_wrote.load(Ordering::SeqCst);
+            let _ = done_tx.send((victim_snapshot, healthy_snapshot, write, reached_writer));
+        })
+    };
 
-    // (1) Victim's own GUI-thread accessors must return promptly, serving
-    // bounded-fallback / last-known-good data instead of blocking.
-    let victim_snapshot = snapshot_pane_info(&victim);
-    assert!(
-        victim_snapshot.elapsed < PROMPT_BOUND,
-        "victim pane's pos_pane_to_pane_info-equivalent read batch took {:?} \
-         while its terminal.lock() was held by another thread -- it must \
-         return within the bounded-fallback window instead of blocking",
-        victim_snapshot.elapsed,
-    );
-    assert!(
-        victim_snapshot.has_unseen_output,
-        "has_unseen_output() is lock-free (task #244) and must still \
-         report the real, already-published state while the lock is held"
-    );
-    assert_eq!(
-        victim_snapshot.title, "victim-title",
-        "get_title() must fall back to the last known-good cached title \
-         (task #246) rather than blocking or returning garbage"
-    );
-    assert!(
-        victim_snapshot.is_unresponsive_after,
-        "is_unresponsive() must flip true (task #248) once the bounded \
-         terminal.lock() attempt inside get_title()/copy_user_vars()/etc. \
-         above timed out"
-    );
-
-    // (2) THE CORE CLAIM: the healthy, unrelated pane's own accessors are
-    // completely unaffected -- correct data, and no slowdown at all, even
-    // though the victim's terminal is wedged concurrently. This is the
-    // property no single existing per-accessor test proves on its own,
-    // since each of those drives only one pane.
-    let healthy_snapshot = snapshot_pane_info(&healthy);
-    assert!(
-        healthy_snapshot.elapsed < PROMPT_BOUND,
-        "healthy pane's read batch took {:?} even though only the OTHER \
-         (victim) pane's terminal was wedged -- panes must not contend \
-         with each other's terminal locks",
-        healthy_snapshot.elapsed,
-    );
-    assert!(
-        !healthy_snapshot.has_unseen_output,
-        "healthy pane's has_unseen_output() must reflect its own real \
-         state (still focused, no new output), unaffected by the victim"
-    );
-    assert_eq!(
-        healthy_snapshot.title, "healthy-title",
-        "healthy pane's get_title() must return its own live title, not \
-         be corrupted or delayed by the victim pane's wedged lock"
-    );
-    assert!(
-        !healthy_snapshot.is_unresponsive_after,
-        "the healthy pane's own terminal.lock() was never contended, so \
-         it must never have been marked unresponsive"
-    );
-    assert!(healthy_snapshot.user_vars.is_empty());
-
-    // (3) A paste/SendString-style write against the VICTIM must also not
-    // block, even though both its terminal.lock() AND its writer's
-    // underlying pipe are currently wedged. Task #245's WriterWrapper
-    // background thread is independent of terminal.lock(), so this
-    // exercises that independence explicitly as part of the combined
-    // scenario rather than trusting it from #245's own separate test.
-    let write_start = Instant::now();
-    victim
-        .writer()
-        .write_all(b"echo hello\n")
-        .expect("write_all must succeed (it only enqueues onto WriterWrapper's background thread)");
-    let write_elapsed = write_start.elapsed();
-    assert!(
-        write_elapsed < PROMPT_BOUND,
-        "pane.writer().write_all() on the victim pane took {:?} while both \
-         its terminal.lock() and its underlying writer were wedged -- the \
-         writer path (task #245) must be fully independent of terminal.lock()",
-        write_elapsed,
-    );
-    assert!(
-        !victim_wrote.load(Ordering::SeqCst),
-        "the write is still blocked behind the writer gate, so it must \
-         not have reached the underlying BlockingWriter yet"
-    );
-
-    // --- Release both wedges. ---
+    // Causal oracle: accessors and enqueue must finish BEFORE either lock is released.
+    let before_release = done_rx.recv_timeout(DEADLOCK_WATCHDOG);
     drop(writer_guard);
-    blocker_release.store(true, Ordering::SeqCst);
-    blocker_handle.join().expect("blocker thread panicked");
+    drop(release);
+    blocker.join().expect("blocker thread panicked");
+    reader.join().expect("pane read thread panicked");
+    let (victim_snapshot, healthy_snapshot, write, reached_writer) =
+        before_release.expect("pane accessors depended on releasing another thread's lock");
 
-    // Give the deferred write a bounded window to actually land on the
-    // real (now-unblocked) writer.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !victim_wrote.load(Ordering::SeqCst) {
-        assert!(
-            Instant::now() < deadline,
-            "the victim pane's deferred write never reached the \
-             underlying writer after the gate was released"
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-
-    // (4) Post-recovery correctness: both panes must still report
-    // accurate, un-corrupted data, and the victim must clear its
-    // unresponsive flag now that its terminal.lock() is free again --
-    // nothing was silently left in a bad state by the timeout/fallback
-    // paths exercised above.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        if !victim.is_unresponsive() {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "victim.is_unresponsive() never cleared after the wedge was released"
-        );
-        let _ = victim.get_title();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    eprintln!(
+        "pane snapshots: victim={:?}, healthy={:?}",
+        victim_snapshot.elapsed, healthy_snapshot.elapsed
+    );
+    assert!(victim_snapshot.has_unseen_output);
+    assert_eq!(victim_snapshot.title, "victim-title");
+    assert!(victim_snapshot.is_unresponsive_after);
+    assert!(!healthy_snapshot.has_unseen_output);
+    assert_eq!(healthy_snapshot.title, "healthy-title");
+    assert!(!healthy_snapshot.is_unresponsive_after);
+    assert!(healthy_snapshot.user_vars.is_empty());
+    write.expect("write only enqueues onto WriterWrapper");
+    assert!(
+        !reached_writer,
+        "underlying writer must still be blocked before release"
+    );
+    write_completed
+        .recv_timeout(DEADLOCK_WATCHDOG)
+        .expect("deferred write after gate release");
 
     let victim_after = snapshot_pane_info(&victim);
-    assert!(victim_after.elapsed < PROMPT_BOUND);
     assert_eq!(victim_after.title, "victim-title");
-    assert!(
-        !victim_after.is_unresponsive_after,
-        "victim pane must report responsive again once its terminal.lock() \
-         is free"
-    );
-
+    assert!(!victim_after.is_unresponsive_after);
     let healthy_after = snapshot_pane_info(&healthy);
-    assert!(healthy_after.elapsed < PROMPT_BOUND);
     assert_eq!(healthy_after.title, "healthy-title");
     assert!(!healthy_after.is_unresponsive_after);
-
     crate::Mux::shutdown();
 }

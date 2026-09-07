@@ -8,6 +8,7 @@ use std::sync::{Arc, LazyLock};
 
 const SEARCH_BATCH_MAX_PHYSICAL_ROWS: usize = 256;
 const SEARCH_WORKER_COUNT: usize = 2;
+const SEARCH_LOCK_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn permit_pool(count: usize) -> (Sender<()>, Receiver<()>) {
     let (sender, receiver) = bounded(count);
@@ -110,6 +111,7 @@ struct PhysicalSnapshot {
     lines: Vec<Line>,
 }
 
+/// cancel-safe: yes; snapshots are read-only and permits follow their workers.
 pub(super) async fn search(
     pane: &LocalPane,
     pattern: Pattern,
@@ -195,6 +197,22 @@ async fn snapshot_physical_batch(
     cursor: StableRowIndex,
     end: StableRowIndex,
 ) -> anyhow::Result<Option<PhysicalSnapshot>> {
+    snapshot_physical_batch_until(
+        pane,
+        cursor,
+        end,
+        std::time::Instant::now() + SEARCH_LOCK_WAIT_LIMIT,
+    )
+    .await
+}
+
+// One absolute deadline per lock acquisition, never reset by a retry.
+async fn snapshot_physical_batch_until(
+    pane: &LocalPane,
+    cursor: StableRowIndex,
+    end: StableRowIndex,
+    deadline: std::time::Instant,
+) -> anyhow::Result<Option<PhysicalSnapshot>> {
     loop {
         let captured = {
             pane.terminal.try_lock().map(|term| {
@@ -220,6 +238,10 @@ async fn snapshot_physical_batch(
         if let Some(captured) = captured {
             return Ok(captured);
         }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for terminal during search"
+        );
         smol::Timer::after(std::time::Duration::from_millis(2)).await;
     }
 }
@@ -496,6 +518,47 @@ fn haystack_idx_to_coord(idx: usize, coords: &[Coord], end: bool) -> (usize, Sta
 mod tests {
     use super::{lowercase_with_offsets, search_limit_allows_result};
     use std::future::Future;
+
+    #[test]
+    fn snapshot_timeout_returns_its_search_slot() {
+        let (pane, _) = super::super::tests::make_pane();
+        let _guard = pane.terminal.lock();
+        let pool = super::permit_pool(1);
+        let mut search = Box::pin(async {
+            let _permit = super::acquire_permit_from(&pool).await?;
+            super::snapshot_physical_batch_until(&pane, 0, 1, std::time::Instant::now()).await
+        });
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        match search.as_mut().poll(&mut cx) {
+            std::task::Poll::Ready(Err(err)) => {
+                assert!(err.to_string().contains("timed out waiting for terminal"))
+            }
+            _ => panic!("expired lock wait must fail and return its permit"),
+        }
+        assert!(
+            pool.1.try_recv().is_ok(),
+            "another pane can acquire the slot"
+        );
+    }
+
+    #[test]
+    fn cancelling_a_snapshot_returns_its_search_slot() {
+        let (pane, _) = super::super::tests::make_pane();
+        let _guard = pane.terminal.lock();
+        let pool = super::permit_pool(1);
+        let mut search = Box::pin(async {
+            let _permit = super::acquire_permit_from(&pool).await?;
+            super::snapshot_physical_batch(&pane, 0, 1).await
+        });
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(search.as_mut().poll(&mut cx).is_pending());
+        assert!(pool.1.try_recv().is_err());
+        drop(search);
+        assert!(
+            pool.1.try_recv().is_ok(),
+            "cancelled pane cannot starve others"
+        );
+    }
 
     #[test]
     fn snapshot_waits_cooperatively_and_can_be_cancelled_while_locked() {

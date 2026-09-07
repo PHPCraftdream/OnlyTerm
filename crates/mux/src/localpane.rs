@@ -1,3 +1,4 @@
+mod action_chunks;
 mod pane_impl;
 mod process_info;
 mod search;
@@ -579,67 +580,6 @@ impl LocalPane {
         }
     }
 
-    /// Applies a batch of already-parsed actions to `self.terminal` in
-    /// chunks of at most `chunk_size` actions, releasing and
-    /// re-acquiring `terminal.lock()` between chunks.
-    ///
-    /// Task #147: a full `mux_output_parser_buffer_size` (128KiB
-    /// default) batch of actions can be tens of thousands of `Action`s,
-    /// and measurements (see `crates/term/src/test/perf_probe.rs`) show
-    /// that applying all of them under one lock acquisition holds
-    /// `terminal.lock()` for 40-60ms, which starves both keyboard/mouse
-    /// input (`key_down`/`mouse_event`) and rendering (`with_lines_mut`)
-    /// -- both block on the same mutex. Splitting the batch between
-    /// whole `Action`s (never inside one) and taking the lock separately
-    /// per chunk lets those callers interleave between chunks while
-    /// leaving the final terminal state identical to applying the whole
-    /// batch under a single lock acquisition, since each `Action` is
-    /// self-contained and `Terminal::perform_actions` makes no
-    /// assumption that spans a call boundary (each call only bumps the
-    /// sequence number and re-triggers the "unseen output" check, both
-    /// of which are correct to do once per chunk) -- PROVIDED nothing
-    /// changes the terminal's geometry between chunks, which is exactly
-    /// what `resize_guard` (held below, for the whole batch) rules out:
-    /// without it, a `resize()` landing between two chunks of one
-    /// logical ConPTY repaint would apply the chunk's tail under a
-    /// different geometry than the one it was drawn for.
-    fn perform_actions_chunked(&self, actions: Vec<Action>, chunk_size: usize) {
-        if actions.len() <= chunk_size.max(1) {
-            // Common case (small batches, e.g. interactive typing): no
-            // benefit to chunking, so avoid the `Vec` chunking overhead
-            // and just take the lock once, as before. A single lock
-            // acquisition can't be sliced by a concurrent resize, so
-            // `resize_guard` isn't needed here.
-            lock_terminal_timed(
-                &self.terminal,
-                "localpane.terminal_lock.wait.perform_actions",
-                |term| term.perform_actions(actions),
-            );
-            return;
-        }
-
-        let _resize_guard = self.resize_guard.lock();
-        let chunk_size = chunk_size.max(1);
-        let mut chunk = Vec::with_capacity(chunk_size);
-        for action in actions {
-            chunk.push(action);
-            if chunk.len() == chunk_size {
-                lock_terminal_timed(
-                    &self.terminal,
-                    "localpane.terminal_lock.wait.perform_actions",
-                    |term| term.perform_actions_reusing(&mut chunk),
-                );
-            }
-        }
-        if !chunk.is_empty() {
-            lock_terminal_timed(
-                &self.terminal,
-                "localpane.terminal_lock.wait.perform_actions",
-                |term| term.perform_actions_reusing(&mut chunk),
-            );
-        }
-    }
-
     /// Test-only escape hatch that measures `terminal.lock()` wait time
     /// with the exact same semantics as the `localpane.terminal_lock.wait.*`
     /// metrics (time to acquire, not time held), without going through
@@ -679,44 +619,6 @@ impl LocalPane {
         let hold_start = Instant::now();
         term.perform_actions(actions);
         (waited, hold_start.elapsed())
-    }
-
-    /// Like `perform_actions_timed`, but goes through the same chunked
-    /// path as production's `perform_actions` (see
-    /// `perform_actions_chunked`), returning one (wait, hold) sample per
-    /// chunk so `test::terminal_lock_contention` can confirm that
-    /// per-chunk hold time actually stays bounded regardless of total
-    /// batch size.
-    #[cfg(test)]
-    pub(crate) fn perform_actions_chunked_timed(
-        &self,
-        actions: Vec<termwiz::escape::Action>,
-        chunk_size: usize,
-    ) -> Vec<(Duration, Duration)> {
-        let mut samples = Vec::new();
-        let _resize_guard = self.resize_guard.lock();
-        let chunk_size = chunk_size.max(1);
-        let mut chunk = Vec::with_capacity(chunk_size);
-        for action in actions {
-            chunk.push(action);
-            if chunk.len() == chunk_size {
-                let wait_start = Instant::now();
-                let mut term = self.terminal.lock();
-                let waited = wait_start.elapsed();
-                let hold_start = Instant::now();
-                term.perform_actions_reusing(&mut chunk);
-                samples.push((waited, hold_start.elapsed()));
-            }
-        }
-        if !chunk.is_empty() {
-            let wait_start = Instant::now();
-            let mut term = self.terminal.lock();
-            let waited = wait_start.elapsed();
-            let hold_start = Instant::now();
-            term.perform_actions_reusing(&mut chunk);
-            samples.push((waited, hold_start.elapsed()));
-        }
-        samples
     }
 
     #[cfg(test)]
@@ -810,23 +712,19 @@ impl LocalPane {
     #[cfg(test)]
     pub(crate) fn spawn_terminal_lock_blocker(
         self: &Arc<Self>,
-        release: Arc<std::sync::atomic::AtomicBool>,
+        release: std::sync::mpsc::Receiver<()>,
     ) -> std::thread::JoinHandle<()> {
-        let started = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
         let handle = {
             let pane = Arc::clone(self);
-            let started = Arc::clone(&started);
             std::thread::spawn(move || {
                 let _guard = pane.terminal.lock();
-                started.store(true, Ordering::SeqCst);
-                while !release.load(Ordering::SeqCst) {
-                    std::thread::sleep(Duration::from_millis(5));
-                }
+                started_tx.send(()).expect("blocker readiness receiver");
+                // Dropping the sender also releases the lock on test failure.
+                let _ = release.recv();
             })
         };
-        while !started.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        started_rx.recv().expect("blocker acquired terminal lock");
         handle
     }
 }

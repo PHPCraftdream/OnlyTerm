@@ -68,31 +68,32 @@ impl CopyRenderable {
     }
 
     pub(super) fn schedule_update_search(&mut self) {
-        self.typing_cookie += 1;
-        let cookie = self.typing_cookie;
+        self.search_jobs.cancel();
+        self.searching.take();
+        let generation = self.search_jobs.generation();
 
         let window = self.window.clone();
         let pane_id = self.delegate.pane_id();
 
-        promise::spawn::spawn(async move {
+        let task = promise::spawn::spawn(async move {
             smol::Timer::after(Duration::from_millis(350)).await;
             window.notify(TermWindowNotif::Apply(Box::new(move |term_window| {
                 let state = term_window.pane_state(pane_id);
                 if let Some(overlay) = state.overlay.as_ref() {
                     if let Some(copy_overlay) = overlay.pane.downcast_ref::<CopyOverlay>() {
                         let mut r = copy_overlay.render.lock();
-                        if cookie == r.typing_cookie {
+                        if r.search_jobs.is_current(&generation) {
                             r.update_search();
                         }
                     }
                 }
             })));
-            anyhow::Result::<()>::Ok(())
-        })
-        .detach();
+        });
+        self.search_jobs.set_debounce(task);
     }
 
     pub(super) fn update_search(&mut self) {
+        self.search_jobs.cancel();
         for idx in self.by_line.keys() {
             self.dirty_results.add(*idx);
         }
@@ -113,7 +114,6 @@ impl CopyRenderable {
         let pattern = self.get_pattern();
         if !pattern.is_empty() {
             let pane: Arc<dyn Pane> = self.delegate.clone();
-            let window = self.window.clone();
             let dims = pane.get_dimensions();
 
             let end = dims.scrollback_top + dims.scrollback_rows as StableRowIndex;
@@ -125,26 +125,7 @@ impl CopyRenderable {
                 remain: range.start - dims.scrollback_top,
             });
 
-            promise::spawn::spawn(async move {
-                let limit = None;
-                log::trace!("Searching for {pattern:?} in {range:?}");
-                let results = pane.search(pattern.clone(), range.clone(), limit).await?;
-
-                let pane_id = pane.pane_id();
-                let mut results = Some(results);
-                window.notify(TermWindowNotif::Apply(Box::new(move |term_window| {
-                    let state = term_window.pane_state(pane_id);
-                    if let Some(overlay) = state.overlay.as_ref() {
-                        if let Some(copy_overlay) = overlay.pane.downcast_ref::<CopyOverlay>() {
-                            let mut r = copy_overlay.render.lock();
-                            r.processed_search_chunk(pattern, results.take().unwrap(), range);
-                        }
-                    }
-                })));
-
-                anyhow::Result::<()>::Ok(())
-            })
-            .detach();
+            self.spawn_search_chunk(pattern, range);
         } else {
             self.searching.take();
             self.clear_selection();
@@ -175,27 +156,26 @@ impl CopyRenderable {
         }
 
         let dims = self.delegate.get_dimensions();
-        if range.start == dims.scrollback_top {
+        let Some(range) = search_jobs::preceding_chunk(range.start, dims.scrollback_top) else {
             self.searching.take();
             return;
-        }
-
-        // Search next chunk
-        let pane: Arc<dyn Pane> = self.delegate.clone();
-        let window = self.window.clone();
-        let end = range.start;
-        let range = end
-            .saturating_sub(SEARCH_CHUNK_SIZE)
-            .max(dims.scrollback_top)..end;
+        };
 
         self.searching.replace(Searching {
             remain: range.start - dims.scrollback_top,
         });
 
-        promise::spawn::spawn(async move {
+        self.spawn_search_chunk(pattern, range);
+    }
+
+    fn spawn_search_chunk(&mut self, pattern: Pattern, range: Range<StableRowIndex>) {
+        let pane = Arc::clone(&self.delegate);
+        let window = self.window.clone();
+        let generation = self.search_jobs.generation();
+        let task = promise::spawn::spawn(async move {
             let limit = None;
             log::trace!("Searching for {pattern:?} in {range:?}");
-            let results = pane.search(pattern.clone(), range.clone(), limit).await?;
+            let results = pane.search(pattern.clone(), range.clone(), limit).await;
 
             let pane_id = pane.pane_id();
             let mut results = Some(results);
@@ -204,14 +184,22 @@ impl CopyRenderable {
                 if let Some(overlay) = state.overlay.as_ref() {
                     if let Some(copy_overlay) = overlay.pane.downcast_ref::<CopyOverlay>() {
                         let mut r = copy_overlay.render.lock();
-                        r.processed_search_chunk(pattern, results.take().unwrap(), range);
+                        if !r.search_jobs.is_current(&generation) {
+                            return;
+                        }
+                        match results.take().unwrap() {
+                            Ok(results) => r.processed_search_chunk(pattern, results, range),
+                            Err(err) => {
+                                r.searching.take();
+                                r.window.invalidate();
+                                log::warn!("Search failed for pane {}: {:#}", pane_id, err);
+                            }
+                        }
                     }
                 }
             })));
-
-            anyhow::Result::<()>::Ok(())
-        })
-        .detach();
+        });
+        self.search_jobs.set_worker(task);
     }
 
     fn clear_selection(&mut self) {
@@ -365,7 +353,9 @@ impl CopyRenderable {
             })));
     }
 
-    pub(super) fn close(&self) {
+    pub(super) fn close(&mut self) {
+        self.search_jobs.cancel();
+        self.searching.take();
         TermWindow::schedule_cancel_overlay_for_pane(self.window.clone(), self.delegate.pane_id());
     }
 

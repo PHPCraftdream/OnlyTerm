@@ -35,6 +35,62 @@ fn conpty_resize_clamps_cursor_when_its_old_line_leaves_the_viewport() {
 }
 
 #[test]
+fn conpty_resize_preserves_blank_semantic_zones() {
+    for (start, end, kind) in [
+        ("A", "B", SemanticType::Prompt),
+        ("B", "C", SemanticType::Input),
+    ] {
+        let mut term = TestTerm::new(24, 80, 1000);
+        term.enable_conpty_quirks();
+        term.print(format!(
+            "\x1b]133;{}\x1b\\ \x1b]133;{}\x1b\\\r\ntext",
+            start, end
+        ));
+        let before = term.get_semantic_zones().unwrap();
+        let zone = before
+            .iter()
+            .find(|zone| zone.semantic_type == kind)
+            .unwrap();
+        let first_row = zone.start_y;
+        term.resize(TerminalSize {
+            rows: 23,
+            cols: 80,
+            ..Default::default()
+        });
+        std::assert_eq!(term.screen().scrollback_rows(), 24);
+        std::assert!(term
+            .get_semantic_zones()
+            .unwrap()
+            .iter()
+            .any(|zone| zone.semantic_type == kind && zone.start_y == first_row));
+        std::assert_eq!(term.screen().visible_lines()[0].as_str(), "text");
+    }
+}
+
+#[test]
+fn conpty_resize_preserves_blank_wrapped_prefix() {
+    let mut term = TestTerm::new(24, 160, 1000);
+    term.enable_conpty_quirks();
+    term.print(format!("{}suffix", " ".repeat(80)));
+    term.resize(TerminalSize {
+        rows: 24,
+        cols: 80,
+        ..Default::default()
+    });
+    std::assert!(term.screen().all_lines()[0].last_cell_was_wrapped());
+    let first_row = term.screen().phys_to_stable_row_index(0);
+    term.resize(TerminalSize {
+        rows: 23,
+        cols: 80,
+        ..Default::default()
+    });
+    std::assert_eq!(term.screen().scrollback_rows(), 24);
+    std::assert_eq!(term.screen().phys_to_stable_row_index(0), first_row);
+    std::assert!(term.screen().all_lines()[0].last_cell_was_wrapped());
+    std::assert_eq!(term.screen().visible_lines()[0].as_str(), "suffix");
+}
+
+#[test]
 fn conpty_resize_does_not_create_blank_only_scrollback() {
     let mut term = TestTerm::new(24, 80, 1000);
     term.enable_conpty_quirks();
