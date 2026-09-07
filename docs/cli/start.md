@@ -9,7 +9,11 @@
 `--start-conf <path.ktav>` loads a startup layout instead of spawning the
 single tab this command would otherwise open. The file is plain ktav data
 (the same format as `.onlyterm.ktav`, but parsed standalone -- it is not
-merged with your regular config) shaped like this:
+merged with your regular config). Tabs open in the listed order; once startup
+finishes, the first tab is active. This does not change which tab is activated
+when you open additional tabs normally.
+
+The layout is shaped like this:
 
 ```
 ## root_dir is where a tab's shell starts. A relative path (like
