@@ -3661,6 +3661,7 @@ dependencies = [
  "ordered-float",
  "parking_lot",
  "portable-pty",
+ "procinfo",
  "promise",
  "rangeset",
  "ratelim",

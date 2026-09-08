@@ -507,6 +507,15 @@ impl TermWindow {
         } else {
             "".to_string()
         };
+        let title = match self.process_usage_suffix.borrow().as_ref() {
+            // An em dash (with extra surrounding padding) separates this
+            // suffix from the base title; the suffix's own internal
+            // separators are plain hyphens (see
+            // `process_stats::format_usage_suffix`), and the whole suffix is
+            // bracketed to set it apart visually as one block.
+            Some(suffix) => format!("{title}  —  [{suffix}]"),
+            None => title,
+        };
 
         if let Some(window) = self.window.as_ref() {
             window.set_title(&title);

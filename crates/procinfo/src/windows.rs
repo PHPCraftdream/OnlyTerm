@@ -18,8 +18,12 @@ use winapi::shared::ntdef::{FALSE, NT_SUCCESS};
 use winapi::shared::winerror::ERROR_NO_MORE_FILES;
 use winapi::um::handleapi::{CloseHandle, INVALID_HANDLE_VALUE};
 use winapi::um::memoryapi::ReadProcessMemory;
-use winapi::um::processthreadsapi::{GetCurrentProcessId, GetProcessTimes, OpenProcess};
+use winapi::um::processthreadsapi::{
+    GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcess,
+};
+use winapi::um::psapi::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
 use winapi::um::shellapi::CommandLineToArgvW;
+use winapi::um::sysinfoapi::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use winapi::um::tlhelp32::*;
 use winapi::um::winbase::{LocalFree, QueryFullProcessImageNameW};
 use winapi::um::winnt::{HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
@@ -666,7 +670,190 @@ impl LocalProcessInfo {
 
         crate::build_tree_iterative(&procs, pid, |info| info.pid, |info| info.ppid, make_leaf)
     }
+
+    /// Aggregate CPU time and working-set memory across `pid` and all of
+    /// its descendants, reusing the same shared, cached Toolhelp snapshot
+    /// as `with_root_pid`. Unlike `with_root_pid`, this never reads a
+    /// process's PEB/command line -- only `GetProcessTimes` and
+    /// `GetProcessMemoryInfo` on a `PROCESS_QUERY_INFORMATION` handle -- so
+    /// it is cheaper per process and, unlike `ProcHandle`, does not skip
+    /// `pid` when it equals our own (self-querying via `GetCurrentProcess`'s
+    /// pseudo-handle is safe for these two calls; `ProcHandle::new` only
+    /// avoids self because of the PEB/`ReadProcessMemory` deadlock risk).
+    /// Processes that can no longer be opened (exited between the snapshot
+    /// and this call, or access denied) are silently skipped, same as
+    /// `with_root_pid`'s per-leaf `ProcHandle::new`.
+    pub fn process_tree_resource_usage(pid: u32) -> io::Result<ProcessTreeUsage> {
+        let procs = shared_snapshot_entries();
+        let root = procs.iter().find(|entry| entry.pid == pid).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "root pid missing from process snapshot",
+            )
+        })?;
+
+        let mut children: HashMap<u32, Vec<&ProcessEntry>> = HashMap::new();
+        for entry in procs.iter() {
+            children.entry(entry.ppid).or_default().push(entry);
+        }
+
+        // SAFETY: GetCurrentProcessId has no preconditions and no UB.
+        let my_pid = unsafe { GetCurrentProcessId() };
+        let mut usage = ProcessTreeUsage::default();
+        let mut visited = HashSet::new();
+        let mut stack = vec![root];
+        while let Some(entry) = stack.pop() {
+            if !visited.insert(entry.pid) {
+                continue;
+            }
+            if let Some((cpu_time_100ns, working_set_bytes)) =
+                process_cpu_and_memory(entry.pid, my_pid)
+            {
+                usage.total_cpu_time_100ns += cpu_time_100ns;
+                usage.total_working_set_bytes += working_set_bytes;
+                usage.process_count += 1;
+            }
+            if let Some(kids) = children.get(&entry.pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+        Ok(usage)
+    }
+}
+
+/// Combined CPU time (kernel+user) and physical RAM footprint of a process
+/// tree, as sampled by `LocalProcessInfo::process_tree_resource_usage`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ProcessTreeUsage {
+    /// Number of processes actually opened and read (may be less than the
+    /// tree's true size if some could not be opened).
+    pub process_count: usize,
+    /// Sum, across every opened process, of kernel+user CPU time ever
+    /// consumed (100-nanosecond units, matching `FILETIME`). This is a
+    /// cumulative counter, not a rate -- compute a percentage from the
+    /// delta between two samples and the wall-clock time between them.
+    pub total_cpu_time_100ns: u64,
+    /// Sum, across every opened process, of the process's current working
+    /// set size in bytes.
+    pub total_working_set_bytes: u64,
+}
+
+/// Reads (kernel+user CPU time in 100ns units, working-set bytes) for a
+/// single process. `pid == my_pid` uses `GetCurrentProcess()`'s
+/// pseudo-handle (always valid, needs no `CloseHandle`); every other pid is
+/// opened and closed here.
+fn process_cpu_and_memory(pid: u32, my_pid: u32) -> Option<(u64, u64)> {
+    if pid == my_pid {
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that is always
+        // valid and must not be closed.
+        read_cpu_and_memory(unsafe { GetCurrentProcess() })
+    } else {
+        // SAFETY: `PROCESS_QUERY_INFORMATION` and `pid` are valid arguments;
+        // `FALSE` is a valid BOOL. The returned handle (or NULL) is closed
+        // below before returning.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, FALSE as _, pid) };
+        if handle.is_null() {
+            return None;
+        }
+        let result = read_cpu_and_memory(handle);
+        // SAFETY: `handle` was just obtained from `OpenProcess` above and is
+        // not used again after this point.
+        unsafe { CloseHandle(handle) };
+        result
+    }
+}
+
+fn read_cpu_and_memory(handle: HANDLE) -> Option<(u64, u64)> {
+    const fn empty() -> FILETIME {
+        FILETIME {
+            dwLowDateTime: 0,
+            dwHighDateTime: 0,
+        }
+    }
+    fn filetime_to_100ns(ft: FILETIME) -> u64 {
+        (ft.dwHighDateTime as u64) << 32 | ft.dwLowDateTime as u64
+    }
+
+    let mut create = empty();
+    let mut exit = empty();
+    let mut kernel = empty();
+    let mut user = empty();
+    // SAFETY: `handle` is a valid process handle (real or the current-process
+    // pseudo-handle); all out-pointers are valid `*mut FILETIME`.
+    let res = unsafe { GetProcessTimes(handle, &mut create, &mut exit, &mut kernel, &mut user) };
+    if res == 0 {
+        return None;
+    }
+    let cpu_time_100ns = filetime_to_100ns(kernel) + filetime_to_100ns(user);
+
+    // SAFETY: PROCESS_MEMORY_COUNTERS is a plain POD struct of integers; the
+    // all-zero bit pattern is a valid value, immediately overwritten below.
+    let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    // SAFETY: `handle` is valid; `&mut counters` is a valid out-pointer sized
+    // by the `cb` field set just above, as the API requires.
+    let mem_res = unsafe { GetProcessMemoryInfo(handle, &mut counters, counters.cb) };
+    let working_set_bytes = if mem_res == 0 {
+        0
+    } else {
+        counters.WorkingSetSize as u64
+    };
+
+    Some((cpu_time_100ns, working_set_bytes))
+}
+
+/// Total installed physical RAM, in bytes. Memoized: this does not change
+/// for the lifetime of the process, so there is no need to repeat the
+/// `GlobalMemoryStatusEx` syscall on every periodic sample.
+pub fn total_physical_memory_bytes() -> u64 {
+    static TOTAL: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *TOTAL.get_or_init(|| {
+        // SAFETY: MEMORYSTATUSEX is a plain POD struct of integers; the
+        // all-zero bit pattern is a valid value, immediately overwritten
+        // below (`dwLength` is required to be set before the API call).
+        let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+        // SAFETY: `&mut status` is a valid out-pointer with `dwLength` set to
+        // its own size, as the API requires.
+        let res = unsafe { GlobalMemoryStatusEx(&mut status) };
+        if res == 0 {
+            0
+        } else {
+            status.ullTotalPhys
+        }
+    })
 }
 
 #[cfg(test)]
 mod key_compat_tests;
+
+#[cfg(test)]
+mod resource_usage_tests {
+    use super::*;
+
+    #[test]
+    fn process_tree_resource_usage_reads_the_current_process() {
+        // SAFETY: GetCurrentProcessId has no preconditions and no UB.
+        let my_pid = unsafe { GetCurrentProcessId() };
+        let usage = LocalProcessInfo::process_tree_resource_usage(my_pid)
+            .expect("current process must be in its own snapshot");
+        assert!(usage.process_count >= 1);
+        // A freshly-started test process has done *some* CPU work (at least
+        // process startup) and has a non-zero working set by the time this
+        // assertion runs.
+        assert!(usage.total_working_set_bytes > 0);
+    }
+
+    #[test]
+    fn process_tree_resource_usage_rejects_an_unknown_pid() {
+        // Windows PIDs are always multiples of 4 and, in practice, far
+        // smaller than u32::MAX, so this can never collide with a live
+        // process and reliably exercises the not-found path.
+        assert!(LocalProcessInfo::process_tree_resource_usage(u32::MAX).is_err());
+    }
+
+    #[test]
+    fn total_physical_memory_bytes_is_populated() {
+        assert!(total_physical_memory_bytes() > 0);
+    }
+}

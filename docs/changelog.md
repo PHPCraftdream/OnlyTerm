@@ -526,6 +526,9 @@ As features stabilize some brief notes about them will accumulate here.
   one. Each is filed separately for its own fix.
 
 #### New
+* [show_process_tree_stats_in_title](config/reference/config/show_process_tree_stats_in_title.md)
+  option (default `true`): appends this OnlyTerm process tree's CPU% and
+  memory usage (GB and %) to the OS window title, refreshed every 5 seconds.
 * [wezterm.serde](config/reference/wezterm.serde/index.md) module for serialization
   and deserialization of JSON, TOML and YAML. Thanks to @expnn! #4969
 * `wezterm ssh` now supports agent forwarding. Thanks to @Riatre! #5345

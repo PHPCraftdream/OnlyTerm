@@ -55,6 +55,7 @@ pub mod newtab_options;
 pub mod palette;
 pub mod paneselect;
 mod prevcursor;
+mod process_stats;
 pub mod render;
 mod render_pipeline;
 pub mod resize;
@@ -528,6 +529,19 @@ pub struct TermWindow {
     /// than `REBUILD_WINDOW` are pruned on every check, so this never grows
     /// unbounded across a long-lived window's lifetime.
     rebuild_attempts: RefCell<Vec<Instant>>,
+    /// Guards `schedule_process_usage_tick`'s self-rearming timer chain the
+    /// same way `hang_check_scheduled` guards the render-thread hang check:
+    /// set when a tick is armed, cleared at the top of `process_usage_tick`,
+    /// so at most one chain is ever pending per window.
+    process_usage_scheduled: Cell<bool>,
+    /// The previous periodic CPU-time sample, used to compute a percentage
+    /// from the delta with the current sample. `None` until the first tick
+    /// has run once (a single sample has no rate to derive).
+    last_process_usage_sample: RefCell<Option<crate::termwindow::process_stats::UsageSample>>,
+    /// The window-title suffix computed by the most recent process-usage
+    /// tick, appended by `update_title_impl`. `None` before the second tick
+    /// (no delta yet) or while `show_process_tree_stats_in_title` is off.
+    process_usage_suffix: RefCell<Option<String>>,
     config_subscription: Option<config::ConfigSubscription>,
     /// Frame signature for deduplicating identical consecutive frames (task #450).
     /// `None` means "no valid previous frame signature to compare against" -

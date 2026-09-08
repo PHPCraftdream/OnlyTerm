@@ -277,6 +277,12 @@ pub struct Config {
     #[dynamic(default)]
     pub allow_process_title_updates: bool,
 
+    /// Show this OnlyTerm process tree's CPU and memory usage as a suffix
+    /// on the OS window title, refreshed every 5 seconds. Enabled by
+    /// default.
+    #[dynamic(default = "default_true")]
+    pub show_process_tree_stats_in_title: bool,
+
     /// Whether the terminal should respond to DECRQCRA checksum requests.
     /// Disabled by default as it allows programs to read screen contents.
     /// <https://vt100.net/docs/vt510-rm/DECRQCRA.html>

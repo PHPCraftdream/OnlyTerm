@@ -177,6 +177,9 @@ impl TermWindow {
             render_thread_hang_handled: Cell::new(false),
             hang_check_scheduled: Cell::new(false),
             rebuild_attempts: RefCell::new(Vec::new()),
+            process_usage_scheduled: Cell::new(false),
+            last_process_usage_sample: RefCell::new(None),
+            process_usage_suffix: RefCell::new(None),
             window: None,
             window_background,
             config: config.clone(),
@@ -562,6 +565,7 @@ impl TermWindow {
             if installed_render_thread {
                 myself.schedule_render_thread_hang_check(&window);
             }
+            myself.schedule_process_usage_tick(&window);
             myself.load_os_parameters();
             myself.subscribe_to_pane_updates();
 
@@ -731,6 +735,87 @@ impl TermWindow {
             "this window's render thread has hung and been rebuilt",
             "gui.render_thread.window_renderer_rebuilt",
         );
+    }
+
+    /// Arms (or, if a chain is already pending, no-ops) the self-rearming
+    /// timer chain that samples this process tree's CPU/memory usage every
+    /// 5 seconds for the OS window title suffix. Same guard pattern as
+    /// `schedule_render_thread_hang_check`: `process_usage_scheduled` is set
+    /// here and cleared at the top of `process_usage_tick`, so at most one
+    /// chain is ever pending per window.
+    ///
+    /// Unlike the hang check, this always re-arms regardless of
+    /// `show_process_tree_stats_in_title` -- see `process_usage_tick` for
+    /// why: it lets the config be toggled live without restarting the
+    /// window, at the cost of one cheap `bool` check every 5s while off.
+    fn schedule_process_usage_tick(&self, window: &Window) {
+        if self.process_usage_scheduled.get() {
+            return;
+        }
+        self.process_usage_scheduled.set(true);
+
+        let next = Instant::now() + Duration::from_secs(5);
+        let window = window.clone();
+        promise::spawn::spawn(async move {
+            Timer::at(next).await;
+            let win = window.clone();
+            window.notify(TermWindowNotif::Apply(Box::new(move |tw| {
+                tw.process_usage_tick(&win);
+            })));
+        })
+        .detach();
+    }
+
+    /// One tick of the process-usage sampler. Reads this process tree's
+    /// current CPU time + memory via `procinfo`, derives a CPU% from the
+    /// delta against the previous tick's sample (a single sample has no
+    /// rate, hence no title update on the very first tick after a window is
+    /// created), and stores the formatted suffix for `update_title_impl` to
+    /// append -- then requests a title rebuild so it actually shows up.
+    /// Always re-arms itself (see `schedule_process_usage_tick`).
+    fn process_usage_tick(&mut self, window: &Window) {
+        self.process_usage_scheduled.set(false);
+
+        if !self.config.show_process_tree_stats_in_title {
+            // Drop any stale suffix from before the config was toggled off,
+            // and drop the baseline sample so re-enabling starts a fresh
+            // delta rather than reporting usage accrued while disabled.
+            if self.process_usage_suffix.borrow_mut().take().is_some() {
+                self.last_process_usage_sample.borrow_mut().take();
+                self.update_title_coalesced();
+            }
+            self.schedule_process_usage_tick(window);
+            return;
+        }
+
+        match procinfo::LocalProcessInfo::process_tree_resource_usage(std::process::id()) {
+            Ok(usage) => {
+                let now = crate::termwindow::process_stats::UsageSample {
+                    at: Instant::now(),
+                    total_cpu_time_100ns: usage.total_cpu_time_100ns,
+                };
+                let prev = self.last_process_usage_sample.replace(Some(now));
+                if let Some(prev) = prev {
+                    let logical_cpus = std::thread::available_parallelism()
+                        .map(|n| n.get())
+                        .unwrap_or(1);
+                    let suffix = crate::termwindow::process_stats::format_usage_suffix(
+                        &prev,
+                        &now,
+                        usage.total_working_set_bytes,
+                        procinfo::total_physical_memory_bytes(),
+                        logical_cpus,
+                    );
+                    self.process_usage_suffix.replace(Some(suffix));
+                    self.update_title_coalesced();
+                }
+            }
+            Err(err) => {
+                log::warn!("process_tree_resource_usage failed: {err:#}");
+            }
+        }
+
+        self.schedule_process_usage_tick(window);
     }
 
     /// Re-entry point (via `TermWindowNotif::Apply`) for render-error
