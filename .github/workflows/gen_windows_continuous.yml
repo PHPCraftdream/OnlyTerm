@@ -16,6 +16,7 @@ on:
       - "assets/icon/*"
       - "assets/windows/**/*"
       - "ci/deploy.sh"
+      - "ci/generate-workflows.py"
       - "ci/windows-installer.iss"
 
 jobs:
@@ -36,6 +37,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           target: "x86_64-pc-windows-msvc"
+          components: "clippy"
       - name: "Compile with sccache"
         uses: mozilla-actions/sccache-action@v0.0.11
       - name: "Cache Rust Dependencies"
@@ -52,16 +54,19 @@ jobs:
         run: "cargo vendor --locked --versioned-dirs >> .cargo/config"
       - name: "Build onlyterm (Release mode)"
         shell: cmd
-        run: "cargo build -p onlyterm --release"
+        run: "cargo build -p onlyterm --release --locked"
       - name: "Build onlyterm-gui (Release mode)"
         shell: cmd
-        run: "cargo build -p onlyterm-gui --release"
+        run: "cargo build -p onlyterm-gui --release --locked"
       - name: "Build onlyterm-mux-server (Release mode)"
         shell: cmd
-        run: "cargo build -p onlyterm-mux-server --release"
+        run: "cargo build -p onlyterm-mux-server --release --locked"
       - name: "Build strip-ansi-escapes (Release mode)"
         shell: cmd
-        run: "cargo build -p strip-ansi-escapes --release"
+        run: "cargo build -p strip-ansi-escapes --release --locked"
+      - name: "Clippy (GUI, window, terminal and process tracking)"
+        shell: cmd
+        run: "cargo clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p mux -p procinfo --all-targets -- -D warnings"
       - name: "Install cargo-nextest from Cargo"
         uses: baptiste0928/cargo-install@v3
         with:
@@ -69,7 +74,7 @@ jobs:
           cache-key: "windows"
       - name: "Test"
         shell: cmd
-        run: "cargo nextest run --all --no-fail-fast"
+        run: "cargo nextest run --all --no-fail-fast --locked"
       - name: "Package"
         shell: bash
         run: "bash ci/deploy.sh"

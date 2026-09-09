@@ -2,6 +2,97 @@
 //! Split out from the parent test module; helpers come from `super::*`.
 use super::*;
 
+fn replay_conpty_color_fill(term: &mut TestTerm, rows: usize, cols: usize) {
+    // OpenConsole 1.22.10352.0: cmd.exe `color f8` startup output.
+    term.print("\x1b7");
+    for row in 1..=rows {
+        term.print(format!("\x1b[{};1H\x1b[0;90;107m{}", row, " ".repeat(cols)));
+    }
+    term.print("\x1b8\x1b[0;90;107m");
+}
+
+#[test]
+fn conpty_resize_replays_native_cmd_edits_after_growing() {
+    for colored in [false, true] {
+        let mut term = TestTerm::new(24, 100, 1000);
+        term.enable_conpty_quirks();
+        if colored {
+            replay_conpty_color_fill(&mut term, 24, 100);
+        }
+        term.print("\r\nPROBE>");
+        let mut expected = "PROBE>".to_string();
+        for (index, (cols, rows)) in [
+            (145, 53),
+            (100, 24),
+            (145, 53),
+            (145, 52),
+            (100, 24),
+            (145, 53),
+        ]
+        .iter()
+        .copied()
+        .enumerate()
+        {
+            term.resize(TerminalSize {
+                rows,
+                cols,
+                ..Default::default()
+            });
+            // Native cooked-read redraw excludes the prompt and clears below it.
+            term.print(format!("\x1b[2;7H\x1b[J\x1b[2;7H{}", &expected[6..]));
+            term.print(format!("\x1b[2;{}Hq{}", expected.len() + 1, index));
+            expected.push_str(&format!("q{}", index));
+            std::assert_eq!(
+                term.screen().visible_lines()[1].as_str().trim_end(),
+                expected
+            );
+            std::assert_eq!(term.cursor_pos().y, 1);
+            std::assert_eq!(term.screen().scrollback_rows(), rows);
+        }
+    }
+}
+
+#[test]
+fn conpty_shrink_preserves_untouched_blank_rows_like_native_console() {
+    let mut term = TestTerm::new(24, 100, 1000);
+    term.enable_conpty_quirks();
+    term.print("\r\nPROBE>");
+    term.resize(TerminalSize {
+        rows: 23,
+        cols: 100,
+        ..Default::default()
+    });
+    term.print("\x1b[2;7Hq0");
+    std::assert_eq!(term.screen().visible_lines()[1].as_str(), "PROBE>q0");
+    std::assert_eq!(term.cursor_pos().y, 1);
+}
+
+#[test]
+fn conpty_growth_keeps_the_native_output_extent_for_later_shrink() {
+    let mut term = TestTerm::new(24, 100, 1000);
+    term.enable_conpty_quirks();
+    replay_conpty_color_fill(&mut term, 24, 100);
+    term.print("\r\nPROBE>");
+    term.resize(TerminalSize {
+        rows: 53,
+        cols: 145,
+        ..Default::default()
+    });
+    term.print("\x1b[2;7Hq0\x1b[2;9H");
+    term.resize(TerminalSize {
+        rows: 18,
+        cols: 100,
+        ..Default::default()
+    });
+    // Native capture: the prior 24-row output extent now pushes the prompt up.
+    term.print("\x1b[1;7H\x1b[J\x1b[1;7Hq0q1\x1b[1;11H");
+    std::assert_eq!(
+        term.screen().visible_lines()[0].as_str().trim_end(),
+        "PROBE>q0q1"
+    );
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (10, 0));
+}
+
 #[test]
 fn conpty_resize_clamps_cursor_when_its_old_line_leaves_the_viewport() {
     let mut term = TestTerm::new(53, 80, 1000);
@@ -53,11 +144,11 @@ fn conpty_resize_preserves_blank_semantic_zones() {
             .unwrap();
         let first_row = zone.start_y;
         term.resize(TerminalSize {
-            rows: 23,
+            rows: 1,
             cols: 80,
             ..Default::default()
         });
-        std::assert_eq!(term.screen().scrollback_rows(), 24);
+        std::assert_eq!(term.screen().scrollback_rows(), 2);
         std::assert!(term
             .get_semantic_zones()
             .unwrap()
@@ -80,11 +171,11 @@ fn conpty_resize_preserves_blank_wrapped_prefix() {
     std::assert!(term.screen().all_lines()[0].last_cell_was_wrapped());
     let first_row = term.screen().phys_to_stable_row_index(0);
     term.resize(TerminalSize {
-        rows: 23,
+        rows: 1,
         cols: 80,
         ..Default::default()
     });
-    std::assert_eq!(term.screen().scrollback_rows(), 24);
+    std::assert_eq!(term.screen().scrollback_rows(), 2);
     std::assert_eq!(term.screen().phys_to_stable_row_index(0), first_row);
     std::assert!(term.screen().all_lines()[0].last_cell_was_wrapped());
     std::assert_eq!(term.screen().visible_lines()[0].as_str(), "suffix");
@@ -96,7 +187,7 @@ fn conpty_resize_does_not_create_blank_only_scrollback() {
     term.enable_conpty_quirks();
     term.print("\r\nprompt> ");
     let stable_cursor = term.screen().visible_row_to_stable_row(term.cursor_pos().y);
-    for rows in [23, 18, 30, 24] {
+    for rows in [1, 18, 30, 24] {
         term.resize(TerminalSize {
             rows,
             cols: 80,
@@ -127,11 +218,11 @@ fn conpty_resize_preserves_text_and_visible_blank_row_decoration() {
         term.print(format!("{}\r\nprompt> ", prefix));
         let original = term.screen().all_lines()[0].clone();
         term.resize(TerminalSize {
-            rows: 23,
+            rows: 1,
             cols: 80,
             ..Default::default()
         });
-        std::assert_eq!(term.screen().scrollback_rows(), 24);
+        std::assert_eq!(term.screen().scrollback_rows(), 2);
         std::assert_eq!(term.screen().all_lines()[0], original);
         std::assert_eq!(term.cursor_pos().y, 0);
     }
@@ -150,13 +241,13 @@ fn conpty_resize_uses_active_palette_for_blank_background() {
         }
         term.print("\x1b[107m   \x1b[0m\r\nprompt> ");
         term.resize(TerminalSize {
-            rows: 23,
+            rows: 1,
             cols: 80,
             ..Default::default()
         });
         std::assert_eq!(
             term.screen().scrollback_rows(),
-            if palette_override { 24 } else { 23 }
+            if palette_override { 2 } else { 1 }
         );
         std::assert_eq!(term.cursor_pos().y, 0);
     }
@@ -186,6 +277,7 @@ fn conpty_resize_does_not_discard_preexisting_blank_history() {
 fn conpty_shrink_moves_prompt_over_leading_blank_like_native_console() {
     let mut term = TestTerm::new(24, 80, 1000);
     term.enable_conpty_quirks();
+    replay_conpty_color_fill(&mut term, 24, 80);
     term.print("\r\nprompt> ");
     for rows in [23, 22, 18] {
         term.resize(TerminalSize {
@@ -194,11 +286,17 @@ fn conpty_shrink_moves_prompt_over_leading_blank_like_native_console() {
             ..Default::default()
         });
         std::assert_eq!(term.cursor_pos().y, 0);
-        std::assert_eq!(term.screen().visible_lines()[0].as_str(), "prompt> ");
+        std::assert_eq!(
+            term.screen().visible_lines()[0].as_str().trim_end(),
+            "prompt>"
+        );
     }
     // ConPTY sends only the edit and its absolute position, not the prompt.
     term.print("\x1b[1;9Hinput");
-    std::assert_eq!(term.screen().visible_lines()[0].as_str(), "prompt> input");
+    std::assert_eq!(
+        term.screen().visible_lines()[0].as_str().trim_end(),
+        "prompt> input"
+    );
 }
 
 #[test]

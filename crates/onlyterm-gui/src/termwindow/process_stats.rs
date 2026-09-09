@@ -20,9 +20,7 @@ pub(super) struct UsageSample {
 /// Task Manager's per-process display convention, so the maximum possible
 /// value is 100% regardless of how many cores this process tree is using.
 ///
-/// The returned string has no leading separator -- the caller joins it to
-/// the base title with " — " (an em dash, distinct from the plain hyphens
-/// used between the values inside this suffix).
+/// The caption renderer supplies brackets and positions the block independently.
 pub(super) fn format_usage_suffix(
     prev: &UsageSample,
     now: &UsageSample,
@@ -53,7 +51,21 @@ pub(super) fn format_usage_suffix(
     };
     let mem_gb = working_set_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
-    format!("CPU {cpu_percent}% - RAM {mem_gb:.1} GB - {mem_percent}%")
+    format!("CPU - {cpu_percent}% - RAM - {mem_gb:.1} GB - {mem_percent}%")
+}
+
+pub(super) struct UsageText {
+    pub full: String,
+    pub compact: String,
+}
+
+impl UsageText {
+    pub fn new(full: String) -> Self {
+        let compact = full
+            .replace(" - RAM - ", " / RAM - ")
+            .replace(" GB - ", "G / ");
+        Self { full, compact }
+    }
 }
 
 #[cfg(test)]
@@ -82,7 +94,7 @@ mod tests {
         let prev = sample(base, 0, 1_000_000);
         let now = sample(base, 5, 1_000_000); // no CPU time consumed in 5s
         let suffix = format_usage_suffix(&prev, &now, GIB, 16 * GIB, 4);
-        assert_eq!(suffix, "CPU 0% - RAM 1.0 GB - 6%");
+        assert_eq!(suffix, "CPU - 0% - RAM - 1.0 GB - 6%");
     }
 
     #[test]
@@ -93,7 +105,7 @@ mod tests {
         // (5s in 100ns units = 5 * 10_000_000).
         let now = sample(base, 5, 5 * 10_000_000);
         let suffix = format_usage_suffix(&prev, &now, GIB, 4 * GIB, 4);
-        assert_eq!(suffix, "CPU 25% - RAM 1.0 GB - 25%");
+        assert_eq!(suffix, "CPU - 25% - RAM - 1.0 GB - 25%");
     }
 
     #[test]
@@ -103,7 +115,7 @@ mod tests {
         // 5 seconds wall-clock, 4 cores fully busy (4x the elapsed time).
         let now = sample(base, 5, 4 * 5 * 10_000_000);
         let suffix = format_usage_suffix(&prev, &now, GIB, 4 * GIB, 4);
-        assert!(suffix.starts_with("CPU 100% -"));
+        assert!(suffix.starts_with("CPU - 100% -"));
     }
 
     #[test]
@@ -123,7 +135,7 @@ mod tests {
         let prev = sample(base, 0, 0);
         let now = sample(base, 1, 0);
         let suffix = format_usage_suffix(&prev, &now, GIB + GIB / 2, 16 * GIB, 4);
-        assert!(suffix.contains("RAM 1.5 GB"), "{}", suffix);
+        assert!(suffix.contains("RAM - 1.5 GB"), "{}", suffix);
     }
 
     #[test]
@@ -132,6 +144,13 @@ mod tests {
         let prev = sample(base, 0, 0);
         let now = sample(base, 0, 0); // identical instant
         let suffix = format_usage_suffix(&prev, &now, 0, 0, 4);
-        assert_eq!(suffix, "CPU 0% - RAM 0.0 GB - 0%");
+        assert_eq!(suffix, "CPU - 0% - RAM - 0.0 GB - 0%");
+    }
+
+    #[test]
+    fn compact_caption_preserves_all_three_readings() {
+        let text = UsageText::new("CPU - 7% - RAM - 2.5 GB - 9%".into());
+        assert_eq!(text.compact, "CPU - 7% / RAM - 2.5G / 9%");
+        assert_eq!(text.full, "CPU - 7% - RAM - 2.5 GB - 9%");
     }
 }

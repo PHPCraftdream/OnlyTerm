@@ -45,6 +45,8 @@ pub struct Screen {
     /// Physical, visible width of the screen
     pub physical_cols: usize,
     pub dpi: u32,
+    /// ConPTY's output extent excludes unused space added by window growth.
+    output_rows: usize,
 
     pub(crate) saved_cursor: Option<SavedCursor>,
 }
@@ -87,6 +89,7 @@ impl Screen {
             physical_cols,
             stable_row_index_offset: 0,
             dpi: size.dpi,
+            output_rows: 0,
             keyboard_stack: vec![],
             saved_cursor: None,
         }
@@ -94,6 +97,7 @@ impl Screen {
 
     pub fn full_reset(&mut self) {
         self.keyboard_stack.clear();
+        self.output_rows = 0;
     }
 
     fn scrollback_size(&self) -> usize {
@@ -238,17 +242,26 @@ impl Screen {
         // this avoids growing the scrollback size when rapidly switching between normal and
         // maximized states.
         let cursor_phys = self.phys_row(cursor.y);
-        let prune_limit =
-            if is_conpty && self.allow_scrollback && physical_rows < self.physical_rows {
-                // Native ConPTY shifts rows upward on shrink until the cursor
-                // reaches the top. Pruning all trailing blanks would instead
-                // pin the prompt while subsequent absolute cursor updates move.
-                let shrink = self.physical_rows - physical_rows;
-                let shift = shrink.min(cursor.y.max(0) as usize);
-                self.lines.len().saturating_sub(shrink - shift)
-            } else {
-                cursor_phys + 1
-            };
+        let old_top = self.lines.len().saturating_sub(self.physical_rows);
+        if is_conpty && self.allow_scrollback {
+            // Erase-to-end can paint unused padding without extending output.
+            let output_end = (old_top + self.output_rows).max(cursor_phys + 1);
+            while self.lines.len() > output_end
+                && self.lines.back().map(Line::is_whitespace).unwrap_or(false)
+            {
+                self.lines.pop_back();
+            }
+        }
+        let prune_limit = if is_conpty && self.allow_scrollback {
+            // Native ConPTY shifts rows upward on shrink until the cursor
+            // reaches the top. Pruning all trailing blanks would instead
+            // pin the prompt while subsequent absolute cursor updates move.
+            let shrink = self.lines.len().saturating_sub(old_top + physical_rows);
+            let shift = shrink.min(cursor.y.max(0) as usize);
+            self.lines.len().saturating_sub(shrink - shift)
+        } else {
+            cursor_phys + 1
+        };
         for _ in prune_limit..self.lines.len() {
             if self.lines.back().map(Line::is_whitespace).unwrap_or(false) {
                 self.lines.pop_back();
@@ -282,6 +295,7 @@ impl Screen {
         };
 
         let capacity = physical_rows + self.scrollback_size();
+        let output_end = self.lines.len();
         let current_capacity = self.lines.capacity();
         if capacity > current_capacity {
             self.lines.reserve(capacity - current_capacity);
@@ -346,6 +360,9 @@ impl Screen {
         let new_cursor_y = cursor_y as VisibleRowIndex
             - (self.lines.len() as VisibleRowIndex - physical_rows as VisibleRowIndex);
 
+        self.output_rows = output_end
+            .saturating_sub(self.lines.len() - physical_rows)
+            .min(physical_rows);
         self.physical_rows = physical_rows;
         self.physical_cols = physical_cols;
         CursorPosition {
@@ -433,6 +450,7 @@ impl Screen {
     /// Set a cell.  the x and y coordinates are relative to the visible screeen
     /// origin.  0,0 is the top left.
     pub fn set_cell(&mut self, x: usize, y: VisibleRowIndex, cell: &Cell, seqno: SequenceNo) {
+        self.note_output_row(y);
         let line_idx = self.phys_row(y);
         //debug!("set_cell x={} y={} phys={} {:?}", x, y, line_idx, cell);
 
@@ -449,12 +467,14 @@ impl Screen {
         attr: CellAttributes,
         seqno: SequenceNo,
     ) {
+        self.note_output_row(y);
         let line_idx = self.phys_row(y);
         let line = self.line_mut(line_idx);
         line.set_cell_grapheme(x, text, width, attr, seqno);
     }
 
     pub fn cell_mut(&mut self, x: usize, y: VisibleRowIndex) -> Option<&mut Cell> {
+        self.note_output_row(y);
         let line_idx = self.phys_row(y);
         let line = self.lines.get_mut(line_idx)?;
         line.cells_mut().get_mut(x)
@@ -464,6 +484,12 @@ impl Screen {
         let line_idx = self.phys_row(y);
         let line = self.lines.get_mut(line_idx)?;
         line.cells_mut().get(x)
+    }
+
+    fn note_output_row(&mut self, y: VisibleRowIndex) {
+        self.output_rows = self
+            .output_rows
+            .max((y.max(0) as usize + 1).min(self.physical_rows));
     }
 
     pub fn clear_line(

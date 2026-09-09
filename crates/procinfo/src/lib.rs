@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use onlyterm_dynamic::{FromDynamic, ToDynamic};
 
 mod windows;
-pub use windows::{total_physical_memory_bytes, ProcessTreeUsage};
+pub use windows::{total_physical_memory_bytes, ProcessActivityStamp, ProcessTreeUsage};
 
 #[derive(Debug, Copy, Clone)]
 #[cfg_attr(feature = "lua", derive(FromDynamic, ToDynamic))]

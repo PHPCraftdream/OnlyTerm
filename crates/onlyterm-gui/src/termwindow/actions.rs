@@ -507,18 +507,14 @@ impl TermWindow {
         } else {
             "".to_string()
         };
-        let title = match self.process_usage_suffix.borrow().as_ref() {
-            // An em dash (with extra surrounding padding) separates this
-            // suffix from the base title; the suffix's own internal
-            // separators are plain hyphens (see
-            // `process_stats::format_usage_suffix`), and the whole suffix is
-            // bracketed to set it apart visually as one block.
-            Some(suffix) => format!("{title}  —  [{suffix}]"),
-            None => title,
-        };
-
         if let Some(window) = self.window.as_ref() {
-            window.set_title(&title);
+            let usage = self.process_usage_suffix.borrow();
+            let status = usage
+                .as_ref()
+                .filter(|_| self.config.show_process_tree_stats_in_title)
+                .map(|usage| (usage.full.as_str(), usage.compact.as_str()));
+            window.set_title_and_status(&title, status);
+            drop(usage);
 
             let show_tab_bar = if num_tabs == 1 {
                 self.config.enable_tab_bar && !self.config.hide_tab_bar_if_only_one_tab

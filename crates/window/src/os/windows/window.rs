@@ -57,6 +57,8 @@ use windows::UI::ViewManagement::{UIColorType, UISettings};
 use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
 
+mod caption;
+
 const GCS_RESULTSTR: DWORD = 0x800;
 const GCS_COMPSTR: DWORD = 0x8;
 const ISC_SHOWUICOMPOSITIONWINDOW: DWORD = 0x80000000;
@@ -300,6 +302,7 @@ pub(crate) struct WindowInner {
     /// is destroyed. Kept sized/positioned to exactly cover `hwnd`'s client
     /// area by `check_and_call_resize_if_needed`.
     webgpu_child_hwnd: HWindow,
+    caption: caption::Caption,
     /// Old WebGpu child HWNDs that have been superseded by a renderer
     /// rebuild (see `Window::recreate_webgpu_child_window`) but not yet
     /// `DestroyWindow`-ed, paired with a type-erased `Weak` handle to the
@@ -580,6 +583,7 @@ impl WindowInner {
         // window handle; `GetClientRect` only writes the client rect into it.
         unsafe {
             GetClientRect(self.hwnd.0, &mut rect);
+            caption::content_rect(self.hwnd.0, &mut rect);
         }
         let pixel_width = rect_width(&rect) as usize;
         let pixel_height = rect_height(&rect) as usize;
@@ -616,6 +620,7 @@ impl WindowInner {
             pixel_height,
             dpi: self.get_effective_dpi(),
         };
+        self.sync_caption();
 
         let same = self
             .last_size
@@ -668,7 +673,18 @@ fn schedule_apply_decoration(hwnd: HWND, decorations: WindowDecorations) {
 fn apply_decoration_immediate(hwnd: HWND, decorations: WindowDecorations) {
     match rc_from_hwnd(hwnd) {
         Some(inner) => {
-            if inner.borrow().saved_placement.is_some() {
+            let inner = inner.borrow();
+            // SAFETY: this live window is owned by the GUI thread; property is scalar.
+            unsafe {
+                caption::configure(
+                    hwnd,
+                    inner.config.show_process_tree_stats_in_title
+                        && !no_native_title_bar(decorations)
+                        && !inner.caption.failed
+                        && !inner.webgpu_child_hwnd.0.is_null(),
+                );
+            }
+            if inner.saved_placement.is_some() {
                 // We are full screen; ignore it for now
                 return;
             }
@@ -911,6 +927,7 @@ impl Window {
         // just-created window handle; `GetClientRect` only writes into `rect`.
         unsafe {
             GetClientRect(parent, &mut rect);
+            caption::content_rect(parent, &mut rect);
         }
 
         let name = wide_string("OnlyTermWebGpuChild");
@@ -1134,6 +1151,7 @@ impl Window {
         let inner = Rc::new(RefCell::new(WindowInner {
             hwnd: HWindow(null_mut()),
             webgpu_child_hwnd: HWindow(null_mut()),
+            caption: caption::Caption::default(),
             retired_webgpu_children: Vec::new(),
             appearance,
             events,
@@ -1164,6 +1182,8 @@ impl Window {
 
         let geometry = conn.resolve_geometry(geometry);
 
+        let centered_caption = config.show_process_tree_stats_in_title
+            && !no_native_title_bar(config.window_decorations);
         let hwnd = match Self::create_window(config, class_name, name, geometry, raw) {
             Ok(hwnd) => HWindow(hwnd),
             Err(err) => {
@@ -1210,7 +1230,22 @@ impl Window {
         {
             let mut inner_mut = inner.borrow_mut();
             inner_mut.webgpu_child_hwnd = webgpu_child_hwnd;
+            inner_mut.caption.set_text(name, None);
             inner_mut.events.assign_window(window_handle.clone());
+        }
+
+        // SAFETY: parent and its child have been created; change the frame before showing it.
+        unsafe {
+            caption::configure(hwnd.0, centered_caption && !webgpu_child_hwnd.0.is_null());
+            SetWindowPos(
+                hwnd.0,
+                null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
 
         apply_theme(hwnd.0);
@@ -1883,6 +1918,11 @@ impl WindowInner {
     }
 
     fn set_title(&mut self, title: &str) {
+        self.caption.set_text(title, None);
+        self.set_native_title(title);
+    }
+
+    fn set_native_title(&mut self, title: &str) {
         let title = wide_string(title);
         // SAFETY: `self.hwnd.0` is a valid window handle and `title` is a live
         // null-terminated UTF-16 buffer.
@@ -1895,7 +1935,9 @@ impl WindowInner {
         self.set_ime_window_position(cursor);
     }
 
-    fn set_ime_window_position(&mut self, cursor: Rect) {
+    fn set_ime_window_position(&mut self, mut cursor: Rect) {
+        // SAFETY: IME coordinates must include the same live caption inset as mouse input.
+        cursor.origin.y += unsafe { caption::height(self.hwnd.0) } as isize;
         let imc = ImmContext::get(self.hwnd.0);
         match self.config.ime_preedit_rendering {
             ImePreeditRendering::Builtin => imc.set_candidate_window_position(cursor),
@@ -1985,6 +2027,27 @@ impl HasWindowHandle for Window {
         // SAFETY: `handle` is a valid `Win32WindowHandle` backed by a live `hwnd`
         // kept alive by the owning `Connection`, so borrowing it raw is sound.
         unsafe { Ok(WindowHandle::borrow_raw(handle.as_raw())) }
+    }
+}
+
+impl Window {
+    /// Native title stays concise for accessibility; status is painted independently.
+    pub fn set_title_and_status(&self, title: &str, status: Option<(&str, &str)>) {
+        let title = title.to_owned();
+        let status = status.map(|(full, compact)| (full.to_owned(), compact.to_owned()));
+        Connection::with_window_inner(self.0, move |inner| {
+            if inner.caption.set_text(
+                &title,
+                status.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+            ) {
+                let native = match status {
+                    Some((full, _)) => format!("{title} — [{full}]"),
+                    None => title,
+                };
+                inner.set_native_title(&native);
+            }
+            Ok(())
+        });
     }
 }
 
@@ -2106,10 +2169,9 @@ impl WindowOps for Window {
     fn invalidate(&self) {
         let hwnd = self.0 .0;
         log::trace!("WindowOps::invalidate calling InvalidateRect");
-        // SAFETY: `hwnd` is a valid window handle; a null rect invalidates the
-        // whole client area and the erase flag (0) is a valid constant.
+        // SAFETY: live window; caption invalidation is independent from terminal frames.
         unsafe {
-            InvalidateRect(hwnd, null(), 0);
+            caption::invalidate_content(hwnd);
         }
     }
 
@@ -2428,6 +2490,9 @@ unsafe fn wm_ncdestroy(
         // it simply never runs in the successful case, so setting this
         // unconditionally here is harmless either way.
         inner.extra_ref_reclaimed_by_ncdestroy.set(true);
+        inner.caption = caption::Caption::default();
+        // SAFETY: clear this window's scalar property before its HWND is destroyed.
+        caption::configure(hwnd, false);
         inner.events.dispatch(WindowEvent::Destroyed);
         inner.hwnd = HWindow(null_mut());
         // Backstop in case this window is closed before a renderer ever
@@ -2462,6 +2527,10 @@ fn no_native_title_bar(decorations: WindowDecorations) -> bool {
 /// real `WM_NCCALCSIZE` message (when `wparam==1`, `lparam` points at a valid
 /// `NCCALCSIZE_PARAMS`).
 unsafe fn wm_nccalcsize(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+    // SAFETY: parameters are the original WM_NCCALCSIZE arguments.
+    if let Some(result) = unsafe { caption::nc_calc(hwnd, _msg, wparam, lparam) } {
+        return Some(result);
+    }
     let inner = rc_from_hwnd(hwnd)?;
     let inner = match inner.try_borrow() {
         Ok(inner) => inner,
@@ -2805,7 +2874,11 @@ fn apply_theme(hwnd: HWND) -> Option<LRESULT> {
                 &MARGINS {
                     cxLeftWidth: margins,
                     cxRightWidth: margins,
-                    cyTopHeight: margins,
+                    cyTopHeight: if margins < 0 {
+                        margins
+                    } else {
+                        caption::height(hwnd)
+                    },
                     cyBottomHeight: margins,
                 },
             );
@@ -2870,6 +2943,7 @@ fn apply_theme(hwnd: HWND) -> Option<LRESULT> {
 
             if appearance != inner.appearance {
                 inner.appearance = appearance;
+                inner.caption.set_appearance(appearance);
                 inner
                     .events
                     .dispatch(WindowEvent::AppearanceChanged(appearance));
@@ -3080,6 +3154,8 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
         rgbReserved: [0; 32],
     };
     let hdc = BeginPaint(hwnd, &mut ps);
+    // SAFETY: paint DC uses parent-client coordinates; keep DWM's caption-button layer visible.
+    caption::clear_frame_background(hwnd, hdc);
     // Paint the placeholder spinner here rather than leaving it to
     // `wm_erasebkgnd`. That handler can never do it during our own paint
     // cycle: `BeginPaint` sends `WM_ERASEBKGND` *synchronously*, from
@@ -3101,6 +3177,8 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
             // SAFETY: `hwnd` is the valid window handle passed in; `rect`
             // is a live stack `RECT` that `GetClientRect` only writes into.
             GetClientRect(hwnd, &mut rect);
+            // SAFETY: placeholder must cover terminal content, not the caption band.
+            caption::content_rect(hwnd, &mut rect);
             // SAFETY: `hdc` is the non-null device context just returned by
             // `BeginPaint` and still live until `EndPaint`; `spinner`'s GDI
             // objects are owned by `inner` (created in
@@ -3123,7 +3201,7 @@ unsafe fn wm_paint(hwnd: HWND, _msg: UINT, _wparam: WPARAM, _lparam: LPARAM) -> 
         Connection::with_window_inner(window_id, move |inner| {
             inner.paint_throttled = false;
             if inner.invalidated {
-                InvalidateRect(inner.hwnd.0, null(), 0);
+                caption::invalidate_content(inner.hwnd.0);
             }
             Ok(())
         });
@@ -3162,6 +3240,8 @@ unsafe fn wm_erasebkgnd(
     wparam: WPARAM,
     _lparam: LPARAM,
 ) -> Option<LRESULT> {
+    // SAFETY: WM_ERASEBKGND supplies a live parent-client paint DC.
+    caption::clear_frame_background(hwnd, wparam as HDC);
     let inner = match rc_from_hwnd(hwnd) {
         Some(inner) => inner,
         // No `WindowInner` yet (e.g. during early window-creation messages
@@ -3194,6 +3274,8 @@ unsafe fn wm_erasebkgnd(
         // SAFETY: `hwnd` is the valid window handle passed in; `rect` is a
         // live stack `RECT` that `GetClientRect` only writes into.
         GetClientRect(hwnd, &mut rect);
+        // SAFETY: initialized client rectangle for this live parent window.
+        caption::content_rect(hwnd, &mut rect);
         // SAFETY: `hdc` comes from `wparam` of a real `WM_ERASEBKGND`
         // message and is therefore a valid device context for this window;
         // `spinner`'s GDI objects are owned by `inner` (created in
@@ -3303,7 +3385,10 @@ fn screen_to_client(hwnd: HWND, point: ScreenPoint) -> Point {
         y: point.y.try_into().unwrap(),
     };
     // SAFETY: `hwnd` is a valid window handle and `point` is a live `POINT`.
-    unsafe { ScreenToClient(hwnd, &mut point as *mut _) };
+    unsafe {
+        ScreenToClient(hwnd, &mut point as *mut _);
+        point.y -= caption::height(hwnd);
+    }
     Point::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
 }
 
@@ -3313,7 +3398,10 @@ fn client_to_screen(hwnd: HWND, point: Point) -> ScreenPoint {
         y: point.y.try_into().unwrap(),
     };
     // SAFETY: `hwnd` is a valid window handle and `point` is a live `POINT`.
-    unsafe { ClientToScreen(hwnd, &mut point as *mut _) };
+    unsafe {
+        point.y += caption::height(hwnd);
+        ClientToScreen(hwnd, &mut point as *mut _);
+    }
     ScreenPoint::new(point.x.try_into().unwrap(), point.y.try_into().unwrap())
 }
 
@@ -3355,7 +3443,9 @@ unsafe fn mouse_button(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) ->
         ReleaseCapture();
     }
     let (modifiers, mouse_buttons) = mods_and_buttons(wparam);
-    let coords = mouse_coords(lparam);
+    let mut coords = mouse_coords(lparam);
+    // SAFETY: client messages use the parent's raw origin, not the terminal origin.
+    coords.y -= unsafe { caption::height(hwnd) } as isize;
     let event = MouseEvent {
         kind: match msg {
             WM_LBUTTONDOWN => MouseEventKind::Press(MousePress::Left),
@@ -3452,7 +3542,9 @@ unsafe fn mouse_move(hwnd: HWND, _msg: UINT, wparam: WPARAM, lparam: LPARAM) -> 
     }
 
     let (modifiers, mouse_buttons) = mods_and_buttons(wparam);
-    let coords = mouse_coords(lparam);
+    let mut coords = mouse_coords(lparam);
+    // SAFETY: client messages use the parent's raw origin, not the terminal origin.
+    coords.y -= unsafe { caption::height(hwnd) } as isize;
     let event = MouseEvent {
         kind: MouseEventKind::Move,
         coords,
@@ -4199,6 +4291,34 @@ unsafe fn drop_files(hwnd: HWND, _msg: UINT, wparam: WPARAM, _lparam: LPARAM) ->
 /// `hwnd` must be a valid window handle and the args the values from the Win32
 /// message being dispatched.
 unsafe fn do_wnd_proc(hwnd: HWND, msg: UINT, wparam: WPARAM, lparam: LPARAM) -> Option<LRESULT> {
+    if matches!(
+        msg,
+        WM_NCHITTEST
+            | WM_NCMOUSEMOVE
+            | WM_NCMOUSEHOVER
+            | WM_NCMOUSELEAVE
+            | WM_NCLBUTTONDOWN
+            | WM_NCLBUTTONUP
+            | WM_NCLBUTTONDBLCLK
+    ) {
+        // SAFETY: forward unchanged non-client messages to DWM before application hit testing.
+        if let Some(result) = unsafe { caption::non_client_message(hwnd, msg, wparam, lparam) } {
+            return Some(result);
+        }
+    }
+    if matches!(msg, WM_SETTINGCHANGE | WM_THEMECHANGED) {
+        if let Some(inner) = rc_from_hwnd(hwnd) {
+            if let Ok(mut inner) = inner.try_borrow_mut() {
+                inner.caption.reset_font();
+            }
+        }
+    } else if matches!(msg, WM_ACTIVATE | WM_NCACTIVATE) {
+        if let Some(inner) = rc_from_hwnd(hwnd) {
+            if let Ok(inner) = inner.try_borrow() {
+                inner.caption.invalidate();
+            }
+        }
+    }
     match msg {
         WM_NCCREATE => wm_nccreate(hwnd, msg, wparam, lparam),
         WM_NCDESTROY => wm_ncdestroy(hwnd, msg, wparam, lparam),
@@ -4278,7 +4398,24 @@ unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match std::panic::catch_unwind(|| {
+        // SAFETY: DWM receives the original window message before custom frame handling.
+        let dwm = unsafe { caption::dwm_message(hwnd, msg, wparam, lparam) };
+        if matches!(
+            msg,
+            WM_NCHITTEST
+                | WM_NCMOUSEMOVE
+                | WM_NCMOUSEHOVER
+                | WM_NCMOUSELEAVE
+                | WM_NCLBUTTONDOWN
+                | WM_NCLBUTTONUP
+                | WM_NCLBUTTONDBLCLK
+        ) {
+            if let Some(result) = dwm {
+                return result;
+            }
+        }
         do_wnd_proc(hwnd, msg, wparam, lparam)
+            .or(dwm)
             .unwrap_or_else(|| DefWindowProcW(hwnd, msg, wparam, lparam))
     }) {
         Ok(result) => result,
@@ -4531,6 +4668,7 @@ mod test {
         Rc::new(RefCell::new(WindowInner {
             hwnd: HWindow(std::ptr::null_mut()),
             webgpu_child_hwnd: HWindow(std::ptr::null_mut()),
+            caption: caption::Caption::default(),
             retired_webgpu_children: Vec::new(),
             appearance: Appearance::Light,
             events: WindowEventSender::new(|_, _| {}),

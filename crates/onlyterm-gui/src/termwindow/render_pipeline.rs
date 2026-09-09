@@ -806,7 +806,8 @@ impl TermWindow {
                         procinfo::total_physical_memory_bytes(),
                         logical_cpus,
                     );
-                    self.process_usage_suffix.replace(Some(suffix));
+                    self.process_usage_suffix
+                        .replace(Some(process_stats::UsageText::new(suffix)));
                     self.update_title_coalesced();
                 }
             }

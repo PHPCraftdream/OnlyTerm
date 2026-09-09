@@ -124,7 +124,7 @@ impl LocalPane {
     /// stale value it's safe to return instead.
     pub(super) fn compute_proc_info(pid: u32) -> Option<CachedProcInfo> {
         log::trace!("CachedProcInfo expired, refresh");
-        let root = LocalProcessInfo::with_root_pid(pid)?;
+        let (root, snapshot_started) = LocalProcessInfo::with_root_pid_and_snapshot(pid)?;
 
         // Windows doesn't have any job control or session concept,
         // so we infer that the equivalent to the process group
@@ -156,11 +156,17 @@ impl LocalPane {
         let foreground = youngest.clone_without_children();
 
         log::trace!("CachedProcInfo updated");
+        #[cfg(windows)]
+        let mut activity = super::process_activity::ActivityState::new(Instant::now());
+        #[cfg(windows)]
+        activity.snapshot_started(snapshot_started);
         Some(CachedProcInfo {
             root,
             foreground,
             updated: Instant::now(),
             updating: false,
+            #[cfg(windows)]
+            activity,
         })
     }
 
@@ -183,6 +189,9 @@ impl LocalPane {
     /// fetch to refresh the cache for next time, guarded by
     /// `CachedProcInfo::updating` against spawning a duplicate concurrent
     /// refresh.
+    /// On Windows, idle known processes use identity/cycle probes instead of
+    /// rebuilding the system snapshot. A full snapshot must postdate the
+    /// activity baseline; uncertain probes and the 5s idle deadline force a scan.
     ///
     /// Task #471: the very first call for a pane (`proc_list` still
     /// `None`, nothing cached at all yet) used to be the one case that
@@ -274,8 +283,29 @@ impl LocalPane {
                     // policy allows it: hand back the stale data now and
                     // queue up a background refresh for next time.
                     info.updating = true;
+                    #[cfg(windows)]
+                    let refresh = super::process_activity::RefreshPlan::new(info);
                     let proc_list_ref = Arc::clone(&self.proc_list);
+                    // fire-and-forget: one bounded refresh per pane; no cache lock during OS queries.
                     smol::unblock(move || {
+                        #[cfg(windows)]
+                        {
+                            use super::process_activity::RefreshResult;
+                            let result = refresh.run(pid);
+                            let mut proc_list = proc_list_ref.lock();
+                            if let Some(info) = proc_list.as_mut().filter(|info| refresh.owns(info))
+                            {
+                                match result {
+                                    RefreshResult::Fresh(fresh) => *info = *fresh,
+                                    RefreshResult::Unchanged => {
+                                        info.updated = Instant::now();
+                                        info.updating = false;
+                                    }
+                                    RefreshResult::Failed => info.updating = false,
+                                }
+                            }
+                        }
+                        #[cfg(not(windows))]
                         if let Some(fresh) = Self::compute_proc_info(pid) {
                             let mut proc_list = proc_list_ref.lock();
                             if let Some(info) = proc_list.as_mut() {

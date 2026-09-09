@@ -261,6 +261,7 @@ fn key_compat_names_ignore_stale_positive_and_stuck_refresh() {
         root,
         updated: Instant::now() - Duration::from_secs(60),
         updating: true,
+        activity: super::super::process_activity::ActivityState::new(Instant::now()),
     });
     let names = pane
         .get_process_tree_exe_names(CachePolicy::AllowStale)
@@ -341,6 +342,8 @@ fn current_working_dir_tracks_root_process_not_foreground_pick() {
         foreground,
         updated: Instant::now(),
         updating: false,
+        #[cfg(windows)]
+        activity: super::super::process_activity::ActivityState::new(Instant::now()),
     });
 
     let cwd = pane

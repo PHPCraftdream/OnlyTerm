@@ -1,5 +1,7 @@
 mod action_chunks;
 mod pane_impl;
+#[cfg(windows)]
+mod process_activity;
 mod process_info;
 mod search;
 
@@ -90,6 +92,8 @@ struct CachedProcInfo {
     /// second caller that also observes an expired-but-present cache
     /// doesn't spawn a duplicate concurrent refresh.
     updating: bool,
+    #[cfg(windows)]
+    activity: process_activity::ActivityState,
 }
 
 impl CachedProcInfo {

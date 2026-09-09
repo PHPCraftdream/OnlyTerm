@@ -54,6 +54,7 @@ winapi = { workspace=true, features = [
     "shellscalingapi",
     "synchapi",
     "sysinfoapi",
+    "wingdi",
     "winerror",
     "winuser",
 ]}

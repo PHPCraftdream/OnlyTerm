@@ -11,6 +11,7 @@ use std::ffi::OsString;
 use std::io;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStringExt;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use winapi::shared::minwindef::{DWORD, FILETIME, LPVOID, MAX_PATH};
@@ -22,11 +23,16 @@ use winapi::um::processthreadsapi::{
     GetCurrentProcess, GetCurrentProcessId, GetProcessTimes, OpenProcess,
 };
 use winapi::um::psapi::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+use winapi::um::realtimeapiset::QueryProcessCycleTime;
 use winapi::um::shellapi::CommandLineToArgvW;
+use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::sysinfoapi::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use winapi::um::tlhelp32::*;
 use winapi::um::winbase::{LocalFree, QueryFullProcessImageNameW};
-use winapi::um::winnt::{HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
+use winapi::um::winnt::{
+    HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
+    SYNCHRONIZE,
+};
 
 /// Manages a Toolhelp32 snapshot handle
 struct Snapshot(HANDLE);
@@ -442,6 +448,13 @@ impl Drop for ProcHandle {
 /// shared snapshot instead of taking its own.
 const PROC_SNAPSHOT_TTL: Duration = Duration::from_millis(300);
 
+/// Identity and activity, without enumerating unrelated system processes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProcessActivityStamp {
+    pub creation_time: u64,
+    pub cycles: u64,
+}
+
 /// The one field of `PROCESSENTRY32W` that `with_root_pid`'s tree
 /// building actually needs, copied out of the raw Win32 struct so the
 /// shared cache doesn't hand out Win32 handles or keep snapshot-shaped
@@ -493,10 +506,15 @@ impl SnapshotExeEntries {
 /// the staleness every caller tolerates. Concurrent refresher threads
 /// serialize on the mutex; the first one past expiry refreshes and the
 /// rest find it warm.
-type ProcessSnapshotCache = Mutex<Option<(Instant, Arc<[ProcessEntry]>)>>;
+struct ProcessEntries {
+    started_at: Instant,
+    entries: Vec<ProcessEntry>,
+}
+
+type ProcessSnapshotCache = Mutex<Option<(Instant, Arc<ProcessEntries>)>>;
 static SNAPSHOT_CACHE: ProcessSnapshotCache = Mutex::new(None);
 
-fn shared_snapshot_entries() -> Arc<[ProcessEntry]> {
+fn shared_snapshot_entries() -> Arc<ProcessEntries> {
     snapshot_entries_with(&SNAPSHOT_CACHE, Instant::now, fresh_snapshot_entries)
 }
 
@@ -504,7 +522,7 @@ fn snapshot_entries_with(
     cache: &ProcessSnapshotCache,
     now: impl Fn() -> Instant,
     fetch: impl FnOnce() -> io::Result<Vec<ProcessEntry>>,
-) -> Arc<[ProcessEntry]> {
+) -> Arc<ProcessEntries> {
     // Deliberately poison-tolerant: the cache holds only plain data, so a
     // panicking refresher must not permanently break process lookups.
     let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -513,14 +531,24 @@ fn snapshot_entries_with(
             return Arc::clone(entries);
         }
     }
+    let started_at = now();
     let entries = match fetch() {
-        Ok(entries) => Arc::<[ProcessEntry]>::from(entries),
+        Ok(entries) => Arc::new(ProcessEntries {
+            started_at,
+            entries,
+        }),
         Err(err) => {
             log::warn!("process snapshot failed: {err}");
             // Keep the last complete snapshot, without making it fresh.
-            return cache
-                .as_ref()
-                .map_or_else(|| Arc::from([]), |(_, entries)| Arc::clone(entries));
+            return cache.as_ref().map_or_else(
+                || {
+                    Arc::new(ProcessEntries {
+                        started_at,
+                        entries: Vec::new(),
+                    })
+                },
+                |(_, entries)| Arc::clone(entries),
+            );
         }
     };
     *cache = Some((now(), Arc::clone(&entries)));
@@ -598,6 +626,44 @@ fn entry_exe_name(exe: &[u16]) -> Option<String> {
 }
 
 impl LocalProcessInfo {
+    /// Returns None for exited/inaccessible processes; never treats uncertainty as idle.
+    pub fn activity_stamp(pid: u32) -> Option<ProcessActivityStamp> {
+        // SAFETY: read/wait-only access; OpenProcess transfers ownership of a non-null handle.
+        let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid) };
+        if raw.is_null() {
+            return None;
+        }
+        // SAFETY: the non-null OpenProcess result is exclusively owned and closed exactly once.
+        let handle = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        let mut cycles = 0;
+        // SAFETY: owned live handle has query/SYNCHRONIZE rights; all outputs are initialized.
+        // Zero-time wait never blocks. QueryProcessCycleTime includes user and kernel execution.
+        unsafe {
+            if WaitForSingleObject(handle.as_raw_handle().cast(), 0)
+                != winapi::shared::winerror::WAIT_TIMEOUT
+                || GetProcessTimes(
+                    handle.as_raw_handle().cast(),
+                    &mut creation,
+                    &mut exit,
+                    &mut kernel,
+                    &mut user,
+                ) == 0
+                || QueryProcessCycleTime(handle.as_raw_handle().cast(), &mut cycles) == 0
+            {
+                return None;
+            }
+        }
+        Some(ProcessActivityStamp {
+            creation_time: (u64::from(creation.dwHighDateTime) << 32)
+                | u64::from(creation.dwLowDateTime),
+            cycles,
+        })
+    }
+
     /// Fresh executable base names for a pane's process tree. Unlike
     /// `with_root_pid`, this only reads Toolhelp's PID/PPID/name records:
     /// no OpenProcess, remote memory reads, or asynchronous cache refresh.
@@ -621,6 +687,11 @@ impl LocalProcessInfo {
     }
 
     pub fn with_root_pid(pid: u32) -> Option<Self> {
+        Self::with_root_pid_and_snapshot(pid).map(|(root, _)| root)
+    }
+
+    /// Snapshot start is conservative: data cannot predate this instant.
+    pub fn with_root_pid_and_snapshot(pid: u32) -> Option<(Self, Instant)> {
         log::trace!("LocalProcessInfo::with_root_pid({}), getting snapshot", pid);
         // Shared machine-wide snapshot; may be up to PROC_SNAPSHOT_TTL
         // old and is shared across all panes/callers.
@@ -668,7 +739,14 @@ impl LocalProcessInfo {
             }
         }
 
-        crate::build_tree_iterative(&procs, pid, |info| info.pid, |info| info.ppid, make_leaf)
+        crate::build_tree_iterative(
+            &procs.entries,
+            pid,
+            |info| info.pid,
+            |info| info.ppid,
+            make_leaf,
+        )
+        .map(|root| (root, procs.started_at))
     }
 
     /// Aggregate CPU time and working-set memory across `pid` and all of
@@ -685,15 +763,19 @@ impl LocalProcessInfo {
     /// `with_root_pid`'s per-leaf `ProcHandle::new`.
     pub fn process_tree_resource_usage(pid: u32) -> io::Result<ProcessTreeUsage> {
         let procs = shared_snapshot_entries();
-        let root = procs.iter().find(|entry| entry.pid == pid).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "root pid missing from process snapshot",
-            )
-        })?;
+        let root = procs
+            .entries
+            .iter()
+            .find(|entry| entry.pid == pid)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "root pid missing from process snapshot",
+                )
+            })?;
 
         let mut children: HashMap<u32, Vec<&ProcessEntry>> = HashMap::new();
-        for entry in procs.iter() {
+        for entry in procs.entries.iter() {
             children.entry(entry.ppid).or_default().push(entry);
         }
 
@@ -830,6 +912,47 @@ mod key_compat_tests;
 #[cfg(test)]
 mod resource_usage_tests {
     use super::*;
+
+    #[test]
+    fn snapshot_start_is_recorded_before_fetch_not_when_it_finishes() {
+        use std::cell::Cell;
+        let at = Instant::now();
+        let clock = Cell::new(at);
+        let cache = Mutex::new(None);
+        let entries = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            || {
+                clock.set(at + Duration::from_secs(1));
+                Ok(vec![])
+            },
+        );
+        assert_eq!(entries.started_at, at);
+        let reused = snapshot_entries_with(&cache, || clock.get(), || panic!("cache remains warm"));
+        assert!(Arc::ptr_eq(&entries, &reused));
+        assert_eq!(reused.started_at, at);
+    }
+
+    #[test]
+    fn activity_stamp_distinguishes_exited_process_even_with_exit_code_259() {
+        use std::os::windows::process::CommandExt;
+        let mut child = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "exit 259"])
+            .creation_flags(winapi::um::winbase::CREATE_NO_WINDOW)
+            .spawn()
+            .expect("short-lived process fixture");
+        let pid = child.id();
+        assert_eq!(child.wait().expect("fixture exit").code(), Some(259));
+        assert_eq!(LocalProcessInfo::activity_stamp(pid), None);
+    }
+
+    #[test]
+    fn activity_stamp_reads_identity_without_a_tree_snapshot() {
+        let stamp =
+            LocalProcessInfo::activity_stamp(std::process::id()).expect("own process activity");
+        assert!(stamp.creation_time > 0);
+        assert_eq!(LocalProcessInfo::activity_stamp(u32::MAX), None);
+    }
 
     #[test]
     fn process_tree_resource_usage_reads_the_current_process() {

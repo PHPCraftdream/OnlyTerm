@@ -541,7 +541,7 @@ pub struct TermWindow {
     /// The window-title suffix computed by the most recent process-usage
     /// tick, appended by `update_title_impl`. `None` before the second tick
     /// (no delta yet) or while `show_process_tree_stats_in_title` is off.
-    process_usage_suffix: RefCell<Option<String>>,
+    process_usage_suffix: RefCell<Option<process_stats::UsageText>>,
     config_subscription: Option<config::ConfigSubscription>,
     /// Frame signature for deduplicating identical consecutive frames (task #450).
     /// `None` means "no valid previous frame signature to compare against" -

@@ -43,8 +43,8 @@ fn cached_snapshots_share_storage_and_failed_refresh_preserves_generation() {
     );
     assert!(Arc::ptr_eq(&first, &stale));
     let replaced = snapshot_entries_with(&cache, || later, || Ok(Vec::new()));
-    assert!(replaced.is_empty());
-    assert_eq!(first[0].exe, PathBuf::from("shell.exe"));
+    assert!(replaced.entries.is_empty());
+    assert_eq!(first.entries[0].exe, PathBuf::from("shell.exe"));
 }
 
 #[test]

@@ -100,3 +100,50 @@ including both cursor resize regressions, repeated shrink/grow, stable row
 identity, existing history, decorated whitespace, active palette and images.
 This follow-up still requires GUI runtime acceptance and is not in the existing
 `v0.0.20-alpha` tag.
+
+## September 9 follow-up: output extent is not viewport height
+
+The old shrink rule was insufficient after a window had first grown. A fresh
+maximized CMD followed by restore/maximize reproduced the user's report:
+OnlyTerm retained the prompt on row 0 and placed new input on row 1, while a
+read-only native console snapshot showed both together on row 1. Subsequent
+cooked-read redraws could also erase the displaced prompt.
+
+Captures from the bundled OpenConsole/ConPTY 1.22.250204002 established distinct
+cases (row numbers below are zero-based):
+
+| Sequence from a 100-column, 24-row CMD | Native prompt/input row |
+|---|---:|
+| No `color` command, shrink to 23 rows | 1 |
+| `color f8` full-screen fill, shrink directly to 23 rows | 0 |
+| Same fill, grow to 145×53, shrink to 100×24 | 1 |
+| Same fill, grow to 145×53, shrink to 100×18 | 0 |
+
+The native resize code distinguishes the virtual output extent from the
+allocated viewport. Growing the viewport does not make its new empty rows
+output. See the matching release's
+[ResizeWindow](https://github.com/microsoft/terminal/blob/v1.22.10352.0/src/host/outputStream.cpp)
+and [ResizeWithReflow](https://github.com/microsoft/terminal/blob/v1.22.10352.0/src/host/screenInfo.cpp).
+
+`Screen` now tracks the output extent independently. Printing extends it;
+new viewport padding and erase-to-end do not. Resize removes unused trailing
+padding before calculating the upward shift, preserves the extent on growth,
+and derives the final cursor from the retained text's physical position.
+No frame-by-frame history scan or hard-coded row displacement is involved.
+
+A first attempt that recognized only zero-length rows passed tests but failed
+again in the GUI: `CSI J` fills those rows with attributed blank cells. The
+final regressions therefore replay native cooked-read redraws (CUP to the
+input start, erase-to-end, input-only rewrite) through multiple grow/shrink
+cycles, not merely a new character after the first resize.
+
+Older history-preservation tests assumed that untouched blank padding forced
+scrolling. Their fixtures now shrink to one row to force real history
+pressure; assertions still preserve image, hyperlink, decoration, palette,
+semantic-zone and stable-row identities. The original color-startup fixture
+remains covered, including fragmented input.
+
+All 97 terminal tests pass. The final optimized GUI also retained Latin and
+Cyrillic input beside the prompt through 30 window-state transitions,
+including minimize/restore. Native and emulated row contents were compared;
+the observed input displacement is no longer present in those scenarios.

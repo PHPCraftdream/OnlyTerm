@@ -18,11 +18,11 @@ fn conpty_resize_keeps_history_images_on_whitespace_cells() {
         .visible_cells()
         .any(|cell| cell.attrs().images().is_some()));
     term.resize(TerminalSize {
-        rows: 23,
+        rows: 1,
         cols: 80,
         ..Default::default()
     });
-    std::assert_eq!(term.screen().scrollback_rows(), 24);
+    std::assert_eq!(term.screen().scrollback_rows(), 2);
     std::assert_eq!(term.screen().all_lines()[0], original);
     std::assert_eq!(term.cursor_pos().y, 0);
 }

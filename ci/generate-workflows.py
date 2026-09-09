@@ -15,6 +15,7 @@ TRIGGER_PATHS = [
     "assets/fonts/**/*",
     "assets/icon/*",
     "ci/deploy.sh",
+    "ci/generate-workflows.py",
 ]
 
 TRIGGER_PATHS_WIN = [
@@ -328,6 +329,7 @@ ln -s /usr/local/git/bin/git /usr/local/bin/git""",
         params = dict()
         if self.rust_target:
             params["target"] = self.rust_target
+        params["components"] = "clippy"
         steps = []
         # Manually setup rust toolchain in CentOS7 curl is too old for the action
         if "centos7" in self.name:
@@ -392,14 +394,19 @@ rustup default {toolchain}
                 RunStep(
                     name=f"Build {bin} (Release mode)",
                     shell="cmd",
-                    run=f"cargo build -p {bin} --release",
+                    run=f"cargo build -p {bin} --release --locked",
                 )
             ]
         return steps
 
     def test_all(self):
-        run = "cargo nextest run --all --no-fail-fast"
+        run = "cargo nextest run --all --no-fail-fast --locked"
         return [
+            RunStep(
+                name="Clippy (GUI, window, terminal and process tracking)",
+                run="cargo clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p mux -p procinfo --all-targets -- -D warnings",
+                shell="cmd",
+            ),
             # Install cargo-nextest
             InstallCrateStep("cargo-nextest", key=self.name),
             # Run tests
