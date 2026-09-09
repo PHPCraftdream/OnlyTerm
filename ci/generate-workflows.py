@@ -365,15 +365,15 @@ rustup default {toolchain}
                 # Cache vendored dependecies
                 CacheStep(
                     name="Cache Rust Dependencies",
-                    path="vendor\n.cargo/config",
-                    key="cargo-deps-${{ hashFiles('**/Cargo.lock') }}",
+                    path="vendor\n.cargo/vendor.toml",
+                    key="cargo-vendor-config-${{ hashFiles('**/Cargo.lock') }}",
                     id="cache-cargo-vendor",
                 ),
                 # Vendor dependencies
                 RunStep(
-                    name="Vendor dependecies",
+                    name="Vendor dependencies",
                     condition="steps.cache-cargo-vendor.outputs.cache-hit != 'true'",
-                    run="cargo vendor --locked --versioned-dirs >> .cargo/config",
+                    run="cargo vendor --locked --versioned-dirs > .cargo/vendor.toml",
                 ),
             ]
         return steps
@@ -394,19 +394,23 @@ rustup default {toolchain}
                 RunStep(
                     name=f"Build {bin} (Release mode)",
                     shell="cmd",
-                    run=f"cargo build -p {bin} --release --locked",
+                    run=f"cargo --config .cargo/vendor.toml build -p {bin} --release --locked",
                 )
             ]
         return steps
 
-    def test_all(self):
-        run = "cargo nextest run --all --no-fail-fast --locked"
+    def lint_all(self):
         return [
             RunStep(
                 name="Clippy (GUI, window, terminal and process tracking)",
-                run="cargo clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p mux -p procinfo --all-targets -- -D warnings",
+                run="cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p mux -p procinfo --all-targets -- -D warnings",
                 shell="cmd",
             ),
+        ]
+
+    def test_all(self):
+        run = "cargo nextest run --config .cargo/vendor.toml --all --no-fail-fast --locked"
+        return [
             # Install cargo-nextest
             InstallCrateStep("cargo-nextest", key=self.name),
             # Run tests
@@ -654,6 +658,7 @@ rustup default {toolchain}
 
     def pull_request(self):
         steps = self.prep_environment()
+        steps += self.lint_all()
         steps += self.build_all_release()
         steps += self.test_all()
         steps += self.package()
@@ -683,6 +688,7 @@ rustup default {toolchain}
 
     def continuous(self):
         steps = self.prep_environment()
+        steps += self.lint_all()
         steps += self.build_all_release()
         steps += self.test_all()
         steps += self.package(trusted=True)
@@ -707,6 +713,7 @@ rustup default {toolchain}
 
     def tag(self):
         steps = self.prep_environment()
+        steps += self.lint_all()
         steps += self.build_all_release()
         steps += self.test_all()
         steps += self.package(trusted=True, from_tag=True)

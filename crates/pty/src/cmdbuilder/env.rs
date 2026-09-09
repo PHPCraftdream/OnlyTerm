@@ -54,13 +54,15 @@ pub(super) fn get_base_env() -> BTreeMap<OsString, EnvEntry> {
             match value.vtype {
                 RegType::REG_EXPAND_SZ => {
                     // Reinterpret the raw bytes as native-endian u16 (UTF-16LE
-                    // on Windows). Using chunks_exact avoids the alignment UB
+                    // on Windows). Fixed-size byte chunks avoid the alignment UB
                     // that a raw pointer cast (*const u8 as *const u16) would
                     // introduce when the Vec<u8> backing allocation is not
                     // guaranteed to be 2-byte aligned.
                     let src: Vec<u16> = value
                         .bytes
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|c| u16::from_ne_bytes([c[0], c[1]]))
                         .collect();
                     // SAFETY: ExpandEnvironmentStringsW is a standard win32 FFI

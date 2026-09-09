@@ -109,9 +109,7 @@ impl TabStop {
             // we cannot honor ClearCharacterTabStopsAtActiveLine.
             TabulationClear::ClearAllCharacterTabStops => {
                 // | TabulationClear::ClearCharacterTabStopsAtActiveLine
-                for t in &mut self.tabs {
-                    *t = false;
-                }
+                self.tabs.fill(false);
             }
             _ => {
                 if log_unknown_escape_sequences {
