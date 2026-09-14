@@ -629,6 +629,23 @@ As features stabilize some brief notes about them will accumulate here.
   the tab bar does the same. No context menu is involved.
 
 #### Fixed
+* OnlyTerm could abort while the machine was out of memory. The process-tree
+  walk that backs window titles and keyboard-compatibility detection enumerates
+  every process on the machine and allocated an owned path for each one, even
+  though only the handful of processes in the requested subtree are ever read;
+  when one of those allocations failed, Rust's allocator terminated the whole
+  process. The walk now packs all executable names into a single buffer, reuses
+  that buffer across refreshes instead of reallocating it, and stops retrying
+  for 5 seconds after a walk fails rather than retrying every 300ms while the
+  machine is still under pressure. A failed walk still serves the last complete
+  snapshot; partial results are never published. This makes the abort much less
+  likely, but a process cannot be made immune to allocation failure.
+* Unfocused windows no longer sample their process tree's CPU and memory usage
+  for the title at all. Every window is a separate process with its own
+  snapshot cache, so a dozen idle background windows were each enumerating the
+  whole machine on a timer. A window that regains focus produces a fresh figure
+  within one 5-second interval, and its previous CPU baseline is discarded so
+  the first sample is not an average smeared across the idle gap.
 * The window could freeze on a stale, sometimes visually inconsistent frame -- most
   noticeably the terminal cursor appearing on an old prompt row instead of the current
   input line -- when running with the per-tab GPU host-process backend
