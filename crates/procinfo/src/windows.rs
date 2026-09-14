@@ -455,6 +455,18 @@ pub struct ProcessActivityStamp {
     pub cycles: u64,
 }
 
+/// How long to stop attempting a fresh walk after one fails. A failed
+/// snapshot means the OS refused the handle or the memory the walk needs;
+/// retrying at the `PROC_SNAPSHOT_TTL` cadence under sustained memory
+/// pressure only spends more allocations on the same failure, and every
+/// attempt is another chance for an allocation to abort the whole process
+/// (Rust's global allocator aborts on failure -- that is exactly how the
+/// 2026-09-14 crashes ended, inside this walk, immediately after a
+/// "process snapshot failed" warning). Serving the last complete snapshot
+/// for a few seconds is well inside the staleness every caller already
+/// tolerates.
+const PROC_SNAPSHOT_FAILURE_BACKOFF: Duration = Duration::from_secs(5);
+
 /// The one field of `PROCESSENTRY32W` that `with_root_pid`'s tree
 /// building actually needs, copied out of the raw Win32 struct so the
 /// shared cache doesn't hand out Win32 handles or keep snapshot-shaped
@@ -463,7 +475,12 @@ pub struct ProcessActivityStamp {
 struct ProcessEntry {
     pid: u32,
     ppid: u32,
-    exe: PathBuf,
+    /// Range into `ProcessEntries::names` rather than an owned path: this
+    /// walk covers *every* process on the machine, but only the handful in
+    /// a caller's requested subtree ever have their path read, so
+    /// materializing a `PathBuf` here allocated thousands of strings per
+    /// refresh that nothing looked at.
+    exe: std::ops::Range<usize>,
 }
 
 /// Lightweight snapshot entry used only by fresh keyboard compatibility
@@ -509,63 +526,160 @@ impl SnapshotExeEntries {
 struct ProcessEntries {
     started_at: Instant,
     entries: Vec<ProcessEntry>,
+    /// All executable names of `entries`, concatenated and NUL-free. One
+    /// allocation for the whole machine instead of one per process.
+    names: Vec<u16>,
 }
 
-type ProcessSnapshotCache = Mutex<Option<(Instant, Arc<ProcessEntries>)>>;
-static SNAPSHOT_CACHE: ProcessSnapshotCache = Mutex::new(None);
+impl ProcessEntries {
+    fn new(started_at: Instant) -> Self {
+        Self {
+            started_at,
+            entries: Vec::new(),
+            names: Vec::new(),
+        }
+    }
+
+    /// Empties the contents but keeps both allocations, so a refresh that
+    /// reuses this buffer does not have to grow them again from zero.
+    fn reset(&mut self, started_at: Instant) {
+        self.started_at = started_at;
+        self.entries.clear();
+        self.names.clear();
+    }
+
+    fn push(&mut self, pid: u32, ppid: u32, exe: &[u16]) {
+        let len = exe.iter().position(|&unit| unit == 0).unwrap_or(exe.len());
+        let start = self.names.len();
+        self.names.extend_from_slice(&exe[..len]);
+        self.entries.push(ProcessEntry {
+            pid,
+            ppid,
+            exe: start..self.names.len(),
+        });
+    }
+
+    /// Materializes one entry's executable path. Callers reach this only
+    /// for the processes they actually walk, which is the point of storing
+    /// the names packed.
+    fn exe_path(&self, entry: &ProcessEntry) -> PathBuf {
+        // `push` already stripped the NUL, so the range is exactly the name.
+        OsString::from_wide(&self.names[entry.exe.clone()]).into()
+    }
+}
+
+struct CachedSnapshot {
+    updated: Instant,
+    entries: Arc<ProcessEntries>,
+}
+
+struct ProcessSnapshotState {
+    cached: Option<CachedSnapshot>,
+    /// Backing storage reclaimed from a superseded snapshot, refilled in
+    /// place by the next refresh instead of allocating a fresh pair of
+    /// `Vec`s. Never handed to callers, so it may also hold the remains of
+    /// a failed (partial) walk -- `reset` clears that before reuse.
+    spare: Option<ProcessEntries>,
+    /// Set when a walk fails, cleared when one succeeds; gates
+    /// `PROC_SNAPSHOT_FAILURE_BACKOFF`.
+    failed_at: Option<Instant>,
+}
+
+impl ProcessSnapshotState {
+    const fn new() -> Self {
+        Self {
+            cached: None,
+            spare: None,
+            failed_at: None,
+        }
+    }
+}
+
+type ProcessSnapshotCache = Mutex<ProcessSnapshotState>;
+static SNAPSHOT_CACHE: ProcessSnapshotCache = Mutex::new(ProcessSnapshotState::new());
 
 fn shared_snapshot_entries() -> Arc<ProcessEntries> {
-    snapshot_entries_with(&SNAPSHOT_CACHE, Instant::now, fresh_snapshot_entries)
+    snapshot_entries_with(&SNAPSHOT_CACHE, Instant::now, refill_snapshot_entries)
+}
+
+/// The last complete snapshot if there is one, or an empty stand-in. Used
+/// on every path that declines to walk (failed or backed off): callers
+/// tolerate staleness, but must never see a partially filled walk.
+fn stale_or_empty(cached: &Option<CachedSnapshot>, started_at: Instant) -> Arc<ProcessEntries> {
+    match cached {
+        Some(cached) => Arc::clone(&cached.entries),
+        None => Arc::new(ProcessEntries::new(started_at)),
+    }
 }
 
 fn snapshot_entries_with(
     cache: &ProcessSnapshotCache,
     now: impl Fn() -> Instant,
-    fetch: impl FnOnce() -> io::Result<Vec<ProcessEntry>>,
+    refill: impl FnOnce(&mut ProcessEntries) -> io::Result<()>,
 ) -> Arc<ProcessEntries> {
     // Deliberately poison-tolerant: the cache holds only plain data, so a
     // panicking refresher must not permanently break process lookups.
-    let mut cache = cache.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((updated, entries)) = cache.as_ref() {
-        if now().saturating_duration_since(*updated) < PROC_SNAPSHOT_TTL {
-            return Arc::clone(entries);
+    let mut state = cache.lock().unwrap_or_else(|e| e.into_inner());
+
+    if let Some(cached) = state.cached.as_ref() {
+        if now().saturating_duration_since(cached.updated) < PROC_SNAPSHOT_TTL {
+            return Arc::clone(&cached.entries);
         }
     }
-    let started_at = now();
-    let entries = match fetch() {
-        Ok(entries) => Arc::new(ProcessEntries {
-            started_at,
-            entries,
-        }),
-        Err(err) => {
-            log::warn!("process snapshot failed: {err}");
-            // Keep the last complete snapshot, without making it fresh.
-            return cache.as_ref().map_or_else(
-                || {
-                    Arc::new(ProcessEntries {
-                        started_at,
-                        entries: Vec::new(),
-                    })
-                },
-                |(_, entries)| Arc::clone(entries),
-            );
+
+    // Checked whether or not anything is cached: with nothing cached and
+    // the machine out of memory, hammering the walk on every call is the
+    // worst thing to do.
+    if let Some(failed_at) = state.failed_at {
+        if now().saturating_duration_since(failed_at) < PROC_SNAPSHOT_FAILURE_BACKOFF {
+            return stale_or_empty(&state.cached, now());
         }
+    }
+
+    let started_at = now();
+    let mut buf = match state.spare.take() {
+        Some(mut spare) => {
+            spare.reset(started_at);
+            spare
+        }
+        None => ProcessEntries::new(started_at),
     };
-    *cache = Some((now(), Arc::clone(&entries)));
+
+    if let Err(err) = refill(&mut buf) {
+        log::warn!("process snapshot failed: {err}");
+        state.failed_at = Some(now());
+        // The partial walk stays private as the spare: its capacity is
+        // still worth keeping, and the previously published snapshot --
+        // which is complete -- remains what callers get.
+        state.spare = Some(buf);
+        return stale_or_empty(&state.cached, started_at);
+    }
+
+    state.failed_at = None;
+    let entries = Arc::new(buf);
+    let superseded = state.cached.replace(CachedSnapshot {
+        updated: now(),
+        entries: Arc::clone(&entries),
+    });
+    // Reclaim the superseded generation's allocations once no caller still
+    // holds it, which is the common case: callers drop their `Arc` as soon
+    // as their tree walk returns.
+    if let Some(superseded) = superseded {
+        state.spare = Arc::try_unwrap(superseded.entries).ok();
+    }
     entries
 }
 
-fn fresh_snapshot_entries() -> io::Result<Vec<ProcessEntry>> {
-    Snapshot::new()?
-        .iter()
-        .map(|info| {
-            info.map(|info| ProcessEntry {
-                pid: info.th32ProcessID,
-                ppid: info.th32ParentProcessID,
-                exe: wstr_to_path(&info.szExeFile),
-            })
-        })
-        .collect()
+fn refill_snapshot_entries(dest: &mut ProcessEntries) -> io::Result<()> {
+    for info in Snapshot::new()?.iter() {
+        let info = info?;
+        dest.push(
+            info.th32ProcessID,
+            info.th32ParentProcessID,
+            &info.szExeFile,
+        );
+    }
+    Ok(())
 }
 
 fn fresh_snapshot_exe_entries() -> io::Result<SnapshotExeEntries> {
@@ -698,7 +812,10 @@ impl LocalProcessInfo {
         let procs = shared_snapshot_entries();
         log::trace!("Got snapshot");
 
-        fn make_leaf(info: &ProcessEntry) -> LocalProcessInfo {
+        // A closure, not a plain `fn`, because the fallback executable name
+        // now lives in the snapshot's packed `names` buffer rather than in
+        // the entry itself.
+        let make_leaf = |info: &ProcessEntry| -> LocalProcessInfo {
             let mut executable = None;
             let mut start_time = 0;
             let mut cwd = PathBuf::new();
@@ -719,7 +836,7 @@ impl LocalProcessInfo {
                 }
             }
 
-            let executable = executable.unwrap_or_else(|| info.exe.clone());
+            let executable = executable.unwrap_or_else(|| procs.exe_path(info));
             let name = match executable.file_name() {
                 Some(name) => name.to_string_lossy().into_owned(),
                 None => String::new(),
@@ -737,7 +854,7 @@ impl LocalProcessInfo {
                 children: HashMap::new(),
                 console,
             }
-        }
+        };
 
         crate::build_tree_iterative(
             &procs.entries,
@@ -918,19 +1035,225 @@ mod resource_usage_tests {
         use std::cell::Cell;
         let at = Instant::now();
         let clock = Cell::new(at);
-        let cache = Mutex::new(None);
+        let cache = Mutex::new(ProcessSnapshotState::new());
         let entries = snapshot_entries_with(
             &cache,
             || clock.get(),
-            || {
+            |_| {
                 clock.set(at + Duration::from_secs(1));
-                Ok(vec![])
+                Ok(())
             },
         );
         assert_eq!(entries.started_at, at);
-        let reused = snapshot_entries_with(&cache, || clock.get(), || panic!("cache remains warm"));
+        let reused =
+            snapshot_entries_with(&cache, || clock.get(), |_| panic!("cache remains warm"));
         assert!(Arc::ptr_eq(&entries, &reused));
         assert_eq!(reused.started_at, at);
+    }
+
+    /// One name buffer for the whole machine, and the range for an entry
+    /// round-trips back to the path a caller would have gotten from an
+    /// owned `PathBuf` per process.
+    #[test]
+    fn packed_names_round_trip_to_the_same_path() {
+        let mut entries = ProcessEntries::new(Instant::now());
+        let mut wide: Vec<u16> = "explorer.exe".encode_utf16().collect();
+        wide.push(0);
+        wide.extend(std::iter::repeat_n(0, 8)); // trailing garbage after the NUL
+        entries.push(7, 1, &wide);
+        entries.push(9, 7, &"cmd.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+
+        assert_eq!(entries.entries.len(), 2);
+        assert!(!entries.names.contains(&0), "packed names must be NUL-free");
+        assert_eq!(
+            entries.exe_path(&entries.entries[0]),
+            PathBuf::from("explorer.exe")
+        );
+        assert_eq!(
+            entries.exe_path(&entries.entries[1]),
+            PathBuf::from("cmd.exe")
+        );
+    }
+
+    /// The whole point of the double buffer: once a superseded snapshot is
+    /// dropped by its callers, its allocations come back as the spare and a
+    /// later refresh refills them instead of growing new ones.
+    ///
+    /// Reclaim necessarily lags one generation -- a refresh can only take
+    /// back the generation it just superseded, and the generation it is
+    /// replacing has to stay alive until the new walk succeeds -- so the
+    /// steady state is "published generation N plus spare generation N-1",
+    /// and the reuse is observable from the third refresh on.
+    #[test]
+    fn superseded_snapshot_buffers_are_reclaimed_and_refilled_in_place() {
+        use std::cell::Cell;
+        let at = Instant::now();
+        let clock = Cell::new(at);
+        let cache = Mutex::new(ProcessSnapshotState::new());
+
+        let fill = |dest: &mut ProcessEntries| {
+            for pid in 0..64u32 {
+                dest.push(pid, 0, &"a.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+            }
+            Ok(())
+        };
+
+        let first = snapshot_entries_with(&cache, || clock.get(), fill);
+        let first_entries_ptr = first.entries.as_ptr();
+        let first_capacity = first.entries.capacity();
+        drop(first);
+
+        clock.set(at + PROC_SNAPSHOT_TTL);
+        let second = snapshot_entries_with(&cache, || clock.get(), fill);
+        drop(second);
+
+        clock.set(at + PROC_SNAPSHOT_TTL * 2);
+        let third = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                assert!(
+                    dest.entries.capacity() >= first_capacity,
+                    "refresh should have been handed the reclaimed buffer"
+                );
+                assert!(dest.entries.is_empty(), "reused buffer must be reset first");
+                dest.push(1, 0, &"b.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Ok(())
+            },
+        );
+        assert_eq!(
+            third.entries.as_ptr(),
+            first_entries_ptr,
+            "the reclaimed allocation should be the one refilled"
+        );
+        assert_eq!(third.entries.len(), 1);
+    }
+
+    /// A snapshot still held by a caller cannot be reclaimed, so the
+    /// refresh allocates rather than mutating data someone is reading.
+    #[test]
+    fn a_snapshot_still_held_by_a_caller_is_never_reused_as_the_spare() {
+        use std::cell::Cell;
+        let at = Instant::now();
+        let clock = Cell::new(at);
+        let cache = Mutex::new(ProcessSnapshotState::new());
+
+        let held = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                dest.push(1, 0, &"a.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Ok(())
+            },
+        );
+
+        clock.set(at + PROC_SNAPSHOT_TTL);
+        let next = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                dest.push(2, 0, &"b.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Ok(())
+            },
+        );
+
+        // `held` is still alive, so the refresh must not have written into it.
+        assert_eq!(held.entries.len(), 1);
+        assert_eq!(held.entries[0].pid, 1);
+        assert_eq!(next.entries[0].pid, 2);
+        let state = cache.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(
+            state.spare.is_none(),
+            "a snapshot a caller still holds must not be handed out as scratch"
+        );
+    }
+
+    /// A walk that fails partway must not become what callers see: the
+    /// previous complete snapshot stays published, partial data stays
+    /// private.
+    #[test]
+    fn a_failed_walk_keeps_serving_the_last_complete_snapshot() {
+        use std::cell::Cell;
+        let at = Instant::now();
+        let clock = Cell::new(at);
+        let cache = Mutex::new(ProcessSnapshotState::new());
+
+        let complete = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                dest.push(1, 0, &"a.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                dest.push(2, 1, &"b.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Ok(())
+            },
+        );
+        assert_eq!(complete.entries.len(), 2);
+
+        clock.set(at + PROC_SNAPSHOT_TTL);
+        let after_failure = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                dest.push(3, 0, &"partial.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Err(io::Error::other("walk failed partway"))
+            },
+        );
+        assert_eq!(
+            after_failure.entries.len(),
+            2,
+            "a partial walk must never be published"
+        );
+        assert_eq!(after_failure.entries[0].pid, 1);
+    }
+
+    /// After a failure the walk is not retried at the TTL cadence: under
+    /// the memory pressure that caused the failure, every retry is another
+    /// chance for an allocation to abort the process.
+    #[test]
+    fn a_failed_walk_is_not_retried_until_the_backoff_expires() {
+        use std::cell::Cell;
+        let at = Instant::now();
+        let clock = Cell::new(at);
+        let cache = Mutex::new(ProcessSnapshotState::new());
+
+        snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                dest.push(1, 0, &"a.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Ok(())
+            },
+        );
+
+        let failed_at = at + PROC_SNAPSHOT_TTL;
+        clock.set(failed_at);
+        snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |_| Err(io::Error::other("out of memory")),
+        );
+
+        // Well past the TTL, still inside the backoff: no walk attempted.
+        clock.set(at + PROC_SNAPSHOT_TTL * 4);
+        let stale = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |_| panic!("must not retry while backing off"),
+        );
+        assert_eq!(stale.entries.len(), 1);
+
+        // The backoff is measured from the failure, not from the last
+        // successful refresh.
+        clock.set(failed_at + PROC_SNAPSHOT_FAILURE_BACKOFF + Duration::from_millis(1));
+        let refreshed = snapshot_entries_with(
+            &cache,
+            || clock.get(),
+            |dest| {
+                dest.push(2, 0, &"b.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+                Ok(())
+            },
+        );
+        assert_eq!(refreshed.entries[0].pid, 2);
     }
 
     #[test]

@@ -20,31 +20,34 @@ fn packed_names_copy_only_live_utf16_and_keep_unicode_names() {
 
 #[test]
 fn cached_snapshots_share_storage_and_failed_refresh_preserves_generation() {
-    let cache = Mutex::new(None);
+    let cache = Mutex::new(ProcessSnapshotState::new());
     let now = Instant::now();
     let first = snapshot_entries_with(
         &cache,
         || now,
-        || {
-            Ok(vec![ProcessEntry {
-                pid: 1,
-                ppid: 0,
-                exe: PathBuf::from("shell.exe"),
-            }])
+        |dest| {
+            dest.push(1, 0, &"shell.exe\u{0}".encode_utf16().collect::<Vec<_>>());
+            Ok(())
         },
     );
-    let warm = snapshot_entries_with(&cache, || now, || panic!("warm snapshot must not refresh"));
+    let warm = snapshot_entries_with(&cache, || now, |_| panic!("warm snapshot must not refresh"));
     assert!(Arc::ptr_eq(&first, &warm));
     let later = now + PROC_SNAPSHOT_TTL;
     let stale = snapshot_entries_with(
         &cache,
         || later,
-        || Err(io::Error::other("snapshot unavailable")),
+        |_| Err(io::Error::other("snapshot unavailable")),
     );
     assert!(Arc::ptr_eq(&first, &stale));
-    let replaced = snapshot_entries_with(&cache, || later, || Ok(Vec::new()));
+    // A failure now also starts a backoff, so the next refresh only happens
+    // once that window has passed.
+    let after_backoff = later + PROC_SNAPSHOT_FAILURE_BACKOFF;
+    let replaced = snapshot_entries_with(&cache, || after_backoff, |_| Ok(()));
     assert!(replaced.entries.is_empty());
-    assert_eq!(first.entries[0].exe, PathBuf::from("shell.exe"));
+    assert_eq!(
+        first.exe_path(&first.entries[0]),
+        PathBuf::from("shell.exe")
+    );
 }
 
 #[test]
