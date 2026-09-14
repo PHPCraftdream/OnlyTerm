@@ -654,6 +654,13 @@ impl TermWindow {
     const MAX_REBUILDS_PER_WINDOW: usize = 3;
     const REBUILD_WINDOW: Duration = Duration::from_secs(30);
 
+    /// How often a focused window refreshes the CPU/memory figures in its
+    /// title. Also the delay before a window that just regained focus
+    /// produces its first figure, which is why it stays short rather than
+    /// being stretched to cover idle windows -- those skip sampling
+    /// entirely instead (see `process_usage_tick`).
+    const PROCESS_USAGE_INTERVAL: Duration = Duration::from_secs(5);
+
     /// One tick of the render-thread hang supervisor: if this window's
     /// render thread appears hung, rebuild the renderer in place (new
     /// WebGpu device/surface, new render thread) so the window and all its
@@ -747,14 +754,19 @@ impl TermWindow {
     /// Unlike the hang check, this always re-arms regardless of
     /// `show_process_tree_stats_in_title` -- see `process_usage_tick` for
     /// why: it lets the config be toggled live without restarting the
-    /// window, at the cost of one cheap `bool` check every 5s while off.
+    /// window, at the cost of one cheap `bool` check every tick while off.
+    ///
+    /// The timer keeps ticking at a fixed interval whether or not the
+    /// window is focused, but an unfocused tick does no sampling at all
+    /// (see `process_usage_tick`) -- so re-arming here stays trivial and a
+    /// window that regains focus produces a figure within one interval.
     fn schedule_process_usage_tick(&self, window: &Window) {
         if self.process_usage_scheduled.get() {
             return;
         }
         self.process_usage_scheduled.set(true);
 
-        let next = Instant::now() + Duration::from_secs(5);
+        let next = Instant::now() + Self::PROCESS_USAGE_INTERVAL;
         let window = window.clone();
         promise::spawn::spawn(async move {
             Timer::at(next).await;
@@ -775,6 +787,25 @@ impl TermWindow {
     /// Always re-arms itself (see `schedule_process_usage_tick`).
     fn process_usage_tick(&mut self, window: &Window) {
         self.process_usage_scheduled.set(false);
+
+        // An unfocused window samples nothing. Each sample walks *every*
+        // process on the machine, and every GUI window is a separate
+        // process with its own snapshot cache, so this walk rate scales
+        // with the number of open windows -- a dozen idle background
+        // windows enumerating the whole machine on a timer is pure waste,
+        // and it is exactly the work that aborted two windows on
+        // 2026-09-14 when an unrelated process storm exhausted system
+        // memory mid-walk. The last computed suffix stays in the title
+        // (no flicker); sampling resumes within one interval of the window
+        // being focused again.
+        if self.focused.is_none() {
+            // Drop the baseline rather than carry it across the idle gap:
+            // the next sample would otherwise report a CPU average
+            // stretched over the whole time the window sat unfocused.
+            self.last_process_usage_sample.borrow_mut().take();
+            self.schedule_process_usage_tick(window);
+            return;
+        }
 
         if !self.config.show_process_tree_stats_in_title {
             // Drop any stale suffix from before the config was toggled off,
