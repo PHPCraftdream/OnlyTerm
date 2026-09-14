@@ -18,6 +18,12 @@ onlyterm-dynamic = { workspace=true, optional = true, features=["std"]}
 ntapi.workspace = true
 winapi = { workspace=true, features = [
     "handleapi",
+    # `activity_stamp` uses `FILETIME::default()`, which winapi only derives
+    # under this feature. Without declaring it here the crate happens to
+    # build inside the workspace (termwiz/onlyterm-escape-parser turn it on
+    # and Cargo unifies features) but `cargo test -p procinfo` on its own
+    # does not compile.
+    "impl-default",
     "memoryapi",
     "psapi",
     "processthreadsapi",
