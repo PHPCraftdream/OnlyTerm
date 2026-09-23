@@ -315,6 +315,15 @@ pub struct TermWindow {
     input_map: InputMap,
     /// If is_some, the LEADER modifier is active until the specified instant.
     leader_is_down: Option<std::time::Instant>,
+    /// Double-Ctrl tap detector and armed pass-through mode; fed from
+    /// `raw_key_event_impl` (see keyevent/pass_through.rs).
+    pass_through: keyevent::pass_through::PassThrough,
+    /// The outcome computed when the most recent raw key event was fed to
+    /// `pass_through`, threaded here because the raw and cooked key events
+    /// arrive as separate `WindowEvent`s. Matched by phys code and direction
+    /// before use, so a raw event that was fully handled cannot leak its
+    /// outcome into a later press.
+    pending_pass_through: Option<(PhysKeyCode, bool, keyevent::pass_through::Outcome)>,
     dead_key_status: DeadKeyStatus,
     key_table_state: KeyTableState,
     show_tab_bar: bool,

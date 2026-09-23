@@ -238,6 +238,18 @@ impl TermWindow {
         self.invalidate_modal();
         self.input_map = InputMap::new(&config);
         self.leader_is_down = None;
+        // Re-read the pass-through flag so toggling it applies live; disabling
+        // also drops any armed mode or partial tap, like focus loss does.
+        let outcome = self
+            .pass_through
+            .set_enabled(config.pass_through_next_key_on_double_ctrl);
+        self.pending_pass_through = None;
+        if let Some(armed) = outcome.armed_edge {
+            log::debug!(
+                "diag: pass-through {} (config reload)",
+                if armed { "armed" } else { "disarmed" }
+            );
+        }
         if let Some(rs) = self.render_state.as_mut() {
             rs.config_changed()
         }

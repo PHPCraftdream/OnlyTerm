@@ -263,6 +263,16 @@ pub struct Config {
     /// was the real root cause both previous attempts never pinned down.
     #[dynamic(default = "default_true")]
     pub enable_kitty_keyboard: bool,
+    /// After two short taps of either Ctrl key, the next key press is
+    /// encoded and sent to the application in the active pane without
+    /// being matched against any OnlyTerm key binding, so chords that
+    /// OnlyTerm binds (eg. Ctrl+Shift+C) can still reach programs that
+    /// need them. The mode disarms itself after that one physical press
+    /// (its autorepeats included), on a repeated double-tap, or when
+    /// the window loses focus. See
+    /// docs/plans/2026-09-23-double-ctrl-pass-through.md.
+    #[dynamic(default = "default_true")]
+    pub pass_through_next_key_on_double_ctrl: bool,
 
     /// Whether the terminal should respond to requests to read the
     /// title string.

@@ -41,6 +41,19 @@ impl TermWindow {
 
         if self.focused.is_none() {
             self.last_mouse_click = None;
+            // Key-ups can be lost across Alt+Tab, so both a half-complete
+            // tap and an armed mode are dropped.
+            let outcome = self.pass_through.focus_lost();
+            self.pending_pass_through = None;
+            if let Some(armed) = outcome.armed_edge {
+                log::debug!(
+                    "diag: pass-through {} (focus lost)",
+                    if armed { "armed" } else { "disarmed" }
+                );
+                // Same as the keyevent.rs edge sites: the cached fancy tab
+                // bar must drop (or pick up) its accent rim.
+                self.invalidate_fancy_tab_bar();
+            }
             self.current_mouse_buttons.clear();
             self.current_mouse_capture = None;
             self.is_click_to_focus_window = false;

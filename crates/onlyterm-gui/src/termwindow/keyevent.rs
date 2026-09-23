@@ -1,6 +1,10 @@
 mod key_table;
 pub use key_table::{KeyTableArgs, KeyTableState};
 
+// The double-Ctrl pass-through detector; fed from raw_key_event_impl and
+// consumed in key_event_impl below (docs/plans/2026-09-23-double-ctrl-pass-through.md).
+pub(crate) mod pass_through;
+
 use crate::termwindow::InputMap;
 use ::window::{
     DeadKeyStatus, KeyCode, KeyEvent, KeyboardLedStatus, Modifiers, PhysKeyCode, RawKeyEvent,
@@ -238,11 +242,12 @@ impl super::TermWindow {
         raw_modifiers: Modifiers,
         leader_active: bool,
         leader_mod: Modifiers,
+        bypass_lookup: bool,
         only_key_bindings: OnlyKeyBindings,
         is_down: bool,
         key_event: Option<&KeyEvent>,
     ) -> bool {
-        if is_down && !leader_active {
+        if is_down && !leader_active && !bypass_lookup {
             // Check to see if this key-press is the leader activating
             if let Some(duration) = self.input_map.is_leader(keycode, raw_modifiers) {
                 // Yes; record its expiration
@@ -280,7 +285,14 @@ impl super::TermWindow {
             }
 
             let effective_mods = raw_modifiers | leader_mod;
-            let looked_up = self.lookup_key(pane, keycode, effective_mods, only_key_bindings);
+            let looked_up = if bypass_lookup {
+                // Pass-through mode: bindings are not consulted -- and
+                // lookup_key mutates the key-table stack, so it is skipped
+                // outright rather than queried and discarded.
+                None
+            } else {
+                self.lookup_key(pane, keycode, effective_mods, only_key_bindings)
+            };
 
             // Unconditional (not gated on debug_key_events) diagnostic for
             // the three newline-insertion chords specifically: whether this
@@ -446,6 +458,63 @@ impl super::TermWindow {
     }
 
     pub fn raw_key_event_impl(&mut self, key: RawKeyEvent, context: &dyn WindowOps) {
+        // Feed the pass-through detector first: it must see every raw event,
+        // including ones this function would otherwise handle, and a
+        // bypassed event must not reach the leader check below (its
+        // is_leader lookup mutates leader state). The outcome is stashed for
+        // key_event_impl, which receives the cooked KeyEvent for this same
+        // press as a separate WindowEvent.
+        let pass_through_outcome = match key.phys_code {
+            Some(phys) => {
+                let outcome = self.pass_through.key(phys, key.key_is_down, Instant::now());
+                self.pending_pass_through = Some((
+                    phys,
+                    key.key_is_down,
+                    pass_through::Outcome {
+                        bypass: outcome.bypass,
+                        consumes: outcome.consumes,
+                        // Edges are observed here rather than in
+                        // key_event_impl: a key-up can be fully handled below
+                        // (the encoders encode key-ups too), and then no
+                        // KeyEvent ever follows for it.
+                        armed_edge: None,
+                    },
+                ));
+                outcome
+            }
+            None => pass_through::Outcome::default(),
+        };
+
+        if let Some(armed) = pass_through_outcome.armed_edge {
+            // Arming cancels a leader that is active at that moment, or the
+            // next key -- the one meant to pass through -- would be swallowed
+            // by the leader branch of key_event_impl.
+            if armed && self.leader_is_active() {
+                self.leader_done();
+            }
+            log::debug!(
+                "diag: pass-through {} (double ctrl tap)",
+                if armed { "armed" } else { "disarmed" }
+            );
+            // The fancy tab bar caches its built element (paint_tab_bar only
+            // rebuilds it when invalidated): refresh the accent rim now.
+            self.invalidate_fancy_tab_bar();
+            context.invalidate();
+        }
+
+        if pass_through_outcome.bypass {
+            // Keep the modifier/LED snapshot current even though the binding
+            // paths below are skipped.
+            let modifier_and_leds = (key.modifiers, key.leds);
+            if self.current_modifier_and_leds != modifier_and_leds {
+                self.current_modifier_and_leds = modifier_and_leds;
+            }
+            // Deliberately not set_handled: the cooked KeyEvent for this
+            // press must still arrive, and it is what sends the key to the
+            // pane with bindings bypassed.
+            return;
+        }
+
         // The leader key is a kind of modal modifier key.
         // It is allowed to be active for up to the leader timeout duration,
         // after which it auto-deactivates.
@@ -515,6 +584,7 @@ impl super::TermWindow {
                 key.modifiers,
                 leader_active,
                 leader_mod,
+                false,
                 OnlyKeyBindings::Yes,
                 key.key_is_down,
                 None,
@@ -536,6 +606,7 @@ impl super::TermWindow {
             key.modifiers,
             leader_active,
             leader_mod,
+            false,
             OnlyKeyBindings::Yes,
             key.key_is_down,
             None,
@@ -557,6 +628,7 @@ impl super::TermWindow {
             key.modifiers,
             leader_active,
             leader_mod,
+            false,
             OnlyKeyBindings::Yes,
             key.key_is_down,
             None,
@@ -680,6 +752,42 @@ impl super::TermWindow {
             );
         }
 
+        // The pass-through outcome for this press was computed exactly once
+        // in raw_key_event_impl; feeding the detector again here would count
+        // the same press twice. Events with no raw part are IME results:
+        // report them as "another key", which consumes an armed mode.
+        let pass_through_outcome = if window_key.raw.is_none() {
+            self.pending_pass_through = None;
+            let outcome = self.pass_through.ime_composed();
+            if let Some(armed) = outcome.armed_edge {
+                log::debug!(
+                    "diag: pass-through {} (composed IME text)",
+                    if armed { "armed" } else { "disarmed" }
+                );
+                // Same as the raw-stage edge: refresh the cached accent rim.
+                self.invalidate_fancy_tab_bar();
+                context.invalidate();
+            }
+            outcome
+        } else {
+            match self.pending_pass_through.take().filter(|(phys, down, _)| {
+                window_key.raw.as_ref().and_then(|raw| raw.phys_code) == Some(*phys)
+                    && *down == window_key.key_is_down
+            }) {
+                Some((_, _, outcome)) => outcome,
+                // No matching raw outcome: the raw event was handled by a
+                // binding, or carried no phys code. Nothing bypasses.
+                None => pass_through::Outcome::default(),
+            }
+        };
+        if pass_through_outcome.consumes {
+            log::debug!(
+                "diag: pass-through consumed key={:?} key_is_down={}",
+                window_key.key,
+                window_key.key_is_down
+            );
+        }
+
         let modifiers = window_key.modifiers;
 
         if self.process_key(
@@ -689,6 +797,7 @@ impl super::TermWindow {
             window_key.modifiers,
             leader_active,
             leader_mod,
+            pass_through_outcome.bypass,
             OnlyKeyBindings::No,
             window_key.key_is_down,
             Some(&window_key),
