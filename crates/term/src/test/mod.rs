@@ -2,19 +2,13 @@
 //! processing routines.
 
 use super::*;
-mod c0;
+mod control_codes;
 use bitflags::bitflags;
-mod c1;
-mod conpty_startup;
-mod csi;
 mod image;
 mod mouse;
+mod osc;
 mod perf_probe;
-mod resize;
-mod semantic;
-mod stable_seqno;
-mod title;
-// mod selection; FIXME: port to render layer
+mod screen;
 use crate::color::ColorPalette;
 use k9::assert_equal as assert_eq;
 use onlyterm_escape_parser::csi::{Edit, EraseInDisplay, EraseInLine};

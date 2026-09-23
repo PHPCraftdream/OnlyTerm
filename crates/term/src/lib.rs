@@ -54,8 +54,8 @@ pub use crate::screen::*;
 pub mod terminal;
 pub use crate::terminal::*;
 
-pub mod terminalstate;
-pub use crate::terminalstate::*;
+pub use crate::terminal::terminalstate;
+pub use crate::terminal::terminalstate::*;
 
 /// Represents the index into screen.lines.  Index 0 is the top of
 /// the scrollback (if any).  The index of the top of the visible screen
@@ -138,7 +138,7 @@ pub struct SemanticZone {
     pub semantic_type: SemanticType,
 }
 
-pub mod color;
+pub use crate::config::color;
 
 #[cfg(test)]
 mod test;
