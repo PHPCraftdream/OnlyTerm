@@ -55,8 +55,8 @@ fn gen_class() -> anyhow::Result<()> {
 
     entries.sort_by_key(|e| e.start);
 
-    let mut f =
-        std::fs::File::create("bidi/src/bidi_class.rs").context("bidi/src/bidi_class.rs")?;
+    let mut f = std::fs::File::create("bidi/src/data/bidi_class.rs")
+        .context("bidi/src/data/bidi_class.rs")?;
     writeln!(
         f,
         "//! Generated from bidi/data/DerivedBidiClass.txt by bidi/generate/src/main.rs"
@@ -186,8 +186,8 @@ fn gen_brackets() -> anyhow::Result<()> {
 
     entries.sort_by_key(|e| e.code_point);
 
-    let mut f =
-        std::fs::File::create("bidi/src/bidi_brackets.rs").context("bidi/src/bidi_brackets.rs")?;
+    let mut f = std::fs::File::create("bidi/src/data/bidi_brackets.rs")
+        .context("bidi/src/data/bidi_brackets.rs")?;
     writeln!(
         f,
         "//! Generated from bidi/data/BidiBrackets.txt by bidi/generate/src/main.rs"
@@ -263,8 +263,8 @@ fn gen_mirroring() -> anyhow::Result<()> {
 
     entries.sort_by_key(|e| e.code_point);
 
-    let mut f = std::fs::File::create("bidi/src/bidi_mirroring.rs")
-        .context("bidi/src/bidi_mirroring.rs")?;
+    let mut f = std::fs::File::create("bidi/src/data/bidi_mirroring.rs")
+        .context("bidi/src/data/bidi_mirroring.rs")?;
     writeln!(
         f,
         "//! Generated from bidi/data/BidiMirroring.txt by bidi/generate/src/main.rs"

@@ -1,4 +1,4 @@
-use crate::bidi_mirroring;
+use super::bidi_mirroring;
 
 /// Returns the mirrored counterpart of `c` per the Unicode
 /// `Bidi_Mirroring_Glyph` property (UAX #9 rule L4), if one exists. A

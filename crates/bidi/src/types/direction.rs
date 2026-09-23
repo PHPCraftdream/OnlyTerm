@@ -1,4 +1,4 @@
-use crate::bidi_class::BidiClass;
+use crate::data::bidi_class::BidiClass;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Direction {
