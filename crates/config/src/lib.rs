@@ -10,60 +10,52 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-mod background;
-mod bell;
-mod cell;
-mod color;
+mod appearance;
 mod config;
-mod config_types;
-mod configuration;
-mod daemon;
-mod dynamic_convert;
-mod exec_domain;
+mod domains;
 mod font;
-mod font_weight;
-mod frontend;
-pub mod keyassignment;
-mod keys;
-pub mod ktav_value;
-pub mod meta;
-pub mod powershell;
-mod serial;
-pub mod shell;
-mod start_conf;
-mod terminal;
-mod text_style;
-mod units;
-mod unix;
-mod version;
-pub mod window;
+mod input;
+mod process;
+mod value;
 
-pub use crate::config::*;
-pub use background::*;
-pub use bell::*;
-pub use cell::*;
-pub use color::*;
-pub use config_types::*;
-pub use configuration::*;
-pub use daemon::*;
-pub(crate) use dynamic_convert::*;
-pub use exec_domain::*;
+// Preserve the original public module paths; other crates depend on them.
+pub use appearance::window;
+pub use input::keyassignment;
+pub use process::{powershell, shell};
+pub use value::{ktav_value, meta};
+
+// Preserve the original internal module paths for in-crate callers.
+pub(crate) use appearance::{background, bell, color, frontend};
+pub(crate) use domains::{exec_domain, unix};
+pub(crate) use input::keys;
+pub(crate) use process::daemon;
+pub(crate) use value::{config_types, units, version};
+
+// Preserve the original item-level re-export surface.
+pub use appearance::background::*;
+pub use appearance::bell::*;
+pub use appearance::color::*;
+pub use appearance::frontend::*;
+pub use appearance::window::*;
+pub use config::*;
+pub use domains::exec_domain::*;
+pub use domains::serial::*;
+pub use domains::unix::*;
 pub use font::*;
-pub use frontend::*;
-pub use keyassignment::ProcessPriority;
-pub use keys::*;
-pub use serial::*;
-pub use start_conf::*;
-pub use terminal::*;
-pub use units::*;
-pub use unix::*;
-pub use version::*;
+pub use input::keyassignment::*;
+pub use input::keys::*;
+pub use process::daemon::*;
+pub use process::powershell::*;
+pub use process::shell::*;
+pub use process::start_conf::*;
+pub use value::config_types::*;
+pub(crate) use value::dynamic_convert::*;
+pub use value::ktav_value::*;
+pub use value::meta::*;
+pub use value::units::*;
+pub use value::version::*;
 
 use onlyterm_color_schemes_data as scheme_data;
-
-pub(crate) use configuration::{
-    default_config_with_overrides_applied, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP,
-};
 
 lazy_static! {
     pub static ref HOME_DIR: PathBuf = dirs_next::home_dir().expect("can't find HOME dir");
@@ -152,14 +144,14 @@ fn config_dirs() -> Vec<PathBuf> {
     vec![xdg_config_home()]
 }
 
-fn default_one_point_oh_f64() -> f64 {
+pub(crate) fn default_one_point_oh_f64() -> f64 {
     1.0
 }
 
-fn default_one_point_oh() -> f32 {
+pub(crate) fn default_one_point_oh() -> f32 {
     1.0
 }
 
-fn default_true() -> bool {
+pub(crate) fn default_true() -> bool {
     true
 }

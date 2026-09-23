@@ -4,8 +4,13 @@ use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::convert::TryFrom;
 use std::fmt::Display;
 
-pub use crate::font_weight::*;
-pub use crate::text_style::*;
+mod cell;
+mod font_weight;
+mod text_style;
+
+pub use cell::*;
+pub use font_weight::*;
+pub use text_style::*;
 
 #[derive(
     Debug,
