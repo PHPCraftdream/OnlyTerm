@@ -1,5 +1,5 @@
-use crate::bidi_class::BidiClass;
-use crate::direction::Direction;
+use super::direction::Direction;
+use crate::data::bidi_class::BidiClass;
 use crate::NO_LEVEL;
 
 /// Maximum stack depth; UBA guarantees that it will never increase

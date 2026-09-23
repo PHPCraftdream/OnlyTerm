@@ -1,5 +1,5 @@
-use crate::bidi_class::BidiClass;
-use crate::level::{Level, MAX_DEPTH};
+use crate::data::bidi_class::BidiClass;
+use crate::types::level::{Level, MAX_DEPTH};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Override {
