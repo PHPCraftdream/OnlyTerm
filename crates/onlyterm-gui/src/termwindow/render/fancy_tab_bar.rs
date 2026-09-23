@@ -10,6 +10,7 @@ use config::{Dimension, DimensionContext, TabBarColors};
 use onlyterm_font::LoadedFont;
 use onlyterm_term::color::{ColorAttribute, ColorPalette};
 use std::rc::Rc;
+use window::color::LinearRgba;
 use window::{IntegratedTitleButtonAlignment, IntegratedTitleButtonStyle};
 
 const X_BUTTON: &[Poly] = &[
@@ -99,6 +100,17 @@ impl crate::TermWindow {
             .to_linear()
             .into(),
         };
+
+        // Pass-through indicator input, resolved once per build rather than
+        // per tab. A fixed bright blue rather than a theme color (unlike the
+        // cursor indicator's compose_cursor): it must stay visible regardless
+        // of color scheme, the same way the elevated-tab border stays legible
+        // -- but elevated tabs get that from the pane's own foreground color,
+        // which happens to be blue for an admin shell, not a fixed constant,
+        // so it can't be reused here for a state that has nothing to do with
+        // any particular pane's colors.
+        let pass_through_armed = self.pass_through.is_armed();
+        let pass_through_accent = LinearRgba::with_srgba(30, 144, 255, 255); // DodgerBlue
 
         let item_to_elem = |item: &TabEntry| -> Element {
             let element = Element::with_line(&font, &item.title, palette);
@@ -190,6 +202,18 @@ impl crate::TermWindow {
                         bg_color
                             .unwrap_or_else(|| active_tab.bg_color.into())
                             .to_linear()
+                    };
+                    // While the double-Ctrl pass-through mode is armed, rim
+                    // the active tab in a fixed bright blue -- a cue that
+                    // survives the pane hiding its terminal cursor. Recolor
+                    // only, like the elevated-tab border: changing the
+                    // border width here as well made the tab visibly resize
+                    // every time the mode toggled, which is worse than no
+                    // indicator at all.
+                    let border_color = if pass_through_armed {
+                        pass_through_accent
+                    } else {
+                        border_color
                     };
                     element
                         .vertical_align(VerticalAlign::Bottom)
