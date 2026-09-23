@@ -118,6 +118,15 @@ impl crate::TermWindow {
         }
 
         let dims = snapshot.dims;
+        let normalized_viewport = crate::scrollbar::normalize_viewport(
+            current_viewport,
+            dims.scrollback_top,
+            dims.physical_top,
+        );
+        if normalized_viewport != current_viewport {
+            self.set_viewport(pane_id, normalized_viewport, dims);
+        }
+        let current_viewport = normalized_viewport;
 
         let gl_state = self.render_state.as_ref().unwrap();
 
@@ -422,7 +431,7 @@ impl crate::TermWindow {
             // the two origins equal -- but nothing enforces that coupling,
             // and a stale cursor row is exactly the failure this exemption
             // exists to prevent.
-            let viewport_top = current_viewport.unwrap_or(dims.physical_top);
+            let viewport_top = snapshot.stable_top;
             let cursor_row_slot = cursor_row_slot(cursor.y, viewport_top, dims.viewport_rows);
 
             use crate::termwindow::render::{RetainedPaneRows, RetainedRow, RetainedStamp};

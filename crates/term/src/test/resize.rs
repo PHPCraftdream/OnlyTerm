@@ -2,6 +2,68 @@
 //! Split out from the parent test module; helpers come from `super::*`.
 use super::*;
 
+fn check_saved_prompt_after_reflow(conpty: bool, move_live_cursor: bool, repeat: bool) {
+    let mut term = TestTerm::new(24, 8, 1000);
+    if conpty {
+        term.enable_conpty_quirks();
+    }
+    for _ in 0..8 {
+        term.print("abcdefghABCDEFGH\r\n");
+    }
+    term.print("p> \x1b7");
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (3, 16));
+    if move_live_cursor {
+        term.cup(0, 0);
+    }
+
+    term.resize(TerminalSize {
+        rows: 24,
+        cols: 16,
+        ..Default::default()
+    });
+    if repeat {
+        for cols in [8, 16] {
+            term.resize(TerminalSize {
+                rows: 24,
+                cols,
+                ..Default::default()
+            });
+        }
+    }
+    // Eight two-row lines become eight one-row lines; the prompt follows.
+    std::assert_eq!(term.screen().visible_lines()[8].as_str(), "p> ");
+    term.print("\x1b8input");
+    std::assert_eq!(
+        term.screen().visible_lines()[8].as_str(),
+        "p> input",
+        "saved prompt position must reflow (conpty={}, moved={})",
+        conpty,
+        move_live_cursor
+    );
+    std::assert_eq!((term.cursor_pos().x, term.cursor_pos().y), (8, 8));
+}
+
+#[test]
+fn saved_active_cursor_follows_prompt_after_reflow() {
+    for conpty in [false, true] {
+        check_saved_prompt_after_reflow(conpty, false, false);
+    }
+}
+
+#[test]
+fn saved_active_cursor_reflows_independently_of_live_cursor() {
+    for conpty in [false, true] {
+        check_saved_prompt_after_reflow(conpty, true, false);
+    }
+}
+
+#[test]
+fn saved_active_cursor_survives_repeated_reflow() {
+    for conpty in [false, true] {
+        check_saved_prompt_after_reflow(conpty, true, true);
+    }
+}
+
 fn replay_conpty_color_fill(term: &mut TestTerm, rows: usize, cols: usize) {
     // OpenConsole 1.22.10352.0: cmd.exe `color f8` startup output.
     term.print("\x1b7");

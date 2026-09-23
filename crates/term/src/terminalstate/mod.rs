@@ -122,8 +122,8 @@ impl TabStop {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SavedCursor {
-    position: CursorPosition,
-    wrap_next: bool,
+    pub(crate) position: CursorPosition,
+    pub(crate) wrap_next: bool,
     pen: CellAttributes,
     dec_origin_mode: bool,
     g0_charset: CharSet,

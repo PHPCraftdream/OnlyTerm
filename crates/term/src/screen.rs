@@ -110,12 +110,15 @@ impl Screen {
         physical_rows: usize,
         cursor_x: usize,
         cursor_y: PhysRowIndex,
+        saved_cursor: Option<(usize, PhysRowIndex)>,
         seqno: SequenceNo,
-    ) -> (usize, PhysRowIndex) {
+    ) -> ((usize, PhysRowIndex), Option<(usize, PhysRowIndex)>) {
         let mut rewrapped = VecDeque::new();
         let mut logical_line: Option<Line> = None;
         let mut logical_cursor_x: Option<usize> = None;
+        let mut logical_saved_x: Option<usize> = None;
         let mut adjusted_cursor = (cursor_x, cursor_y);
+        let mut adjusted_saved = saved_cursor;
 
         for (phys_idx, mut line) in self.lines.drain(..).enumerate() {
             line.update_last_change_seqno(seqno);
@@ -125,17 +128,19 @@ impl Screen {
                 line.set_last_cell_was_wrapped(false, seqno);
             }
 
-            let line = match logical_line.take() {
-                None => {
-                    if phys_idx == cursor_y {
-                        logical_cursor_x = Some(cursor_x);
-                    }
-                    line
+            let prior_len = logical_line.as_ref().map_or(0, Line::len);
+            if phys_idx == cursor_y {
+                logical_cursor_x = Some(cursor_x + prior_len);
+            }
+            if let Some((saved_x, saved_y)) = saved_cursor {
+                if phys_idx == saved_y {
+                    logical_saved_x = Some(saved_x + prior_len);
                 }
+            }
+
+            let line = match logical_line.take() {
+                None => line,
                 Some(mut prior) => {
-                    if phys_idx == cursor_y {
-                        logical_cursor_x = Some(cursor_x + prior.len());
-                    }
                     prior.append_line(line, seqno);
                     prior
                 }
@@ -147,46 +152,22 @@ impl Screen {
             }
 
             if let Some(x) = logical_cursor_x.take() {
-                let num_lines = x / physical_cols;
-                let last_x = x - (num_lines * physical_cols);
-                adjusted_cursor = (last_x, rewrapped.len() + num_lines);
-
-                // Special case: if the cursor lands in column zero, we'll
-                // lose track of its logical association with the wrapped
-                // line and it won't resize with the line correctly.
-                // Put it back on the prior line. The cursor is now
-                // technically outside of the viewport width.
-                //
-                // This only applies when the cursor really did land in
-                // column zero *because its logical line wrapped* there
-                // (`num_lines > 0`, ie. its offset is a non-zero multiple
-                // of the new width): that is the position a terminal
-                // parks at the end of the previous row with the wrap
-                // pending, so reflow has to park it there too. Testing
-                // `adjusted_cursor.1 > 0` instead -- ie. merely "not on
-                // the first row of the screen" -- also caught the wholly
-                // ordinary cursor a plain newline leaves at the start of
-                // its own row, and yanked it up onto the end of the row
-                // above (and to `physical_cols`, one past the last valid
-                // column) on every widening resize. The next character
-                // the program printed then landed at the far right of the
-                // previous line and pushed the rest of its output a row
-                // down -- which is what garbled a `--start-conf` tab,
-                // whose startup commands are typed in immediately and so
-                // leave the shell mid-output when the window maximizes.
-                if num_lines > 0 && adjusted_cursor.0 == 0 && adjusted_cursor.1 > 0 {
-                    if physical_cols < self.physical_cols {
-                        // getting smaller: preserve its original position
-                        // on the prior line
-                        adjusted_cursor.0 = cursor_x;
-                    } else {
-                        // getting larger; we were most likely in column 1
-                        // or somewhere close. Jump to the end of the
-                        // prior line.
-                        adjusted_cursor.0 = physical_cols;
-                    }
-                    adjusted_cursor.1 -= 1;
-                }
+                adjusted_cursor = Self::rewrapped_cursor_position(
+                    x,
+                    cursor_x,
+                    rewrapped.len(),
+                    physical_cols,
+                    self.physical_cols,
+                );
+            }
+            if let (Some(x), Some((saved_x, _))) = (logical_saved_x.take(), saved_cursor) {
+                adjusted_saved = Some(Self::rewrapped_cursor_position(
+                    x,
+                    saved_x,
+                    rewrapped.len(),
+                    physical_cols,
+                    self.physical_cols,
+                ));
             }
 
             if line.len() <= physical_cols {
@@ -211,7 +192,29 @@ impl Screen {
             self.lines.pop_back();
         }
 
-        adjusted_cursor
+        (adjusted_cursor, adjusted_saved)
+    }
+
+    fn rewrapped_cursor_position(
+        logical_x: usize,
+        original_x: usize,
+        line_start: usize,
+        new_cols: usize,
+        old_cols: usize,
+    ) -> (usize, PhysRowIndex) {
+        let rows = logical_x / new_cols;
+        let mut x = logical_x % new_cols;
+        let mut y = line_start + rows;
+        // A nonzero logical offset at column zero belongs to the prior row.
+        if rows > 0 && x == 0 && y > 0 {
+            x = if new_cols < old_cols {
+                original_x
+            } else {
+                new_cols
+            };
+            y -= 1;
+        }
+        (x, y)
     }
 
     /// Resize the physical, viewable portion of the screen
@@ -242,6 +245,10 @@ impl Screen {
         // this avoids growing the scrollback size when rapidly switching between normal and
         // maximized states.
         let cursor_phys = self.phys_row(cursor.y);
+        let saved_cursor_phys = self
+            .saved_cursor
+            .as_ref()
+            .map(|saved| (saved.position.x, self.phys_row(saved.position.y)));
         let old_top = self.lines.len().saturating_sub(self.physical_rows);
         if is_conpty && self.allow_scrollback {
             // Erase-to-end can paint unused padding without extending output.
@@ -268,7 +275,7 @@ impl Screen {
             }
         }
 
-        let (cursor_x, cursor_y) = if physical_cols != self.physical_cols {
+        let ((cursor_x, cursor_y), saved_cursor) = if physical_cols != self.physical_cols {
             // Check to see if we need to rewrap lines that were
             // wrapped due to reaching the right hand side of the terminal.
             // For each one that we find, we need to join it with its
@@ -277,7 +284,14 @@ impl Screen {
             // screen (hence the check for allow_scrollback), to avoid
             // conflicting screen updates with full screen apps.
             if self.allow_scrollback {
-                self.rewrap_lines(physical_cols, physical_rows, cursor.x, cursor_phys, seqno)
+                self.rewrap_lines(
+                    physical_cols,
+                    physical_rows,
+                    cursor.x,
+                    cursor_phys,
+                    saved_cursor_phys,
+                    seqno,
+                )
             } else {
                 for line in &mut self.lines {
                     if physical_cols < self.physical_cols {
@@ -288,10 +302,10 @@ impl Screen {
                         line.update_last_change_seqno(seqno);
                     }
                 }
-                (cursor.x, cursor_phys)
+                ((cursor.x, cursor_phys), saved_cursor_phys)
             }
         } else {
-            (cursor.x, cursor_phys)
+            ((cursor.x, cursor_phys), saved_cursor_phys)
         };
 
         let capacity = physical_rows + self.scrollback_size();
@@ -359,6 +373,14 @@ impl Screen {
         // the cursor from that line, not its pre-resize visible row number.
         let new_cursor_y = cursor_y as VisibleRowIndex
             - (self.lines.len() as VisibleRowIndex - physical_rows as VisibleRowIndex);
+
+        if let (Some(saved), Some((x, y))) = (self.saved_cursor.as_mut(), saved_cursor) {
+            saved.position.x = x;
+            saved.position.y = y as VisibleRowIndex
+                - (self.lines.len() as VisibleRowIndex - physical_rows as VisibleRowIndex);
+            saved.position.seqno = seqno;
+            saved.wrap_next = false;
+        }
 
         self.output_rows = output_end
             .saturating_sub(self.lines.len() - physical_rows)
@@ -554,15 +576,19 @@ impl Screen {
         let first = match self.stable_row_to_phys(range.start) {
             Some(first) => first,
             None => {
-                return 0..range_len.min(self.lines.len());
+                if range.start < self.phys_to_stable_row_index(0) {
+                    return 0..range_len.min(self.lines.len());
+                }
+                let end = self.lines.len();
+                return end.saturating_sub(range_len)..end;
             }
         };
 
         let last = match self.stable_row_to_phys(range.end.saturating_sub(1)) {
             Some(last) => last,
             None => {
-                let last = self.lines.len() - 1;
-                return last.saturating_sub(range_len)..last + 1;
+                let end = self.lines.len();
+                return end.saturating_sub(range_len)..end;
             }
         };
 

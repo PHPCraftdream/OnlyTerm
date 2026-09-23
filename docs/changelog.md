@@ -629,6 +629,12 @@ As features stabilize some brief notes about them will accumulate here.
   the tab bar does the same. No context menu is involved.
 
 #### Fixed
+* Returning to a tab after its window width changed could restore a saved
+  cursor several rows below the reflowed prompt. Saved and live cursors now
+  follow their own positions through reflow, including repeated resizes.
+* A saved scroll position could jump to the oldest history row after reflow
+  removed lines. Out-of-range positions now resolve to the nearest available
+  viewport, and rendering updates the tab's stored scroll position.
 * OnlyTerm could abort while the machine was out of memory. The process-tree
   walk that backs window titles and keyboard-compatibility detection enumerates
   every process on the machine and allocated an owned path for each one, even

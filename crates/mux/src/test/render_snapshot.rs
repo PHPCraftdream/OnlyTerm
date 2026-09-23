@@ -95,6 +95,10 @@ const ROWS: usize = 6;
 const COLS: usize = 40;
 
 fn make_pane() -> Arc<LocalPane> {
+    make_pane_with_config(Arc::new(TestConfig))
+}
+
+fn make_pane_with_config(config: Arc<dyn TerminalConfiguration>) -> Arc<LocalPane> {
     let size = TerminalSize {
         rows: ROWS,
         cols: COLS,
@@ -102,13 +106,7 @@ fn make_pane() -> Arc<LocalPane> {
         pixel_height: ROWS * 16,
         dpi: 0,
     };
-    let terminal = Terminal::new(
-        size,
-        Arc::new(TestConfig),
-        "OnlyTerm",
-        "0.0.0",
-        Box::new(Vec::new()),
-    );
+    let terminal = Terminal::new(size, config, "OnlyTerm", "0.0.0", Box::new(Vec::new()));
     let pty = Box::new(FakeMasterPty {
         size: Mutex::new(PtySize {
             rows: ROWS as u16,
@@ -181,4 +179,114 @@ fn render_snapshot_is_consistent_with_individual_getters() {
     for (a, b) in snapshot.lines.iter().zip(lines.iter()) {
         assert_eq!(a.as_str(), b.as_str());
     }
+}
+
+#[test]
+fn render_snapshot_stale_reflow_viewport_does_not_jump_to_oldest_history() {
+    use termwiz::escape::{Action, ControlCode};
+
+    let pane = make_pane();
+    let mut actions = Vec::new();
+    for n in 0..30 {
+        let text = format!("{:02}{}", n, "x".repeat(COLS * 2 - 2));
+        actions.extend(text.chars().map(Action::Print));
+        actions.push(Action::Control(ControlCode::CarriageReturn));
+        actions.push(Action::Control(ControlCode::LineFeed));
+    }
+    actions.extend("prompt> ".chars().map(Action::Print));
+    pane.perform_actions(actions);
+    let old_dims = pane.get_dimensions();
+    let anchor = old_dims.physical_top - 1;
+    let before = pane.get_render_snapshot(Some(anchor), &[]);
+    assert_eq!(before.stable_top, anchor);
+
+    pane.resize(TerminalSize {
+        rows: ROWS,
+        cols: COLS * 2,
+        ..Default::default()
+    })
+    .unwrap();
+    let dims = pane.get_dimensions();
+    assert!(anchor >= dims.scrollback_top + dims.scrollback_rows as isize);
+
+    // An obsolete anchor beyond the new end must clamp to the newest page.
+    let snapshot = pane.get_render_snapshot(Some(anchor), &[]);
+    assert_eq!(snapshot.stable_top, dims.physical_top);
+    assert_eq!(snapshot.lines.len(), ROWS);
+    assert!(snapshot.lines[0].as_str().starts_with("25"));
+    assert_eq!(snapshot.lines[ROWS - 1].as_str(), "prompt> ");
+    assert_eq!(snapshot.cursor.y - snapshot.stable_top, (ROWS - 1) as isize);
+}
+
+#[test]
+fn render_snapshot_partly_past_bottom_returns_exactly_one_viewport() {
+    use termwiz::escape::{Action, ControlCode};
+
+    let pane = make_pane();
+    let mut actions = Vec::new();
+    for n in 0..12 {
+        actions.extend(format!("line {}", n).chars().map(Action::Print));
+        actions.push(Action::Control(ControlCode::CarriageReturn));
+        actions.push(Action::Control(ControlCode::LineFeed));
+    }
+    pane.perform_actions(actions);
+    let dims = pane.get_dimensions();
+    let request = dims.physical_top + 1;
+    assert!(request < dims.scrollback_top + dims.scrollback_rows as isize);
+
+    let snapshot = pane.get_render_snapshot(Some(request), &[]);
+    assert_eq!(snapshot.stable_top, dims.physical_top);
+    assert_eq!(snapshot.lines.len(), ROWS);
+    assert_eq!(snapshot.lines[0].as_str(), "line 7");
+    assert_eq!(snapshot.cursor.y - snapshot.stable_top, 5);
+}
+
+#[test]
+fn render_snapshot_after_unobserved_output_keeps_bottom_and_clamps_expired_history() {
+    use termwiz::escape::{Action, ControlCode};
+
+    #[derive(Debug)]
+    struct SmallHistory;
+    impl TerminalConfiguration for SmallHistory {
+        fn color_palette(&self) -> ColorPalette {
+            ColorPalette::default()
+        }
+
+        fn scrollback_size(&self) -> usize {
+            20
+        }
+    }
+
+    let pane = make_pane_with_config(Arc::new(SmallHistory));
+    let write_lines = |start, end| {
+        let mut actions = Vec::new();
+        for n in start..end {
+            actions.extend(format!("line {}", n).chars().map(Action::Print));
+            actions.push(Action::Control(ControlCode::CarriageReturn));
+            actions.push(Action::Control(ControlCode::LineFeed));
+        }
+        pane.perform_actions(actions);
+    };
+    write_lines(0, 20);
+    let anchor = pane.get_dimensions().physical_top - 1;
+    assert_eq!(
+        pane.get_render_snapshot(Some(anchor), &[]).stable_top,
+        anchor
+    );
+
+    // No reads, resize, or elapsed-time dependency while history rolls over.
+    write_lines(20, 40);
+    pane.perform_actions("prompt> ".chars().map(Action::Print).collect());
+    let bottom = pane.get_render_snapshot(None, &[]);
+    assert_eq!(bottom.stable_top, 35);
+    assert_eq!(bottom.lines.len(), ROWS);
+    assert_eq!(bottom.lines[0].as_str(), "line 35");
+    assert_eq!(bottom.lines[ROWS - 1].as_str(), "prompt> ");
+    assert_eq!(bottom.cursor.y - bottom.stable_top, 5);
+
+    let history = pane.get_render_snapshot(Some(anchor), &[]);
+    assert!(anchor < history.dims.scrollback_top);
+    assert_eq!(history.stable_top, 15);
+    assert_eq!(history.lines.len(), ROWS);
+    assert_eq!(history.lines[0].as_str(), "line 15");
 }
