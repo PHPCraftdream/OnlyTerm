@@ -62,6 +62,15 @@ impl super::TermWindow {
 
     pub fn mouse_event_impl(&mut self, event: MouseEvent, context: &dyn WindowOps) {
         log::trace!("{:?}", event);
+        // Any button press or wheel tick breaks a Ctrl tap in progress -- the
+        // Ctrl+click-on-a-link gesture must not arm the pass-through mode. An
+        // already-armed mode is deliberately untouched.
+        if matches!(
+            event.kind,
+            WMEK::Press(_) | WMEK::VertWheel(_) | WMEK::HorzWheel(_)
+        ) {
+            self.pass_through.mouse_input();
+        }
         // A window can legitimately have no pane at all: `--choose-tab` opens
         // one whose only content is the New Tab Options modal, and the first
         // tab does not exist until the user presses Run. Returning here in

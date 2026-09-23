@@ -200,6 +200,10 @@ impl TermWindow {
             render_state,
             input_map: InputMap::new(&config),
             leader_is_down: None,
+            pass_through: crate::termwindow::keyevent::pass_through::PassThrough::new(
+                config.pass_through_next_key_on_double_ctrl,
+            ),
+            pending_pass_through: None,
             dead_key_status: DeadKeyStatus::None,
             show_tab_bar,
             show_scroll_bar: config.enable_scroll_bar,

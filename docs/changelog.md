@@ -526,6 +526,9 @@ As features stabilize some brief notes about them will accumulate here.
   one. Each is filed separately for its own fix.
 
 #### New
+* [pass_through_next_key_on_double_ctrl](config/reference/config/pass_through_next_key_on_double_ctrl.md)
+  option (default `true`): after two quick Ctrl taps, the next key press bypasses
+  OnlyTerm's key bindings and is sent straight to the program in the active pane.
 * [show_process_tree_stats_in_title](config/reference/config/show_process_tree_stats_in_title.md)
   option (default `true`): appends this OnlyTerm process tree's CPU% and
   memory usage (GB and %) to the OS window title, refreshed every 5 seconds.
