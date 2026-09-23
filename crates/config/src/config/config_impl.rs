@@ -1,4 +1,4 @@
-use super::{Config, PathPossibility};
+use super::Config;
 use crate::background::BackgroundLayer;
 use crate::color::{ColorSchemeFile, Palette, TabBarColor, TabBarColors};
 use crate::font::StyleRule;
@@ -18,6 +18,48 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
+pub(super) struct PathPossibility {
+    path: PathBuf,
+    is_required: bool,
+}
+impl PathPossibility {
+    pub fn required(path: PathBuf) -> PathPossibility {
+        PathPossibility {
+            path,
+            is_required: true,
+        }
+    }
+    pub fn optional(path: PathBuf) -> PathPossibility {
+        PathPossibility {
+            path,
+            is_required: false,
+        }
+    }
+}
+
+pub(crate) fn compute_cache_dir() -> anyhow::Result<PathBuf> {
+    if let Some(runtime) = dirs_next::cache_dir() {
+        return Ok(runtime.join("onlyterm"));
+    }
+
+    Ok(crate::HOME_DIR.join(".local/share/onlyterm"))
+}
+
+pub(crate) fn compute_data_dir() -> anyhow::Result<PathBuf> {
+    if let Some(runtime) = dirs_next::data_dir() {
+        return Ok(runtime.join("onlyterm"));
+    }
+
+    Ok(crate::HOME_DIR.join(".local/share/onlyterm"))
+}
+
+pub(crate) fn compute_runtime_dir() -> anyhow::Result<PathBuf> {
+    if let Some(runtime) = dirs_next::runtime_dir() {
+        return Ok(runtime.join("onlyterm"));
+    }
+
+    Ok(crate::HOME_DIR.join(".local/share/onlyterm"))
+}
 /// Distinguishes "no `.ktav` config exists at this candidate path, but a
 /// legacy `.rhai`/`.lua` sibling does" from any other load error (I/O error,
 /// a `.ktav` file that exists but fails to parse, etc). `load_with_overrides`
