@@ -13,11 +13,10 @@ pub mod change;
 mod cursor;
 pub mod hyperlink;
 pub mod line;
-mod position;
 mod surface;
 
+pub use cursor::position::Position;
 pub use cursor::{CursorShape, CursorVisibility};
-pub use position::Position;
 pub use surface::Surface;
 
 pub use self::change::{Change, LineAttribute};
