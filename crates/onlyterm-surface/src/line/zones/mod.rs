@@ -1,3 +1,7 @@
+mod doubleclick;
+
+pub use doubleclick::DoubleClickRange;
+
 use core::ops::Range;
 use onlyterm_cell::SemanticType;
 #[cfg(feature = "use_serde")]

@@ -1,6 +1,4 @@
-mod cellref;
 mod clusterline;
-mod doubleclick;
 // The inner `line` module holds the `Line` type itself; the directory is named
 // `line` to group all line-related code. Renaming it would be a non-cosmetic
 // restructure of a core type, so the `module_inception` lint is suppressed.
@@ -8,11 +6,11 @@ mod doubleclick;
 mod line;
 mod linebits;
 mod storage;
+#[cfg(test)]
+#[path = "tests/test.rs"]
 mod test;
-mod vecstorage;
-mod zone;
+mod zones;
 
-pub use cellref::CellRef;
-pub use doubleclick::DoubleClickRange;
 pub use line::Line;
-pub use zone::ZoneRange;
+pub use storage::CellRef;
+pub use zones::{DoubleClickRange, ZoneRange};

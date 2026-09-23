@@ -1,6 +1,10 @@
-use crate::line::cellref::CellRef;
+mod cellref;
+mod vecstorage;
+
+pub use cellref::CellRef;
+pub(crate) use vecstorage::{VecStorage, VecStorageIter};
+
 use crate::line::clusterline::{ClusterLineCellIter, ClusteredLine};
-use crate::line::vecstorage::{VecStorage, VecStorageIter};
 use alloc::sync::Arc;
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};

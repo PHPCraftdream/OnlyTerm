@@ -1,4 +1,4 @@
-use crate::line::cellref::CellRef;
+use super::cellref::CellRef;
 use alloc::sync::Arc;
 use onlyterm_cell::Cell;
 #[cfg(feature = "use_serde")]

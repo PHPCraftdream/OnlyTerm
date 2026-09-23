@@ -1,3 +1,5 @@
+pub(crate) mod position;
+
 use crate::alloc::string::ToString;
 use onlyterm_dynamic::{FromDynamic, ToDynamic};
 #[cfg(feature = "use_serde")]
