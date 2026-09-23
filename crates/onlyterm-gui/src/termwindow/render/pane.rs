@@ -554,7 +554,8 @@ impl crate::TermWindow {
                                 },
                                 dead_key_or_leader: self.term_window.dead_key_status
                                     != DeadKeyStatus::None
-                                    || self.term_window.leader_is_active(),
+                                    || self.term_window.leader_is_active()
+                                    || self.term_window.pass_through.is_armed(),
                                 cursor_fg: self.cursor_fg,
                                 cursor_bg: self.cursor_bg,
                                 cursor_border_color: self.cursor_border_color,

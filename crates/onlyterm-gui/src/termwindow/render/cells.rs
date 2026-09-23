@@ -356,8 +356,9 @@ impl crate::TermWindow {
                 };
             }
 
-            let dead_key_or_leader =
-                self.dead_key_status != DeadKeyStatus::None || self.leader_is_active();
+            let dead_key_or_leader = self.dead_key_status != DeadKeyStatus::None
+                || self.leader_is_active()
+                || self.pass_through.is_armed();
 
             if dead_key_or_leader && params.is_active_pane {
                 let (fg_color, bg_color) = if self.use_reverse_video_cursor(&params) {
