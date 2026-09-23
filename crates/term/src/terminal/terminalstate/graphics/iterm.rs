@@ -1,4 +1,4 @@
-use crate::terminalstate::image::*;
+use super::image::*;
 use crate::TerminalState;
 use ::image::imageops::FilterType;
 use ::image::ImageFormat;

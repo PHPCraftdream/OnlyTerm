@@ -3,6 +3,8 @@ use crate::terminalstate::performer::Performer;
 use onlyterm_escape_parser::parser::Parser;
 use std::sync::Arc;
 
+pub mod terminalstate;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 pub enum ClipboardSelection {

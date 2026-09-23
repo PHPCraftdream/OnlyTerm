@@ -1,3 +1,5 @@
+pub mod color;
+
 use crate::color::ColorPalette;
 use downcast_rs::{impl_downcast, Downcast};
 use onlyterm_bidi::ParagraphDirectionHint;

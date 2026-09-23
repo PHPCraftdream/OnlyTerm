@@ -1,5 +1,5 @@
-use crate::terminalstate::image::*;
-use crate::terminalstate::{default_color_map, ImageAttachParams};
+use super::image::*;
+use crate::terminalstate::default_color_map;
 use crate::TerminalState;
 use ::image::RgbaImage;
 use onlyterm_cell::color::RgbColor;

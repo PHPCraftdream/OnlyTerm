@@ -1,5 +1,4 @@
-use crate::terminalstate::image::*;
-use crate::terminalstate::{ImageAttachParams, PlacementInfo};
+use super::image::*;
 use crate::{StableRowIndex, TerminalState};
 use ::image::{
     DynamicImage, GenericImage, GenericImageView, ImageBuffer, RgbImage, Rgba, RgbaImage,

@@ -3,16 +3,13 @@
 #![allow(clippy::range_plus_one)]
 use super::*;
 use crate::color::{ColorPalette, RgbColor};
-use crate::config::{BidiMode, NewlineCanon};
-use log::debug;
+use crate::config::BidiMode;
 use onlyterm_bidi::ParagraphDirectionHint;
 use onlyterm_cell::image::ImageData;
 use onlyterm_cell::UnicodeVersion;
-use onlyterm_escape_parser::csi::{
-    CursorStyle, Edit, EraseInDisplay, EraseInLine, TabulationClear,
-};
+use onlyterm_escape_parser::csi::{Edit, EraseInDisplay, EraseInLine, TabulationClear};
 use onlyterm_escape_parser::{OperatingSystemCommand, CSI};
-use onlyterm_surface::{CursorShape, CursorVisibility, SequenceNo};
+use onlyterm_surface::{CursorVisibility, SequenceNo};
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::num::NonZeroUsize;
@@ -23,20 +20,17 @@ use terminfo::Database;
 use termwiz::input::KeyboardEncoding;
 use url::Url;
 
-mod csi;
-mod image;
-mod iterm;
-mod keyboard;
-mod kitty;
-mod mouse;
+pub(crate) mod csi;
+pub(crate) mod graphics;
+pub(crate) mod input;
+mod movement;
 pub(crate) mod performer;
-mod sixel;
-use crate::terminalstate::image::*;
-use crate::terminalstate::kitty::*;
+mod resize;
+use crate::terminalstate::graphics::kitty::*;
 
 lazy_static::lazy_static! {
     static ref DB: Database = {
-        let data = include_bytes!("../../../termwiz/data/onlyterm");
+        let data = include_bytes!("../../../../termwiz/data/onlyterm");
         Database::from_buffer(&data[..]).unwrap()
     };
 }
@@ -750,17 +744,6 @@ impl TerminalState {
         &mut self.screen
     }
 
-    fn set_clipboard_contents(
-        &self,
-        selection: ClipboardSelection,
-        text: Option<String>,
-    ) -> anyhow::Result<()> {
-        if let Some(clip) = self.clipboard.as_ref() {
-            clip.set_contents(selection, text)?;
-        }
-        Ok(())
-    }
-
     pub fn erase_scrollback_and_viewport(&mut self) {
         // Since we may be called outside of perform_actions,
         // we need to ensure that we increment the seqno in
@@ -881,140 +864,6 @@ impl TerminalState {
         }
     }
 
-    /// Send text to the terminal that is the result of pasting.
-    /// If bracketed paste mode is enabled, the paste is enclosed
-    /// De-fang the text by removing any embedded bracketed paste
-    /// sequence that may be present.  Loops until no more occurrences
-    /// remain, because a single pass of str::replace is not idempotent:
-    /// nested sequences like `\x1b\x1b[200~[200~` can leave a valid
-    /// marker behind after the first sweep.
-    fn defang_paste(text: &str) -> String {
-        let mut result = text.to_string();
-        loop {
-            let prev = result.clone();
-            result = result.replace("\x1b[200~", "").replace("\x1b[201~", "");
-            if result == prev {
-                break;
-            }
-        }
-        result
-    }
-
-    /// in the bracketing, otherwise it is fed to the writer as-is.
-    pub fn send_paste(&mut self, text: &str) -> Result<(), Error> {
-        let mut buf = String::new();
-        if self.bracketed_paste {
-            buf.push_str("\x1b[200~");
-        }
-
-        let canon = if self.bracketed_paste {
-            NewlineCanon::None
-        } else {
-            self.config.canonicalize_pasted_newlines()
-        };
-
-        let canon = canon.canonicalize(text);
-        let de_fanged = Self::defang_paste(&canon);
-        buf.push_str(&de_fanged);
-
-        if self.bracketed_paste {
-            buf.push_str("\x1b[201~");
-        }
-
-        self.writer.write_all(buf.as_bytes())?;
-        self.writer.flush()?;
-        Ok(())
-    }
-
-    /// Informs the terminal that the viewport of the window has resized to the
-    /// specified dimensions.
-    /// We need to resize both the primary and alt screens, adjusting
-    /// the cursor positions of both accordingly.
-    pub fn resize(&mut self, size: TerminalSize) {
-        self.increment_seqno();
-        let discard_new_blank_history = self.enable_conpty_quirks
-            && !self.screen.alt_screen_is_active
-            && size.rows.max(1) < self.screen.screen.physical_rows
-            && self.screen.screen.scrollback_rows() == self.screen.screen.physical_rows;
-        let (cursor_main, cursor_alt) = if self.screen.alt_screen_is_active {
-            (
-                self.screen
-                    .screen
-                    .saved_cursor
-                    .as_ref()
-                    .map(|s| s.position)
-                    .unwrap_or_default(),
-                self.cursor,
-            )
-        } else {
-            (
-                self.cursor,
-                self.screen
-                    .alt_screen
-                    .saved_cursor
-                    .as_ref()
-                    .map(|s| s.position)
-                    .unwrap_or_default(),
-            )
-        };
-
-        let bidi_mode = self.get_bidi_mode();
-        let (adjusted_cursor_main, adjusted_cursor_alt) = self.screen.resize(
-            size,
-            cursor_main,
-            cursor_alt,
-            self.seqno,
-            self.enable_conpty_quirks,
-            bidi_mode,
-        );
-        if discard_new_blank_history {
-            let palette = self.palette();
-            self.screen.screen.discard_blank_resize_history(&palette);
-        }
-        self.top_and_bottom_margins = 0..size.rows as i64;
-        self.left_and_right_margins = 0..size.cols;
-        self.pixel_height = size.pixel_height;
-        self.pixel_width = size.pixel_width;
-        self.dpi = size.dpi;
-        self.tabs.resize(size.cols);
-
-        if self.screen.alt_screen_is_active {
-            self.set_cursor_pos(
-                &Position::Absolute(adjusted_cursor_alt.x as i64),
-                &Position::Absolute(adjusted_cursor_alt.y),
-            );
-
-            if let Some(saved) = self.screen.screen.saved_cursor.as_mut() {
-                saved.position.x = adjusted_cursor_main.x;
-                saved.position.y = adjusted_cursor_main.y;
-                saved.position.seqno = self.seqno;
-                saved.wrap_next = false;
-            }
-        } else {
-            self.set_cursor_pos(
-                &Position::Absolute(adjusted_cursor_main.x as i64),
-                &Position::Absolute(adjusted_cursor_main.y),
-            );
-            if let Some(saved) = self.screen.alt_screen.saved_cursor.as_mut() {
-                saved.position.x = adjusted_cursor_alt.x;
-                saved.position.y = adjusted_cursor_alt.y;
-                saved.position.seqno = self.seqno;
-                saved.wrap_next = false;
-            }
-        }
-    }
-
-    pub fn get_size(&self) -> TerminalSize {
-        let screen = self.screen();
-        TerminalSize {
-            dpi: self.dpi,
-            pixel_width: self.pixel_width,
-            pixel_height: self.pixel_height,
-            rows: screen.physical_rows,
-            cols: screen.physical_cols,
-        }
-    }
-
     fn palette_did_change(&mut self) {
         self.make_all_lines_dirty();
         if let Some(handler) = self.alert_handler.as_mut() {
@@ -1054,318 +903,6 @@ impl TerminalState {
 
     pub fn user_vars(&self) -> &HashMap<String, String> {
         &self.user_vars
-    }
-
-    fn clear_semantic_attribute_due_to_movement(&mut self) {
-        if self.clear_semantic_attribute_on_newline {
-            self.clear_semantic_attribute_on_newline = false;
-            self.pen.set_semantic_type(SemanticType::default());
-        }
-    }
-
-    /// Sets the cursor position to precisely the x and values provided
-    fn set_cursor_position_absolute(&mut self, x: usize, y: VisibleRowIndex) {
-        if self.cursor.y != y {
-            self.clear_semantic_attribute_due_to_movement();
-        }
-        self.cursor.y = y;
-        self.cursor.x = x;
-        self.cursor.seqno = self.seqno;
-        self.wrap_next = false;
-    }
-
-    /// Sets the cursor position. x and y are 0-based and relative to the
-    /// top left of the visible screen.
-    fn set_cursor_pos(&mut self, x: &Position, y: &Position) {
-        let x = match *x {
-            Position::Relative(x) => (self.cursor.x as i64 + x)
-                .min(
-                    if self.dec_origin_mode {
-                        self.left_and_right_margins.end
-                    } else {
-                        self.screen().physical_cols
-                    } as i64
-                        - 1,
-                )
-                .max(0),
-            Position::Absolute(x) => (x + if self.dec_origin_mode {
-                self.left_and_right_margins.start
-            } else {
-                0
-            } as i64)
-                .min(
-                    if self.dec_origin_mode {
-                        self.left_and_right_margins.end
-                    } else {
-                        // We allow 1 extra for the cursor x position
-                        // to account for some resize/rewrap scenarios
-                        // where we don't want to forget that the
-                        // cursor belongs to a wrapped line
-                        self.screen().physical_cols + 1
-                    } as i64
-                        - 1,
-                )
-                .max(0),
-        };
-
-        let y = match *y {
-            Position::Relative(y) => (self.cursor.y + y)
-                .min(
-                    if self.dec_origin_mode {
-                        self.top_and_bottom_margins.end
-                    } else {
-                        self.screen().physical_rows as i64
-                    } - 1,
-                )
-                .max(0),
-            Position::Absolute(y) => (y + if self.dec_origin_mode {
-                self.top_and_bottom_margins.start
-            } else {
-                0
-            })
-            .min(
-                if self.dec_origin_mode {
-                    self.top_and_bottom_margins.end
-                } else {
-                    self.screen().physical_rows as i64
-                } - 1,
-            )
-            .max(0),
-        };
-
-        self.set_cursor_position_absolute(x as usize, y);
-    }
-
-    fn scroll_up(&mut self, num_rows: usize) {
-        let seqno = self.seqno;
-        let blank_attr = self.pen.clone_sgr_only();
-        let top_and_bottom_margins = self.top_and_bottom_margins.clone();
-        let left_and_right_margins = self.left_and_right_margins.clone();
-        let bidi_mode = self.get_bidi_mode();
-        self.screen_mut().scroll_up_within_margins(
-            &top_and_bottom_margins,
-            &left_and_right_margins,
-            num_rows,
-            seqno,
-            blank_attr,
-            bidi_mode,
-        )
-    }
-
-    fn scroll_down(&mut self, num_rows: usize) {
-        let seqno = self.seqno;
-        let blank_attr = self.pen.clone_sgr_only();
-        let top_and_bottom_margins = self.top_and_bottom_margins.clone();
-        let left_and_right_margins = self.left_and_right_margins.clone();
-        let bidi_mode = self.get_bidi_mode();
-        self.screen_mut().scroll_down_within_margins(
-            &top_and_bottom_margins,
-            &left_and_right_margins,
-            num_rows,
-            seqno,
-            blank_attr,
-            bidi_mode,
-        )
-    }
-
-    /// Defined by FinalTermSemanticPrompt; a fresh-line is a NOP if the
-    /// cursor is already at the left margin, otherwise it is the same as
-    /// a new line.
-    fn fresh_line(&mut self) {
-        if self.cursor.x == self.left_and_right_margins.start {
-            return;
-        }
-        self.new_line(true);
-    }
-
-    fn new_line(&mut self, move_to_first_column: bool) {
-        let x = if move_to_first_column {
-            self.left_and_right_margins.start
-        } else {
-            self.cursor.x
-        };
-        let y = self.cursor.y;
-        let y = if y == self.top_and_bottom_margins.end - 1 {
-            self.scroll_up(1);
-            y
-        } else {
-            y + 1
-        };
-        self.set_cursor_pos(&Position::Absolute(x as i64), &Position::Absolute(y));
-    }
-
-    /// Moves the cursor down one line in the same column.
-    /// If the cursor is at the bottom margin, the page scrolls up.
-    fn c1_index(&mut self) {
-        if self.left_and_right_margins.contains(&self.cursor.x) {
-            if self.cursor.y == self.top_and_bottom_margins.end - 1 {
-                self.scroll_up(1);
-            } else {
-                self.set_cursor_pos(&Position::Relative(0), &Position::Relative(1));
-            }
-        }
-    }
-
-    /// Moves the cursor to the first position on the next line.
-    /// If the cursor is at the bottom margin, the page scrolls up.
-    fn c1_nel(&mut self) {
-        let y_clamp = if self.top_and_bottom_margins.contains(&self.cursor.y) {
-            self.top_and_bottom_margins.end - 1
-        } else {
-            self.screen().physical_rows as VisibleRowIndex - 1
-        };
-
-        if self.left_and_right_margins.contains(&self.cursor.x) {
-            if self.cursor.y == self.top_and_bottom_margins.end - 1 {
-                self.scroll_up(1);
-                self.set_cursor_position_absolute(self.left_and_right_margins.start, self.cursor.y);
-            } else {
-                self.set_cursor_position_absolute(
-                    self.left_and_right_margins.start,
-                    (self.cursor.y + 1).min(y_clamp),
-                );
-            }
-        } else {
-            // When outside left/right margins, NEL moves but does not scroll
-            self.set_cursor_position_absolute(
-                if self.cursor.x < self.left_and_right_margins.start {
-                    self.cursor.x
-                } else {
-                    self.left_and_right_margins.start
-                },
-                (self.cursor.y + 1).min(y_clamp),
-            );
-        }
-    }
-
-    /// Sets a horizontal tab stop at the column where the cursor is.
-    fn c1_hts(&mut self) {
-        self.tabs.set_tab_stop(self.cursor.x);
-    }
-
-    /// Moves the cursor to the next tab stop. If there are no more tab stops,
-    /// the cursor moves to the right margin. HT does not cause text to auto
-    /// wrap.
-    fn c0_horizontal_tab(&mut self) {
-        let seqno = self.seqno;
-        let x = match self.tabs.find_next_tab_stop(self.cursor.x) {
-            Some(x) => x,
-            None => self.left_and_right_margins.end - 1,
-        };
-        self.cursor.x = x.min(self.left_and_right_margins.end - 1);
-        self.cursor.seqno = seqno;
-    }
-
-    /// Move the cursor up 1 line.  If the position is at the top scroll margin,
-    /// scroll the region down.
-    fn c1_reverse_index(&mut self) {
-        if self.left_and_right_margins.contains(&self.cursor.x) {
-            if self.cursor.y == self.top_and_bottom_margins.start {
-                self.scroll_down(1);
-            } else {
-                self.set_cursor_pos(&Position::Relative(0), &Position::Relative(-1));
-            }
-        }
-    }
-
-    fn set_hyperlink(&mut self, link: Option<Hyperlink>) {
-        self.pen.set_hyperlink(link.map(Arc::new));
-    }
-
-    fn erase_in_display(&mut self, erase: EraseInDisplay) {
-        let seqno = self.seqno;
-        let cy = self.cursor.y;
-        let pen = self.pen.clone_sgr_only();
-        let rows = self.screen().physical_rows as VisibleRowIndex;
-        let col_range = 0..self.screen().physical_cols;
-        let row_range = match erase {
-            EraseInDisplay::EraseToEndOfDisplay => {
-                self.perform_csi_edit(Edit::EraseInLine(EraseInLine::EraseToEndOfLine));
-                cy + 1..rows
-            }
-            EraseInDisplay::EraseToStartOfDisplay => {
-                self.perform_csi_edit(Edit::EraseInLine(EraseInLine::EraseToStartOfLine));
-                0..cy
-            }
-            EraseInDisplay::EraseDisplay => 0..rows,
-            EraseInDisplay::EraseScrollback => {
-                self.screen_mut().erase_scrollback();
-                return;
-            }
-        };
-
-        {
-            let bidi_mode = self.get_bidi_mode();
-            let screen = self.screen_mut();
-            for y in row_range {
-                screen.clear_line(y, col_range.clone(), &pen, seqno, bidi_mode);
-                let line_idx = screen.phys_row(y);
-                screen.line_mut(line_idx).set_single_width(seqno);
-            }
-        }
-    }
-
-    fn get_bidi_mode(&self) -> BidiMode {
-        let mut mode = self.config.bidi_mode();
-        if let Some(enabled) = &self.bidi_enabled {
-            mode.enabled = *enabled;
-        }
-        if let Some(hint) = &self.bidi_hint {
-            mode.hint = *hint;
-        }
-        mode
-    }
-
-    /// Computes the set of `SemanticZone`s for the current terminal screen.
-    /// Semantic zones are contiguous runs of cells that have the same
-    /// `SemanticType` (Prompt, Input, Output).
-    /// Due to the way that the terminal clears the screen, the raw, literal
-    /// set of zones is overly fragmented by blanks.  This method will ignore
-    /// trailing Output regions when computing the SemanticZone bounds.
-    ///
-    /// By default, all screen data is of type Output.  The shell needs to
-    /// employ OSC 133 escapes to markup its output.
-    pub fn get_semantic_zones(&mut self) -> anyhow::Result<Vec<SemanticZone>> {
-        let screen = self.screen_mut();
-
-        let mut current_zone: Option<SemanticZone> = None;
-        let mut zones = vec![];
-
-        let first_stable_row = screen.phys_to_stable_row_index(0);
-        screen.for_each_phys_line_mut(|idx, line| {
-            let stable_row = first_stable_row + idx as StableRowIndex;
-
-            for zone_range in line.semantic_zone_ranges() {
-                let new_zone = match current_zone.as_ref() {
-                    None => true,
-                    Some(zone) => zone.semantic_type != zone_range.semantic_type,
-                };
-
-                if new_zone {
-                    if let Some(zone) = current_zone.take() {
-                        zones.push(zone);
-                    }
-
-                    current_zone.replace(SemanticZone {
-                        start_x: zone_range.range.start as usize,
-                        start_y: stable_row,
-                        end_x: zone_range.range.end as usize,
-                        end_y: stable_row,
-                        semantic_type: zone_range.semantic_type,
-                    });
-                }
-
-                if let Some(zone) = current_zone.as_mut() {
-                    zone.end_x = zone_range.range.end as usize;
-                    zone.end_y = stable_row;
-                }
-            }
-        });
-        if let Some(zone) = current_zone.take() {
-            zones.push(zone);
-        }
-
-        Ok(zones)
     }
 
     #[inline]
