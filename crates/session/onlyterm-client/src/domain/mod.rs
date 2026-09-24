@@ -24,11 +24,10 @@ pub struct ClientDomain {
     label: String,
     inner: Mutex<Option<Arc<ClientInner>>>,
     local_domain_id: DomainId,
-    /// See `Domain::spawnable`'s doc comment. `true` for every ordinary
-    /// remote/proxy domain (SSH, a general mux connection, ...), which can
-    /// host any number of panes; `false` only for the single-pane hosting-
-    /// process domains constructed via `new_single_pane`.
+    /// Dedicated per-tab hosts cannot create another tab, but may split their
+    /// existing tab into multiple panes.
     spawnable: bool,
+    elevated_host: bool,
 }
 
 pub struct PreparedAttach {
@@ -235,17 +234,20 @@ impl ClientDomain {
     }
 
     pub fn new(config: ClientDomainConfig) -> Self {
-        Self::new_impl(config, true)
+        Self::new_impl(config, true, false)
     }
 
-    /// Same as `new`, but for a domain that hosts exactly one dedicated
-    /// single-pane hosting process (regular or elevated) and can never be
-    /// spawned into again. See `Domain::spawnable`'s doc comment.
+    /// A regular dedicated host process that cannot create another tab.
     pub fn new_single_pane(config: ClientDomainConfig) -> Self {
-        Self::new_impl(config, false)
+        Self::new_impl(config, false, false)
     }
 
-    fn new_impl(config: ClientDomainConfig, spawnable: bool) -> Self {
+    /// An elevated dedicated host process with restricted split requests.
+    pub fn new_elevated_single_pane(config: ClientDomainConfig) -> Self {
+        Self::new_impl(config, false, true)
+    }
+
+    fn new_impl(config: ClientDomainConfig, spawnable: bool, elevated_host: bool) -> Self {
         let local_domain_id = alloc_domain_id();
         let label = config.label();
         Mux::get().subscribe(move |notif| mux_notify_client_domain(local_domain_id, notif));
@@ -255,6 +257,7 @@ impl ClientDomain {
             inner: Mutex::new(None),
             local_domain_id,
             spawnable,
+            elevated_host,
         }
     }
 

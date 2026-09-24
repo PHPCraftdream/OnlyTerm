@@ -3,10 +3,10 @@ use anyhow::Context as _;
 use std::io::{Error as IoError, Result as IoResult};
 use std::os::windows::io::{AsRawHandle, RawHandle};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use winapi::shared::minwindef::DWORD;
-use winapi::um::handleapi::CloseHandle;
 use winapi::um::minwinbase::STILL_ACTIVE;
 use winapi::um::processthreadsapi::*;
 use winapi::um::synchapi::WaitForSingleObject;
@@ -49,6 +49,18 @@ const GRACEFUL_KILL_TIMEOUT_MS: DWORD = 5000;
 /// job is only ever closed once.
 type SharedJobHandle = Arc<Mutex<Option<OwnedHandle>>>;
 
+static REQUIRE_JOB_OBJECT: AtomicBool = AtomicBool::new(false);
+
+/// Require atomic Job Object assignment for every later PTY child in this process.
+#[doc(hidden)]
+pub fn require_job_object_for_children() {
+    REQUIRE_JOB_OBJECT.store(true, Ordering::SeqCst);
+}
+
+fn job_object_required() -> bool {
+    REQUIRE_JOB_OBJECT.load(Ordering::SeqCst)
+}
+
 #[derive(Debug)]
 pub struct WinChild {
     proc: Mutex<OwnedHandle>,
@@ -74,7 +86,15 @@ impl WinChild {
     }
 
     fn do_kill(&mut self) -> IoResult<()> {
-        let proc = self.proc.lock().unwrap().try_clone().unwrap();
+        let cloned = self.proc.lock().unwrap().try_clone();
+        let proc = match cloned {
+            Ok(proc) => proc,
+            Err(error) => {
+                let job = self.job.lock().unwrap().take();
+                drop(job);
+                return Err(IoError::other(format!("Failed to clone handle: {}", error)));
+            }
+        };
         // Take the job handle out so that we own its lifetime for the
         // duration of the background thread below; there's nothing else
         // that needs it once a kill has been requested.
@@ -110,15 +130,8 @@ fn kill_gracefully_then_forcefully(proc: OwnedHandle, job: Option<OwnedHandle>) 
         unsafe { TerminateProcess(proc.as_raw_handle() as _, 1) };
     }
 
-    // Whether the process exited on its own or we just forced it, close
-    // the Job Object handle (if any) so that JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    // cleans up any descendant processes still assigned to it.
-    if let Some(job) = job {
-        // SAFETY: `job` is a valid Job Object handle from CreateJobObjectW.
-        unsafe {
-            CloseHandle(job.as_raw_handle() as _);
-        }
-    }
+    // OwnedHandle closes the job exactly once and reaps assigned descendants.
+    drop(job);
 }
 
 impl ChildKiller for WinChild {
@@ -133,13 +146,12 @@ impl ChildKiller for WinChild {
         // signature, so rather than panicking here (which used to bring
         // down the whole process just because a `ChildKiller` was cloned;
         // see wezterm/wezterm#5107) we degrade gracefully: produce a
-        // killer with no handle, whose `kill()` becomes a harmless no-op.
+        // killer with no process handle, which can still close its Job.
         let proc = self.proc.lock().unwrap().try_clone().ok();
         if proc.is_none() {
             log::warn!(
                 "WinChild::clone_killer: failed to duplicate the process \
-                 handle; the returned killer will be unable to terminate \
-                 the process"
+                 handle; the returned killer will rely on its Job Object"
             );
         }
         Box::new(WinChildKiller {
@@ -158,13 +170,19 @@ pub struct WinChildKiller {
 impl ChildKiller for WinChildKiller {
     fn kill(&mut self) -> IoResult<()> {
         let proc = match &self.proc {
-            Some(proc) => proc
-                .try_clone()
-                .map_err(|e| IoError::other(format!("Failed to clone handle: {}", e)))?,
-            // No handle available (eg: because an earlier duplication
-            // attempt failed); treat this as a no-op rather than panicking
-            // or erroring out.
-            None => return Ok(()),
+            Some(proc) => match proc.try_clone() {
+                Ok(proc) => proc,
+                Err(error) => {
+                    let job = self.job.lock().unwrap().take();
+                    drop(job);
+                    return Err(IoError::other(format!("Failed to clone handle: {}", error)));
+                }
+            },
+            None => {
+                let job = self.job.lock().unwrap().take();
+                drop(job);
+                return Ok(());
+            }
         };
         // Take the job handle out so that we own its lifetime for the
         // duration of the background thread below; there's nothing else

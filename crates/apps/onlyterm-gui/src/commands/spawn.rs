@@ -393,7 +393,7 @@ pub async fn spawn_elevated_single_pane_tab(
 
     // Create and register the ClientDomain.
     let client_domain_config = ClientDomainConfig::Unix(unix_domain);
-    let client_domain = Arc::new(ClientDomain::new_single_pane(client_domain_config));
+    let client_domain = Arc::new(ClientDomain::new_elevated_single_pane(client_domain_config));
     let domain: Arc<dyn Domain> = client_domain.clone();
     mux.add_domain(&domain);
 

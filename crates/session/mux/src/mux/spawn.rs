@@ -123,13 +123,21 @@ impl Mux {
         source: SplitSource,
         domain: onlyterm_config::keyassignment::SpawnTabDomain,
     ) -> anyhow::Result<(Arc<dyn Pane>, TerminalSize)> {
-        let (_pane_domain_id, window_id, tab_id) = self
+        let (pane_domain_id, window_id, tab_id) = self
             .resolve_pane_id(pane_id)
             .ok_or_else(|| anyhow!("pane_id {} invalid", pane_id))?;
 
-        let domain = self
-            .resolve_spawn_tab_domain(Some(pane_id), &domain)
-            .context("resolve_spawn_tab_domain")?;
+        // Splitting follows the pane's domain even when that domain cannot host a new tab.
+        let domain = match &domain {
+            SpawnTabDomain::CurrentPaneDomain => {
+                self.get_domain(pane_domain_id).ok_or_else(|| {
+                    anyhow!("domain {} of pane {} not found", pane_domain_id, pane_id)
+                })?
+            }
+            _ => self
+                .resolve_spawn_tab_domain(Some(pane_id), &domain)
+                .context("resolve_spawn_tab_domain")?,
+        };
 
         if domain.state() == DomainState::Detached {
             domain.attach(Some(window_id)).await?;

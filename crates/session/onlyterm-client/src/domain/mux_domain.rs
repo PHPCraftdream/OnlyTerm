@@ -12,7 +12,120 @@ use onlyterm_mux::window::WindowId;
 use onlyterm_mux::Mux;
 use onlyterm_term::TerminalSize;
 use portable_pty::CommandBuilder;
+use std::future::Future;
 use std::sync::Arc;
+
+fn split_command_dir(
+    elevated_host: bool,
+    has_explicit_command: bool,
+    command_dir: Option<String>,
+) -> Option<String> {
+    if elevated_host && !has_explicit_command {
+        None
+    } else {
+        command_dir
+    }
+}
+
+fn split_response_matches_target(
+    source_tab_id: TabId,
+    source_pane_id: PaneId,
+    result_tab_id: TabId,
+    result_pane_id: PaneId,
+) -> bool {
+    source_tab_id == result_tab_id && source_pane_id != result_pane_id
+}
+
+fn split_response_valid_for_source(
+    source_tab_id: TabId,
+    source_pane_id: PaneId,
+    result_tab_id: TabId,
+    result_pane_id: PaneId,
+    spawned_here: bool,
+    already_known: bool,
+) -> bool {
+    if source_tab_id != result_tab_id {
+        return false;
+    }
+    if spawned_here {
+        split_response_matches_target(source_tab_id, source_pane_id, result_tab_id, result_pane_id)
+            && !already_known
+    } else {
+        true
+    }
+}
+
+async fn rollback_split<K, KF, R, RF>(
+    kill: K,
+    resync: R,
+) -> (anyhow::Result<()>, anyhow::Result<()>)
+where
+    K: FnOnce() -> KF,
+    KF: Future<Output = anyhow::Result<()>>,
+    R: FnOnce() -> RF,
+    RF: Future<Output = anyhow::Result<()>>,
+{
+    let kill_result = kill().await;
+    let resync_result = resync().await;
+    (kill_result, resync_result)
+}
+
+impl ClientDomain {
+    fn still_attached_to(&self, inner: &Arc<super::ClientInner>) -> bool {
+        self.inner()
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, inner))
+    }
+
+    /// cancel-safe: no; the caller must finish compensation after a remote split.
+    async fn rollback_remote_split(
+        &self,
+        inner: &Arc<super::ClientInner>,
+        remote_pane_id: PaneId,
+        spawned_here: bool,
+        cause: anyhow::Error,
+    ) -> anyhow::Error {
+        let (kill_result, resync_result) = rollback_split(
+            || async {
+                if spawned_here {
+                    inner
+                        .client
+                        .kill_pane(onlyterm_codec::KillPane {
+                            pane_id: remote_pane_id,
+                        })
+                        .await?;
+                }
+                Ok(())
+            },
+            || async {
+                if !self.still_attached_to(inner) {
+                    anyhow::bail!("domain detached before split resync");
+                }
+                self.resync().await?;
+                if !self.still_attached_to(inner) {
+                    anyhow::bail!("domain detached during split resync");
+                }
+                Ok(())
+            },
+        )
+        .await;
+
+        if resync_result.is_err() && self.still_attached_to(inner) {
+            self.perform_detach();
+        }
+        let mut error = cause;
+        if let Err(kill_error) = kill_result {
+            error = error.context(format!(
+                "remote pane {} cleanup failed: {kill_error:#}",
+                remote_pane_id
+            ));
+        }
+        if let Err(resync_error) = resync_result {
+            error = error.context(format!("split resync failed: {resync_error:#}"));
+        }
+        error
+    }
+}
 
 #[async_trait(?Send)]
 impl Domain for ClientDomain {
@@ -226,6 +339,8 @@ impl Domain for ClientDomain {
             } => (command, command_dir, None),
             SplitSource::MovePane(move_pane_id) => (None, None, Some(move_pane_id)),
         };
+        let spawned_here = move_pane_id.is_none();
+        let command_dir = split_command_dir(self.elevated_host, command.is_some(), command_dir);
 
         let result = inner
             .client
@@ -239,27 +354,90 @@ impl Domain for ClientDomain {
             })
             .await?;
 
-        let pane: Arc<dyn Pane> = Arc::new(ClientPane::new(
+        if !split_response_valid_for_source(
+            pane.remote_tab_id,
+            pane.remote_pane_id,
+            result.tab_id,
+            result.pane_id,
+            spawned_here,
+            inner.remote_to_local_pane_id(result.pane_id).is_some(),
+        ) {
+            let error = anyhow!(
+                "remote split returned pane {} in tab {} for pane {} in tab {}",
+                result.pane_id,
+                result.tab_id,
+                pane.remote_pane_id,
+                pane.remote_tab_id
+            );
+            if !self.still_attached_to(&inner) {
+                return Err(error.context("domain detached before split resync"));
+            }
+            if let Err(sync_error) = self.resync().await {
+                if self.still_attached_to(&inner) {
+                    self.perform_detach();
+                }
+                return Err(error.context(format!("resync failed: {sync_error:#}")));
+            }
+            if !self.still_attached_to(&inner) {
+                return Err(error.context("domain detached during split resync"));
+            }
+            return Err(error);
+        }
+
+        let remote_new_pane_id = result.pane_id;
+        let tab_is_current = mux
+            .get_tab(tab_id)
+            .is_some_and(|current| Arc::ptr_eq(&current, &tab));
+        let source_is_current = mux.resolve_pane_id(pane_id).map(|(_, _, id)| id) == Some(tab_id);
+        let pane_index = tab
+            .iter_panes_ignoring_zoom()
+            .iter()
+            .find(|position| position.pane.pane_id() == pane_id)
+            .map(|position| position.index);
+        let pane_index = match (tab_is_current, source_is_current, pane_index) {
+            (true, true, Some(index)) => index,
+            _ => {
+                let error = anyhow!(
+                    "pane {} disappeared while splitting tab {}",
+                    pane_id,
+                    tab_id
+                );
+                return Err(self
+                    .rollback_remote_split(&inner, remote_new_pane_id, spawned_here, error)
+                    .await);
+            }
+        };
+        if result.size.cols == 0 || result.size.rows == 0 {
+            let error = anyhow!("remote split returned a zero-sized pane");
+            return Err(self
+                .rollback_remote_split(&inner, remote_new_pane_id, spawned_here, error)
+                .await);
+        }
+
+        let new_pane = Arc::new(ClientPane::new(
             &inner,
             result.tab_id,
             result.pane_id,
             result.size,
             "onlyterm",
         ));
+        let pane: Arc<dyn Pane> = new_pane.clone();
+        if let Err(error) = tab.split_and_insert(pane_index, split_request, Arc::clone(&pane)) {
+            return Err(self
+                .rollback_remote_split(&inner, remote_new_pane_id, spawned_here, error)
+                .await);
+        }
 
-        let pane_index = match tab
-            .iter_panes()
-            .iter()
-            .find(|p| p.pane.pane_id() == pane_id)
-        {
-            Some(p) => p.index,
-            None => anyhow::bail!("invalid pane id {}", pane_id),
-        };
-
-        tab.split_and_insert(pane_index, split_request, Arc::clone(&pane))
-            .ok();
-
-        mux.add_pane(&pane)?;
+        if let Err(error) = mux.add_pane(&pane) {
+            tab.remove_pane(new_pane.pane_id());
+            if mux.get_pane(new_pane.pane_id()).is_some() {
+                new_pane.ignore_next_kill();
+                mux.remove_pane(new_pane.pane_id());
+            }
+            return Err(self
+                .rollback_remote_split(&inner, remote_new_pane_id, spawned_here, error)
+                .await);
+        }
 
         Ok(pane)
     }
@@ -292,5 +470,65 @@ impl Domain for ClientDomain {
 
     fn spawnable(&self) -> bool {
         self.spawnable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        rollback_split, split_command_dir, split_response_matches_target,
+        split_response_valid_for_source,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn elevated_default_split_does_not_forward_client_resolved_cwd() {
+        assert_eq!(
+            split_command_dir(true, false, Some("client supplied cwd".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn ordinary_and_explicit_splits_keep_their_requested_cwd() {
+        let cwd = Some("requested cwd".to_string());
+        assert_eq!(split_command_dir(false, false, cwd.clone()), cwd);
+        assert_eq!(split_command_dir(true, true, cwd.clone()), cwd);
+    }
+
+    #[test]
+    fn remote_split_response_must_stay_in_the_source_tab_and_create_a_new_pane() {
+        assert!(split_response_matches_target(7, 42, 7, 43));
+        assert!(!split_response_matches_target(7, 42, 8, 43));
+        assert!(!split_response_matches_target(7, 42, 7, 42));
+    }
+
+    #[test]
+    fn moving_a_known_pane_still_rejects_a_foreign_result_tab() {
+        assert!(split_response_valid_for_source(7, 42, 7, 42, false, true));
+        assert!(!split_response_valid_for_source(7, 42, 8, 42, false, true));
+        assert!(split_response_valid_for_source(7, 42, 7, 43, true, false));
+        assert!(!split_response_valid_for_source(7, 42, 7, 43, true, true));
+    }
+
+    #[test]
+    fn rollback_resyncs_even_when_remote_kill_fails() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+        let kill_calls = Rc::clone(&calls);
+        let resync_calls = Rc::clone(&calls);
+        let (kill, resync) = onlyterm_promise::spawn::block_on(rollback_split(
+            move || async move {
+                kill_calls.borrow_mut().push("kill");
+                anyhow::bail!("remote kill failed")
+            },
+            move || async move {
+                resync_calls.borrow_mut().push("resync");
+                Ok(())
+            },
+        ));
+        assert!(kill.is_err());
+        assert!(resync.is_ok());
+        assert_eq!(*calls.borrow(), ["kill", "resync"]);
     }
 }

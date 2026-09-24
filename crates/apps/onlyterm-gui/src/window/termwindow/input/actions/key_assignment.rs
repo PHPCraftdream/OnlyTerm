@@ -875,6 +875,16 @@ impl TermWindow {
                 let modal = crate::termwindow::newtab_options::NewTabOptions::new();
                 self.set_modal(Rc::new(modal));
             }
+            ActivatePaneLayoutMenu => {
+                if self.get_modal().is_none()
+                    && Mux::get()
+                        .get_active_tab_for_window(self.mux_window_id)
+                        .is_some()
+                {
+                    let menu = crate::termwindow::pane_layout_menu::PaneLayoutMenu::new();
+                    self.set_modal(Rc::new(menu));
+                }
+            }
             PromptInputLine(args) => self.show_prompt_input_line(args),
             InputSelector(args) => self.show_input_selector(args),
             Confirmation(args) => self.show_confirmation(args),

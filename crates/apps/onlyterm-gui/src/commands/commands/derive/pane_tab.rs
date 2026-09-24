@@ -454,6 +454,14 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             menubar: &["Window"],
             icon: Some("fa_pencil"),
         },
+        ActivatePaneLayoutMenu => CommandDef {
+            brief: "Pane Layout".into(),
+            doc: "Shows numbered split and close actions for the active pane".into(),
+            keys: vec![(Modifiers::NONE, "F3".into())],
+            args: &[ArgType::ActivePane],
+            menubar: &["Shell"],
+            icon: None,
+        },
         _ => return None,
     }))
 }

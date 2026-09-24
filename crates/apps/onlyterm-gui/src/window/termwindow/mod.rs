@@ -64,6 +64,8 @@ mod mouseevent;
 pub mod newtab_options;
 #[path = "ui/palette.rs"]
 pub mod palette;
+#[path = "ui/pane_layout_menu.rs"]
+pub mod pane_layout_menu;
 #[path = "panes/paneselect.rs"]
 pub mod paneselect;
 #[path = "ui/prevcursor.rs"]
@@ -206,6 +208,7 @@ pub enum UIItemType {
     NewTabOptionRun,
     /// The dialog's close cross. Dismisses the modal, exactly as Esc does.
     NewTabOptionClose,
+    PaneLayoutMenuItem(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,4 +1,4 @@
-use crate::sessionhandler::{PduPolicy, PduSender, SessionHandler};
+use crate::sessionhandler::{PduPolicy, PduSender, SessionHandler, SplitTracker};
 use anyhow::Context;
 use onlyterm_codec::{DecodedPdu, Pdu};
 use onlyterm_mux::{Mux, MuxNotification};
@@ -62,7 +62,12 @@ where
                 .map_err(|e| anyhow::anyhow!("{:?}", e))
         }
     });
-    let handler = Arc::new(Mutex::new(SessionHandler::new(pdu_sender, policy)));
+    let split_tracker = SplitTracker::new();
+    let handler = Arc::new(Mutex::new(SessionHandler::new(
+        pdu_sender,
+        policy,
+        Arc::clone(&split_tracker),
+    )));
 
     {
         let mux = Mux::get();
@@ -136,7 +141,9 @@ where
     };
 
     // Run all three tasks concurrently; first to finish terminates all
-    smol::future::race(writer_fut, smol::future::race(reader_fut, notif_fut)).await
+    let result = smol::future::race(writer_fut, smol::future::race(reader_fut, notif_fut)).await;
+    split_tracker.wait_idle().await;
+    result
 }
 
 /// Handle a single mux notification.

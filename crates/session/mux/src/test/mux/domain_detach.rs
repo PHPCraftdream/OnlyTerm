@@ -39,13 +39,17 @@
 //! -- reintroducing the wakterm pattern -- this probe would observe the
 //! lock as unavailable and fail the assertion below.
 use super::*;
+use crate::domain::{Domain, DomainState, SplitSource};
 use crate::pane::{CloseReason, Pane, PaneId};
 use crate::tab::{SplitDirection, SplitRequest, SplitSize};
 use crate::window::Window;
-use crate::{DomainId, Mux};
+use crate::{DomainId, Mux, MuxNotification};
+use async_trait::async_trait;
+use onlyterm_config::keyassignment::SpawnTabDomain;
 use onlyterm_term::color::ColorPalette;
 use onlyterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
 use parking_lot::MappedMutexGuard;
+use portable_pty::CommandBuilder;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Queues `Runnable`s instead of running them inline, so that
@@ -300,5 +304,414 @@ fn domain_was_detached_does_not_hold_windows_lock_during_pane_teardown() {
         "the survivor pane is on a different domain and must not be killed"
     );
 
+    Mux::shutdown();
+}
+
+struct RoutingDomain {
+    id: DomainId,
+    name: &'static str,
+    spawnable: bool,
+}
+
+#[async_trait(?Send)]
+impl Domain for RoutingDomain {
+    fn domain_id(&self) -> DomainId {
+        self.id
+    }
+
+    fn domain_name(&self) -> &str {
+        self.name
+    }
+
+    async fn spawn_pane(
+        &self,
+        _size: TerminalSize,
+        _command: Option<CommandBuilder>,
+        _command_dir: Option<String>,
+    ) -> anyhow::Result<Arc<dyn Pane>> {
+        anyhow::bail!("routing test must not spawn a pane")
+    }
+
+    async fn split_pane(
+        &self,
+        _source: SplitSource,
+        _tab: crate::tab::TabId,
+        _pane_id: PaneId,
+        _request: SplitRequest,
+    ) -> anyhow::Result<Arc<dyn Pane>> {
+        anyhow::bail!("selected domain {}", self.name)
+    }
+
+    async fn attach(&self, _window_id: Option<crate::window::WindowId>) -> anyhow::Result<()> {
+        anyhow::bail!("routing test must not attach a domain")
+    }
+
+    fn state(&self) -> DomainState {
+        DomainState::Attached
+    }
+
+    fn detachable(&self) -> bool {
+        false
+    }
+
+    fn detach(&self) -> anyhow::Result<()> {
+        anyhow::bail!("routing test must not detach a domain")
+    }
+
+    fn spawnable(&self) -> bool {
+        self.spawnable
+    }
+}
+
+#[test]
+fn split_preserves_non_spawnable_pane_domain_while_new_tab_falls_back() {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+
+    let mux = Arc::new(Mux::new(None));
+    Mux::set_mux(&mux);
+
+    for (id, name, spawnable) in [
+        (1, "default", true),
+        (2, "isolated", false),
+        (3, "elevated", false),
+    ] {
+        let domain: Arc<dyn Domain> = Arc::new(RoutingDomain {
+            id,
+            name,
+            spawnable,
+        });
+        mux.add_domain(&domain);
+    }
+
+    for (domain_id, expected_name) in [(2, "isolated"), (3, "elevated")] {
+        let pane = ProbePane::new(domain_id);
+        let pane_ref: Arc<dyn Pane> = pane.clone();
+        let tab = Arc::new(crate::tab::Tab::new(&TerminalSize::default()));
+        tab.assign_pane(&pane_ref);
+        mux.add_tab_no_panes(&tab);
+        mux.add_pane(&pane_ref).unwrap();
+
+        let mut window = Window::new(None, None);
+        let window_id = window.window_id();
+        window.push(&tab);
+        mux.insert_window_for_test(window_id, window);
+
+        let new_tab_domain = mux
+            .resolve_spawn_tab_domain(Some(pane.pane_id()), &SpawnTabDomain::CurrentPaneDomain)
+            .unwrap();
+        assert_eq!(new_tab_domain.domain_id(), 1);
+
+        let error = onlyterm_promise::spawn::block_on(mux.split_pane(
+            pane.pane_id(),
+            SplitRequest::default(),
+            SplitSource::Spawn {
+                command: None,
+                command_dir: Some("routing-test".to_string()),
+            },
+            SpawnTabDomain::CurrentPaneDomain,
+        ))
+        .err()
+        .expect("routing domain deliberately rejects the split");
+        assert_eq!(
+            error.to_string(),
+            format!("selected domain {}", expected_name)
+        );
+    }
+
+    Mux::shutdown();
+}
+
+struct LosingTargetDomain {
+    tab: Arc<crate::tab::Tab>,
+    target: PaneId,
+    spawned: Arc<ProbePane>,
+    register_spawned: bool,
+}
+
+#[async_trait(?Send)]
+impl Domain for LosingTargetDomain {
+    fn domain_id(&self) -> DomainId {
+        self.spawned.domain_id
+    }
+
+    fn domain_name(&self) -> &str {
+        "losing-target"
+    }
+
+    async fn spawn_pane(
+        &self,
+        _size: TerminalSize,
+        _command: Option<CommandBuilder>,
+        _command_dir: Option<String>,
+    ) -> anyhow::Result<Arc<dyn Pane>> {
+        self.tab.remove_pane(self.target);
+        let pane: Arc<dyn Pane> = self.spawned.clone();
+        if self.register_spawned {
+            Mux::get().add_pane(&pane)?;
+        }
+        Ok(pane)
+    }
+
+    async fn attach(&self, _window_id: Option<crate::window::WindowId>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn state(&self) -> DomainState {
+        DomainState::Attached
+    }
+
+    fn detachable(&self) -> bool {
+        false
+    }
+
+    fn detach(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+fn assert_failed_split_discards_spawned_pane(register_spawned: bool) {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+
+    let mux = Arc::new(Mux::new(None));
+    Mux::set_mux(&mux);
+    let target = ProbePane::new(1);
+    let spawned = ProbePane::new(1);
+    let tab = Arc::new(crate::tab::Tab::new(&TerminalSize::default()));
+    tab.assign_pane(&(target.clone() as Arc<dyn Pane>));
+    mux.add_tab_no_panes(&tab);
+    mux.add_pane(&(target.clone() as Arc<dyn Pane>)).unwrap();
+    let mut window = Window::new(None, None);
+    let window_id = window.window_id();
+    window.push(&tab);
+    mux.insert_window_for_test(window_id, window);
+
+    let domain = LosingTargetDomain {
+        tab: Arc::clone(&tab),
+        target: target.pane_id(),
+        spawned: Arc::clone(&spawned),
+        register_spawned,
+    };
+    let result = onlyterm_promise::spawn::block_on(domain.split_pane(
+        SplitSource::Spawn {
+            command: None,
+            command_dir: None,
+        },
+        tab.tab_id(),
+        target.pane_id(),
+        SplitRequest::default(),
+    ));
+    assert!(result.is_err());
+    assert_eq!(*spawned.windows_lock_was_free_on_kill.lock(), Some(true));
+    assert!(mux.get_pane(spawned.pane_id()).is_none());
+    Mux::shutdown();
+}
+
+#[test]
+fn failed_split_discards_registered_spawned_pane() {
+    assert_failed_split_discards_spawned_pane(true);
+}
+
+#[test]
+fn failed_split_kills_unregistered_spawned_pane() {
+    assert_failed_split_discards_spawned_pane(false);
+}
+
+#[test]
+fn split_rejects_dimensions_without_room_before_spawning() {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+
+    for (cols, rows, request) in [
+        (2, 24, SplitRequest::default()),
+        (
+            80,
+            2,
+            SplitRequest {
+                direction: SplitDirection::Vertical,
+                ..Default::default()
+            },
+        ),
+        (
+            80,
+            24,
+            SplitRequest {
+                size: SplitSize::Cells(usize::MAX),
+                ..Default::default()
+            },
+        ),
+    ] {
+        let mux = Arc::new(Mux::new(None));
+        Mux::set_mux(&mux);
+        let size = TerminalSize {
+            cols,
+            rows,
+            ..Default::default()
+        };
+        let target = ProbePane::new(1);
+        let spawned = ProbePane::new(1);
+        let tab = Arc::new(crate::tab::Tab::new(&size));
+        tab.assign_pane(&(target.clone() as Arc<dyn Pane>));
+        mux.add_tab_no_panes(&tab);
+        mux.add_pane(&(target.clone() as Arc<dyn Pane>)).unwrap();
+        let mut window = Window::new(None, None);
+        let window_id = window.window_id();
+        window.push(&tab);
+        mux.insert_window_for_test(window_id, window);
+
+        let domain = LosingTargetDomain {
+            tab: Arc::clone(&tab),
+            target: target.pane_id(),
+            spawned: Arc::clone(&spawned),
+            register_spawned: false,
+        };
+        let result = onlyterm_promise::spawn::block_on(domain.split_pane(
+            SplitSource::Spawn {
+                command: None,
+                command_dir: None,
+            },
+            tab.tab_id(),
+            target.pane_id(),
+            request,
+        ));
+        assert!(result.is_err());
+        assert!(tab.contains_pane(target.pane_id()));
+        assert_eq!(*spawned.windows_lock_was_free_on_kill.lock(), None);
+        Mux::shutdown();
+    }
+}
+
+#[test]
+fn empty_notification_waits_for_the_last_pane_in_a_split_tab() {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+    SCHEDULER_QUEUE.queue.lock().clear();
+    onlyterm_promise::spawn::set_schedulers(
+        Box::new(|runnable| SCHEDULER_QUEUE.queue.lock().push(runnable)),
+        Box::new(|runnable| SCHEDULER_QUEUE.queue.lock().push(runnable)),
+    );
+
+    let mux = Arc::new(Mux::new(None));
+    Mux::set_mux(&mux);
+    let size = TerminalSize::default();
+    let first = ProbePane::new(1);
+    let second = ProbePane::new(1);
+    let tab = Arc::new(crate::tab::Tab::new(&size));
+    tab.assign_pane(&(first.clone() as Arc<dyn Pane>));
+    tab.split_and_insert(0, SplitRequest::default(), second.clone() as Arc<dyn Pane>)
+        .unwrap();
+    mux.add_tab_no_panes(&tab);
+    mux.add_pane(&(first.clone() as Arc<dyn Pane>)).unwrap();
+    mux.add_pane(&(second.clone() as Arc<dyn Pane>)).unwrap();
+    let mut window = Window::new(None, None);
+    let window_id = window.window_id();
+    window.push(&tab);
+    mux.insert_window_for_test(window_id, window);
+
+    let empty_count = Arc::new(AtomicUsize::new(0));
+    let notifications = Arc::clone(&empty_count);
+    mux.subscribe(move |notification| {
+        if matches!(notification, MuxNotification::Empty) {
+            notifications.fetch_add(1, Ordering::SeqCst);
+        }
+        true
+    });
+
+    mux.remove_pane(first.pane_id());
+    SCHEDULER_QUEUE.drain();
+    assert_eq!(empty_count.load(Ordering::SeqCst), 0);
+    assert!(mux.get_pane(second.pane_id()).is_some());
+
+    mux.remove_pane(second.pane_id());
+    SCHEDULER_QUEUE.drain();
+    assert!(empty_count.load(Ordering::SeqCst) > 0);
+    Mux::shutdown();
+}
+
+struct ResizeDuringSpawnDomain {
+    tab: Arc<crate::tab::Tab>,
+    size: TerminalSize,
+    spawned: Arc<ProbePane>,
+}
+
+#[async_trait(?Send)]
+impl Domain for ResizeDuringSpawnDomain {
+    fn domain_id(&self) -> DomainId {
+        self.spawned.domain_id
+    }
+
+    fn domain_name(&self) -> &str {
+        "resize-during-spawn"
+    }
+
+    async fn spawn_pane(
+        &self,
+        _size: TerminalSize,
+        _command: Option<CommandBuilder>,
+        _command_dir: Option<String>,
+    ) -> anyhow::Result<Arc<dyn Pane>> {
+        self.tab.resize(self.size);
+        let pane: Arc<dyn Pane> = self.spawned.clone();
+        Mux::get().add_pane(&pane)?;
+        Ok(pane)
+    }
+
+    async fn attach(&self, _window_id: Option<crate::window::WindowId>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn state(&self) -> DomainState {
+        DomainState::Attached
+    }
+
+    fn detachable(&self) -> bool {
+        false
+    }
+
+    fn detach(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn resize_during_spawn_cleans_up_a_split_that_no_longer_fits() {
+    let _test_guard = TEST_LOCK.lock();
+    let _mux_guard = MUX_TEST_GUARD.lock();
+    let mux = Arc::new(Mux::new(None));
+    Mux::set_mux(&mux);
+    let target = ProbePane::new(1);
+    let spawned = ProbePane::new(1);
+    let tab = Arc::new(crate::tab::Tab::new(&TerminalSize::default()));
+    tab.assign_pane(&(target.clone() as Arc<dyn Pane>));
+    mux.add_tab_no_panes(&tab);
+    mux.add_pane(&(target.clone() as Arc<dyn Pane>)).unwrap();
+    let mut window = Window::new(None, None);
+    let window_id = window.window_id();
+    window.push(&tab);
+    mux.insert_window_for_test(window_id, window);
+
+    let domain = ResizeDuringSpawnDomain {
+        tab: Arc::clone(&tab),
+        size: TerminalSize {
+            cols: 2,
+            ..Default::default()
+        },
+        spawned: Arc::clone(&spawned),
+    };
+    let result = onlyterm_promise::spawn::block_on(domain.split_pane(
+        SplitSource::Spawn {
+            command: None,
+            command_dir: None,
+        },
+        tab.tab_id(),
+        target.pane_id(),
+        SplitRequest::default(),
+    ));
+    assert!(result.is_err());
+    assert_eq!(tab.get_size().cols, 2);
+    assert!(tab.contains_pane(target.pane_id()));
+    assert!(mux.get_pane(spawned.pane_id()).is_none());
+    assert_eq!(*spawned.windows_lock_was_free_on_kill.lock(), Some(true));
     Mux::shutdown();
 }

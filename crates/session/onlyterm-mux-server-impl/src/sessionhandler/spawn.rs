@@ -1,5 +1,7 @@
+use super::split_tracker::SplitCompletion;
 use anyhow::anyhow;
 use onlyterm_codec::*;
+use onlyterm_mux::activity::Activity;
 use onlyterm_mux::client::ClientId;
 use onlyterm_mux::domain::{DomainState, SplitSource};
 use onlyterm_mux::Mux;
@@ -26,13 +28,28 @@ pub(super) fn schedule_split_pane<SND>(
     split: SplitPane,
     send_response: SND,
     client_id: Option<Arc<ClientId>>,
+    completion: SplitCompletion,
+    activity: Activity,
 ) where
     SND: Fn(anyhow::Result<Pdu>) + 'static,
 {
-    onlyterm_promise::spawn::spawn(
-        async move { send_response(split_pane(split, client_id).await) },
-    )
+    onlyterm_promise::spawn::spawn(async move {
+        complete_split(
+            split_pane(split, client_id).await,
+            completion,
+            send_response,
+        );
+        drop(activity);
+    })
     .detach();
+}
+
+fn complete_split<SND>(result: anyhow::Result<Pdu>, completion: SplitCompletion, send_response: SND)
+where
+    SND: FnOnce(anyhow::Result<Pdu>),
+{
+    drop(completion);
+    send_response(result);
 }
 
 async fn split_pane(split: SplitPane, client_id: Option<Arc<ClientId>>) -> anyhow::Result<Pdu> {
@@ -146,4 +163,23 @@ async fn move_pane(
         tab_id: tab.tab_id(),
         window_id,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sessionhandler::SplitTracker;
+    use std::cell::Cell;
+
+    #[test]
+    fn split_completion_precedes_its_response() {
+        let tracker = SplitTracker::new();
+        let completion = tracker.start();
+        let sent = Cell::new(false);
+        complete_split(Ok(Pdu::UnitResponse(UnitResponse {})), completion, |_| {
+            assert_eq!(tracker.active(), 0);
+            sent.set(true);
+        });
+        assert!(sent.get());
+    }
 }

@@ -1,5 +1,19 @@
 use super::*;
 
+fn menu_mouse_target_allowed(menu_open: bool, item: Option<&UIItemType>) -> bool {
+    !menu_open || matches!(item, Some(UIItemType::PaneLayoutMenuItem(_)))
+}
+
+fn release_after_menu_selection(
+    kind: &WMEK,
+    last_item: Option<&UIItemType>,
+    ui_capture: bool,
+) -> bool {
+    ui_capture
+        && matches!(kind, WMEK::Release(MousePress::Left))
+        && matches!(last_item, Some(UIItemType::PaneLayoutMenuItem(_)))
+}
+
 impl super::super::TermWindow {
     pub(super) fn resolve_ui_item(&self, event: &MouseEvent) -> Option<UIItem> {
         let x = event.coords.x;
@@ -20,7 +34,8 @@ impl super::super::TermWindow {
             | UIItemType::Split(_)
             | UIItemType::NewTabOptionRadio { .. }
             | UIItemType::NewTabOptionRun
-            | UIItemType::NewTabOptionClose => {}
+            | UIItemType::NewTabOptionClose
+            | UIItemType::PaneLayoutMenuItem(_) => {}
         }
     }
 
@@ -34,7 +49,8 @@ impl super::super::TermWindow {
             | UIItemType::Split(_)
             | UIItemType::NewTabOptionRadio { .. }
             | UIItemType::NewTabOptionRun
-            | UIItemType::NewTabOptionClose => {}
+            | UIItemType::NewTabOptionClose
+            | UIItemType::PaneLayoutMenuItem(_) => {}
         }
     }
 
@@ -49,6 +65,20 @@ impl super::super::TermWindow {
         ) {
             self.pass_through.mouse_input();
         }
+        if release_after_menu_selection(
+            &event.kind,
+            self.last_ui_item.as_ref().map(|item| &item.item_type),
+            matches!(self.current_mouse_capture, Some(MouseCapture::UI)),
+        ) {
+            self.current_mouse_capture = None;
+            self.current_mouse_buttons
+                .retain(|press| press != &MousePress::Left);
+            self.last_ui_item.take();
+            self.last_mouse_click = None;
+            self.current_mouse_event.replace(event);
+            context.set_cursor(Some(MouseCursor::Arrow));
+            return;
+        }
         // A window can legitimately have no pane at all: `--choose-tab` opens
         // one whose only content is the New Tab Options modal, and the first
         // tab does not exist until the user presses Run. Returning here in
@@ -58,6 +88,25 @@ impl super::super::TermWindow {
         let pane = self.get_active_pane_or_overlay();
         if pane.is_none() && self.modal.borrow().is_none() {
             // No pane and no modal: nothing on screen that could want a click.
+            return;
+        }
+
+        let menu_open = self.get_modal().is_some_and(|modal| {
+            modal
+                .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
+                .is_some()
+        });
+        let menu_target = if menu_open {
+            self.resolve_ui_item(&event)
+        } else {
+            None
+        };
+        if !menu_mouse_target_allowed(menu_open, menu_target.as_ref().map(|item| &item.item_type)) {
+            if let WMEK::Release(ref press) = event.kind {
+                self.current_mouse_capture = None;
+                self.current_mouse_buttons.retain(|button| button != press);
+            }
+            context.set_cursor(Some(MouseCursor::Arrow));
             return;
         }
 
@@ -291,5 +340,45 @@ impl super::super::TermWindow {
         if prior_ui_item != ui_item {
             self.update_title_post_status();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn open_pane_layout_menu_routes_only_its_own_rows() {
+        assert!(!menu_mouse_target_allowed(true, None));
+        assert!(!menu_mouse_target_allowed(
+            true,
+            Some(&UIItemType::NewTabOptionRun)
+        ));
+        assert!(menu_mouse_target_allowed(
+            true,
+            Some(&UIItemType::PaneLayoutMenuItem(1))
+        ));
+        assert!(menu_mouse_target_allowed(false, None));
+    }
+
+    #[test]
+    fn mouse_release_after_menu_selection_is_swallowed() {
+        let release = WMEK::Release(MousePress::Left);
+        let menu_item = UIItemType::PaneLayoutMenuItem(3);
+        assert!(release_after_menu_selection(
+            &release,
+            Some(&menu_item),
+            true
+        ));
+        assert!(!release_after_menu_selection(
+            &release,
+            Some(&menu_item),
+            false
+        ));
+        assert!(!release_after_menu_selection(
+            &release,
+            Some(&UIItemType::NewTabOptionRun),
+            true
+        ));
     }
 }

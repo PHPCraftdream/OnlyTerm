@@ -1,6 +1,7 @@
 mod per_pane;
 mod policy;
 mod spawn;
+mod split_tracker;
 
 #[cfg(test)]
 mod tests;
@@ -9,6 +10,7 @@ use anyhow::{anyhow, Context};
 use onlyterm_codec::*;
 use onlyterm_config::keyassignment::RotationDirection;
 use onlyterm_config::TermConfig;
+use onlyterm_mux::activity::Activity;
 use onlyterm_mux::client::ClientId;
 use onlyterm_mux::pane::PaneId;
 use onlyterm_mux::tab::{NotifyMux, TabId};
@@ -23,6 +25,7 @@ use std::time::Instant;
 use per_pane::{maybe_push_pane_changes, PerPane};
 pub use policy::PduPolicy;
 use spawn::{schedule_domain_spawn_v2, schedule_move_pane, schedule_split_pane};
+pub(crate) use split_tracker::SplitTracker;
 
 #[derive(Clone)]
 pub struct PduSender {
@@ -48,6 +51,7 @@ pub struct SessionHandler {
     client_id: Option<Arc<ClientId>>,
     proxy_client_id: Option<ClientId>,
     policy: PduPolicy,
+    split_tracker: Arc<SplitTracker>,
 }
 
 impl Drop for SessionHandler {
@@ -60,13 +64,18 @@ impl Drop for SessionHandler {
 }
 
 impl SessionHandler {
-    pub fn new(to_write_tx: PduSender, policy: PduPolicy) -> Self {
+    pub(crate) fn new(
+        to_write_tx: PduSender,
+        policy: PduPolicy,
+        split_tracker: Arc<SplitTracker>,
+    ) -> Self {
         Self {
             to_write_tx,
             per_pane: HashMap::new(),
             client_id: None,
             proxy_client_id: None,
             policy,
+            split_tracker,
         }
     }
 
@@ -107,7 +116,10 @@ impl SessionHandler {
         // This is a security boundary: any process able to reach the elevated
         // rendezvous channel must not be able to spawn arbitrary elevated
         // processes or otherwise escape the single-pane sandbox.
-        if !self.policy.is_allowed(&decoded.pdu) {
+        if !self
+            .policy
+            .authorize(&decoded.pdu, &Mux::get(), self.split_tracker.active())
+        {
             let pdu_name = decoded.pdu.pdu_name();
             log::warn!(
                 "PDU {} (serial {}) rejected by policy {:?}",
@@ -647,8 +659,10 @@ impl SessionHandler {
 
             Pdu::SplitPane(split) => {
                 let client_id = self.client_id.clone();
+                let completion = self.split_tracker.start();
+                let activity = Activity::new();
                 spawn_into_main_thread(async move {
-                    schedule_split_pane(split, send_response, client_id);
+                    schedule_split_pane(split, send_response, client_id, completion, activity);
                 })
                 .detach();
             }

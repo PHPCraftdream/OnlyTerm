@@ -47,7 +47,33 @@ impl super::super::TermWindow {
             UIItemType::NewTabOptionClose => {
                 self.mouse_event_newtab_options_close(item, event, context);
             }
+            UIItemType::PaneLayoutMenuItem(number) => {
+                self.mouse_event_pane_layout_menu_item(number, event, context);
+            }
         }
+    }
+
+    fn mouse_event_pane_layout_menu_item(
+        &mut self,
+        number: u8,
+        event: MouseEvent,
+        context: &dyn WindowOps,
+    ) {
+        if let WMEK::Press(MousePress::Left) = event.kind {
+            let active = self.get_modal().is_some_and(|modal| {
+                modal
+                    .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
+                    .is_some()
+            });
+            if active {
+                if let Some(choice) =
+                    crate::termwindow::pane_layout_menu::PaneLayoutChoice::from_number(number)
+                {
+                    self.perform_pane_layout_choice(choice);
+                }
+            }
+        }
+        context.set_cursor(Some(MouseCursor::Hand));
     }
 
     fn mouse_event_newtab_options_radio(

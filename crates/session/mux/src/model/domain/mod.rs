@@ -6,7 +6,7 @@
 
 use crate::localpane::LocalPane;
 use crate::pane::{alloc_pane_id, Pane, PaneId};
-use crate::tab::{SplitRequest, Tab, TabId};
+use crate::tab::{SplitDirection, SplitRequest, SplitSize, Tab, TabId};
 use crate::window::WindowId;
 use crate::Mux;
 use anyhow::{bail, Context, Error};
@@ -43,6 +43,23 @@ pub enum SplitSource {
         command_dir: Option<String>,
     },
     MovePane(PaneId),
+}
+
+fn split_size_fits(total: usize, size: SplitSize) -> bool {
+    if total < 3 {
+        return false;
+    }
+    let target = match size {
+        SplitSize::Cells(n) => n,
+        SplitSize::Percent(n) if (1..100).contains(&n) => {
+            let Some(cells) = total.checked_mul(n as usize) else {
+                return false;
+            };
+            (cells / 100).max(1)
+        }
+        _ => return false,
+    };
+    (1..=total - 2).contains(&target)
 }
 
 #[async_trait(?Send)]
@@ -83,20 +100,36 @@ pub trait Domain: Downcast + Send + Sync {
             None => anyhow::bail!("Invalid tab id {}", tab),
         };
 
-        let pane_index = match tab
-            .iter_panes_ignoring_zoom()
-            .iter()
-            .find(|p| p.pane.pane_id() == pane_id)
-        {
-            Some(p) => p.index,
+        let positioned = tab.iter_panes_ignoring_zoom();
+        let target = match positioned.iter().find(|p| p.pane.pane_id() == pane_id) {
+            Some(p) => p,
             None => anyhow::bail!("invalid pane id {}", pane_id),
         };
+        let pane_index = target.index;
+        let whole_size = tab.get_size();
+        let total = match (split_request.top_level, split_request.direction) {
+            (true, SplitDirection::Horizontal) => whole_size.cols,
+            (true, SplitDirection::Vertical) => whole_size.rows,
+            (false, SplitDirection::Horizontal) => target.width,
+            (false, SplitDirection::Vertical) => target.height,
+        };
+        if !split_size_fits(total, split_request.size) {
+            anyhow::bail!("split size does not fit {} cells", total);
+        }
 
         let split_size = match tab.compute_split_size(pane_index, split_request) {
             Some(s) => s,
             None => anyhow::bail!("invalid pane index {}", pane_index),
         };
+        if split_size.first.rows == 0
+            || split_size.first.cols == 0
+            || split_size.second.rows == 0
+            || split_size.second.cols == 0
+        {
+            anyhow::bail!("split would create a zero-sized pane");
+        }
 
+        let spawned_here = matches!(&source, SplitSource::Spawn { .. });
         let pane = match source {
             SplitSource::Spawn {
                 command,
@@ -125,6 +158,30 @@ pub trait Domain: Downcast + Send + Sync {
                 pane
             }
         };
+        let discard_spawned = || {
+            if spawned_here {
+                let id = pane.pane_id();
+                if mux.get_pane(id).is_some() {
+                    mux.remove_pane(id);
+                } else {
+                    pane.kill();
+                }
+            }
+        };
+
+        if spawned_here
+            && (mux.resolve_pane_id(pane_id).map(|(_, _, id)| id) != Some(tab.tab_id())
+                || !mux
+                    .get_tab(tab.tab_id())
+                    .is_some_and(|registered| Arc::ptr_eq(&registered, &tab)))
+        {
+            discard_spawned();
+            anyhow::bail!(
+                "pane {} disappeared while splitting tab {}",
+                pane_id,
+                tab.tab_id()
+            );
+        }
 
         // pane_index may have changed if src_pane was also in the same tab
         let final_pane_index = match tab
@@ -133,10 +190,16 @@ pub trait Domain: Downcast + Send + Sync {
             .find(|p| p.pane.pane_id() == pane_id)
         {
             Some(p) => p.index,
-            None => anyhow::bail!("invalid pane id {}", pane_id),
+            None => {
+                discard_spawned();
+                anyhow::bail!("invalid pane id {}", pane_id)
+            }
         };
 
-        tab.split_and_insert(final_pane_index, split_request, Arc::clone(&pane))?;
+        if let Err(err) = tab.split_and_insert(final_pane_index, split_request, Arc::clone(&pane)) {
+            discard_spawned();
+            return Err(err);
+        }
         Ok(pane)
     }
 
@@ -185,27 +248,8 @@ pub trait Domain: Downcast + Send + Sync {
         Ok(false)
     }
 
-    /// Returns false if the `spawn` method will never succeed.
-    /// There are some internal placeholder domains that are
-    /// pre-created with local UI that we do not want to allow
-    /// to show in the launcher/menu as launchable items.
-    ///
-    /// Also used for a "single-pane hosting process" domain (one dedicated
-    /// OS process per tab, used for regular and elevated/UAC tabs alike --
-    /// see `onlyterm-gui`'s `spawn_single_pane_tab`/
-    /// `spawn_elevated_single_pane_tab`), which is built to host exactly
-    /// the one pane it was created for and overrides this to `false`.
-    /// `Mux::resolve_spawn_tab_domain` consults this for
-    /// `SpawnTabDomain::CurrentPaneDomain` (what a plain "new tab" click/
-    /// keybinding uses) and falls back to the default domain instead of
-    /// resolving to a domain that cannot actually be spawned into.
-    /// Confirmed live: without this, clicking the tab bar's "+" while a
-    /// single-pane-hosted tab is active tried to spawn a second pane into
-    /// that domain -- for an elevated tab this was cleanly rejected by the
-    /// security-critical PDU allow-list (`SpawnV2 not permitted over the
-    /// elevated single-pane rendezvous channel`), which is correct
-    /// behavior for that allow-list, but the "+" button silently did
-    /// nothing instead of opening a tab anywhere at all.
+    /// Whether this domain can create another tab. A dedicated host returns
+    /// false but can still split panes within its existing tab.
     fn spawnable(&self) -> bool {
         true
     }

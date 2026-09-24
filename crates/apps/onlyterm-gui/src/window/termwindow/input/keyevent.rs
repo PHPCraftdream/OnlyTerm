@@ -116,6 +116,15 @@ impl super::TermWindow {
         }
 
         if is_down {
+            if bypass_lookup
+                && self.get_modal().is_some_and(|modal| {
+                    modal
+                        .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
+                        .is_some()
+                })
+            {
+                self.cancel_modal();
+            }
             if only_key_bindings == OnlyKeyBindings::No {
                 if let Some(modal) = self.get_modal() {
                     if let Key::Code(term_key) = self.win_key_code_to_termwiz_key_code(keycode) {
@@ -334,6 +343,15 @@ impl super::TermWindow {
         };
 
         if let Some(armed) = pass_through_outcome.armed_edge {
+            if armed
+                && self.get_modal().is_some_and(|modal| {
+                    modal
+                        .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
+                        .is_some()
+                })
+            {
+                self.cancel_modal();
+            }
             // Arming cancels a leader that is active at that moment, or the
             // next key -- the one meant to pass through -- would be swallowed
             // by the leader branch of key_event_impl.

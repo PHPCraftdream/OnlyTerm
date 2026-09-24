@@ -1,5 +1,17 @@
+use super::policy::HostedPaneLayout;
 use super::*;
 use onlyterm_codec::*;
+
+fn hosted_split() -> SplitPane {
+    SplitPane {
+        pane_id: 42,
+        split_request: onlyterm_mux::tab::SplitRequest::default(),
+        command: None,
+        command_dir: None,
+        domain: onlyterm_config::keyassignment::SpawnTabDomain::CurrentPaneDomain,
+        move_pane_id: None,
+    }
+}
 
 #[test]
 fn test_pdu_policy_unrestricted_allows_all() {
@@ -113,6 +125,144 @@ fn test_pdu_policy_elevated_allowlist_allows_only_allowed_pdus() {
 }
 
 #[test]
+fn elevated_policy_accepts_only_constrained_split_shape() {
+    let policy = PduPolicy::ElevatedSinglePaneAllowList;
+    let request = hosted_split();
+    assert!(
+        policy.is_allowed(&Pdu::SplitPane(request)),
+        "a user-requested split with no client-supplied command must be allowed"
+    );
+
+    let mut request = hosted_split();
+    request.split_request.size = onlyterm_mux::tab::SplitSize::Cells(10);
+    assert!(policy.is_allowed(&Pdu::SplitPane(request)));
+}
+
+#[test]
+fn elevated_policy_rejects_split_that_can_escape_the_hosted_tab() {
+    let policy = PduPolicy::ElevatedSinglePaneAllowList;
+
+    let mut request = hosted_split();
+    request.command = Some(portable_pty::CommandBuilder::new_default_prog());
+    assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+
+    let mut request = hosted_split();
+    request.command_dir = Some("other-directory".to_string());
+    assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+
+    let mut request = hosted_split();
+    request.move_pane_id = Some(99);
+    assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+
+    let mut request = hosted_split();
+    request.domain = onlyterm_config::keyassignment::SpawnTabDomain::DefaultDomain;
+    assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+
+    let mut request = hosted_split();
+    request.split_request.top_level = true;
+    assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+
+    let mut request = hosted_split();
+    request.split_request.target_is_second = false;
+    assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+
+    for size in [
+        onlyterm_mux::tab::SplitSize::Cells(0),
+        onlyterm_mux::tab::SplitSize::Cells(usize::MAX),
+        onlyterm_mux::tab::SplitSize::Percent(0),
+        onlyterm_mux::tab::SplitSize::Percent(100),
+    ] {
+        let mut request = hosted_split();
+        request.split_request.size = size;
+        assert!(!policy.is_allowed(&Pdu::SplitPane(request)));
+    }
+}
+
+#[test]
+fn elevated_split_geometry_rejects_zero_width_and_overflow() {
+    use onlyterm_mux::tab::SplitSize;
+
+    for total in 0..3 {
+        assert!(!PduPolicy::hosted_split_size_fits(
+            total,
+            SplitSize::Cells(1)
+        ));
+    }
+    for (total, size) in [
+        (3, SplitSize::Cells(2)),
+        (5, SplitSize::Cells(4)),
+        (5, SplitSize::Cells(usize::MAX)),
+        (3, SplitSize::Percent(99)),
+    ] {
+        assert!(!PduPolicy::hosted_split_size_fits(total, size));
+    }
+    for (total, size) in [
+        (3, SplitSize::Cells(1)),
+        (5, SplitSize::Cells(3)),
+        (5, SplitSize::Percent(50)),
+    ] {
+        assert!(PduPolicy::hosted_split_size_fits(total, size));
+    }
+}
+
+#[test]
+fn elevated_split_stays_inside_one_hosted_tab_and_respects_pane_limit() {
+    let pane = |pane_id, tab_id, width, height| HostedPaneLayout {
+        pane_id,
+        tab_id,
+        width,
+        height,
+    };
+    let request = hosted_split();
+    let one = [pane(42, 7, 80, 24)];
+    assert!(PduPolicy::hosted_split_target_allowed(&request, &one, 0));
+    assert!(!PduPolicy::hosted_split_target_allowed(&request, &one, 1));
+    assert!(PduPolicy::hosted_split_target_allowed(
+        &request,
+        &[one[0], pane(43, 7, 40, 24)],
+        0
+    ));
+
+    let mut unknown_target = hosted_split();
+    unknown_target.pane_id = 99;
+    assert!(!PduPolicy::hosted_split_target_allowed(
+        &unknown_target,
+        &one,
+        0
+    ));
+    assert!(!PduPolicy::hosted_split_target_allowed(
+        &request,
+        &[one[0], pane(43, 8, 80, 24)],
+        0
+    ));
+    assert!(!PduPolicy::hosted_split_target_allowed(
+        &request,
+        &[pane(42, 7, 2, 24)],
+        0
+    ));
+    let mut vertical = hosted_split();
+    vertical.split_request.direction = onlyterm_mux::tab::SplitDirection::Vertical;
+    assert!(!PduPolicy::hosted_split_target_allowed(
+        &vertical,
+        &[pane(42, 7, 80, 2)],
+        0
+    ));
+    assert!(!PduPolicy::hosted_split_target_allowed(&request, &[], 0));
+    assert!(!PduPolicy::hosted_split_target_allowed(&request, &one, 15));
+    let full: Vec<_> = (42..58).map(|id| pane(id, 7, 80, 24)).collect();
+    assert!(!PduPolicy::hosted_split_target_allowed(&request, &full, 0));
+}
+
+#[test]
+fn elevated_split_authorization_rejects_an_unhosted_pane_before_scheduling() {
+    let mux = onlyterm_mux::Mux::new(None);
+    let split = Pdu::SplitPane(hosted_split());
+    assert!(PduPolicy::ElevatedSinglePaneAllowList.is_allowed(&split));
+    assert!(!PduPolicy::ElevatedSinglePaneAllowList.authorize(&split, &mux, 0));
+    assert!(PduPolicy::Unrestricted.authorize(&split, &mux, 0));
+}
+
+#[test]
 fn test_pdu_policy_elevated_allowlist_rejects_dangerous_pdus() {
     let policy = PduPolicy::ElevatedSinglePaneAllowList;
 
@@ -130,11 +280,14 @@ fn test_pdu_policy_elevated_allowlist_rejects_dangerous_pdus() {
         }))
     );
 
-    // Pane layout manipulation - breaks single-pane contract
+    // Top-level layout mutation is still outside the hosted-pane split contract.
     assert!(
         !policy.is_allowed(&onlyterm_codec::Pdu::SplitPane(onlyterm_codec::SplitPane {
             pane_id: 0,
-            split_request: Default::default(),
+            split_request: onlyterm_mux::tab::SplitRequest {
+                top_level: true,
+                ..Default::default()
+            },
             command: None,
             command_dir: None,
             domain: onlyterm_config::keyassignment::SpawnTabDomain::CurrentPaneDomain,

@@ -455,6 +455,7 @@ pub enum KeyAssignment {
     InputSelector(InputSelector),
     Confirmation(Confirmation),
     ActivateNewTabOptions,
+    ActivatePaneLayoutMenu,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]
@@ -541,4 +542,18 @@ pub struct KeyTables {
 #[derive(Debug, Clone, PartialEq)]
 pub struct KeyTableEntry {
     pub action: KeyAssignment,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::KeyAssignment;
+    use onlyterm_dynamic::{FromDynamic, ToDynamic};
+
+    #[test]
+    fn pane_layout_menu_assignment_round_trips_through_dynamic_value() {
+        let action = KeyAssignment::ActivatePaneLayoutMenu;
+        let value = action.to_dynamic();
+        let decoded = KeyAssignment::from_dynamic(&value, Default::default()).unwrap();
+        assert_eq!(decoded, action);
+    }
 }

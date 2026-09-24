@@ -281,6 +281,17 @@ impl ClientPane {
     pub fn ignore_next_kill(&self) {
         *self.ignore_next_kill.lock() = true;
     }
+
+    /// cancel-safe: no; local removal must wait for this response.
+    pub async fn kill_remote_and_wait(&self) -> anyhow::Result<()> {
+        self.client
+            .client
+            .kill_pane(KillPane {
+                pane_id: self.remote_pane_id,
+            })
+            .await?;
+        Ok(())
+    }
 }
 
 #[async_trait(?Send)]

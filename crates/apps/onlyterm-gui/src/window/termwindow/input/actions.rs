@@ -166,6 +166,10 @@ mod key_assignment;
 mod overlays;
 #[path = "actions/pane_actions.rs"]
 mod pane_actions;
+#[path = "actions/pane_layout.rs"]
+mod pane_layout;
+#[path = "actions/split_plan.rs"]
+mod split_plan;
 #[path = "actions/tabs.rs"]
 mod tabs;
 #[path = "actions/window_state.rs"]

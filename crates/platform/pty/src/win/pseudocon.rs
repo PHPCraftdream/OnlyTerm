@@ -1,4 +1,4 @@
-use super::WinChild;
+use super::{job_object_required, WinChild};
 use crate::cmdbuilder::CommandBuilder;
 use crate::win::procthreadattr::ProcThreadAttributeList;
 use anyhow::{bail, ensure, Error};
@@ -95,6 +95,52 @@ lazy_static! {
     static ref CONPTY: ConPtyFuncs = load_conpty();
 }
 
+fn spawn_with_prepared_job<J, R, C, S>(
+    require_job: bool,
+    create_job: C,
+    spawn: S,
+) -> anyhow::Result<(R, Option<J>)>
+where
+    C: FnOnce() -> anyhow::Result<J>,
+    S: FnOnce(Option<&J>) -> anyhow::Result<R>,
+{
+    let job = if require_job {
+        Some(create_job()?)
+    } else {
+        None
+    };
+    let result = spawn(job.as_ref())?;
+    Ok((result, job))
+}
+
+fn create_kill_on_close_job() -> anyhow::Result<OwnedHandle> {
+    // SAFETY: Null attributes and name request a non-inheritable, unnamed job.
+    let raw = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
+    if raw.is_null() {
+        let error = IoError::last_os_error();
+        bail!("CreateJobObjectW failed: {}", error);
+    }
+    // SAFETY: CreateJobObjectW returned a valid owned HANDLE.
+    let job = unsafe { OwnedHandle::from_raw_handle(raw as _) };
+    // SAFETY: This WinAPI information struct is valid when zero-initialized.
+    let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    // SAFETY: `job` is live and `info` is a valid input of the declared size.
+    let set_res = unsafe {
+        SetInformationJobObject(
+            job.as_raw_handle() as _,
+            JobObjectExtendedLimitInformation,
+            &mut info as *mut _ as *mut _,
+            mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        )
+    };
+    if set_res == 0 {
+        let error = IoError::last_os_error();
+        bail!("SetInformationJobObject failed: {}", error);
+    }
+    Ok(job)
+}
+
 pub struct PseudoCon {
     con: HPCON,
     output: FileDescriptor,
@@ -188,160 +234,103 @@ impl PseudoCon {
     }
 
     pub fn spawn_command(&self, cmd: CommandBuilder) -> anyhow::Result<WinChild> {
-        // SAFETY: STARTUPINFOEXW is a `repr(C)` struct of primitive types;
-        // zero-initialization is valid. `cb` is set immediately after.
-        let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
-        si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
-        // Explicitly set the stdio handles as invalid handles otherwise
-        // we can end up with a weird state where the spawned process can
-        // inherit the explicitly redirected output handles from its parent.
-        // For example, when daemonizing onlyterm-mux-server, the stdio handles
-        // are redirected to a log file and the spawned process would end up
-        // writing its output there instead of to the pty we just created.
-        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        si.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
-        si.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
-        si.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
-
-        let mut attrs = ProcThreadAttributeList::with_capacity(1)?;
-        attrs.set_pty(self.con)?;
-        si.lpAttributeList = attrs.as_mut_ptr();
-
-        // SAFETY: PROCESS_INFORMATION is a `repr(C)` struct of primitive
-        // types; zero-initialization is valid. It will be filled by
-        // CreateProcessW below.
-        let mut pi: PROCESS_INFORMATION = unsafe { mem::zeroed() };
-
         let (mut exe, mut cmdline) = cmd.cmdline()?;
         let cmd_os = OsString::from_wide(&cmdline);
-
         let cwd = cmd.current_directory();
+        let require_job = job_object_required();
+        let (proc, required_job) =
+            spawn_with_prepared_job(require_job, create_kill_on_close_job, |job| {
+                // SAFETY: STARTUPINFOEXW is valid when zero-initialized.
+                let mut si: STARTUPINFOEXW = unsafe { mem::zeroed() };
+                si.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
+                si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+                si.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+                si.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
+                si.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
 
-        // SAFETY: `exe` and `cmdline` are NUL-terminated wide strings with
-        // valid mutable pointers. `si` is a valid STARTUPINFOEXW with the
-        // attribute list set. `pi` is a valid out-pointer.
-        let res = unsafe {
-            CreateProcessW(
-                exe.as_mut_slice().as_mut_ptr(),
-                cmdline.as_mut_slice().as_mut_ptr(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-                0,
-                // NOTE: deliberately NOT setting CREATE_NEW_PROCESS_GROUP here.
-                // Windows explicitly stops delivering CTRL_C_EVENT (physical
-                // Ctrl+C) to processes created with that flag - only
-                // CTRL_BREAK_EVENT reaches them. That's fine for a process we
-                // want to signal selectively via GenerateConsoleCtrlEvent, but
-                // it silently breaks the far more common case of the user
-                // pressing Ctrl+C to interrupt/exit whatever is running in the
-                // pane, which must always keep working.
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | cmd.priority_class(),
-                cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
-                cwd.as_ref()
-                    .map(|c| c.as_slice().as_ptr())
-                    .unwrap_or(ptr::null()),
-                &mut si.StartupInfo,
-                &mut pi,
-            )
-        };
-        if res == 0 {
-            let err = IoError::last_os_error();
-            let msg = format!(
-                "CreateProcessW `{:?}` in cwd `{:?}` failed: {}",
-                cmd_os,
-                cwd.as_ref().map(|c| OsString::from_wide(c)),
-                err
-            );
-            log::error!("{}", msg);
-            bail!("{}", msg);
-        }
-
-        // Make sure we close out the thread handle so we don't leak it;
-        // we do this simply by making it owned
-        // SAFETY: `pi.hThread` was populated by a successful CreateProcessW
-        // with a valid thread handle. We take exclusive ownership so it is
-        // closed on drop.
-        let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
-        // SAFETY: `pi.hProcess` was populated by a successful CreateProcessW
-        // with a valid process handle. We take exclusive ownership.
-        let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
-
-        // Create a Job Object and assign the freshly spawned process to it,
-        // configured so that closing the job's handle force-kills every
-        // process still assigned to it (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE).
-        // This ensures that when we kill the direct child on pane-close, any
-        // grandchild processes it spawned (eg. a shell running a CLI tool
-        // that itself spawned other processes) are also cleaned up, rather
-        // than being orphaned. The job handle is stored on `WinChild` and
-        // closed as part of the kill sequence.
-        //
-        // Failure to set up the job object is non-fatal: we still have a
-        // usable direct-child kill path, so we simply log a warning and
-        // proceed without job-based cleanup in that (unexpected) case.
-        // SAFETY: FFI call with NULL security attributes and NULL name;
-        // returns either a valid job handle or NULL.
-        let job = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
-        let job = if job.is_null() {
-            log::warn!(
-                "CreateJobObjectW failed: {}; descendant processes of `{:?}` \
-                 will not be automatically cleaned up on kill",
-                IoError::last_os_error(),
-                cmd_os,
-            );
-            None
-        } else {
-            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
-                // SAFETY: `repr(C)` POD struct of primitive types; valid
-                // zero-initialized.
-                unsafe { mem::zeroed() };
-            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-
-            // SAFETY: `job` is a valid handle from CreateJobObjectW.
-            // `info` is a properly initialized JOBOBJECT_EXTENDED_LIMIT_INFORMATION.
-            let set_res = unsafe {
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    &mut info as *mut _ as *mut _,
-                    mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                )
-            };
-            if set_res == 0 {
-                log::warn!(
-                    "SetInformationJobObject failed: {}; descendant processes of \
-                     `{:?}` will not be automatically cleaned up on kill",
-                    IoError::last_os_error(),
-                    cmd_os,
-                );
-                // SAFETY: `job` is a valid handle; we clean it up because
-                // SetInformationJobObject failed.
-                unsafe {
-                    CloseHandle(job);
+                let mut attrs =
+                    ProcThreadAttributeList::with_capacity(if job.is_some() { 2 } else { 1 })?;
+                attrs.set_pty(self.con)?;
+                if let Some(job) = job {
+                    attrs.set_job(job.as_raw_handle() as _)?;
                 }
-                None
-            } else {
-                // SAFETY: Both `job` (from CreateJobObjectW) and `proc`
-                // (from CreateProcessW) are valid handles.
-                let assign_res =
-                    unsafe { AssignProcessToJobObject(job, proc.as_raw_handle() as _) };
-                if assign_res == 0 {
-                    log::warn!(
-                        "AssignProcessToJobObject failed: {}; descendant processes of \
-                         `{:?}` will not be automatically cleaned up on kill",
-                        IoError::last_os_error(),
+                si.lpAttributeList = attrs.as_mut_ptr();
+
+                // SAFETY: PROCESS_INFORMATION is valid when zero-initialized.
+                let mut pi: PROCESS_INFORMATION = unsafe { mem::zeroed() };
+                // SAFETY: All pointers refer to live command, environment, startup,
+                // attribute, and output storage for the duration of this call.
+                let res = unsafe {
+                    CreateProcessW(
+                        exe.as_mut_slice().as_mut_ptr(),
+                        cmdline.as_mut_slice().as_mut_ptr(),
+                        ptr::null_mut(),
+                        ptr::null_mut(),
+                        0,
+                        // CREATE_NEW_PROCESS_GROUP would break physical Ctrl+C.
+                        EXTENDED_STARTUPINFO_PRESENT
+                            | CREATE_UNICODE_ENVIRONMENT
+                            | cmd.priority_class(),
+                        cmd.environment_block().as_mut_slice().as_mut_ptr() as *mut _,
+                        cwd.as_ref()
+                            .map(|c| c.as_slice().as_ptr())
+                            .unwrap_or(ptr::null()),
+                        &mut si.StartupInfo,
+                        &mut pi,
+                    )
+                };
+                if res == 0 {
+                    let err = IoError::last_os_error();
+                    let msg = format!(
+                        "CreateProcessW `{:?}` in cwd `{:?}` failed: {}",
                         cmd_os,
+                        cwd.as_ref().map(|c| OsString::from_wide(c)),
+                        err
                     );
-                    // SAFETY: `job` is a valid handle; we clean it up
-                    // because AssignProcessToJobObject failed.
-                    unsafe {
-                        CloseHandle(job);
+                    log::error!("{}", msg);
+                    bail!("{}", msg);
+                }
+
+                // SAFETY: CreateProcessW initialized both owned handles.
+                let _main_thread = unsafe { OwnedHandle::from_raw_handle(pi.hThread as _) };
+                // SAFETY: CreateProcessW initialized the owned process handle.
+                let proc = unsafe { OwnedHandle::from_raw_handle(pi.hProcess as _) };
+                Ok(proc)
+            })?;
+
+        let job = if require_job {
+            required_job
+        } else {
+            match create_kill_on_close_job() {
+                Ok(job) => {
+                    // SAFETY: Both job and process handles are live; neither is transferred.
+                    let assigned = unsafe {
+                        AssignProcessToJobObject(
+                            job.as_raw_handle() as _,
+                            proc.as_raw_handle() as _,
+                        )
+                    };
+                    if assigned == 0 {
+                        let error = IoError::last_os_error();
+                        log::warn!(
+                            "AssignProcessToJobObject failed: {}; descendants of `{:?}` \
+                             may survive pane close",
+                            error,
+                            cmd_os
+                        );
+                        None
+                    } else {
+                        Some(job)
                     }
+                }
+                Err(error) => {
+                    log::warn!(
+                        "Job Object setup failed: {:#}; descendants of `{:?}` \
+                         may survive pane close",
+                        error,
+                        cmd_os
+                    );
                     None
-                } else {
-                    // SAFETY: `job` is a valid, fully-configured job object
-                    // handle. We take exclusive ownership so it is closed (and
-                    // thus triggers KILL_ON_JOB_CLOSE) on drop.
-                    Some(unsafe { OwnedHandle::from_raw_handle(job as _) })
                 }
             }
         };
@@ -350,5 +339,79 @@ impl PseudoCon {
             proc: Mutex::new(proc),
             job: std::sync::Arc::new(Mutex::new(job)),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn required_job_is_prepared_before_spawn_and_failure_skips_spawn() {
+        let state = Cell::new(0);
+        let (result, job) = spawn_with_prepared_job(
+            true,
+            || {
+                state.set(1);
+                Ok(7u8)
+            },
+            |job| {
+                assert_eq!(state.get(), 1);
+                assert_eq!(job.copied(), Some(7));
+                state.set(2);
+                Ok(42u8)
+            },
+        )
+        .unwrap();
+        assert_eq!((result, job, state.get()), (42, Some(7), 2));
+
+        let spawn_called = Cell::new(false);
+        let result = spawn_with_prepared_job::<(), (), _, _>(
+            true,
+            || anyhow::bail!("job unavailable"),
+            |_| {
+                spawn_called.set(true);
+                Ok(())
+            },
+        );
+        assert!(result.is_err());
+        assert!(!spawn_called.get());
+    }
+
+    #[test]
+    fn ordinary_spawn_does_not_require_a_job_before_process_creation() {
+        let (result, job) = spawn_with_prepared_job::<(), _, _, _>(
+            false,
+            || panic!("ordinary spawn must not prepare a job first"),
+            |job| {
+                assert!(job.is_none());
+                Ok(42u8)
+            },
+        )
+        .unwrap();
+        assert_eq!(result, 42);
+        assert!(job.is_none());
+    }
+
+    #[test]
+    fn windows_accepts_a_single_job_list_attribute() {
+        let job = create_kill_on_close_job().unwrap();
+        let mut attrs = ProcThreadAttributeList::with_capacity(2).unwrap();
+        assert!(attrs.set_job(std::ptr::null_mut()).is_err());
+        attrs.set_job(job.as_raw_handle() as _).unwrap();
+        assert!(attrs.set_job(job.as_raw_handle() as _).is_err());
+    }
+
+    #[test]
+    fn killer_without_process_handle_still_closes_its_job() {
+        let job = Arc::new(Mutex::new(Some(create_kill_on_close_job().unwrap())));
+        let mut killer = crate::win::WinChildKiller {
+            proc: None,
+            job: Arc::clone(&job),
+        };
+        crate::ChildKiller::kill(&mut killer).unwrap();
+        assert!(job.lock().unwrap().is_none());
     }
 }

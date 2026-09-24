@@ -1,14 +1,17 @@
 use crate::win::pseudocon::HPCON;
-use anyhow::{ensure, Error};
+use anyhow::{bail, ensure, Error};
 use std::io::Error as IoError;
 use std::{mem, ptr};
 use winapi::shared::minwindef::DWORD;
 use winapi::um::processthreadsapi::*;
+use winapi::um::winnt::HANDLE;
 
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
+const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002000D;
 
 pub struct ProcThreadAttributeList {
-    data: Vec<u8>,
+    data: Vec<usize>,
+    job_handle: Option<Box<HANDLE>>,
 }
 
 impl ProcThreadAttributeList {
@@ -25,15 +28,16 @@ impl ProcThreadAttributeList {
                 &mut bytes_required,
             )
         };
-        // Zero-initialize rather than `with_capacity` + `set_len`: the latter
-        // would materialize a `&mut [u8]` over uninitialized memory, which is
-        // its own soundness violation regardless of whether the bytes are
-        // read before `InitializeProcThreadAttributeList` overwrites them.
-        let mut data = vec![0u8; bytes_required];
+        ensure!(
+            bytes_required > 0,
+            "empty process attribute list allocation"
+        );
+        // The opaque WinAPI list has pointer alignment.
+        let mut data = vec![0usize; bytes_required.div_ceil(mem::size_of::<usize>())];
 
-        let attr_ptr = data.as_mut_slice().as_mut_ptr() as *mut _;
-        // SAFETY: `attr_ptr` points to `data` which has the exact capacity
-        // reported by the first call. `num_attributes` matches the first call.
+        let attr_ptr = data.as_mut_ptr() as *mut _;
+        // SAFETY: `attr_ptr` is aligned, zeroed storage of at least
+        // `bytes_required` bytes; the attribute count matches the first call.
         let res = unsafe {
             InitializeProcThreadAttributeList(attr_ptr, num_attributes, 0, &mut bytes_required)
         };
@@ -42,11 +46,14 @@ impl ProcThreadAttributeList {
             "InitializeProcThreadAttributeList failed: {}",
             IoError::last_os_error()
         );
-        Ok(Self { data })
+        Ok(Self {
+            data,
+            job_handle: None,
+        })
     }
 
     pub fn as_mut_ptr(&mut self) -> LPPROC_THREAD_ATTRIBUTE_LIST {
-        self.data.as_mut_slice().as_mut_ptr() as *mut _
+        self.data.as_mut_ptr() as *mut _
     }
 
     pub fn set_pty(&mut self, con: HPCON) -> Result<(), Error> {
@@ -69,6 +76,33 @@ impl ProcThreadAttributeList {
             "UpdateProcThreadAttribute failed: {}",
             IoError::last_os_error()
         );
+        Ok(())
+    }
+
+    pub fn set_job(&mut self, job: HANDLE) -> Result<(), Error> {
+        ensure!(!job.is_null(), "job handle is null");
+        ensure!(self.job_handle.is_none(), "job attribute already set");
+
+        let attr_ptr = self.as_mut_ptr();
+        let mut handle = Box::new(job);
+        // SAFETY: The list is initialized and `handle` stays boxed until
+        // `DeleteProcThreadAttributeList` runs, as required for lpValue.
+        let res = unsafe {
+            UpdateProcThreadAttribute(
+                attr_ptr,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                &mut *handle as *mut HANDLE as *mut _,
+                mem::size_of::<HANDLE>(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        let error = (res == 0).then(IoError::last_os_error);
+        self.job_handle = Some(handle);
+        if let Some(error) = error {
+            bail!("UpdateProcThreadAttribute(JOB_LIST) failed: {error}");
+        }
         Ok(())
     }
 }
