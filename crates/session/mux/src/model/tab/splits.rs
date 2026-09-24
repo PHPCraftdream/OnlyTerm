@@ -1,9 +1,9 @@
 use super::split_tree::{
     adjust_x_size, adjust_y_size, apply_sizes_from_splits, cell_dimensions, compute_min_size,
 };
-use super::PathBranch;
 use super::{
-    Cursor, SplitDirection, SplitDirectionAndSize, SplitRequest, SplitSize, TabInner, Tree,
+    Cursor, PathBranch, SplitDirection, SplitDirectionAndSize, SplitRequest, SplitSize, TabInner,
+    Tree,
 };
 use crate::pane::Pane;
 use crate::{Mux, MuxNotification};

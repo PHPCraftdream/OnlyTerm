@@ -1,8 +1,7 @@
 use super::split_tree::{apply_sizes_from_splits, build_from_pane_tree, pane_tree};
-use super::PathBranch;
 use super::{
-    PaneEntry, PaneNode, PositionedPane, PositionedSplit, Recency, SplitDirection, TabInner, Tree,
-    TAB_ID,
+    PaneEntry, PaneNode, PathBranch, PositionedPane, PositionedSplit, Recency, SplitDirection,
+    TabInner, Tree, TAB_ID,
 };
 use crate::domain::DomainId;
 use crate::pane::{CloseReason, Pane, PaneId};
