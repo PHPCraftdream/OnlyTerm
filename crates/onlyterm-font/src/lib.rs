@@ -21,14 +21,18 @@ use std::sync::{Arc, Mutex};
 use termwiz::cell::Presentation;
 use thiserror::Error;
 
+#[path = "font/db.rs"]
 pub mod db;
+#[path = "font/locator/mod.rs"]
 pub mod locator;
 pub mod parser;
 pub mod rasterizer;
 pub mod shaper;
 pub mod swash_metrics;
+#[path = "font/units.rs"]
 pub mod units;
 
+#[path = "font/fallback.rs"]
 mod fallback;
 
 pub use crate::rasterizer::RasterizedGlyph;

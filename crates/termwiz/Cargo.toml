@@ -81,7 +81,42 @@ workspace = true
 features = ["docs"]
 rustdoc-args = ["--cfg", "feature=\"docs\""]
 
+[[example]]
+name = "buffered_terminal"
+path = "examples/terminal/buffered_terminal.rs"
+
+[[example]]
+name = "gennerdfonts"
+path = "examples/utilities/gennerdfonts.rs"
+
+[[example]]
+name = "hello"
+path = "examples/utilities/hello.rs"
+
+[[example]]
+name = "key_tester"
+path = "examples/input/key_tester.rs"
+
+[[example]]
+name = "line_editor"
+path = "examples/input/line_editor.rs"
+
+[[example]]
+name = "strip-ansi-escapes"
+path = "examples/utilities/strip-ansi-escapes.rs"
+
+[[example]]
+name = "terminal_direct"
+path = "examples/terminal/terminal_direct.rs"
+
+[[example]]
+name = "widgets_basic"
+path = "examples/widgets/widgets_basic.rs"
+
+[[example]]
+name = "widgets_nested"
+path = "examples/widgets/widgets_nested.rs"
+
 [[bench]]
 name = "cell"
 harness = false
-

@@ -45,7 +45,9 @@ use crate::locator::SharedFontData;
 use crate::parser::ParsedFont;
 use crate::shaper::{FallbackIdx, FontMetrics, FontShaper, GlyphInfo, PresentationWidth};
 use crate::units::*;
+mod cluster;
 use anyhow::{anyhow, Context};
+use cluster::ClusterResolver;
 use config::ConfigHandle;
 use finl_unicode::grapheme_clusters::Graphemes;
 use log::error;
@@ -54,7 +56,7 @@ use ordered_float::NotNan;
 use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
 use std::ops::Range;
-use termwiz::cell::{unicode_column_width, Presentation};
+use termwiz::cell::Presentation;
 
 /// Keeps shared immutable raw storage alive for a `rustybuzz::Face<'static>`.
 ///
@@ -603,10 +605,7 @@ impl RustybuzzShaper {
         // rationale behind this cluster-resolution dance; the logic here is
         // a straight port, operating on rustybuzz's GlyphInfo/GlyphPosition
         // instead of harfbuzz's.
-        let mut cluster_resolver = ClusterResolver {
-            presentation_width,
-            ..Default::default()
-        };
+        let mut cluster_resolver = ClusterResolver::new(presentation_width);
 
         cluster_resolver.build(rb_infos, s, &range);
         log::debug!("cluster_resolver: {cluster_resolver:#?}");
@@ -927,113 +926,6 @@ impl FontShaper for RustybuzzShaper {
         }
 
         self.metrics_for_idx(metrics_idx, size, dpi)
-    }
-}
-
-#[derive(Debug)]
-struct ClusterInfo {
-    start: usize,
-    byte_len: usize,
-    cell_width: u8,
-    incomplete: bool,
-}
-
-#[derive(Default, Debug)]
-struct ClusterResolver<'a> {
-    map: HashMap<usize, ClusterInfo>,
-    presentation_width: Option<&'a PresentationWidth<'a>>,
-    start_by_cell_idx: HashMap<usize, usize>,
-}
-
-impl<'a> ClusterResolver<'a> {
-    pub fn build(&mut self, rb_infos: &[rustybuzz::GlyphInfo], s: &str, range: &Range<usize>) {
-        #[derive(PartialOrd, Ord, Eq, PartialEq, Copy, Clone)]
-        struct Item {
-            cell_idx: Option<usize>,
-            start: usize,
-        }
-
-        let mut map = HashMap::new();
-
-        for info in rb_infos.iter() {
-            // See the comment at the `get_mut` call site in `do_shape`:
-            // rustybuzz's `cluster` is relative to `range.start` (the
-            // start of whatever substring was actually shaped), so it
-            // must be converted to an absolute offset into `s` before
-            // it's used to slice `s` or to look up `PresentationWidth`
-            // (which indexes by absolute byte offset into the full
-            // cluster text).
-            let start = info.cluster as usize + range.start;
-
-            let cell_idx = match self.presentation_width {
-                Some(pw) => {
-                    let cell_idx = pw.byte_to_cell_idx(start);
-
-                    let entry = self.start_by_cell_idx.entry(cell_idx).or_insert(start);
-                    *entry = (*entry).min(start);
-
-                    Some(cell_idx)
-                }
-                None => None,
-            };
-
-            map.entry(start).or_insert_with(|| Item { start, cell_idx });
-        }
-
-        let mut cluster_starts: Vec<Item> = map.into_values().collect();
-        // Must sort by byte position, not the derived `Ord` (which
-        // compares `cell_idx` first since it's declared first): walking
-        // this vector assumes consecutive entries are consecutive byte
-        // ranges (`next_start - start` below). That coincided with
-        // sorting by `cell_idx` as long as cell_idx only ever increased
-        // with byte position, which no longer holds once a line can
-        // contain a right-to-left phrase whose cells were reordered
-        // in `cluster.text` relative to their original cell index.
-        cluster_starts.sort_by_key(|item| item.start);
-
-        cluster_starts.dedup_by(|a, b| match (a.cell_idx, b.cell_idx) {
-            (Some(a), Some(b)) => a == b,
-            _ => false,
-        });
-
-        let mut iter = cluster_starts.iter().peekable();
-        while let Some(item) = iter.next().copied() {
-            let start = item.start;
-            let next_start = iter.peek().map(|&&s| s.start).unwrap_or(range.end);
-            let byte_len = next_start - start;
-            let cell_width = match self.presentation_width {
-                Some(p) => p.num_cells(start..next_start),
-                None => unicode_column_width(&s[start..next_start], None) as u8,
-            };
-            self.map.entry(start).or_insert_with(|| ClusterInfo {
-                start,
-                byte_len,
-                cell_width,
-                incomplete: false,
-            });
-        }
-    }
-
-    pub fn get_mut(&mut self, start: usize) -> Option<&mut ClusterInfo> {
-        match self.presentation_width {
-            Some(pw) => {
-                let cell_idx = pw.byte_to_cell_idx(start);
-                let actual_start = self.start_by_cell_idx.get(&cell_idx)?;
-                self.map.get_mut(actual_start)
-            }
-            None => self.map.get_mut(&start),
-        }
-    }
-
-    pub fn get(&self, start: usize) -> Option<&ClusterInfo> {
-        match self.presentation_width {
-            Some(pw) => {
-                let cell_idx = pw.byte_to_cell_idx(start);
-                let actual_start = self.start_by_cell_idx.get(&cell_idx)?;
-                self.map.get(actual_start)
-            }
-            None => self.map.get(&start),
-        }
     }
 }
 

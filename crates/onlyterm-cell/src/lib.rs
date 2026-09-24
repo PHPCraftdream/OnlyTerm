@@ -11,7 +11,6 @@ extern crate alloc;
 #[macro_use]
 extern crate std;
 
-mod attribute_change;
 mod attributes;
 mod cell;
 pub mod color;
@@ -21,8 +20,7 @@ pub mod image;
 mod test;
 mod unicode;
 
-pub use attribute_change::AttributeChange;
-pub use attributes::{CellAttributes, SemanticType};
+pub use attributes::{AttributeChange, CellAttributes, SemanticType};
 pub use cell::Cell;
 pub use onlyterm_char_props::emoji::Presentation;
 pub use onlyterm_escape_parser::csi::{Blink, Intensity, Underline, VerticalAlign};

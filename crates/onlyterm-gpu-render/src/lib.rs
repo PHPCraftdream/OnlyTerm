@@ -8,9 +8,13 @@
 //! and talks to this crate through its public API.
 
 pub mod backpressure;
+#[path = "host/gpu_tab_host.rs"]
 pub mod gpu_tab_host;
+#[path = "host/process_backend.rs"]
 pub mod host_process_backend;
+#[path = "geometry/instance_buffer_pool.rs"]
 mod instance_buffer_pool;
+#[path = "geometry/quad.rs"]
 mod quad;
 #[cfg(test)]
 mod test_gpu;

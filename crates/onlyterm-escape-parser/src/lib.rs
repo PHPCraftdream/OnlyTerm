@@ -20,15 +20,20 @@ extern crate alloc;
 mod allocate;
 use allocate::*;
 
+#[path = "sequences/apc/mod.rs"]
 pub mod apc;
 pub mod color;
+#[path = "sequences/csi/mod.rs"]
 pub mod csi;
 pub mod error;
 pub mod esc;
 pub mod hyperlink;
+#[path = "sequences/osc/mod.rs"]
 pub mod osc;
+#[path = "sequences/parser/mod.rs"]
 pub mod parser;
 #[cfg(feature = "tmux_cc")]
+#[path = "sequences/tmux_cc/mod.rs"]
 pub mod tmux_cc;
 
 pub use self::apc::KittyImage;

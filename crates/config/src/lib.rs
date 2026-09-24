@@ -10,13 +10,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-mod appearance;
 mod config;
 mod domains;
-mod font;
-mod input;
 mod process;
+mod ui;
 mod value;
+
+pub(crate) use ui::{appearance, font, input};
 
 // Preserve the original public module paths; other crates depend on them.
 pub use appearance::window;

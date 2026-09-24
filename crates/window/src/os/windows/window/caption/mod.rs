@@ -459,7 +459,10 @@ impl WindowInner {
         if !self.caption.failed {
             self.caption.failed = true;
             log::warn!("Caption drawing unavailable; restoring the native title bar");
-            super::schedule_apply_decoration(self.hwnd.0, self.config.window_decorations);
+            super::msg::frame::schedule_apply_decoration(
+                self.hwnd.0,
+                self.config.window_decorations,
+            );
         }
     }
     pub(super) fn sync_caption(&mut self) {

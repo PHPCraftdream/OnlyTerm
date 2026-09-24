@@ -1,17 +1,12 @@
 pub mod connection;
 pub mod event;
 mod extra_constants;
-mod ime;
-mod keyboard_layout;
-mod keycodes;
 pub mod watchdog;
-mod wheel;
 pub mod window;
 
 pub use self::window::*;
 pub use connection::*;
 pub use event::*;
-pub use ime::*;
 
 /// Convert a rust string to a windows wide string
 pub fn wide_string(s: &str) -> Vec<u16> {

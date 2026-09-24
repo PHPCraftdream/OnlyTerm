@@ -500,7 +500,7 @@ impl ProcessGpuContext {
 
         let queue = Arc::new(queue);
 
-        let shader = device.create_shader_module(wgpu::include_wgsl!("../shader.wgsl"));
+        let shader = device.create_shader_module(wgpu::include_wgsl!("../geometry/shader.wgsl"));
 
         let shader_uniform_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

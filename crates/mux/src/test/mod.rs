@@ -18,13 +18,8 @@ use termwiz::escape::Action;
 use termwiz::surface::{Line, SequenceNo};
 use url::Url;
 
-mod domain_detach;
-mod domain_registration;
-mod notify_coalescing;
-mod render_snapshot;
-mod sync_update;
-mod terminal_lock_contention;
-mod wedged_pane_isolation;
+mod mux;
+mod pane;
 
 // The mux is a process-global singleton (`Mux::set_mux`/`Mux::get`), so any
 // test in this crate that installs one must run serially with every other
@@ -138,9 +133,9 @@ impl Pane for RecordingPane {
     }
 }
 
-// The tests mutate the process-global configuration, so they must not
-// run concurrently with each other.
-static TEST_LOCK: Mutex<()> = Mutex::new(());
+// These tests mutate process-global configuration and promise schedulers,
+// so they must not run concurrently with each other.
+pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 /// Test-only stand-in for the production `FileDescriptor`-based writer:
 /// wraps a `Sender<Vec<u8>>` with a `write_all`-shaped API so the

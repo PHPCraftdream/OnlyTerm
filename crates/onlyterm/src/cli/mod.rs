@@ -3,24 +3,11 @@ use clap::Parser;
 use onlyterm_client::client::Client;
 use std::ffi::OsString;
 
-mod activate_pane;
-mod activate_pane_direction;
-mod activate_tab;
-mod adjust_pane_size;
-mod get_pane_direction;
-mod get_text;
-mod kill_pane;
-mod list;
-mod list_clients;
-mod move_pane_to_new_tab;
-mod proxy;
-mod rename_workspace;
-mod send_text;
-mod set_tab_title;
-mod set_window_title;
-mod spawn_command;
-mod split_pane;
-mod zoom_pane;
+mod client_server;
+mod pane_content;
+mod pane_control;
+mod pane_layout;
+mod tab_window;
 
 #[derive(Debug, Parser, Clone, Copy)]
 enum CliOutputFormatKind {
@@ -75,20 +62,20 @@ pub struct CliCommand {
 #[derive(Debug, Parser, Clone)]
 enum CliSubCommand {
     #[command(name = "list", about = "list windows, tabs and panes")]
-    List(list::ListCommand),
+    List(client_server::ListCommand),
 
     #[command(name = "list-clients", about = "list clients")]
-    ListClients(list_clients::ListClientsCommand),
+    ListClients(client_server::ListClientsCommand),
 
     #[command(name = "proxy", about = "start rpc proxy pipe")]
-    Proxy(proxy::ProxyCommand),
+    Proxy(client_server::ProxyCommand),
 
     #[command(
         name = "move-pane-to-new-tab",
         rename_all = "kebab",
         about = "Move a pane into a new tab"
     )]
-    MovePaneToNewTab(move_pane_to_new_tab::MovePaneToNewTab),
+    MovePaneToNewTab(pane_layout::MovePaneToNewTab),
 
     #[command(
         name = "split-pane",
@@ -97,7 +84,7 @@ enum CliSubCommand {
         about = "split the current pane.
 Outputs the pane-id for the newly created pane on success"
     )]
-    SplitPane(split_pane::SplitPane),
+    SplitPane(pane_layout::SplitPane),
 
     #[command(
         name = "spawn",
@@ -105,60 +92,60 @@ Outputs the pane-id for the newly created pane on success"
         about = "Spawn a command into a new window or tab
 Outputs the pane-id for the newly created pane on success"
     )]
-    SpawnCommand(spawn_command::SpawnCommand),
+    SpawnCommand(client_server::SpawnCommand),
 
     /// Send text to a pane as though it were pasted.
     /// If bracketed paste mode is enabled in the pane, then the
     /// text will be sent as a bracketed paste.
     #[command(name = "send-text", rename_all = "kebab")]
-    SendText(send_text::SendText),
+    SendText(pane_content::SendText),
 
     /// Retrieves the textual content of a pane and output it to stdout
     #[command(name = "get-text", rename_all = "kebab")]
-    GetText(get_text::GetText),
+    GetText(pane_content::GetText),
 
     /// Activate an adjacent pane in the specified direction.
     #[command(name = "activate-pane-direction", rename_all = "kebab")]
-    ActivatePaneDirection(activate_pane_direction::ActivatePaneDirection),
+    ActivatePaneDirection(pane_control::ActivatePaneDirection),
 
     /// Determine the adjacent pane in the specified direction.
     ///
     /// Prints the pane id in that direction, or nothing if there
     /// is no pane in that direction.
     #[command(name = "get-pane-direction", rename_all = "kebab")]
-    GetPaneDirection(get_pane_direction::GetPaneDirection),
+    GetPaneDirection(pane_control::GetPaneDirection),
 
     /// Kill a pane
     #[command(name = "kill-pane", rename_all = "kebab")]
-    KillPane(kill_pane::KillPane),
+    KillPane(pane_control::KillPane),
 
     /// Activate (focus) a pane
     #[command(name = "activate-pane", rename_all = "kebab")]
-    ActivatePane(activate_pane::ActivatePane),
+    ActivatePane(pane_control::ActivatePane),
 
     /// Adjust the size of a pane directionally
     #[command(name = "adjust-pane-size", rename_all = "kebab")]
-    AdjustPaneSize(adjust_pane_size::CliAdjustPaneSize),
+    AdjustPaneSize(pane_control::CliAdjustPaneSize),
 
     /// Activate a tab
     #[command(name = "activate-tab", rename_all = "kebab")]
-    ActivateTab(activate_tab::ActivateTab),
+    ActivateTab(tab_window::ActivateTab),
 
     /// Change the title of a tab
     #[command(name = "set-tab-title", rename_all = "kebab")]
-    SetTabTitle(set_tab_title::SetTabTitle),
+    SetTabTitle(tab_window::SetTabTitle),
 
     /// Change the title of a window
     #[command(name = "set-window-title", rename_all = "kebab")]
-    SetWindowTitle(set_window_title::SetWindowTitle),
+    SetWindowTitle(tab_window::SetWindowTitle),
 
     /// Rename a workspace
     #[command(name = "rename-workspace", rename_all = "kebab")]
-    RenameWorkspace(rename_workspace::RenameWorkspace),
+    RenameWorkspace(tab_window::RenameWorkspace),
 
     /// Zoom, unzoom, or toggle zoom state
     #[command(name = "zoom-pane", rename_all = "kebab")]
-    ZoomPane(zoom_pane::ZoomPane),
+    ZoomPane(pane_control::ZoomPane),
 }
 
 fn is_process_title_command(command: &CliSubCommand) -> bool {

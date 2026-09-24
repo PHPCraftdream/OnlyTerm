@@ -35,30 +35,54 @@ use termwiz::cell::CellAttributes;
 use termwiz::surface::{Line, SEQ_ZERO};
 use unicode_normalization::UnicodeNormalization;
 
+#[path = "render/colorease.rs"]
 mod colorease;
+#[path = "commands/commands/mod.rs"]
 mod commands;
+#[path = "glyphs/customglyph/mod.rs"]
 mod customglyph;
+#[path = "startup/download.rs"]
 mod download;
+#[path = "startup/elevate.rs"]
 mod elevate;
+#[path = "startup/frontend.rs"]
 mod frontend;
+#[path = "glyphs/glyphcache/mod.rs"]
 mod glyphcache;
+#[path = "window/gui_api/mod.rs"]
 mod gui_api;
+#[path = "input/inputmap.rs"]
 mod inputmap;
+#[path = "window/overlay/mod.rs"]
 mod overlay;
+#[path = "render/quad.rs"]
 mod quad;
+#[path = "render/renderstate.rs"]
 mod renderstate;
+#[path = "window/resize_increment_calculator.rs"]
 mod resize_increment_calculator;
+#[path = "input/scrollbar.rs"]
 mod scrollbar;
+#[path = "input/selection.rs"]
 mod selection;
+#[path = "render/shapecache.rs"]
 mod shapecache;
+#[path = "commands/spawn.rs"]
 mod spawn;
+#[path = "startup/startup.rs"]
 mod startup;
 use startup::{async_run_terminal_gui, build_initial_mux, cell_pixel_dims, run_terminal_gui};
+#[path = "startup/startup_chooser.rs"]
 mod startup_chooser;
+#[path = "startup/stats.rs"]
 mod stats;
+#[path = "input/tabbar.rs"]
 mod tabbar;
+#[path = "window/termwindow/mod.rs"]
 mod termwindow;
+#[path = "startup/update.rs"]
 mod update;
+#[path = "render/utilsprites.rs"]
 mod utilsprites;
 
 pub use onlyterm_gui_render_thread as renderthread;

@@ -49,27 +49,38 @@
 //! * `widgets` - enables the widget layout and related traits
 //! * `use_serde` - makes a number of structs serde serializable
 
+#[path = "console/caps/mod.rs"]
 pub mod caps;
 pub use onlyterm_cell as cell;
 pub use onlyterm_cell::color;
 pub use onlyterm_surface::cellcluster;
+#[path = "core/error.rs"]
 pub mod error;
 #[cfg(feature = "use_image")]
 pub use onlyterm_cell::image;
 pub use onlyterm_surface::hyperlink;
+#[path = "interaction/input/mod.rs"]
 pub mod input;
+#[path = "console/istty.rs"]
 pub mod istty;
+#[path = "interaction/keymap.rs"]
 pub mod keymap;
+#[path = "interaction/lineedit/mod.rs"]
 pub mod lineedit;
+#[path = "core/macros.rs"]
 mod macros;
 pub use onlyterm_char_props::nerdfonts;
+#[path = "interaction/readbuf.rs"]
 mod readbuf;
+#[path = "console/render/mod.rs"]
 pub mod render;
 pub use onlyterm_surface as surface;
+#[path = "console/terminal/mod.rs"]
 pub mod terminal;
 #[cfg(feature = "tmux_cc")]
 pub use onlyterm_escape_parser::tmux_cc;
 #[cfg(feature = "widgets")]
+#[path = "console/widgets/mod.rs"]
 pub mod widgets;
 
 pub use error::{Context, Error, Result};
