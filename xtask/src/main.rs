@@ -259,9 +259,9 @@ fn step<S: AsRef<str>>(root: &Path, title: &str, args: &[S], failures: &mut Vec<
 /// Cargo knows this, but only via `cargo metadata`, whose answer is JSON and
 /// would drag a parser into a crate that is deliberately dependency-free.
 /// Package names do not reliably match directory names here (`portable-pty`
-/// lives in `crates/pty`, `onlyterm-term` in `crates/term`), so the manifests
-/// are read directly. Depth 3 covers `crates/<name>`, `crates/<a>/<b>` and
-/// top-level members like `xtask`.
+/// lives in `crates/platform/pty`, `onlyterm-term` in `crates/terminal/term`), so the manifests
+/// are read directly. Depth 4 covers `crates/<group>/<a>/<b>` and top-level
+/// members like `xtask`.
 fn package_dir(root: &Path, pkg: &str) -> Option<PathBuf> {
     fn find(dir: &Path, pkg: &str, depth: usize) -> Option<PathBuf> {
         if depth == 0 {
@@ -304,7 +304,7 @@ fn package_dir(root: &Path, pkg: &str) -> Option<PathBuf> {
         None
     }
 
-    find(&root.join("crates"), pkg, 3).or_else(|| find(root, pkg, 2))
+    find(&root.join("crates"), pkg, 4).or_else(|| find(root, pkg, 2))
 }
 
 /// Group `--message-format short` output by lint text.
@@ -318,7 +318,7 @@ fn summarize(output: &str, only_under: Option<&Path>) -> BTreeMap<String, usize>
     // Clippy reports paths relative to the workspace root, with the platform
     // separator. `only_under` is likewise relative to the root (see the call
     // site), so a plain prefix match is exact -- no substring guessing, which
-    // would confuse `crates/window` with `crates/onlyterm-gui/src/window`.
+    // would confuse `crates/graphics/window` with `crates/apps/onlyterm-gui/src/window`.
     let prefix = only_under.map(|dir| {
         let mut s = dir.to_string_lossy().replace('\\', "/");
         if !s.ends_with('/') {

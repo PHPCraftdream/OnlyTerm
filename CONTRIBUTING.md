@@ -44,14 +44,14 @@ Some platforms like Windows have a few specific steps, make sure to check the de
 
 ### Where to find things?
 
-The `crates/term` directory holds the core terminal model code. This is agnostic
+The `crates/terminal/term` directory holds the core terminal model code. This is agnostic
 of any windowing system. If you want to add support for terminal escape
-sequences and that sort of thing, you probably want to be in the `crates/term` directory.
+sequences and that sort of thing, you probably want to be in the `crates/terminal/term` directory.
 Keep in mind that for maximal compatibility and utility the terminal model aims to
 be compatible with the `xterm` behavior.
 https://invisible-island.net/xterm/ctlseqs/ctlseqs.html is a useful resource!
 
-The `crates/onlyterm-gui` directory holds the code for the GUI renderer for the
+The `crates/apps/onlyterm-gui` directory holds the code for the GUI renderer for the
 terminal model.  If you want to change something about the GUI you want to be
 in that directory.
 
@@ -89,13 +89,13 @@ for writing fixed-iteration micro-benchmarks. It calibrates an iteration count o
 per benchmark, then re-runs that static count on every subsequent `cargo bench`, so
 wall-time becomes a directly comparable speed signal across runs.
 
-All benchmarks in this workspace use this harness — `rangeset` (`crates/rangeset/benches/rangeset.rs`),
-`termwiz`'s `cell` bench (`crates/termwiz/benches/cell.rs`), `onlyterm-char-props`'s
-`wcwidth` bench (`crates/onlyterm-char-props/benches/wcwidth.rs`), and the
-`mux`/`placeholder` demo (`crates/mux/benches/placeholder.rs`). Criterion is no
+All benchmarks in this workspace use this harness — `rangeset` (`crates/support/rangeset/benches/rangeset.rs`),
+`termwiz`'s `cell` bench (`crates/terminal/termwiz/benches/cell.rs`), `onlyterm-char-props`'s
+`wcwidth` bench (`crates/terminal/onlyterm-char-props/benches/wcwidth.rs`), and the
+`mux`/`placeholder` demo (`crates/session/mux/benches/placeholder.rs`). Criterion is no
 longer used anywhere in the project; it has been fully replaced by `bench-scale-tool`.
 
-See `crates/mux/benches/placeholder.rs` and `crates/mux/Cargo.toml` for a minimal,
+See `crates/session/mux/benches/placeholder.rs` and `crates/session/mux/Cargo.toml` for a minimal,
 working example of the plumbing (`[dev-dependencies]` entry + `[[bench]] harness = false`
 target + a `main()` built around `bench_scale_tool::Harness`).
 
@@ -109,7 +109,7 @@ To add your own benchmark to a crate:
    This writes/updates `bench-iters.txt` at the workspace root — **commit this file**,
    it stores the calibrated iteration counts so results stay comparable over time.
 4. Afterwards, plain `cargo bench -p <crate> --bench <bin>` reuses the stored counts,
-   e.g. `cargo bench -p rangeset --bench rangeset` re-runs the `contig/*` and
+   e.g. `cargo bench -p onlyterm-rangeset --bench rangeset` re-runs the `contig/*` and
    `sparse/*` cases at their pinned iteration counts.
 
 `bench-run.log`, `bench-history.log`, and `bench-run-baselines.txt` are machine-local
@@ -119,13 +119,13 @@ run artifacts the tool generates and are gitignored — do not commit them.
 
 The [`captrack`](https://github.com/PHPCraftdream/captrack) crate is wired up as a
 workspace dependency (`captrack` in `[workspace.dependencies]`, currently `0.1.1`) and
-added as a regular (non-dev) dependency of `crates/mux`. It provides `t*!` macros
+added as a regular (non-dev) dependency of `crates/session/mux`. It provides `t*!` macros
 (`tvec!`, `tfxmap!`, `tbtreemap!`, and friends) that are drop-in replacements for the
 usual collection constructors (`Vec::with_capacity`, `HashMap::new`, etc.).
 
 This is integration/setup only (task #151) — **no production call site has been
 migrated to a `t*!` macro yet**. A single demo test,
-`crates/mux/src/lib.rs::captrack_integration::tvec_demo_resolves_and_behaves_like_vec`,
+`crates/session/mux/src/lib.rs::captrack_integration::tvec_demo_resolves_and_behaves_like_vec`,
 exists purely to prove the dependency resolves and compiles; it does not touch any
 real code path.
 
@@ -134,12 +134,12 @@ real code path.
   runtime overhead, and the `label` argument is discarded at compile time.
 - **With `telemetry` enabled:** the macros return `Tracked*` wrapper types that record
   real capacity/len into a lock-free global registry (`scc::HashMap`) on construction.
-  Enable it with `cargo build -p mux --features telemetry` (or
-  `cargo build --workspace --features mux/telemetry`).
+  Enable it with `cargo build -p onlyterm-mux --features telemetry` (or
+  `cargo build --workspace --features onlyterm-mux/telemetry`).
 - **Dumping stats:** once telemetry is enabled and the instrumented code has run, call
   `captrack::dump_capacity_stats("path.json")` to write out what was recorded.
 
-`crates/mux/Cargo.toml` proxies the feature with `telemetry = ["captrack/telemetry"]`.
+`crates/session/mux/Cargo.toml` proxies the feature with `telemetry = ["captrack/telemetry"]`.
 
 ### Please include tests to cover your changes!
 
@@ -185,4 +185,3 @@ $ rustup component add rustfmt-preview          # you only need to do this once
 $ cargo test --all
 $ cargo fmt --all
 ```
-

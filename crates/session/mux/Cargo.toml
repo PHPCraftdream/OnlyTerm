@@ -1,0 +1,71 @@
+[package]
+name = "onlyterm-mux"
+version = "0.1.0"
+authors = ["Wez Furlong <wez@wezfurlong.org>"]
+edition = "2018"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+# Proxies to captrack's own `telemetry` feature (opt-in, off by default).
+# With this feature disabled (the default), captrack's `t*!` macros compile
+# down to bare collection constructors with zero overhead. See
+# CONTRIBUTING.md ("Collection-capacity telemetry with captrack") for
+# details and how to dump captured stats.
+telemetry = ["captrack/telemetry"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bitflags.workspace = true
+captrack.workspace = true
+chrono.workspace = true
+onlyterm-config.workspace = true
+crossbeam.workspace = true
+downcast-rs.workspace = true
+fancy-regex.workspace = true
+filedescriptor.workspace = true
+finl_unicode.workspace = true
+hostname.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+metrics.workspace = true
+names.workspace = true
+parking_lot.workspace = true
+percent-encoding.workspace = true
+portable-pty = { workspace=true, features = ["serde_support"]}
+onlyterm-procinfo.workspace = true
+onlyterm-promise.workspace = true
+onlyterm-rangeset.workspace = true
+serde = {workspace=true, features = ["rc", "derive"]}
+serial2.workspace = true
+shell-words.workspace = true
+smol.workspace = true
+terminfo.workspace = true
+onlyterm-termwiz-funcs.workspace = true
+termwiz.workspace = true
+textwrap.workspace = true
+thiserror.workspace = true
+url.workspace = true
+onlyterm-dynamic.workspace = true
+onlyterm-term = { workspace=true, features=["use_serde"] }
+
+[target."cfg(windows)".dependencies]
+ntapi.workspace = true
+winapi = { workspace=true, features = [
+    "handleapi",
+    "memoryapi",
+    "psapi",
+    "processthreadsapi",
+    "tlhelp32",
+]}
+
+[dev-dependencies]
+bench-scale-tool.workspace = true
+k9.workspace = true
+
+[[bench]]
+name = "placeholder"
+harness = false

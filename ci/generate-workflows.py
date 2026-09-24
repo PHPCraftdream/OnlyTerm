@@ -403,7 +403,7 @@ rustup default {toolchain}
         return [
             RunStep(
                 name="Clippy (GUI, window, terminal and process tracking)",
-                run="cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p mux -p procinfo --all-targets -- -D warnings",
+                run="cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p onlyterm-mux -p onlyterm-procinfo --all-targets -- -D warnings",
                 shell="cmd",
             ),
         ]
@@ -775,7 +775,7 @@ def generate_actions(namer, jobber, trigger, is_continuous, is_tag=False):
         trigger_paths = "- " + "\n      - ".join(yv(p) for p in sorted(trigger_paths))
         trigger_with_paths = trigger.replace("@PATHS@", trigger_paths)
 
-        with open(file_name, "w") as f:
+        with open(file_name, "w", newline="\n") as f:
             f.write(
                 f"""name: {name}
 {trigger_with_paths}

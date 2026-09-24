@@ -10,7 +10,7 @@ echo "OSTYPE is $OSTYPE"
 
 # OnlyTerm is Windows-only: this used to dispatch on $OSTYPE to also
 # package macOS app bundles and Linux rpm/deb/apk packages, but those
-# platforms are no longer supported by this fork -- see crates/window/src/os,
+# platforms are no longer supported by this fork -- see crates/graphics/window/src/os,
 # which only builds the Windows backend now.
 case $OSTYPE in
   msys|cygwin)

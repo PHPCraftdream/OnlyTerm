@@ -1,30 +1,61 @@
 [workspace]
 members = [
-  "crates/bidi",
-  "crates/bidi/generate",
-  "crates/strip-ansi-escapes",
-  "crates/sync-color-schemes",
-  "crates/onlyterm",
-  "crates/onlyterm-blob-leases",
-  "crates/onlyterm-cell",
-  "crates/onlyterm-color-schemes-data",
-  "crates/onlyterm-escape-parser",
-  "crates/onlyterm-dynamic",
-  "crates/onlyterm-elevated-transport",
-  "crates/onlyterm-gpu-render",
-  "crates/onlyterm-gpu-protocol",
-  "crates/onlyterm-gui",
-  "crates/onlyterm-gui-render-thread",
-  "crates/onlyterm-mux-server",
-  "crates/onlyterm-open-url",
-  "crates/onlyterm-surface",
-  "crates/onlyterm-uds",
+  "crates/apps/onlyterm",
+  "crates/apps/onlyterm-gui",
+  "crates/apps/onlyterm-gui-subcommands",
+  "crates/apps/onlyterm-mux-server",
+  "crates/configuration/config",
+  "crates/configuration/config/derive",
+  "crates/configuration/onlyterm-color-schemes-data",
+  "crates/configuration/onlyterm-dynamic",
+  "crates/configuration/onlyterm-dynamic/derive",
+  "crates/configuration/sync-color-schemes",
+  "crates/configuration/api-crates/color-funcs",
+  "crates/graphics/onlyterm-font",
+  "crates/graphics/onlyterm-gpu-protocol",
+  "crates/graphics/onlyterm-gpu-render",
+  "crates/graphics/onlyterm-gui-render-thread",
+  "crates/graphics/window",
+  "crates/platform/filedescriptor",
+  "crates/platform/onlyterm-elevated-transport",
+  "crates/platform/onlyterm-open-url",
+  "crates/platform/onlyterm-uds",
+  "crates/platform/onlyterm-toast-notification",
+  "crates/platform/procinfo",
+  "crates/platform/pty",
+  "crates/platform/umask",
+  "crates/session/base91",
+  "crates/session/codec",
+  "crates/session/mux",
+  "crates/session/onlyterm-client",
+  "crates/session/onlyterm-mux-server-impl",
+  "crates/session/api-crates/mux-funcs",
+  "crates/support/env-bootstrap",
+  "crates/support/lfucache",
+  "crates/support/onlyterm-blob-leases",
+  "crates/support/onlyterm-version",
+  "crates/support/promise",
+  "crates/support/rangeset",
+  "crates/support/ratelim",
+  "crates/support/tabout",
+  "crates/terminal/bidi",
+  "crates/terminal/bidi/generate",
+  "crates/terminal/color-types",
+  "crates/terminal/onlyterm-cell",
+  "crates/terminal/onlyterm-char-props",
+  "crates/terminal/onlyterm-escape-parser",
+  "crates/terminal/onlyterm-input-types",
+  "crates/terminal/onlyterm-surface",
+  "crates/terminal/strip-ansi-escapes",
+  "crates/terminal/term",
+  "crates/terminal/termwiz",
+  "crates/terminal/vtparse",
+  "crates/terminal/api-crates/termwiz-funcs",
   "xtask",
 ]
 resolver = "2"
 exclude = [
-  "crates/termwiz/codegen",
-  "crates/onlyterm-char-props/codegen",
+  "crates/terminal/onlyterm-char-props/codegen",
 ]
 
 # Vendored copy of wgpu-hal 25.0.2, patched to expose a fast DX12
@@ -70,10 +101,9 @@ async-task = "4.7"
 async-trait = "0.1"
 backtrace = "0.3"
 base64 = {version="0.22", default-features=false }
-base91 = { path = "crates/base91" }
+onlyterm-base91 = { path = "crates/session/base91" }
 bench-scale-tool = "0.1"
 benchmarking = "0.4"
-bintree = { path = "crates/bintree" }
 bitflags = "1.3"
 bstr = "1.0"
 bytemuck = { version="1.4", features=["derive"]}
@@ -87,10 +117,10 @@ clap = {version="4.0", features=["derive"]}
 clap_complete = "4.4"
 clap_complete_fig = "4.0"
 clipboard-win = "2.2"
-codec = { path = "crates/codec" }
-color-funcs = { path = "crates/api-crates/color-funcs" }
+onlyterm-codec = { path = "crates/session/codec" }
+onlyterm-color-funcs = { path = "crates/configuration/api-crates/color-funcs" }
 colorgrad = "0.6"
-config = { path = "crates/config" }
+onlyterm-config = { path = "crates/configuration/config" }
 crossbeam = "0.8"
 csscolorparser = "0.6"
 deltae = "0.3"
@@ -103,12 +133,12 @@ embed-resource = "1.7"
 emojis = "0.6"
 encoding_rs = "0.8"
 enum-display-derive = "0.1"
-env-bootstrap = { path = "crates/env-bootstrap" }
+onlyterm-env-bootstrap = { path = "crates/support/env-bootstrap" }
 env_logger = "0.11"
 euclid = {version="0.22", default-features=false}
 fancy-regex = {version="0.14", default-features=false, features=[]}
 fastrand = "2.0"
-filedescriptor = { version="0.8.3", path = "crates/filedescriptor" }
+filedescriptor = { version="0.8.3", path = "crates/platform/filedescriptor" }
 filenamegen = "0.2.6"
 finl_unicode = { version = "1.3",  git="https://github.com/wez/finl_unicode.git", branch="no_std" , default-features=false, features=["categories", "grapheme_clusters"]}
 fixed = "1.23"
@@ -116,7 +146,6 @@ fixedbitset = {version="0.4", default-features=false}
 flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 flume = "0.11"
 fnv = "1.0"
-frecency = { path = "crates/frecency" }
 futures = "0.3"
 futures-lite = "2.3"
 futures-util = "0.3"
@@ -140,7 +169,7 @@ k9 = "0.12.0"
 ktav = "0.6.1"
 lazy_static = "1.4"
 leb128 = "0.2"
-lfucache = { path = "crates/lfucache" }
+onlyterm-lfucache = { path = "crates/support/lfucache" }
 libc = "0.2"
 libflate = "2"
 libloading = "0.8"
@@ -153,8 +182,8 @@ memmem = "0.1"
 metrics = "0.23"
 miniz_oxide = "0.7"
 mio = "0.8"
-mux = { path = "crates/mux" }
-mux-funcs = { path = "crates/api-crates/mux-funcs" }
+onlyterm-mux = { path = "crates/session/mux" }
+onlyterm-mux-funcs = { path = "crates/session/api-crates/mux-funcs" }
 names = { version = "0.12", default-features = false }
 nix = "0.29"
 notify = "5.0.0"
@@ -171,14 +200,14 @@ pest_derive = "2.7"
 phf = {version="0.11", default-features=false}
 phf_codegen = "0.10"
 plist = "1.7"
-portable-pty = { path = "crates/pty" }
+portable-pty = { path = "crates/platform/pty" }
 predicates = "3.0"
 proc-macro2 = "1.0"
-procinfo = { path = "crates/procinfo" }
-promise = { path = "crates/promise" }
+onlyterm-procinfo = { path = "crates/platform/procinfo" }
+onlyterm-promise = { path = "crates/support/promise" }
 quote = "1.0.2"
-rangeset = { path = "crates/rangeset" }
-ratelim= { path = "crates/ratelim" }
+onlyterm-rangeset = { path = "crates/support/rangeset" }
+onlyterm-ratelim = { path = "crates/support/ratelim" }
 raw-window-handle = "0.6"
 rayon = "1.10"
 rcgen = "0.12"
@@ -204,12 +233,12 @@ socket2 = "0.5"
 spa = "0.3.1"
 strsim = "0.11"
 syn = "1.0"
-tabout = { path = "crates/tabout" }
+tabout = { path = "crates/support/tabout" }
 tar = "0.4"
 tempfile = "3.20"
 terminfo = "0.9"
-termwiz = { version="0.24.0", path = "crates/termwiz" }
-termwiz-funcs = { path = "crates/api-crates/termwiz-funcs" }
+termwiz = { version="0.24.0", path = "crates/terminal/termwiz" }
+onlyterm-termwiz-funcs = { path = "crates/terminal/api-crates/termwiz-funcs" }
 textwrap = "0.16"
 thiserror = "1.0"
 tiny-skia = "0.11"
@@ -218,44 +247,44 @@ toml = "0.8"
 tungstenite = "0.30"
 ucd-trie = {version="0.1", default-features=false}
 uds_windows = "1.1"
-umask = { path = "crates/umask" }
+onlyterm-umask = { path = "crates/platform/umask" }
 unicode-normalization = "0.1.24"
 unicode-segmentation = "1.12"
 url = "2"
 utf8parse = "0.2"
 uuid = "1.13"
 varbincode = "0.1"
-vtparse = { version="0.7", path="crates/vtparse", default-features=false }
+vtparse = { version="0.7", path="crates/terminal/vtparse", default-features=false }
 walkdir = "2"
 # wayland-* removed - Windows-only build
-onlyterm-bidi = { version="0.2.3", path = "crates/bidi", default-features=false}
-onlyterm-blob-leases = { version="0.1.1", path = "crates/onlyterm-blob-leases"}
-onlyterm-cell = { path = "crates/onlyterm-cell"}
-onlyterm-char-props = { path = "crates/onlyterm-char-props", default-features=false }
-onlyterm-color-schemes-data = { path = "crates/onlyterm-color-schemes-data" }
-onlyterm-client = { path = "crates/onlyterm-client" }
-onlyterm-color-types = { version="0.3", path = "crates/color-types", default-features=false }
-onlyterm-config-derive = { version="0.1", path="crates/config/derive" }
-onlyterm-dynamic = { version = "0.2.1", path = "crates/onlyterm-dynamic", default-features=false }
-onlyterm-dynamic-derive = { version="0.1.1", path="crates/onlyterm-dynamic/derive" }
-onlyterm-elevated-transport = { path = "crates/onlyterm-elevated-transport" }
-onlyterm-escape-parser = { version="0.1.0", path="crates/onlyterm-escape-parser" }
-onlyterm-font = { path = "crates/onlyterm-font" }
-onlyterm-gpu-render = { path = "crates/onlyterm-gpu-render" }
-onlyterm-gpu-protocol = { path = "crates/onlyterm-gpu-protocol" }
-onlyterm-gui-render-thread = { path = "crates/onlyterm-gui-render-thread" }
-onlyterm-gui-subcommands = { path = "crates/onlyterm-gui-subcommands" }
-onlyterm-input-types = { version="0.1", path = "crates/onlyterm-input-types", default-features=false }
-onlyterm-mux-server-impl = { path = "crates/onlyterm-mux-server-impl" }
-onlyterm-open-url = { path = "crates/onlyterm-open-url" }
-onlyterm-surface = { path = "crates/onlyterm-surface" }
-onlyterm-term = { path = "crates/term" }
-onlyterm-toast-notification = { path = "crates/onlyterm-toast-notification" }
-onlyterm-uds = { path = "crates/onlyterm-uds" }
-onlyterm-version = { path = "crates/onlyterm-version" }
+onlyterm-bidi = { version="0.2.3", path = "crates/terminal/bidi", default-features=false}
+onlyterm-blob-leases = { version="0.1.1", path = "crates/support/onlyterm-blob-leases"}
+onlyterm-cell = { path = "crates/terminal/onlyterm-cell"}
+onlyterm-char-props = { path = "crates/terminal/onlyterm-char-props", default-features=false }
+onlyterm-color-schemes-data = { path = "crates/configuration/onlyterm-color-schemes-data" }
+onlyterm-client = { path = "crates/session/onlyterm-client" }
+onlyterm-color-types = { version="0.3", path = "crates/terminal/color-types", default-features=false }
+onlyterm-config-derive = { version="0.1", path="crates/configuration/config/derive" }
+onlyterm-dynamic = { version = "0.2.1", path = "crates/configuration/onlyterm-dynamic", default-features=false }
+onlyterm-dynamic-derive = { version="0.1.1", path="crates/configuration/onlyterm-dynamic/derive" }
+onlyterm-elevated-transport = { path = "crates/platform/onlyterm-elevated-transport" }
+onlyterm-escape-parser = { version="0.1.0", path="crates/terminal/onlyterm-escape-parser" }
+onlyterm-font = { path = "crates/graphics/onlyterm-font" }
+onlyterm-gpu-render = { path = "crates/graphics/onlyterm-gpu-render" }
+onlyterm-gpu-protocol = { path = "crates/graphics/onlyterm-gpu-protocol" }
+onlyterm-gui-render-thread = { path = "crates/graphics/onlyterm-gui-render-thread" }
+onlyterm-gui-subcommands = { path = "crates/apps/onlyterm-gui-subcommands" }
+onlyterm-input-types = { version="0.1", path = "crates/terminal/onlyterm-input-types", default-features=false }
+onlyterm-mux-server-impl = { path = "crates/session/onlyterm-mux-server-impl" }
+onlyterm-open-url = { path = "crates/platform/onlyterm-open-url" }
+onlyterm-surface = { path = "crates/terminal/onlyterm-surface" }
+onlyterm-term = { path = "crates/terminal/term" }
+onlyterm-toast-notification = { path = "crates/platform/onlyterm-toast-notification" }
+onlyterm-uds = { path = "crates/platform/onlyterm-uds" }
+onlyterm-version = { path = "crates/support/onlyterm-version" }
 wgpu = "25.0.2"
 winapi = "0.3.9"
-window = {path="crates/window"}
+window = {path="crates/graphics/window"}
 windows = "0.58"
 winreg = "0.10"
 # x11, xcb, xcb-imdkit, xkbcommon removed - Windows-only build

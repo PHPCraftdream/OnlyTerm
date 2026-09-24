@@ -51,7 +51,7 @@ jobs:
         run: "cargo vendor --locked --versioned-dirs > .cargo/vendor.toml"
       - name: "Clippy (GUI, window, terminal and process tracking)"
         shell: cmd
-        run: "cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p mux -p procinfo --all-targets -- -D warnings"
+        run: "cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p onlyterm-mux -p onlyterm-procinfo --all-targets -- -D warnings"
       - name: "Build onlyterm (Release mode)"
         shell: cmd
         run: "cargo --config .cargo/vendor.toml build -p onlyterm --release --locked"

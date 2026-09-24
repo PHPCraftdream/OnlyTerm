@@ -1,0 +1,24 @@
+[package]
+name = "onlyterm-color-funcs"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow.workspace = true
+onlyterm-config.workspace = true
+csscolorparser = {workspace=true, features=["lab"]}
+deltae.workspace = true
+image.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+lru.workspace = true
+plist.workspace = true
+serde = {workspace=true, features=["derive"]}
+serde_json.workspace = true
+serde_yaml.workspace = true
+onlyterm-dynamic.workspace = true
+onlyterm-color-types = {workspace=true, features=["std"]}
+onlyterm-term = { workspace=true, features=["use_serde"] }

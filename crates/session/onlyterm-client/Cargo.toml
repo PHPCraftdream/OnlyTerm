@@ -1,0 +1,48 @@
+[package]
+name = "onlyterm-client"
+version = "0.1.0"
+authors = ["Wez Furlong <wez@wezfurlong.org>"]
+edition = "2018"
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow.workspace = true
+async-io.workspace = true
+async-trait.workspace = true
+onlyterm-codec.workspace = true
+onlyterm-config.workspace = true
+filedescriptor.workspace = true
+futures.workspace = true
+lazy_static.workspace = true
+log.workspace = true
+lru.workspace = true
+metrics.workspace = true
+onlyterm-mux.workspace = true
+parking_lot.workspace = true
+portable-pty = { workspace=true, features = ["serde_support"]}
+onlyterm-promise.workspace = true
+onlyterm-rangeset.workspace = true
+onlyterm-ratelim.workspace = true
+smol.workspace = true
+termwiz.workspace = true
+textwrap.workspace = true
+thiserror.workspace = true
+onlyterm-umask.workspace = true
+url.workspace = true
+onlyterm-dynamic.workspace = true
+onlyterm-term = { workspace=true, features=["use_serde"] }
+onlyterm-uds.workspace = true
+
+[target."cfg(windows)".dependencies]
+winapi = { workspace=true, features = [
+    "winuser",
+    "errhandlingapi",
+    "handleapi",
+    "processthreadsapi",
+    "synchapi",
+    "winbase",
+    "winnt",
+    "minwindef",
+]}

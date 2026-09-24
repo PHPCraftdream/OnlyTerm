@@ -1,0 +1,534 @@
+//! The connection to the GUI subsystem
+use super::window::get_primary_monitor_dpi;
+use super::{watchdog, HWindow, WindowInner};
+use crate::connection::ConnectionOps;
+use crate::screen::{ScreenInfo, Screens};
+use crate::spawn::*;
+use crate::{Appearance, ScreenRect};
+use anyhow::Context;
+use onlyterm_config::ConfigHandle;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ffi::OsString;
+use std::os::windows::ffi::OsStringExt;
+use std::ptr::null_mut;
+use std::rc::Rc;
+use winapi::shared::minwindef::*;
+use winapi::shared::windef::*;
+use winapi::shared::winerror::ERROR_SUCCESS;
+use winapi::um::shellscalingapi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use winapi::um::winbase::INFINITE;
+use winapi::um::wingdi::{
+    DEVMODEW, DISPLAY_DEVICEW, DM_DISPLAYFREQUENCY, QDC_ONLY_ACTIVE_PATHS, QDC_VIRTUAL_MODE_AWARE,
+};
+use winapi::um::winnt::HANDLE;
+use winapi::um::winuser::*;
+use windows::Win32::Devices::Display::{
+    DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QueryDisplayConfig,
+    DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+    DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO, DISPLAYCONFIG_SOURCE_DEVICE_NAME,
+    DISPLAYCONFIG_TARGET_DEVICE_NAME, QUERY_DISPLAY_CONFIG_FLAGS,
+};
+// `GetDisplayConfigBufferSizes`/`QueryDisplayConfig` return the typed
+// `windows`-crate `WIN32_ERROR`, unlike `DisplayConfigGetDeviceInfo` below
+// (still a bare `i32`, compared against the `winapi`-imported constants) --
+// renamed to avoid clashing with those `winapi::shared::winerror` imports.
+use windows::Win32::Foundation::{
+    ERROR_INSUFFICIENT_BUFFER as WIN_ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS as WIN_ERROR_SUCCESS,
+};
+use winreg::enums::HKEY_CURRENT_USER;
+use winreg::RegKey;
+
+pub struct Connection {
+    event_handle: HANDLE,
+    pub(crate) windows: RefCell<HashMap<HWindow, Rc<RefCell<WindowInner>>>>,
+    pub(crate) main_thread_id: Option<std::thread::ThreadId>,
+}
+
+pub(crate) fn get_appearance() -> Appearance {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu.open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize") {
+        Ok(theme) => {
+            let light = theme.get_value::<u32, _>("AppsUseLightTheme").unwrap_or(1) == 1;
+            if light {
+                Appearance::Light
+            } else {
+                Appearance::Dark
+            }
+        }
+        _ => Appearance::Light,
+    }
+}
+
+impl ConnectionOps for Connection {
+    fn terminate_message_loop(&self) {
+        // SAFETY: PostQuitMessage posts a WM_QUIT to this thread's queue and
+        // takes no pointer/string arguments; it is the documented Win32 way to
+        // request message-loop exit and is safe to call from any thread.
+        unsafe {
+            PostQuitMessage(0);
+        }
+    }
+
+    fn get_appearance(&self) -> Appearance {
+        get_appearance()
+    }
+
+    fn name(&self) -> String {
+        "Windows".to_string()
+    }
+
+    // New windows are placed on the primary monitor unless a specific
+    // position was requested, so querying its real DPI here (instead of
+    // falling back to the hardcoded 96 default) lets the pre-creation
+    // window-size computation (cols/rows -> pixel size via RenderMetrics
+    // in `Config::initial_size`) already match what `GetDpiForWindow`
+    // will report once the window exists. Without this, on a HiDPI primary
+    // monitor `new_window` builds its `FontConfiguration`/`RenderMetrics`
+    // on the 96 default; after creation
+    // `check_and_call_resize_if_needed` reads the real DPI, detects the
+    // mismatch with the cached `last_size.dpi`, and dispatches a
+    // `WindowEvent::Resized`, after which the GUI rebuilds fonts/metrics
+    // and calls `set_inner_size` -- producing a visible resize. (This
+    // codebase has no `WM_DPICHANGED` handler, so the OS itself never
+    // forces that correction; the mismatch is entirely internal.)
+    fn default_dpi(&self) -> f64 {
+        get_primary_monitor_dpi() as f64
+    }
+
+    fn run_message_loop(&self) -> anyhow::Result<()> {
+        // SAFETY: MSG is a plain repr(C) struct of integer/handle fields; an
+        // all-zero value is valid and is fully overwritten by PeekMessageW
+        // before any field is read.
+        let mut msg: MSG = unsafe { std::mem::zeroed() };
+        loop {
+            // Cheap heartbeat bump so the watchdog thread (see
+            // `super::watchdog`) can tell this loop is still alive; must
+            // stay a plain atomic increment to avoid adding latency here.
+            watchdog::record_heartbeat();
+
+            SPAWN_QUEUE.run();
+
+            // SAFETY: PeekMessageW is the documented Win32 message-queue API.
+            // `&mut msg` is a valid pointer to our local MSG; a NULL hwnd means
+            // "any window", the filter range 0..0 means "all messages", and
+            // PM_REMOVE is a valid flag, all permitted by MSDN.
+            let res = unsafe { PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) };
+            if res != 0 {
+                if msg.message == WM_QUIT {
+                    // Clear our state before we exit, otherwise we can
+                    // trigger `drop` handlers during shutdown and that
+                    // can have bad interactions
+                    self.windows.borrow_mut().clear();
+                    return Ok(());
+                }
+
+                // SAFETY: DispatchMessageW dispatches the message that
+                // PeekMessageW just fully initialized into `msg`; `&mut msg` is
+                // a valid pointer to that MSG and the WndProc receives it by
+                // reference. (TranslateMessage is intentionally not called here.)
+                unsafe {
+                    // We don't want to call TranslateMessage here
+                    // unconditionally.  Instead, we perform translation
+                    // in a handful of special cases in window.rs.
+                    DispatchMessageW(&msg);
+                }
+            } else {
+                watchdog::begin_idle_wait();
+                self.wait_message();
+                watchdog::end_idle_wait();
+            }
+        }
+    }
+
+    fn beep(&self) {
+        // SAFETY: MessageBeep plays a system sound; MB_OK is a valid sound
+        // type and the call takes no pointer arguments.
+        unsafe {
+            MessageBeep(MB_OK);
+        }
+    }
+
+    fn screens(&self) -> anyhow::Result<Screens> {
+        let mut info = ScreenInfoHelper::new()?;
+        info.enumerate();
+
+        let main = info
+            .primary
+            .ok_or_else(|| anyhow::anyhow!("There is no primary monitor configured!?"))?;
+        let active = info.active.unwrap_or_else(|| main.clone());
+
+        Ok(Screens {
+            main,
+            active,
+            by_name: info.by_name,
+            virtual_rect: info.virtual_rect,
+        })
+    }
+}
+
+impl Connection {
+    pub(crate) fn create_new() -> anyhow::Result<Self> {
+        let event_handle = SPAWN_QUEUE.event_handle.0;
+        watchdog::spawn_watchdog_thread();
+        Ok(Self {
+            event_handle,
+            windows: RefCell::new(HashMap::new()),
+            main_thread_id: Some(std::thread::current().id()),
+        })
+    }
+
+    fn wait_message(&self) {
+        // SAFETY: MsgWaitForMultipleObjects is the documented Win32 wait API.
+        // nCount=1 with `&self.event_handle` being a valid live HANDLE array of
+        // that length, waitAll=FALSE, INFINITE timeout, and a valid combined
+        // input wake mask are all permitted by MSDN.
+        unsafe {
+            MsgWaitForMultipleObjects(
+                1,
+                &self.event_handle,
+                0,
+                INFINITE,
+                QS_ALLEVENTS | QS_ALLINPUT | QS_ALLPOSTMESSAGE,
+            );
+        }
+    }
+
+    pub(crate) fn get_window(&self, handle: HWindow) -> Option<Rc<RefCell<WindowInner>>> {
+        self.windows.borrow().get(&handle).map(Rc::clone)
+    }
+
+    pub(crate) fn with_window_inner<
+        R,
+        F: FnOnce(&mut WindowInner) -> anyhow::Result<R> + Send + 'static,
+    >(
+        window: HWindow,
+        f: F,
+    ) -> onlyterm_promise::Future<R>
+    where
+        R: Send + 'static,
+    {
+        let mut prom = onlyterm_promise::Promise::new();
+        let future = prom.get_future().unwrap();
+        onlyterm_promise::spawn::spawn_into_main_thread(async move {
+            if let Some(handle) = Connection::get()
+                .expect("Connection::init has not been called")
+                .get_window(window)
+            {
+                let mut inner = handle.borrow_mut();
+                prom.result(f(&mut inner));
+            }
+        })
+        .detach();
+
+        future
+    }
+}
+
+pub(crate) struct ScreenInfoHelper {
+    primary: Option<ScreenInfo>,
+    active: Option<ScreenInfo>,
+    by_name: HashMap<String, ScreenInfo>,
+    virtual_rect: ScreenRect,
+    active_handle: HMONITOR,
+    friendly_names: HashMap<String, String>,
+    gdi_to_adapater: HashMap<String, String>,
+    config: ConfigHandle,
+}
+
+impl ScreenInfoHelper {
+    pub fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            primary: None,
+            active: None,
+            by_name: HashMap::new(),
+            virtual_rect: euclid::rect(0, 0, 0, 0),
+            // SAFETY: GetFocus and MonitorFromWindow are documented Win32
+            // APIs. GetFocus may return NULL (no focused window), but
+            // MONITOR_DEFAULTTONEAREST guarantees MonitorFromWindow returns a
+            // valid non-null HMONITOR in that case, so the result is always
+            // usable.
+            active_handle: unsafe { MonitorFromWindow(GetFocus(), MONITOR_DEFAULTTONEAREST) },
+            friendly_names: gdi_display_name_to_friendly_monitor_names()?,
+            gdi_to_adapater: gdi_display_name_to_adapter_names(),
+            config: onlyterm_config::configuration(),
+        })
+    }
+
+    pub fn enumerate(&mut self) {
+        unsafe extern "system" fn callback(
+            mon: HMONITOR,
+            _hdc: HDC,
+            _rect: *mut RECT,
+            data: LPARAM,
+        ) -> i32 {
+            // SAFETY: this fn is `unsafe extern "system"` to satisfy the
+            // MONITORENUMPROC ABI. `data` is the LPARAM we pass to
+            // EnumDisplayMonitors below (`self as *mut _ as LPARAM`), so casting
+            // it back to `&mut ScreenInfoHelper` is sound: `self` outlives the
+            // synchronous enumeration. `mon`/`_hdc` are valid GDI handles for
+            // the duration of the callback. The zeroed MONITORINFOEXW and
+            // DEVMODEW are repr(C) POD structs whose cbSize/dmSize fields are
+            // set before the GDI calls that populate them.
+            let info: &mut ScreenInfoHelper = &mut *(data as *mut ScreenInfoHelper);
+            let mut mi: MONITORINFOEXW = std::mem::zeroed();
+            mi.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+            GetMonitorInfoW(mon, &mut mi as *mut MONITORINFOEXW as *mut MONITORINFO);
+
+            let mut devmode: DEVMODEW = std::mem::zeroed();
+            devmode.dmSize = std::mem::size_of::<DEVMODEW>() as u16;
+            let max_fps =
+                if EnumDisplaySettingsW(mi.szDevice.as_ptr(), ENUM_CURRENT_SETTINGS, &mut devmode)
+                    != 0
+                    && (devmode.dmFields & DM_DISPLAYFREQUENCY) != 0
+                    && devmode.dmDisplayFrequency > 1
+                {
+                    Some(devmode.dmDisplayFrequency as usize)
+                } else {
+                    None
+                };
+
+            let monitor_name = info.monitor_name(&mi);
+
+            let mut effective_dpi = None;
+
+            if let Some(dpi) = info.config.dpi_by_screen.get(&monitor_name).copied() {
+                effective_dpi.replace(dpi);
+            } else if let Some(dpi) = info.config.dpi {
+                effective_dpi.replace(dpi);
+            } else {
+                let mut dpi_x = 0;
+                let mut dpi_y = 0;
+                GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
+                if dpi_x != 0 {
+                    effective_dpi.replace(dpi_x as f64);
+                }
+            }
+
+            let screen_info = ScreenInfo {
+                name: monitor_name.clone(),
+                rect: euclid::rect(
+                    mi.rcMonitor.left as isize,
+                    mi.rcMonitor.top as isize,
+                    mi.rcMonitor.right as isize - mi.rcMonitor.left as isize,
+                    mi.rcMonitor.bottom as isize - mi.rcMonitor.top as isize,
+                ),
+                scale: 1.0,
+                max_fps,
+                effective_dpi,
+            };
+
+            info.virtual_rect = info.virtual_rect.union(&screen_info.rect);
+
+            if mi.dwFlags & MONITORINFOF_PRIMARY == MONITORINFOF_PRIMARY {
+                info.primary.replace(screen_info.clone());
+            }
+            if mon == info.active_handle {
+                info.active.replace(screen_info.clone());
+            }
+
+            info.by_name.insert(monitor_name, screen_info);
+
+            winapi::shared::ntdef::TRUE.into()
+        }
+
+        // SAFETY: a NULL hdc with a NULL clipping rect enumerates every
+        // monitor; `callback` has the MONITORENUMPROC signature; the LPARAM is
+        // `self as *mut _ as LPARAM`, valid for the duration of this synchronous
+        // call, which is exactly what the callback casts back.
+        unsafe {
+            EnumDisplayMonitors(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                Some(callback),
+                self as *mut _ as LPARAM,
+            );
+        }
+    }
+
+    pub fn monitor_name(&self, mi: &MONITORINFOEXW) -> String {
+        // SAFETY: `mi.szDevice` / `display_device.DeviceString` are
+        // NUL-terminated wide arrays produced by GDI and are only read by the
+        // safe `wstr` helper (up to the NUL). EnumDisplayDevicesW receives a
+        // NULL device name with a valid `&mut display_device` whose `cb` is set
+        // and dwFlags=0, all permitted by MSDN.
+        unsafe {
+            let monitor_name = wstr(&mi.szDevice);
+            let friendly_name = match self.friendly_names.get(&monitor_name) {
+                Some(name) => name.to_string(),
+                None => {
+                    // Fall back to EnumDisplayDevicesW.
+                    // It likely has a terribly generic name like "Generic PnP Monitor".
+                    let mut display_device: DISPLAY_DEVICEW = std::mem::zeroed();
+                    display_device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+                    if EnumDisplayDevicesW(mi.szDevice.as_ptr(), 0, &mut display_device, 0) != 0 {
+                        wstr(&display_device.DeviceString)
+                    } else {
+                        "Unknown".to_string()
+                    }
+                }
+            };
+
+            let adapter_name = match self.gdi_to_adapater.get(&monitor_name) {
+                Some(name) => name.to_string(),
+                None => "Unknown".to_string(),
+            };
+
+            // "\\.\DISPLAY1" -> "DISPLAY1"
+            let monitor_name = if let Some(name) = monitor_name.strip_prefix("\\\\.\\") {
+                name.to_string()
+            } else {
+                monitor_name
+            };
+
+            let monitor_name = format!("{monitor_name}: {friendly_name} on {adapter_name}");
+
+            monitor_name
+        }
+    }
+}
+
+/// Convert a UCS2 wide char string to a Rust String
+fn wstr(slice: &[u16]) -> String {
+    let len = slice.iter().position(|&c| c == 0).unwrap_or(0);
+    OsString::from_wide(&slice[0..len])
+        .to_string_lossy()
+        .to_string()
+}
+
+/// Build a mapping of GDI paths like `\\.\DISPLAY6` to the name of the associated
+/// display adapter eg: `NVIDIA GeForce RTX 3080 Ti`.
+fn gdi_display_name_to_adapter_names() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+
+    // SAFETY: DISPLAY_DEVICEW is a repr(C) POD struct; zero-initialising it is
+    // valid, and `cb` is set before it is passed to EnumDisplayDevicesW below.
+    let mut display_device: DISPLAY_DEVICEW = unsafe { std::mem::zeroed() };
+    display_device.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+
+    for n in 0.. {
+        // SAFETY: a NULL lpDevice enumerates adapters by index `n`; the
+        // `&mut display_device` pointer is valid and has its `cb` field set;
+        // dwFlags=0 is the documented no-op value.
+        if unsafe { EnumDisplayDevicesW(std::ptr::null(), n, &mut display_device, 0) } == 0 {
+            break;
+        }
+        let adapter_name = wstr(&display_device.DeviceString);
+        let gdi_name = wstr(&display_device.DeviceName);
+
+        map.insert(gdi_name, adapter_name);
+    }
+    map
+}
+
+/// Build a mapping of GDI paths like `\\.\DISPLAY6` to the corresponding friendly name of
+/// the associated monitor eg: `Gigabyte M32U`.
+fn gdi_display_name_to_friendly_monitor_names() -> anyhow::Result<HashMap<String, String>> {
+    let mut paths: Vec<DISPLAYCONFIG_PATH_INFO> = vec![];
+    let mut modes: Vec<DISPLAYCONFIG_MODE_INFO> = vec![];
+    let mut map = HashMap::new();
+
+    let flags = QUERY_DISPLAY_CONFIG_FLAGS(QDC_ONLY_ACTIVE_PATHS | QDC_VIRTUAL_MODE_AWARE);
+
+    loop {
+        let mut path_count = 0u32;
+        let mut mode_count = 0u32;
+
+        // SAFETY: GetDisplayConfigBufferSizes is the documented QueryDisplayConfig
+        // sizing API; `flags` is a valid combination and the two out-pointers
+        // reference local u32s.
+        let result = unsafe {
+            GetDisplayConfigBufferSizes(flags, &mut path_count as *mut _, &mut mode_count as *mut _)
+        };
+
+        if result != WIN_ERROR_SUCCESS {
+            return Err(std::io::Error::last_os_error()).context("GetDisplayConfigBufferSizes");
+        }
+
+        // SAFETY: `resize_with` is a safe Vec method; the only unsafe op here is
+        // `std::mem::zeroed()`, which produces valid zero-initialised
+        // DISPLAYCONFIG_PATH_INFO / DISPLAYCONFIG_MODE_INFO (repr(C) POD structs
+        // with no niche invalidity), sized by the caller-provided counts.
+        unsafe {
+            paths.resize_with(path_count as usize, || std::mem::zeroed());
+            modes.resize_with(mode_count as usize, || std::mem::zeroed());
+        }
+
+        // SAFETY: QueryDisplayConfig is the documented display-config API;
+        // `flags` is valid, the count pointers reference local u32s, and
+        // `paths`/`modes` are Vecs whose lengths match those counts with valid
+        // pointers; a NULL topology id is permitted.
+        let result = unsafe {
+            QueryDisplayConfig(
+                flags,
+                &mut path_count as *mut _,
+                paths.as_mut_ptr(),
+                &mut mode_count as &mut _,
+                modes.as_mut_ptr(),
+                None,
+            )
+        };
+
+        // Shrink down if fewer paths than were requested were
+        // returned to us
+        // SAFETY: `resize_with` is a safe Vec method; the only unsafe op here is
+        // `std::mem::zeroed()`, which produces valid zero-initialised
+        // DISPLAYCONFIG_PATH_INFO / DISPLAYCONFIG_MODE_INFO (repr(C) POD structs
+        // with no niche invalidity), sized by the caller-provided counts.
+        unsafe {
+            paths.resize_with(path_count as usize, || std::mem::zeroed());
+            modes.resize_with(mode_count as usize, || std::mem::zeroed());
+        }
+
+        if result == WIN_ERROR_INSUFFICIENT_BUFFER {
+            continue;
+        }
+
+        if result != WIN_ERROR_SUCCESS {
+            return Err(std::io::Error::last_os_error()).context("QueryDisplayConfig");
+        }
+
+        break;
+    }
+
+    for path in &paths {
+        // SAFETY: DISPLAYCONFIG_TARGET_DEVICE_NAME is a repr(C) POD struct; zero
+        // initialisation is valid and its `header.size` is set before use.
+        let mut target_name: DISPLAYCONFIG_TARGET_DEVICE_NAME = unsafe { std::mem::zeroed() };
+
+        target_name.header.adapterId = path.targetInfo.adapterId;
+        target_name.header.id = path.targetInfo.id;
+        target_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+        target_name.header.size = std::mem::size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32;
+
+        // SAFETY: `target_name` is fully initialised (adapterId/id/type/size set);
+        // the pointer to its header is valid for the duration of this call.
+        let result = unsafe { DisplayConfigGetDeviceInfo(&mut target_name.header) };
+        if result != ERROR_SUCCESS as i32 {
+            return Err(std::io::Error::last_os_error())
+                .context("DisplayConfigGetDeviceInfo DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME");
+        }
+
+        // SAFETY: DISPLAYCONFIG_SOURCE_DEVICE_NAME is a repr(C) POD struct; zero
+        // initialisation is valid and its `header.size` is set before use.
+        let mut source_name: DISPLAYCONFIG_SOURCE_DEVICE_NAME = unsafe { std::mem::zeroed() };
+        source_name.header.adapterId = path.targetInfo.adapterId;
+        source_name.header.r#type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+        source_name.header.size = std::mem::size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32;
+
+        // SAFETY: `source_name` is fully initialised (adapterId/type/size set);
+        // the pointer to its header is valid for the duration of this call.
+        let result = unsafe { DisplayConfigGetDeviceInfo(&mut source_name.header) };
+        if result != ERROR_SUCCESS as i32 {
+            return Err(std::io::Error::last_os_error())
+                .context("DisplayConfigGetDeviceInfo DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME");
+        }
+
+        let name = wstr(&target_name.monitorFriendlyDeviceName);
+        let gdi_name = wstr(&source_name.viewGdiDeviceName);
+
+        map.insert(gdi_name, name);
+    }
+    Ok(map)
+}

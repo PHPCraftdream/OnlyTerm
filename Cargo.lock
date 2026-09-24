@@ -421,10 +421,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
-name = "base91"
-version = "0.1.0"
-
-[[package]]
 name = "bench-scale-tool"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -435,10 +431,6 @@ name = "benchmarking"
 version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c335a9de639ba6a3e4107fe7763c9dcd4eb9422575f1191c2b8f2009f03fe4a"
-
-[[package]]
-name = "bintree"
-version = "0.1.0"
 
 [[package]]
 name = "bit-set"
@@ -734,29 +726,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "codec"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base91",
- "config",
- "flate2",
- "leb128",
- "log",
- "metrics",
- "mux",
- "onlyterm-term",
- "onlyterm-uds",
- "portable-pty",
- "rangeset",
- "serde",
- "smol",
- "termwiz",
- "thiserror 1.0.69",
- "varbincode",
-]
-
-[[package]]
 name = "codespan-reporting"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -765,27 +734,6 @@ dependencies = [
  "serde",
  "termcolor",
  "unicode-width",
-]
-
-[[package]]
-name = "color-funcs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "config",
- "csscolorparser",
- "deltae",
- "image",
- "lazy_static",
- "log",
- "lru",
- "onlyterm-color-types",
- "onlyterm-dynamic",
- "onlyterm-term",
- "plist",
- "serde",
- "serde_json",
- "serde_yaml",
 ]
 
 [[package]]
@@ -841,43 +789,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
-]
-
-[[package]]
-name = "config"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bitflags 1.3.2",
- "colorgrad",
- "dirs-next",
- "dunce",
- "enum-display-derive",
- "env_logger 0.11.10",
- "hostname",
- "ktav",
- "lazy_static",
- "log",
- "notify",
- "onlyterm-bidi",
- "onlyterm-color-schemes-data",
- "onlyterm-config-derive",
- "onlyterm-dynamic",
- "onlyterm-input-types",
- "onlyterm-term",
- "ordered-float",
- "portable-pty",
- "promise",
- "serde",
- "serde_json",
- "shlex 1.3.0",
- "smol",
- "tempfile",
- "termwiz",
- "toml 0.8.23",
- "umask",
- "winapi",
- "winreg",
 ]
 
 [[package]]
@@ -1296,25 +1207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "env-bootstrap"
-version = "0.1.0"
-dependencies = [
- "backtrace",
- "chrono",
- "color-funcs",
- "config",
- "dirs-next",
- "env_logger 0.10.2",
- "lazy_static",
- "libc",
- "log",
- "onlyterm-version",
- "termwiz",
- "termwiz-funcs",
- "winapi",
-]
-
-[[package]]
 name = "env_filter"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1598,16 +1490,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "frecency"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "serde_with",
 ]
 
 [[package]]
@@ -2667,18 +2549,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a79a3332a6609480d7d0c9eab957bca6b455b91bb84e66d19f5ff66294b85b8"
 
 [[package]]
-name = "lfucache"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "config",
- "fnv",
- "intrusive-collections",
- "k9",
- "metrics",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2957,73 +2827,6 @@ checksum = "bb85c154ba489f01b25c0d36ae69a87e4a1c73a72631fc6c0eb6dde34a73e44b"
 dependencies = [
  "num-traits",
  "pxfm",
-]
-
-[[package]]
-name = "mux"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bench-scale-tool",
- "bintree",
- "bitflags 1.3.2",
- "captrack",
- "chrono",
- "config",
- "crossbeam",
- "downcast-rs",
- "fancy-regex",
- "filedescriptor",
- "finl_unicode",
- "hostname",
- "k9",
- "lazy_static",
- "log",
- "metrics",
- "names",
- "ntapi",
- "onlyterm-dynamic",
- "onlyterm-term",
- "parking_lot",
- "percent-encoding",
- "portable-pty",
- "procinfo",
- "promise",
- "rangeset",
- "serde",
- "serial2",
- "shell-words",
- "smol",
- "terminfo",
- "termwiz",
- "termwiz-funcs",
- "textwrap",
- "thiserror 1.0.69",
- "url",
- "winapi",
-]
-
-[[package]]
-name = "mux-funcs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "config",
- "lazy_static",
- "libc",
- "log",
- "mux",
- "onlyterm-dynamic",
- "onlyterm-term",
- "parking_lot",
- "portable-pty",
- "promise",
- "serde",
- "smol",
- "termwiz",
- "termwiz-funcs",
 ]
 
 [[package]]
@@ -3327,22 +3130,24 @@ dependencies = [
  "clap",
  "clap_complete",
  "clap_complete_fig",
- "codec",
- "config",
  "embed-resource",
- "env-bootstrap",
  "filedescriptor",
  "hostname",
  "humantime",
  "image",
  "libc",
  "log",
- "mux",
  "onlyterm-client",
+ "onlyterm-codec",
+ "onlyterm-config",
+ "onlyterm-env-bootstrap",
  "onlyterm-gui-subcommands",
+ "onlyterm-mux",
+ "onlyterm-promise",
  "onlyterm-term",
+ "onlyterm-termwiz-funcs",
+ "onlyterm-umask",
  "portable-pty",
- "promise",
  "sefer-alloc",
  "serde",
  "serde_json",
@@ -3351,12 +3156,14 @@ dependencies = [
  "tabout",
  "tempfile",
  "termwiz",
- "termwiz-funcs",
  "textwrap",
- "umask",
  "url",
  "winapi",
 ]
+
+[[package]]
+name = "onlyterm-base91"
+version = "0.1.0"
 
 [[package]]
 name = "onlyterm-bidi"
@@ -3417,30 +3224,74 @@ dependencies = [
  "anyhow",
  "async-io",
  "async-trait",
- "codec",
- "config",
  "filedescriptor",
  "futures",
  "lazy_static",
  "log",
  "lru",
  "metrics",
- "mux",
+ "onlyterm-codec",
+ "onlyterm-config",
  "onlyterm-dynamic",
+ "onlyterm-mux",
+ "onlyterm-promise",
+ "onlyterm-rangeset",
+ "onlyterm-ratelim",
  "onlyterm-term",
  "onlyterm-uds",
+ "onlyterm-umask",
  "parking_lot",
  "portable-pty",
- "promise",
- "rangeset",
- "ratelim",
  "smol",
  "termwiz",
  "textwrap",
  "thiserror 1.0.69",
- "umask",
  "url",
  "winapi",
+]
+
+[[package]]
+name = "onlyterm-codec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "leb128",
+ "log",
+ "metrics",
+ "onlyterm-base91",
+ "onlyterm-config",
+ "onlyterm-mux",
+ "onlyterm-rangeset",
+ "onlyterm-term",
+ "onlyterm-uds",
+ "portable-pty",
+ "serde",
+ "smol",
+ "termwiz",
+ "thiserror 1.0.69",
+ "varbincode",
+]
+
+[[package]]
+name = "onlyterm-color-funcs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "csscolorparser",
+ "deltae",
+ "image",
+ "lazy_static",
+ "log",
+ "lru",
+ "onlyterm-color-types",
+ "onlyterm-config",
+ "onlyterm-dynamic",
+ "onlyterm-term",
+ "plist",
+ "serde",
+ "serde_json",
+ "serde_yaml",
 ]
 
 [[package]]
@@ -3456,6 +3307,43 @@ dependencies = [
  "num-traits",
  "onlyterm-dynamic",
  "serde",
+]
+
+[[package]]
+name = "onlyterm-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bitflags 1.3.2",
+ "colorgrad",
+ "dirs-next",
+ "dunce",
+ "enum-display-derive",
+ "env_logger 0.11.10",
+ "hostname",
+ "ktav",
+ "lazy_static",
+ "log",
+ "notify",
+ "onlyterm-bidi",
+ "onlyterm-color-schemes-data",
+ "onlyterm-config-derive",
+ "onlyterm-dynamic",
+ "onlyterm-input-types",
+ "onlyterm-promise",
+ "onlyterm-term",
+ "onlyterm-umask",
+ "ordered-float",
+ "portable-pty",
+ "serde",
+ "serde_json",
+ "shlex 1.3.0",
+ "smol",
+ "tempfile",
+ "termwiz",
+ "toml 0.8.23",
+ "winapi",
+ "winreg",
 ]
 
 [[package]]
@@ -3493,13 +3381,32 @@ name = "onlyterm-elevated-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "codec",
  "filedescriptor",
  "getrandom 0.3.4",
  "http",
  "log",
+ "onlyterm-codec",
  "onlyterm-uds",
  "tungstenite",
+]
+
+[[package]]
+name = "onlyterm-env-bootstrap"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "chrono",
+ "dirs-next",
+ "env_logger 0.10.2",
+ "lazy_static",
+ "libc",
+ "log",
+ "onlyterm-color-funcs",
+ "onlyterm-config",
+ "onlyterm-termwiz-funcs",
+ "onlyterm-version",
+ "termwiz",
+ "winapi",
 ]
 
 [[package]]
@@ -3536,7 +3443,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "config",
  "dwrote",
  "encoding_rs",
  "enum-display-derive",
@@ -3546,17 +3452,18 @@ dependencies = [
  "image",
  "k9",
  "lazy_static",
- "lfucache",
  "log",
  "memmap2",
  "metrics",
  "onlyterm-bidi",
  "onlyterm-color-types",
+ "onlyterm-config",
  "onlyterm-input-types",
+ "onlyterm-lfucache",
+ "onlyterm-rangeset",
  "onlyterm-term",
  "onlyterm-toast-notification",
  "ordered-float",
- "rangeset",
  "rustybuzz",
  "serde",
  "serde_json",
@@ -3584,15 +3491,15 @@ dependencies = [
  "ahash",
  "anyhow",
  "bytemuck",
- "config",
  "filedescriptor",
  "futures",
  "log",
  "metrics",
  "onlyterm-client",
+ "onlyterm-config",
  "onlyterm-gpu-protocol",
+ "onlyterm-promise",
  "parking_lot",
- "promise",
  "smol",
  "wgpu",
  "winapi",
@@ -3613,21 +3520,17 @@ dependencies = [
  "cc",
  "chrono",
  "clap",
- "codec",
  "colorgrad",
- "config",
  "dhat",
  "dirs-next",
  "downcast-rs",
  "embed-resource",
  "emojis",
- "env-bootstrap",
  "env_logger 0.11.10",
  "euclid",
  "fastrand",
  "filedescriptor",
  "finl_unicode",
- "frecency",
  "futures",
  "hdrhistogram",
  "http_req",
@@ -3635,41 +3538,47 @@ dependencies = [
  "image-webp",
  "k9",
  "lazy_static",
- "lfucache",
  "libc",
  "log",
  "lru",
  "metrics",
- "mux",
- "mux-funcs",
  "nucleo-matcher",
  "onlyterm-bidi",
  "onlyterm-blob-leases",
  "onlyterm-client",
+ "onlyterm-codec",
+ "onlyterm-config",
  "onlyterm-dynamic",
  "onlyterm-elevated-transport",
+ "onlyterm-env-bootstrap",
  "onlyterm-font",
  "onlyterm-gpu-render",
  "onlyterm-gui-render-thread",
  "onlyterm-gui-subcommands",
+ "onlyterm-lfucache",
+ "onlyterm-mux",
+ "onlyterm-mux-funcs",
  "onlyterm-mux-server-impl",
  "onlyterm-open-url",
+ "onlyterm-procinfo",
+ "onlyterm-promise",
+ "onlyterm-rangeset",
+ "onlyterm-ratelim",
  "onlyterm-surface",
  "onlyterm-term",
+ "onlyterm-termwiz-funcs",
  "onlyterm-toast-notification",
  "onlyterm-uds",
+ "onlyterm-umask",
  "ordered-float",
  "parking_lot",
  "portable-pty",
- "procinfo",
- "promise",
- "rangeset",
- "ratelim",
  "rayon",
  "regex",
  "sefer-alloc",
  "serde",
  "serde_json",
+ "serde_with",
  "shared_library",
  "shlex 1.3.0",
  "smol",
@@ -3677,11 +3586,9 @@ dependencies = [
  "tempfile",
  "terminfo",
  "termwiz",
- "termwiz-funcs",
  "textwrap",
  "thiserror 1.0.69",
  "tiny-skia",
- "umask",
  "unicode-normalization",
  "unicode-segmentation",
  "url",
@@ -3696,9 +3603,9 @@ dependencies = [
 name = "onlyterm-gui-render-thread"
 version = "0.1.0"
 dependencies = [
- "config",
  "log",
  "metrics",
+ "onlyterm-config",
  "onlyterm-gpu-render",
  "parking_lot",
  "wgpu",
@@ -3710,7 +3617,7 @@ name = "onlyterm-gui-subcommands"
 version = "0.1.0"
 dependencies = [
  "clap",
- "config",
+ "onlyterm-config",
 ]
 
 [[package]]
@@ -3724,28 +3631,106 @@ dependencies = [
 ]
 
 [[package]]
+name = "onlyterm-lfucache"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "fnv",
+ "intrusive-collections",
+ "k9",
+ "metrics",
+ "onlyterm-config",
+]
+
+[[package]]
+name = "onlyterm-mux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bench-scale-tool",
+ "bitflags 1.3.2",
+ "captrack",
+ "chrono",
+ "crossbeam",
+ "downcast-rs",
+ "fancy-regex",
+ "filedescriptor",
+ "finl_unicode",
+ "hostname",
+ "k9",
+ "lazy_static",
+ "log",
+ "metrics",
+ "names",
+ "ntapi",
+ "onlyterm-config",
+ "onlyterm-dynamic",
+ "onlyterm-procinfo",
+ "onlyterm-promise",
+ "onlyterm-rangeset",
+ "onlyterm-term",
+ "onlyterm-termwiz-funcs",
+ "parking_lot",
+ "percent-encoding",
+ "portable-pty",
+ "serde",
+ "serial2",
+ "shell-words",
+ "smol",
+ "terminfo",
+ "termwiz",
+ "textwrap",
+ "thiserror 1.0.69",
+ "url",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-mux-funcs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lazy_static",
+ "libc",
+ "log",
+ "onlyterm-config",
+ "onlyterm-dynamic",
+ "onlyterm-mux",
+ "onlyterm-promise",
+ "onlyterm-term",
+ "onlyterm-termwiz-funcs",
+ "parking_lot",
+ "portable-pty",
+ "serde",
+ "smol",
+ "termwiz",
+]
+
+[[package]]
 name = "onlyterm-mux-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "cc",
  "clap",
- "config",
  "embed-resource",
- "env-bootstrap",
  "log",
- "mux",
  "onlyterm-blob-leases",
+ "onlyterm-config",
  "onlyterm-elevated-transport",
+ "onlyterm-env-bootstrap",
  "onlyterm-gui-subcommands",
+ "onlyterm-mux",
  "onlyterm-mux-server-impl",
+ "onlyterm-promise",
  "onlyterm-term",
  "onlyterm-uds",
+ "onlyterm-umask",
  "portable-pty",
- "promise",
  "sefer-alloc",
  "smol",
- "umask",
  "winapi",
 ]
 
@@ -3755,18 +3740,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-io",
- "codec",
- "config",
  "futures",
  "log",
- "mux",
  "onlyterm-client",
+ "onlyterm-codec",
+ "onlyterm-config",
+ "onlyterm-mux",
+ "onlyterm-promise",
+ "onlyterm-rangeset",
  "onlyterm-term",
  "onlyterm-uds",
  "parking_lot",
  "portable-pty",
- "promise",
- "rangeset",
  "smol",
  "termwiz",
  "url",
@@ -3779,6 +3764,46 @@ version = "0.1.0"
 dependencies = [
  "log",
  "winapi",
+]
+
+[[package]]
+name = "onlyterm-procinfo"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "ntapi",
+ "onlyterm-dynamic",
+ "winapi",
+]
+
+[[package]]
+name = "onlyterm-promise"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-executor",
+ "async-io",
+ "async-task",
+ "flume",
+ "lazy_static",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "onlyterm-rangeset"
+version = "0.1.0"
+dependencies = [
+ "bench-scale-tool",
+ "num",
+]
+
+[[package]]
+name = "onlyterm-ratelim"
+version = "0.1.0"
+dependencies = [
+ "governor",
+ "onlyterm-config",
 ]
 
 [[package]]
@@ -3838,6 +3863,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "onlyterm-termwiz-funcs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "finl_unicode",
+ "lazy_static",
+ "onlyterm-config",
+ "onlyterm-dynamic",
+ "onlyterm-input-types",
+ "terminfo",
+ "termwiz",
+]
+
+[[package]]
 name = "onlyterm-toast-notification"
 version = "0.1.0"
 dependencies = [
@@ -3854,6 +3893,10 @@ dependencies = [
  "async-io",
  "uds_windows",
 ]
+
+[[package]]
+name = "onlyterm-umask"
+version = "0.1.0"
 
 [[package]]
 name = "onlyterm-version"
@@ -4220,17 +4263,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "procinfo"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log",
- "ntapi",
- "onlyterm-dynamic",
- "winapi",
-]
-
-[[package]]
 name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4247,19 +4279,6 @@ checksum = "4488a4a36b9a4ba6b9334a32a39971f77c1436ec82c38707bce707699cc3bbcb"
 dependencies = [
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "promise"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-executor",
- "async-io",
- "async-task",
- "flume",
- "lazy_static",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4402,22 +4421,6 @@ name = "range-alloc"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ca45419789ae5a7899559e9512e58ca889e41f04f1f2445e9f4b290ceccd1d08"
-
-[[package]]
-name = "rangeset"
-version = "0.1.0"
-dependencies = [
- "bench-scale-tool",
- "num",
-]
-
-[[package]]
-name = "ratelim"
-version = "0.1.0"
-dependencies = [
- "config",
- "governor",
-]
 
 [[package]]
 name = "rav1e"
@@ -5245,13 +5248,13 @@ name = "sync-color-schemes"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "color-funcs",
- "config",
  "env_logger 0.11.10",
  "futures",
  "lazy_static",
  "libflate",
  "log",
+ "onlyterm-color-funcs",
+ "onlyterm-config",
  "onlyterm-dynamic",
  "redb",
  "reqwest",
@@ -5410,20 +5413,6 @@ dependencies = [
  "unicode-segmentation",
  "vtparse",
  "winapi",
-]
-
-[[package]]
-name = "termwiz-funcs"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "config",
- "finl_unicode",
- "lazy_static",
- "onlyterm-dynamic",
- "onlyterm-input-types",
- "terminfo",
- "termwiz",
 ]
 
 [[package]]
@@ -5805,10 +5794,6 @@ dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
 ]
-
-[[package]]
-name = "umask"
-version = "0.1.0"
 
 [[package]]
 name = "unicase"
@@ -6324,7 +6309,6 @@ dependencies = [
  "bitflags 1.3.2",
  "bytes",
  "clipboard-win",
- "config",
  "downcast-rs",
  "euclid",
  "guillotiere",
@@ -6336,9 +6320,10 @@ dependencies = [
  "metrics",
  "onlyterm-bidi",
  "onlyterm-color-types",
+ "onlyterm-config",
  "onlyterm-font",
  "onlyterm-input-types",
- "promise",
+ "onlyterm-promise",
  "raw-window-handle",
  "resize",
  "serde",
