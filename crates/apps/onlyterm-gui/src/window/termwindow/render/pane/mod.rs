@@ -925,7 +925,7 @@ impl crate::TermWindow {
             let sweep_outcome = render.sweep.finish();
 
             // Task #457: record how many rows were actually built this sweep for diagnostics.
-            metrics::histogram!("gui.paint.rows_built_per_sweep")
+            onlyterm_metrics::cached_histogram!("gui.paint.rows_built_per_sweep")
                 .record(sweep_outcome.built_count as f64);
 
             if let Some(error) = render.error.take() {
@@ -977,7 +977,7 @@ impl crate::TermWindow {
             // TODO: render a thingy to jump to prior prompt
         }
         */
-        metrics::histogram!("paint_pane.lines").record(start.elapsed());
+        onlyterm_metrics::cached_histogram!("paint_pane.lines").record(start.elapsed());
         log::trace!("lines elapsed {:?}", start.elapsed());
 
         Ok(())

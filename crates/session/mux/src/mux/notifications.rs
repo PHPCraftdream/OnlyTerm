@@ -121,7 +121,7 @@ impl Mux {
                 // runs on a fresh call stack once this call has returned, so
                 // stack depth stays O(1) regardless of how long the output
                 // keeps coming, and other pending work gets to run in between.
-                metrics::counter!("mux.pane_output.yielded").increment(1);
+                onlyterm_metrics::cached_counter!("mux.pane_output.yielded").increment(1);
                 let notification = MuxNotification::PaneOutput(pane_id);
                 onlyterm_promise::spawn::spawn_into_main_thread(async move {
                     if let Some(mux) = Mux::try_get() {
@@ -135,7 +135,7 @@ impl Mux {
             // More output arrived while we were delivering; loop back and
             // deliver another round in this same call, rather than
             // recursing into `dispatch_notification` -> `notify` again.
-            metrics::counter!("mux.pane_output.rescheduled").increment(1);
+            onlyterm_metrics::cached_counter!("mux.pane_output.rescheduled").increment(1);
             notification = MuxNotification::PaneOutput(pane_id);
         }
     }
@@ -173,13 +173,13 @@ impl Mux {
                     // Already delivering; just mark that more arrived
                     entry.1 = true;
                     entry.2 += 1; // Track that we coalesced during this delivery
-                    metrics::counter!("mux.pane_output.coalesced").increment(1);
+                    onlyterm_metrics::cached_counter!("mux.pane_output.coalesced").increment(1);
                     false
                 } else {
                     // Not delivering; schedule delivery now
                     entry.0 = true;
                     entry.2 = 0; // Reset coalesce counter for new delivery
-                    metrics::counter!("mux.pane_output.scheduled").increment(1);
+                    onlyterm_metrics::cached_counter!("mux.pane_output.scheduled").increment(1);
                     true
                 }
             };

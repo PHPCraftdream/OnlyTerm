@@ -72,6 +72,7 @@ libc.workspace = true
 log.workspace = true
 lru.workspace = true
 metrics.workspace = true
+onlyterm-metrics.workspace = true
 onlyterm-mux.workspace = true
 onlyterm-mux-funcs.workspace = true
 nucleo-matcher.workspace = true

@@ -32,6 +32,7 @@ libloading.workspace = true
 line_drawing.workspace = true
 log.workspace = true
 metrics.workspace = true
+onlyterm-metrics.workspace = true
 onlyterm-promise.workspace = true
 raw-window-handle.workspace = true
 resize.workspace = true

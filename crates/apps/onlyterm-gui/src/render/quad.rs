@@ -266,7 +266,7 @@ impl HeapQuadAllocator {
         other.extend_from_slice(0, &self.layer0);
         other.extend_from_slice(1, &self.layer1);
         other.extend_from_slice(2, &self.layer2);
-        metrics::histogram!("quad_buffer_apply").record(start.elapsed());
+        onlyterm_metrics::cached_histogram!("quad_buffer_apply").record(start.elapsed());
         Ok(())
     }
 }
@@ -352,7 +352,7 @@ impl HeapQuadAllocatorExt for HeapQuadAllocator {
                 other.extend_with_instance(layer, instance);
             }
         }
-        metrics::histogram!("quad_buffer_apply").record(start.elapsed());
+        onlyterm_metrics::cached_histogram!("quad_buffer_apply").record(start.elapsed());
         Ok(())
     }
 }

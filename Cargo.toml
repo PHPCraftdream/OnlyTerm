@@ -33,6 +33,7 @@ members = [
   "crates/support/env-bootstrap",
   "crates/support/lfucache",
   "crates/support/onlyterm-blob-leases",
+  "crates/support/onlyterm-metrics",
   "crates/support/onlyterm-version",
   "crates/support/promise",
   "crates/support/rangeset",
@@ -180,6 +181,7 @@ maplit = "1.0"
 memmap2 = "0.9"
 memmem = "0.1"
 metrics = "0.23"
+onlyterm-metrics = { path = "crates/support/onlyterm-metrics" }
 miniz_oxide = "0.7"
 mio = "0.8"
 onlyterm-mux = { path = "crates/session/mux" }

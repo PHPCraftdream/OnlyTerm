@@ -130,9 +130,18 @@ fn lock_terminal_timed<R>(
     histogram_name: &'static str,
     body: impl FnOnce(&mut Terminal) -> R,
 ) -> R {
+    // `histogram_name` is a runtime `&'static str` shared by several call
+    // sites with different constant names, so a single per-call-site
+    // `static` (as `onlyterm_metrics::cached_histogram!` uses) can't cache
+    // it -- this function body is one call site for all of them. A cache
+    // keyed by the name itself gives each distinct name its own handle.
+    static CACHE: std::sync::LazyLock<onlyterm_metrics::named::NamedCache<metrics::Histogram>> =
+        std::sync::LazyLock::new(onlyterm_metrics::named::NamedCache::new);
     let wait_start = Instant::now();
     let mut term = terminal.lock();
-    metrics::histogram!(histogram_name).record(wait_start.elapsed());
+    CACHE
+        .get_or_resolve(histogram_name, || metrics::histogram!(histogram_name))
+        .record(wait_start.elapsed());
     body(&mut term)
 }
 
@@ -232,7 +241,12 @@ fn try_lock_terminal_for<R>(
         }
         None => {
             unresponsive.store(true, Ordering::Release);
-            metrics::counter!(metric_name).increment(1);
+            static CACHE: std::sync::LazyLock<
+                onlyterm_metrics::named::NamedCache<metrics::Counter>,
+            > = std::sync::LazyLock::new(onlyterm_metrics::named::NamedCache::new);
+            CACHE
+                .get_or_resolve(metric_name, || metrics::counter!(metric_name))
+                .increment(1);
             log::debug!(
                 "{metric_name}: gave up waiting {:?} for terminal.lock(); \
                  falling back to last known-good cached value",

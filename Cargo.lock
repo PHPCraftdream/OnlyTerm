@@ -3556,6 +3556,7 @@ dependencies = [
  "onlyterm-gui-render-thread",
  "onlyterm-gui-subcommands",
  "onlyterm-lfucache",
+ "onlyterm-metrics",
  "onlyterm-mux",
  "onlyterm-mux-funcs",
  "onlyterm-mux-server-impl",
@@ -3643,6 +3644,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "onlyterm-metrics"
+version = "0.1.0"
+dependencies = [
+ "metrics",
+]
+
+[[package]]
 name = "onlyterm-mux"
 version = "0.1.0"
 dependencies = [
@@ -3667,6 +3675,7 @@ dependencies = [
  "ntapi",
  "onlyterm-config",
  "onlyterm-dynamic",
+ "onlyterm-metrics",
  "onlyterm-procinfo",
  "onlyterm-promise",
  "onlyterm-rangeset",
@@ -6323,6 +6332,7 @@ dependencies = [
  "onlyterm-config",
  "onlyterm-font",
  "onlyterm-input-types",
+ "onlyterm-metrics",
  "onlyterm-promise",
  "raw-window-handle",
  "resize",

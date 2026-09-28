@@ -2,7 +2,6 @@ use crate::pane::Pane;
 use crate::{Mux, MuxNotification};
 use crossbeam::channel::RecvTimeoutError;
 use log::error;
-use metrics::histogram;
 use onlyterm_config::{configuration, ExitBehavior};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
@@ -38,7 +37,8 @@ fn send_actions_to_mux(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, actions: V
     match pane.upgrade() {
         Some(pane) => {
             pane.perform_actions(actions);
-            histogram!("send_actions_to_mux.perform_actions.latency").record(start.elapsed());
+            onlyterm_metrics::cached_histogram!("send_actions_to_mux.perform_actions.latency")
+                .record(start.elapsed());
             Mux::notify_from_any_thread(MuxNotification::PaneOutput(pane.pane_id()));
         }
         None => {
@@ -48,7 +48,7 @@ fn send_actions_to_mux(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, actions: V
             dead.store(true, Ordering::Relaxed);
         }
     }
-    histogram!("send_actions_to_mux.rate").record(1.);
+    onlyterm_metrics::cached_histogram!("send_actions_to_mux.rate").record(1.);
 }
 
 /// Returns true for queries that are safe to answer while a synchronized
@@ -334,7 +334,8 @@ pub(crate) fn read_from_pane_pty(
                 break;
             }
             Ok(size) => {
-                histogram!("read_from_pane_pty.bytes.rate").record(size as f64);
+                onlyterm_metrics::cached_histogram!("read_from_pane_pty.bytes.rate")
+                    .record(size as f64);
                 // Send received data to this pane's parser thread. This
                 // blocks if the channel is full, which is the intended
                 // backpressure: it bounds how far the pty reader can run

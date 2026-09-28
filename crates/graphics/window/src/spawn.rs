@@ -53,10 +53,11 @@ impl SpawnQueue {
     // returned function
     fn pop_func(&self) -> Option<SpawnFunc> {
         if let Some(func) = self.spawned_funcs.lock().unwrap().pop_front() {
-            metrics::histogram!("executor.spawn_delay").record(func.at.elapsed());
+            onlyterm_metrics::cached_histogram!("executor.spawn_delay").record(func.at.elapsed());
             Some(func.func)
         } else if let Some(func) = self.spawned_funcs_low_pri.lock().unwrap().pop_front() {
-            metrics::histogram!("executor.spawn_delay.low_pri").record(func.at.elapsed());
+            onlyterm_metrics::cached_histogram!("executor.spawn_delay.low_pri")
+                .record(func.at.elapsed());
             Some(func.func)
         } else {
             None
@@ -75,7 +76,17 @@ impl SpawnQueue {
             self.spawned_funcs_low_pri.lock().unwrap().push_back(f);
             self.spawned_funcs_low_pri.lock().unwrap().len()
         };
-        metrics::histogram!("executor.spawn_queue.depth", "pri" => if high_pri { "high" } else { "low" }).record(depth as f64);
+        // Two separate macro-expansion sites (rather than one call with a
+        // runtime label) so each `pri` value gets its own cached handle --
+        // see `onlyterm_metrics::cached_histogram!`'s docs on why a single
+        // cache cell can't serve more than one label value.
+        if high_pri {
+            onlyterm_metrics::cached_histogram!("executor.spawn_queue.depth", "pri" => "high")
+                .record(depth as f64);
+        } else {
+            onlyterm_metrics::cached_histogram!("executor.spawn_queue.depth", "pri" => "low")
+                .record(depth as f64);
+        }
     }
 
     fn has_any_queued(&self) -> bool {
