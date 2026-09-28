@@ -27,6 +27,18 @@ fn atlas_retry_size(pass: usize, current: usize, requested: usize) -> usize {
 
 impl crate::TermWindow {
     pub fn paint_impl(&mut self, frame: &mut RenderFrame) {
+        // The universal safety net for lazy background-tab resizing (see
+        // `ActiveTabSizeTracker` in window/resize.rs): every activation
+        // path funnels through painting the tab eventually -- including
+        // ones this GUI process never sees directly, like a CLI
+        // `activate-tab` or another mux-server client switching tabs on
+        // our behalf -- so catching the active tab up to this window's
+        // current size here, unconditionally and before anything else,
+        // guarantees it is never painted (or driven by subsequent input)
+        // at a stale size, regardless of how it became active. Cheap when
+        // there is nothing to do (a HashMap lookup).
+        self.sync_active_tab_size();
+
         // Check render-thread back-pressure BEFORE building the frame.
         // `paint_pass` below is the expensive part -- shaping, quad
         // building and signature hashing for every visible row -- and if

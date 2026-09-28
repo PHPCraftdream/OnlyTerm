@@ -4,3 +4,4 @@ mod domain_detach;
 mod domain_registration;
 mod notify_coalescing;
 mod sync_update;
+mod tab_resize_notification;

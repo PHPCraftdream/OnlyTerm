@@ -327,6 +327,11 @@ pub struct TermWindow {
     pending_scale_changes: LinkedList<resize::ScaleChange>,
     /// Terminal dimensions
     terminal_size: TerminalSize,
+    /// The size this window last resized (or confirmed) each tab to -- see
+    /// `sync_active_tab_size`. Only the active tab is ever resized eagerly
+    /// (a ConPTY RPC + full scrollback reflow per pane), so a background
+    /// tab is left stale here until it becomes active.
+    active_tab_sizes: resize::ActiveTabSizeTracker,
     pub mux_window_id: MuxWindowId,
     pub mux_window_id_for_subscriptions: Arc<Mutex<MuxWindowId>>,
     /// `true` when the mux subscription must be unsubscribed from.

@@ -3,8 +3,10 @@ use crate::utilsprites::RenderMetrics;
 use ::window::{Dimensions, ResizeIncrement, Window, WindowOps, WindowState};
 use onlyterm_config::{ConfigHandle, DimensionContext};
 use onlyterm_font::FontConfiguration;
+use onlyterm_mux::tab::TabId;
 use onlyterm_mux::Mux;
 use onlyterm_term::TerminalSize;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy)]
@@ -19,7 +21,85 @@ pub enum ScaleChange {
     Relative(f64),
 }
 
+/// Records the terminal size this window last resized (or confirmed) each
+/// tab to, so a window resize only ever has to touch the *active* tab:
+/// resizing a local pane is a ConPTY `ResizePseudoConsole` RPC plus a full
+/// scrollback reflow, so doing that for every tab on every window-drag/
+/// maximize step scales badly with tab count. A background tab is left
+/// stale here and only caught up, to the window's current
+/// `TermWindow::terminal_size`, the moment it becomes active (see
+/// `TermWindow::sync_active_tab_size`'s call sites) -- until then it keeps
+/// reporting its old size to anything that reads it directly (tab bar,
+/// `list` CLI output, `get_tab_information`), which is fine since nothing
+/// paints or drives input into a pane that isn't the active one.
+///
+/// This tracker -- and, critically, `sync_active_tab_size` calling
+/// `Tab::resize` only *after* fetching the active tab via
+/// `Mux::get_active_tab_for_window` (which drops its internal mux `Window`
+/// guard before returning) -- exists because an earlier version of this
+/// resized tabs from inside `mux::window::Window::set_active_without_saving`
+/// while a caller further up the stack still held that same window locked
+/// for write (eg. `mux.get_window_mut(..)` in `apply_dimensions`). That
+/// deadlocks unconditionally: `Tab::resize` ends with a synchronous
+/// `Mux::notify(MuxNotification::TabReflowed(..))`, delivered on the same
+/// thread, and this GUI's own subscriber (`mux_pane_output_event_callback`)
+/// handles `TabReflowed` by calling `Mux::window_containing_tab`, which
+/// takes a *read* lock on the very same `windows` map -- parking_lot's
+/// `RwLock` is not reentrant, so a write-then-read on one thread hangs
+/// forever, not just races. `Tab::resize` must never be called while any
+/// mux `Window` guard (read or write) is held on this thread.
+#[derive(Default)]
+pub struct ActiveTabSizeTracker {
+    /// Per tab: the size last requested and the size it settled at.
+    settled: HashMap<TabId, (TerminalSize, TerminalSize)>,
+}
+
+impl ActiveTabSizeTracker {
+    /// Whether `tab_id` must be resized to reach `target`: not when it is
+    /// already there, nor when this tracker last took it to `target` and it
+    /// settled at `current`. `TabInner::resize` clamps to split minimums, so
+    /// comparing with `target` alone would resize a clamped tab every
+    /// paint; comparing with the settled size still catches a tab resized
+    /// elsewhere (e.g. while it lived in another window).
+    pub fn needs_resize(&self, tab_id: TabId, current: TerminalSize, target: TerminalSize) -> bool {
+        current != target && self.settled.get(&tab_id) != Some(&(target, current))
+    }
+
+    /// Records the size `tab_id` settled at after a resize to `target`.
+    pub fn record(&mut self, tab_id: TabId, target: TerminalSize, settled: TerminalSize) {
+        self.settled.insert(tab_id, (target, settled));
+    }
+}
+
 impl super::TermWindow {
+    /// Resizes the active tab to `self.terminal_size` if it isn't already
+    /// there, and remembers that (see `ActiveTabSizeTracker`) so it isn't
+    /// resent every frame. Call this after any point where the active tab
+    /// may have changed or the window may have been resized: from
+    /// `apply_dimensions`, once `activate_tab` has dropped its mux `Window`
+    /// guard, and unconditionally at the start of every paint (which is
+    /// what actually guarantees every activation path -- including ones
+    /// driven from the CLI or a mux server, which never call GUI code at
+    /// all -- ends up with a correctly sized tab before it can be seen).
+    ///
+    /// MUST be called with no mux `Window` guard held on this thread; see
+    /// `ActiveTabSizeTracker`'s doc comment for why.
+    pub fn sync_active_tab_size(&mut self) {
+        let mux = Mux::get();
+        let Some(tab) = mux.get_active_tab_for_window(self.mux_window_id) else {
+            return;
+        };
+        let target = self.terminal_size;
+        if self
+            .active_tab_sizes
+            .needs_resize(tab.tab_id(), tab.get_size(), target)
+        {
+            tab.resize(target);
+            self.active_tab_sizes
+                .record(tab.tab_id(), target, tab.get_size());
+        }
+    }
+
     pub fn resize(
         &mut self,
         dimensions: Dimensions,
@@ -294,20 +374,26 @@ impl super::TermWindow {
 
         log::trace!("apply_dimensions computed size {:?}, dims {:?}", size, dims);
 
-        // Only push the resize down to the tabs (a ConPTY RPC per pane on
-        // this thread) when the computed terminal geometry actually
-        // changed; apply_dimensions also runs for events that leave it
-        // untouched, such as pure window_state changes.
+        // Only push a resize down to a tab (a ConPTY RPC per pane on this
+        // thread, plus a full scrollback reflow) when the computed terminal
+        // geometry actually changed; apply_dimensions also runs for events
+        // that leave it untouched, such as pure window_state changes.
+        //
+        // `sync_active_tab_size` resizes only the active tab: with several
+        // tabs open, resizing every one of them synchronously on every
+        // window-drag/maximize step is the whole cost this is avoiding.
+        // Background tabs catch up lazily, to this same `self.terminal_size`,
+        // the moment they become active (see its call sites in
+        // `activate_tab` and at the start of `paint_impl`). Until then a
+        // background tab keeps reporting its old size to anything that
+        // reads it directly (tab bar, `list` CLI output,
+        // `get_tab_information`) -- acceptable since nothing else observes
+        // or paints a tab that isn't the active one.
         let terminal_size_changed = self.terminal_size != size;
         self.terminal_size = size;
 
         if terminal_size_changed {
-            let mux = Mux::get();
-            if let Some(window) = mux.get_window(self.mux_window_id) {
-                for tab in window.iter() {
-                    tab.resize(size);
-                }
-            };
+            self.sync_active_tab_size();
         }
         self.resize_overlays();
         self.invalidate_fancy_tab_bar();
@@ -579,5 +665,104 @@ pub fn effective_right_padding(config: &ConfigHandle, context: DimensionContext)
         (context.pixel_cell * 1.75) as usize
     } else {
         config.window_padding.right.evaluate_as_pixels(context) as usize
+    }
+}
+
+#[cfg(test)]
+mod active_tab_size_test {
+    use super::*;
+
+    fn size(cols: usize, rows: usize) -> TerminalSize {
+        TerminalSize {
+            rows,
+            cols,
+            pixel_width: cols * 10,
+            pixel_height: rows * 20,
+            dpi: 96,
+        }
+    }
+
+    /// Mirrors `sync_active_tab_size`: resize when needed, then record
+    /// where the tab settled (`clamp` stands in for split minimums).
+    fn sync(
+        tracker: &mut ActiveTabSizeTracker,
+        tab_id: TabId,
+        current: &mut TerminalSize,
+        target: TerminalSize,
+        clamp: Option<TerminalSize>,
+    ) -> bool {
+        if !tracker.needs_resize(tab_id, *current, target) {
+            return false;
+        }
+        *current = clamp.unwrap_or(target);
+        tracker.record(tab_id, target, *current);
+        true
+    }
+
+    #[test]
+    fn a_tab_at_the_target_needs_no_resize() {
+        let tracker = ActiveTabSizeTracker::default();
+        assert!(!tracker.needs_resize(1, size(100, 30), size(100, 30)));
+    }
+
+    #[test]
+    fn window_resizes_touch_only_the_active_tab() {
+        let mut tracker = ActiveTabSizeTracker::default();
+        let mut active = size(80, 24);
+        let background = size(80, 24);
+        let mut resizes = 0;
+        for (cols, rows) in [(90, 25), (100, 30), (70, 20), (100, 30)] {
+            if sync(&mut tracker, 1, &mut active, size(cols, rows), None) {
+                resizes += 1;
+            }
+            // Painting again at the same size resizes nothing.
+            assert!(!sync(&mut tracker, 1, &mut active, size(cols, rows), None));
+        }
+        assert_eq!(resizes, 4);
+        assert_eq!(active, size(100, 30));
+        assert_eq!(background, size(80, 24));
+    }
+
+    #[test]
+    fn a_background_tab_catches_up_once_when_activated() {
+        let mut tracker = ActiveTabSizeTracker::default();
+        let target = size(120, 40);
+        let mut background = size(80, 24);
+        assert!(sync(&mut tracker, 2, &mut background, target, None));
+        assert_eq!(background, target);
+        assert!(!sync(&mut tracker, 2, &mut background, target, None));
+    }
+
+    #[test]
+    fn a_clamped_tab_is_not_resized_every_paint() {
+        let mut tracker = ActiveTabSizeTracker::default();
+        let target = size(100, 30);
+        let clamped = size(100, 34);
+        let mut tab = size(80, 24);
+        assert!(sync(&mut tracker, 1, &mut tab, target, Some(clamped)));
+        for _ in 0..5 {
+            assert!(!sync(&mut tracker, 1, &mut tab, target, Some(clamped)));
+        }
+    }
+
+    #[test]
+    fn a_tab_resized_elsewhere_is_caught_up_again() {
+        let mut tracker = ActiveTabSizeTracker::default();
+        let target = size(100, 30);
+        let mut tab = size(80, 24);
+        assert!(sync(&mut tracker, 1, &mut tab, target, None));
+        // Moved to another window and resized there, then moved back.
+        tab = size(140, 50);
+        assert!(sync(&mut tracker, 1, &mut tab, target, None));
+        assert_eq!(tab, target);
+    }
+
+    #[test]
+    fn a_new_window_size_needs_another_resize() {
+        let mut tracker = ActiveTabSizeTracker::default();
+        let mut tab = size(80, 24);
+        assert!(sync(&mut tracker, 1, &mut tab, size(100, 30), None));
+        assert!(sync(&mut tracker, 1, &mut tab, size(120, 40), None));
+        assert_eq!(tab, size(120, 40));
     }
 }

@@ -59,18 +59,17 @@ impl TermWindow {
         if terminal_size != size {
             // DPI is different from the default assumed DPI when the mux
             // created the pty. We need to inform the kernel of the revised
-            // pixel geometry now
+            // pixel geometry now. The actual resize happens below, via
+            // `sync_active_tab_size`, once `self` exists -- see its call
+            // site a little further down for why that (rather than
+            // resizing here, directly, while holding a mux `Window` guard)
+            // is required.
             log::trace!(
                 "Initial geometry was {:?} but dpi-adjusted geometry \
                         is {:?}; update the kernel pixel geometry for the ptys!",
                 size,
                 terminal_size,
             );
-            if let Some(window) = mux.get_window(mux_window_id) {
-                for tab in window.iter() {
-                    tab.resize(terminal_size);
-                }
-            };
         }
 
         let h_context = DimensionContext {
@@ -115,7 +114,7 @@ impl TermWindow {
 
         let connection_name = Connection::get().unwrap().name();
 
-        let myself = Self {
+        let mut myself = Self {
             created: Instant::now(),
             shell_output_seen: false,
             placeholder_cleared: false,
@@ -151,6 +150,7 @@ impl TermWindow {
             is_repaint_pending: false,
             pending_scale_changes: LinkedList::new(),
             terminal_size,
+            active_tab_sizes: resize::ActiveTabSizeTracker::default(),
             render_state,
             input_map: InputMap::new(&config),
             leader_is_down: None,
@@ -249,6 +249,24 @@ impl TermWindow {
             last_wire_atlas_generation: std::cell::Cell::new(None),
             atlas_generation: 0,
         };
+
+        // Resizes the active tab (only) to `terminal_size` if it isn't
+        // already there -- eg. the DPI-mismatch case logged above, or a
+        // tab restored from a session whose pty was created at a
+        // different size. Any other tab in this window (eg. more restored
+        // from the same session) is left alone and catches up lazily when
+        // it becomes active. Deliberately done here, now that `myself`
+        // exists, rather than directly against `mux.get_window(..)`
+        // above: `sync_active_tab_size` fetches the active tab with
+        // `Mux::get_active_tab_for_window` (which does not hold any mux
+        // `Window` guard by the time it returns) before calling
+        // `Tab::resize`, whereas resizing while still holding a `Window`
+        // guard would deadlock -- `Tab::resize` ends with a synchronous
+        // `Mux::notify(TabReflowed)`, and this GUI's own subscriber
+        // handles that by calling `Mux::window_containing_tab`, which
+        // takes a *read* lock on the very same (non-reentrant) `windows`
+        // map.
+        myself.sync_active_tab_size();
 
         let tw = Rc::new(RefCell::new(myself));
         let tw_event = Rc::clone(&tw);

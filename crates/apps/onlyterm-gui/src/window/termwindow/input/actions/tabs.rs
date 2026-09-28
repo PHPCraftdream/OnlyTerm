@@ -75,7 +75,16 @@ impl TermWindow {
             }
             window.save_and_then_set_active(tab_idx);
 
+            // Must run after `window` (a mux `Window` guard) is dropped --
+            // `sync_active_tab_size` calls `Tab::resize`, which is never
+            // safe to do while holding one (see `ActiveTabSizeTracker`'s
+            // doc comment in window/resize.rs for the deadlock this
+            // avoids). Catching the newly active tab up to this window's
+            // size here, rather than waiting for the next paint, means
+            // input dispatched right after the switch already lands on a
+            // correctly sized tab.
             drop(window);
+            self.sync_active_tab_size();
 
             if let Some(pane) = self.get_active_pane_or_overlay() {
                 pane.focus_changed(true);
