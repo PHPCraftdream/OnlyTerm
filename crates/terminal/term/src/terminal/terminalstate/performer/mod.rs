@@ -266,6 +266,17 @@ impl<'a> Performer<'a> {
                 self.wrap_next = false;
             } else {
                 self.wrap_next = self.dec_auto_wrap;
+                // ConPTY marks a row wrapped as soon as its last column is
+                // written, and paints API fills (e.g. `color`) row by row
+                // with absolute moves; a line feed clears the mark.
+                if self.wrap_next
+                    && self.state.enable_conpty_quirks
+                    && width == self.screen().physical_cols
+                {
+                    let screen = self.screen_mut();
+                    let idx = screen.phys_row(y);
+                    screen.line_mut(idx).set_last_cell_was_wrapped(true, seqno);
+                }
             }
         }
 
@@ -412,6 +423,7 @@ impl<'a> Performer<'a> {
         self.flush_print();
         match control {
             ControlCode::LineFeed | ControlCode::VerticalTab | ControlCode::FormFeed => {
+                self.conpty_unwrap_cursor_row();
                 if self.left_and_right_margins.contains(&self.cursor.x) {
                     self.new_line(false);
                 } else {

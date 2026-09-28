@@ -40,13 +40,21 @@ impl Line {
     /// Wrap the line so that it fits within the provided width.
     /// Returns the list of resultant line(s)
     pub fn wrap(self, width: usize, seqno: SequenceNo) -> Vec<Self> {
+        self.wrap_keeping(width, 0, seqno)
+    }
+
+    /// Like `wrap`, but blank cells before column `keep` count as content
+    /// instead of being trimmed as trailing whitespace.
+    pub fn wrap_keeping(self, width: usize, keep: usize, seqno: SequenceNo) -> Vec<Self> {
         // Every piece is still the same line, so each must keep its bidi
         // settings: a fresh `Line` defaults to bidi *disabled*, which
         // would silently switch right-to-left reordering off for anything
         // rewrapped by a window resize.
         let (bidi_enabled, bidi_direction) = self.bidi_info();
         let mut cells: Vec<CellRef> = self.visible_cells().collect();
-        if let Some(end_idx) = cells.iter().rposition(|c| c.str() != " ") {
+        let content_end = cells.iter().rposition(|c| c.str() != " ");
+        let keep_end = cells.iter().rposition(|c| c.cell_index() < keep);
+        if let Some(end_idx) = content_end.max(keep_end) {
             cells.truncate(end_idx + 1);
 
             let mut lines: Vec<Self> = vec![];

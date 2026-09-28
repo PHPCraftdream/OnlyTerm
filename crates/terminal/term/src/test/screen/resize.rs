@@ -64,7 +64,7 @@ fn saved_active_cursor_survives_repeated_reflow() {
     }
 }
 
-fn replay_conpty_color_fill(term: &mut TestTerm, rows: usize, cols: usize) {
+pub(super) fn replay_conpty_color_fill(term: &mut TestTerm, rows: usize, cols: usize) {
     // OpenConsole 1.22.10352.0: cmd.exe `color f8` startup output.
     term.print("\x1b7");
     for row in 1..=rows {

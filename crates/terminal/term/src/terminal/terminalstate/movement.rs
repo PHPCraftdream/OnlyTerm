@@ -139,9 +139,27 @@ impl TerminalState {
         self.set_cursor_pos(&Position::Absolute(x as i64), &Position::Absolute(y));
     }
 
+    /// ConPTY clears a row's wrap flag on an explicit line feed (IND/NEL
+    /// included). Its resize reflow measures wrapped rows at full width, so
+    /// the model must mirror the flag to reflow the same rows.
+    pub(crate) fn conpty_unwrap_cursor_row(&mut self) {
+        if !self.enable_conpty_quirks {
+            return;
+        }
+        let seqno = self.seqno;
+        let y = self.cursor.y;
+        let screen = self.screen_mut();
+        let idx = screen.phys_row(y);
+        let line = screen.line_mut(idx);
+        if line.last_cell_was_wrapped() {
+            line.set_last_cell_was_wrapped(false, seqno);
+        }
+    }
+
     /// Moves the cursor down one line in the same column.
     /// If the cursor is at the bottom margin, the page scrolls up.
     pub(crate) fn c1_index(&mut self) {
+        self.conpty_unwrap_cursor_row();
         if self.left_and_right_margins.contains(&self.cursor.x) {
             if self.cursor.y == self.top_and_bottom_margins.end - 1 {
                 self.scroll_up(1);
@@ -154,6 +172,7 @@ impl TerminalState {
     /// Moves the cursor to the first position on the next line.
     /// If the cursor is at the bottom margin, the page scrolls up.
     pub(crate) fn c1_nel(&mut self) {
+        self.conpty_unwrap_cursor_row();
         let y_clamp = if self.top_and_bottom_margins.contains(&self.cursor.y) {
             self.top_and_bottom_margins.end - 1
         } else {
@@ -239,14 +258,43 @@ impl TerminalState {
             }
         };
 
+        // Partial erases keep ConPTY's wrap marks; a full erase resets rows.
+        let keep_wrap = self.enable_conpty_quirks && erase != EraseInDisplay::EraseDisplay;
         {
             let bidi_mode = self.get_bidi_mode();
             let screen = self.screen_mut();
             for y in row_range {
-                screen.clear_line(y, col_range.clone(), &pen, seqno, bidi_mode);
                 let line_idx = screen.phys_row(y);
-                screen.line_mut(line_idx).set_single_width(seqno);
+                let wrapped = keep_wrap && screen.line_mut(line_idx).last_cell_was_wrapped();
+                screen.clear_line(y, col_range.clone(), &pen, seqno, bidi_mode);
+                let line = screen.line_mut(line_idx);
+                line.set_single_width(seqno);
+                if wrapped {
+                    line.set_last_cell_was_wrapped(true, seqno);
+                }
             }
+        }
+    }
+
+    /// ConPTY erases cells without touching the row's wrap mark
+    /// (`TextBuffer::FillRect`); `erase` would otherwise drop it with the
+    /// last cell.
+    pub(crate) fn conpty_erase_keeping_wrap(
+        &mut self,
+        y: VisibleRowIndex,
+        erase: impl FnOnce(&mut Self),
+    ) {
+        let seqno = self.seqno;
+        let wrapped = self.enable_conpty_quirks && {
+            let screen = self.screen_mut();
+            let idx = screen.phys_row(y);
+            screen.line_mut(idx).last_cell_was_wrapped()
+        };
+        erase(self);
+        if wrapped {
+            let screen = self.screen_mut();
+            let idx = screen.phys_row(y);
+            screen.line_mut(idx).set_last_cell_was_wrapped(true, seqno);
         }
     }
 

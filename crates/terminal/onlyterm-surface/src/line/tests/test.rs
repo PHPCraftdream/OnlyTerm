@@ -4,7 +4,9 @@ use super::*;
 use crate::hyperlink::{Hyperlink, Rule};
 use crate::line::clusterline::ClusteredLine;
 use crate::SEQ_ZERO;
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use k9::assert_equal as assert_eq;
 use onlyterm_cell::{Cell, CellAttributes};
 
@@ -855,4 +857,50 @@ Line {
 }
 "#
     );
+}
+
+#[test]
+fn wrap_trims_trailing_blanks() {
+    let line: Line = "ab        ".into();
+    let lines = line.wrap(4, 1);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].as_str(), "ab");
+}
+
+#[test]
+fn wrap_keeping_counts_blank_prefix_as_content() {
+    // A ConPTY fill row is all blanks yet occupies its full width.
+    let line: Line = "ab        ".into();
+    let lines = line.wrap_keeping(4, 10, 1);
+    let text: Vec<String> = lines.iter().map(|l| l.as_str().into_owned()).collect();
+    assert_eq!(text, vec!["ab  ", "    ", "  "]);
+    let wrapped: Vec<bool> = lines.iter().map(Line::last_cell_was_wrapped).collect();
+    assert_eq!(wrapped, vec![true, true, false]);
+}
+
+#[test]
+fn wrap_keeping_still_trims_blanks_past_keep() {
+    let line: Line = "ab        ".into();
+    let lines = line.wrap_keeping(4, 6, 1);
+    let text: Vec<String> = lines.iter().map(|l| l.as_str().into_owned()).collect();
+    assert_eq!(text, vec!["ab  ", "  "]);
+}
+
+#[test]
+fn wrap_keeping_zero_is_wrap() {
+    for text in ["abcdefghij", "abc   ", "      ", "a b c d e f"] {
+        let line: Line = text.into();
+        let expected: Vec<String> = line
+            .clone()
+            .wrap(4, 1)
+            .iter()
+            .map(|l| l.as_str().into_owned())
+            .collect();
+        let actual: Vec<String> = line
+            .wrap_keeping(4, 0, 1)
+            .iter()
+            .map(|l| l.as_str().into_owned())
+            .collect();
+        std::assert_eq!(actual, expected, "{:?}", text);
+    }
 }

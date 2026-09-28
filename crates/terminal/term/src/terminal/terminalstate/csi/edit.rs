@@ -42,13 +42,13 @@ impl TerminalState {
                 let y = self.cursor.y;
                 let x = self.cursor.x;
                 let limit = (x + n as usize).min(self.screen().physical_cols);
-                {
-                    let blank = Cell::blank_with_attrs(self.pen.clone_sgr_only());
-                    let screen = self.screen_mut();
+                let blank = Cell::blank_with_attrs(self.pen.clone_sgr_only());
+                self.conpty_erase_keeping_wrap(y, |term| {
+                    let screen = term.screen_mut();
                     for x in x..limit {
                         screen.set_cell(x, y, &blank, seqno);
                     }
-                }
+                });
             }
 
             Edit::EraseInLine(erase) => {
@@ -69,8 +69,10 @@ impl TerminalState {
                     EraseInLine::EraseLine => 0..cols,
                 };
 
-                self.screen_mut()
-                    .clear_line(cy, range, &pen, seqno, bidi_mode);
+                self.conpty_erase_keeping_wrap(cy, |term| {
+                    term.screen_mut()
+                        .clear_line(cy, range, &pen, seqno, bidi_mode);
+                });
             }
             Edit::InsertCharacter(n) => {
                 // https://vt100.net/docs/vt510-rm/ICH.html

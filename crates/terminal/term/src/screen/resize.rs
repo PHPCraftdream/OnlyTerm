@@ -1,28 +1,45 @@
 use super::*;
 
 impl Screen {
+    /// `conpty_top` is the first row of ConPTY's buffer (the old viewport
+    /// top) in ConPTY mode; the third result is where that row now starts.
     fn rewrap_lines(
         &mut self,
         physical_cols: usize,
         physical_rows: usize,
-        cursor_x: usize,
-        cursor_y: PhysRowIndex,
+        (cursor_x, cursor_y): (usize, PhysRowIndex),
         saved_cursor: Option<(usize, PhysRowIndex)>,
         seqno: SequenceNo,
-    ) -> ((usize, PhysRowIndex), Option<(usize, PhysRowIndex)>) {
+        conpty_top: Option<PhysRowIndex>,
+    ) -> (
+        (usize, PhysRowIndex),
+        Option<(usize, PhysRowIndex)>,
+        PhysRowIndex,
+    ) {
+        let is_conpty = conpty_top.is_some();
         let mut rewrapped = VecDeque::new();
+        let mut new_top = 0;
         let mut logical_line: Option<Line> = None;
         let mut logical_cursor_x: Option<usize> = None;
         let mut logical_saved_x: Option<usize> = None;
         let mut adjusted_cursor = (cursor_x, cursor_y);
         let mut adjusted_saved = saved_cursor;
 
+        let old_cols = self.physical_cols;
+        let total = self.lines.len();
         for (phys_idx, mut line) in self.lines.drain(..).enumerate() {
+            if Some(phys_idx) == conpty_top {
+                new_top = rewrapped.len();
+            }
             line.update_last_change_seqno(seqno);
             let was_wrapped = line.last_cell_was_wrapped();
 
             if was_wrapped {
                 line.set_last_cell_was_wrapped(false, seqno);
+                // ConPTY measures a wrapped row at its full width.
+                if is_conpty && line.len() < old_cols {
+                    line.resize(old_cols, seqno);
+                }
             }
 
             let prior_len = logical_line.as_ref().map_or(0, Line::len);
@@ -43,7 +60,9 @@ impl Screen {
                 }
             };
 
-            if was_wrapped {
+            // A wrapped bottom row has no successor to join; flush it here.
+            let is_last = phys_idx + 1 == total;
+            if was_wrapped && !is_last {
                 logical_line.replace(line);
                 continue;
             }
@@ -67,10 +86,18 @@ impl Screen {
                 ));
             }
 
+            // ConPTY keeps the blanks of wrapped rows; only trailing blanks
+            // of the final, unwrapped row are dropped.
+            let keep = match (is_conpty, was_wrapped) {
+                (false, _) => 0,
+                (true, true) => line.len(),
+                (true, false) => prior_len,
+            };
+
             if line.len() <= physical_cols {
                 rewrapped.push_back(line);
             } else {
-                for line in line.wrap(physical_cols, seqno) {
+                for line in line.wrap_keeping(physical_cols, keep, seqno) {
                     rewrapped.push_back(line);
                 }
             }
@@ -89,7 +116,53 @@ impl Screen {
             self.lines.pop_back();
         }
 
-        (adjusted_cursor, adjusted_saved)
+        (adjusted_cursor, adjusted_saved, new_top)
+    }
+
+    /// ConPTY's reflow stops one buffer height below the cursor row. Drops
+    /// the blank rows past `limit` and reports whether the reflow was cut
+    /// short there, i.e. rows past it still held text or a wrap mark.
+    fn conpty_cut_below(&mut self, limit: usize) -> bool {
+        let mut cut = false;
+        while self.lines.len() > limit
+            && self.lines.back().map(Line::is_whitespace).unwrap_or(false)
+        {
+            cut |= self
+                .lines
+                .back()
+                .map(Line::last_cell_was_wrapped)
+                .unwrap_or(false);
+            self.lines.pop_back();
+        }
+        cut || self.lines.len() > limit
+    }
+
+    /// End of ConPTY's output extent: its last row holding text or a wrap
+    /// mark, and at least the cursor row.
+    fn conpty_extent(&self, cursor_y: usize) -> usize {
+        let text_end = self
+            .lines
+            .iter()
+            .rposition(|line| line.last_cell_was_wrapped() || !line.is_whitespace())
+            .map_or(0, |idx| idx + 1);
+        text_end.max(cursor_y + 1).min(self.lines.len())
+    }
+
+    /// ConPTY's reflow copies rows up to its extent. A same-width reflow that
+    /// is not cut short leaves the last copied row unwrapped; a width reflow
+    /// already set the marks in `rewrap_lines`. Returns the resulting extent.
+    fn conpty_reflow_extent(
+        &mut self,
+        cursor_y: usize,
+        unwrap_last: bool,
+        seqno: SequenceNo,
+    ) -> usize {
+        let extent = self.conpty_extent(cursor_y);
+        if unwrap_last && extent > 0 && self.lines[extent - 1].last_cell_was_wrapped() {
+            self.lines[extent - 1].set_last_cell_was_wrapped(false, seqno);
+            return self.conpty_extent(cursor_y);
+        }
+        extent
     }
 
     fn rewrapped_cursor_position(
@@ -156,22 +229,38 @@ impl Screen {
                 self.lines.pop_back();
             }
         }
-        let prune_limit = if is_conpty && self.allow_scrollback {
-            // Native ConPTY shifts rows upward on shrink until the cursor
-            // reaches the top. Pruning all trailing blanks would instead
-            // pin the prompt while subsequent absolute cursor updates move.
-            let shrink = self.lines.len().saturating_sub(old_top + physical_rows);
-            let shift = shrink.min(cursor.y.max(0) as usize);
-            self.lines.len().saturating_sub(shrink - shift)
+        let reflowed = physical_cols != self.physical_cols && self.allow_scrollback;
+        let mut cut = false;
+        if is_conpty && self.allow_scrollback {
+            // A width change applies ConPTY's row limits after the reflow.
+            if !reflowed {
+                // Native ConPTY shifts rows upward on shrink until the cursor
+                // reaches the top. Pruning all trailing blanks would instead
+                // pin the prompt while subsequent absolute cursor updates move.
+                let shrink = self.lines.len().saturating_sub(old_top + physical_rows);
+                let shift = shrink.min(cursor.y.max(0) as usize);
+                if shrink > shift {
+                    cut = self.conpty_cut_below(self.lines.len() - (shrink - shift));
+                }
+            }
         } else {
-            cursor_phys + 1
-        };
-        for _ in prune_limit..self.lines.len() {
-            if self.lines.back().map(Line::is_whitespace).unwrap_or(false) {
-                self.lines.pop_back();
+            let prune_limit = cursor_phys + 1;
+            for _ in prune_limit..self.lines.len() {
+                if self.lines.back().map(Line::is_whitespace).unwrap_or(false) {
+                    self.lines.pop_back();
+                }
             }
         }
 
+        if is_conpty && reflowed && old_top > 0 {
+            // ConPTY's buffer starts at the viewport: a line wrapped from
+            // history reflows there as a line of its own.
+            let line = &mut self.lines[old_top - 1];
+            if line.last_cell_was_wrapped() {
+                line.set_last_cell_was_wrapped(false, seqno);
+            }
+        }
+        let mut new_top = old_top;
         let ((cursor_x, cursor_y), saved_cursor) = if physical_cols != self.physical_cols {
             // Check to see if we need to rewrap lines that were
             // wrapped due to reaching the right hand side of the terminal.
@@ -181,14 +270,16 @@ impl Screen {
             // screen (hence the check for allow_scrollback), to avoid
             // conflicting screen updates with full screen apps.
             if self.allow_scrollback {
-                self.rewrap_lines(
+                let (cursor, saved, top) = self.rewrap_lines(
                     physical_cols,
                     physical_rows,
-                    cursor.x,
-                    cursor_phys,
+                    (cursor.x, cursor_phys),
                     saved_cursor_phys,
                     seqno,
-                )
+                    is_conpty.then_some(old_top),
+                );
+                new_top = top;
+                (cursor, saved)
             } else {
                 for line in &mut self.lines {
                     if physical_cols < self.physical_cols {
@@ -206,7 +297,32 @@ impl Screen {
         };
 
         let capacity = physical_rows + self.scrollback_size();
-        let output_end = self.lines.len();
+        let mut output_end = self.lines.len();
+        // Viewport top after a width change, following ConPTY's buffer.
+        let mut conpty_top = None;
+        if is_conpty && reflowed {
+            // ConPTY first reflows the width at the taller of both heights,
+            // dropping rows off its top once they exceed that height.
+            let tallest = physical_rows.max(self.physical_rows);
+            self.conpty_cut_below(cursor_y + tallest);
+            output_end = self.conpty_reflow_extent(cursor_y, false, seqno);
+            let mut top = new_top + self.lines.len().saturating_sub(new_top + tallest);
+            // A shorter height triggers a second reflow, which copies rows
+            // only up to that extent.
+            if physical_rows < self.physical_rows {
+                while self.lines.len() > output_end
+                    && self.lines.back().map(Line::is_whitespace).unwrap_or(false)
+                {
+                    self.lines.pop_back();
+                }
+                let cut = self.conpty_cut_below(cursor_y + physical_rows);
+                output_end = self.conpty_reflow_extent(cursor_y, !cut, seqno);
+                top += self.lines.len().saturating_sub(top + physical_rows);
+            }
+            conpty_top = Some(top.min(cursor_y));
+        } else if is_conpty && self.allow_scrollback && physical_rows != self.physical_rows {
+            output_end = self.conpty_reflow_extent(cursor_y, !cut, seqno);
+        }
         let current_capacity = self.lines.capacity();
         if capacity > current_capacity {
             self.lines.reserve(capacity - current_capacity);
@@ -244,11 +360,14 @@ impl Screen {
         let resize_preserves_scrollback = is_conpty;
 
         if resize_preserves_scrollback {
-            let preserved_cursor_y = cursor
-                .y
-                .saturating_add(cursor_y as i64)
-                .saturating_sub(cursor_phys as i64)
-                .max(0);
+            let preserved_cursor_y = match conpty_top {
+                Some(top) => (cursor_y - top) as i64,
+                None => cursor
+                    .y
+                    .saturating_add(cursor_y as i64)
+                    .saturating_sub(cursor_phys as i64)
+                    .max(0),
+            };
 
             // We need to ensure that the bottom of the screen has sufficient lines;
             // we use simple subtraction of physical_rows from the bottom of the lines

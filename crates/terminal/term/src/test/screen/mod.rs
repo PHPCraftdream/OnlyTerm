@@ -1,5 +1,6 @@
 use super::*;
 
+mod conpty_reflow;
 mod conpty_startup;
 mod resize;
 mod stable_seqno;

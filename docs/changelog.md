@@ -632,6 +632,18 @@ As features stabilize some brief notes about them will accumulate here.
   the tab bar does the same. No context menu is involved.
 
 #### Fixed
+* In a `cmd.exe` tab, typed input could land several rows below (or above)
+  the prompt, typically noticed after returning to a tab left alone for a
+  long time. Display sleep/wake and similar events resize every window, and
+  the tabs' `color` fill makes ConPTY treat every row below the prompt as
+  one soft-wrapped line. ConPTY reflows that line on resize but never
+  repaints, so the terminal model must move rows exactly as ConPTY does. The
+  model now tracks ConPTY's wrap marks (set when the last column is written,
+  cleared by a line feed, kept by partial erases) and follows ConPTY's
+  reflow, row limits and output extent for width and height changes,
+  including input still being typed at the prompt. Differential tests check
+  random resize sequences against a model of the bundled ConPTY's resize,
+  itself checked against native console captures.
 * Returning to a tab after its window width changed could restore a saved
   cursor several rows below the reflowed prompt. Saved and live cursors now
   follow their own positions through reflow, including repeated resizes.
