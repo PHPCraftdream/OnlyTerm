@@ -125,7 +125,11 @@ impl Line {
 
     /// Return true if the line consists solely of whitespace cells
     pub fn is_whitespace(&self) -> bool {
-        self.visible_cells().all(|c| c.str() == " ")
+        match &self.cells {
+            // O(1) byte scan instead of segmenting the whole line.
+            CellStorage::C(cl) => cl.is_all_spaces(),
+            CellStorage::V(_) => self.visible_cells().all(|c| c.str() == " "),
+        }
     }
 
     /// Return true if the last cell in the line has the wrapped attribute,
@@ -135,11 +139,15 @@ impl Line {
         if self.cached_last_cell_wrapped_seqno.load(Relaxed) == self.seqno {
             return self.cached_last_cell_was_wrapped.load(Relaxed);
         }
-        let wrapped = self
-            .visible_cells()
-            .last()
-            .map(|c| c.attrs().wrapped())
-            .unwrap_or(false);
+        let wrapped = match &self.cells {
+            // O(1): no need to segment the whole line to find the last cell.
+            CellStorage::C(cl) => cl.last_cell_attrs().map(|a| a.wrapped()).unwrap_or(false),
+            CellStorage::V(_) => self
+                .visible_cells()
+                .last()
+                .map(|c| c.attrs().wrapped())
+                .unwrap_or(false),
+        };
         self.cached_last_cell_was_wrapped.store(wrapped, Relaxed);
         self.cached_last_cell_wrapped_seqno
             .store(self.seqno, Relaxed);

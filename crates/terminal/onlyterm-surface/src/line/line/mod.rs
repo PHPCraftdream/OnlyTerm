@@ -24,6 +24,9 @@ mod cow_test;
 #[cfg(test)]
 #[path = "../tests/fill_range_test.rs"]
 mod fill_range_test;
+#[cfg(test)]
+#[path = "../tests/wrap_whitespace_fastpath_test.rs"]
+mod wrap_whitespace_fastpath_test;
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 pub struct Line {

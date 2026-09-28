@@ -205,10 +205,8 @@ impl ClusteredLine {
 
         let mut cell_index = 0;
         let mut byte_cut = 0;
-        for grapheme in Graphemes::new(&self.text) {
-            if cell_index >= new_len {
-                break;
-            }
+        while cell_index < new_len && byte_cut < self.text.len() {
+            let grapheme = next_grapheme_at(&self.text, byte_cut);
             cell_index += if self.is_double_wide(cell_index) {
                 2
             } else {
@@ -257,7 +255,8 @@ impl ClusteredLine {
         let mut clusters = self.clusters.iter();
         let cluster = clusters.next();
         ClusterLineCellIter {
-            graphemes: Graphemes::new(&self.text),
+            text: &self.text,
+            pos: 0,
             clusters,
             cluster,
             idx: 0,
@@ -467,10 +466,60 @@ impl ClusteredLine {
             }
         }
     }
+
+    /// O(1) read of the last cell's attributes. Clusters partition the
+    /// line into contiguous cell ranges (invariant maintained by every
+    /// mutator: `append*`, `truncate`, `prune_trailing_blanks`,
+    /// `set_last_cell_was_wrapped`), so the last cluster always covers
+    /// exactly the last grapheme -- no segmentation needed to find it.
+    pub(crate) fn last_cell_attrs(&self) -> Option<&CellAttributes> {
+        self.clusters.last().map(|c| &c.attrs)
+    }
+
+    /// O(1) test used by `Line::is_whitespace`: a space is always
+    /// single-width and (being outside the Extend/ZWJ/SpacingMark
+    /// categories) never merges with a neighboring grapheme, so the line
+    /// is all-blank cells (`c.str() == " "` for every cell) exactly when
+    /// its backing text is nothing but ASCII space bytes.
+    pub(crate) fn is_all_spaces(&self) -> bool {
+        self.text.bytes().all(|b| b == b' ')
+    }
+}
+
+/// Returns the grapheme starting at byte `pos` in `text` (`pos` must be a
+/// grapheme boundary and `pos < text.len()`).
+///
+/// ASCII fast path: a printable ASCII byte (0x20..=0x7E) followed by
+/// another ASCII byte, or by the end of the string, is always its own
+/// one-byte grapheme. No rule of the extended grapheme cluster algorithm
+/// ever joins two bytes in that range: the only ASCII multi-codepoint
+/// cluster is CRLF, and CR (0x0D) falls outside 0x20..=0x7E so it always
+/// takes the slow path below; and every category that can extend a
+/// cluster forward (Extend, ZWJ, SpacingMark, Prepend, regional
+/// indicators, Indic conjuncts) consists entirely of code points >=
+/// U+0080, whose UTF-8 encoding starts with a byte >= 0x80. So checking
+/// only "is the next byte ASCII or is there no next byte" is sufficient
+/// to rule out any extension of the current byte's grapheme.
+///
+/// Anything else falls back to full segmentation from `pos`, which is
+/// always correct (just not always necessary).
+fn next_grapheme_at(text: &str, pos: usize) -> &str {
+    let bytes = text.as_bytes();
+    let b = bytes[pos];
+    if (0x20..=0x7e).contains(&b) {
+        let next_is_ascii_or_end = bytes.get(pos + 1).is_none_or(|&nb| nb < 0x80);
+        if next_is_ascii_or_end {
+            return &text[pos..pos + 1];
+        }
+    }
+    Graphemes::new(&text[pos..])
+        .next()
+        .expect("pos < text.len() implies a grapheme exists at pos")
 }
 
 pub(crate) struct ClusterLineCellIter<'a> {
-    graphemes: Graphemes<'a>,
+    text: &'a str,
+    pos: usize,
     clusters: core::slice::Iter<'a, Cluster>,
     cluster: Option<&'a Cluster>,
     idx: usize,
@@ -482,7 +531,11 @@ impl<'a> Iterator for ClusterLineCellIter<'a> {
     type Item = CellRef<'a>;
 
     fn next(&mut self) -> Option<CellRef<'a>> {
-        let text = self.graphemes.next()?;
+        if self.pos >= self.text.len() {
+            return None;
+        }
+        let text = next_grapheme_at(self.text, self.pos);
+        self.pos += text.len();
 
         let cell_index = self.idx;
         let width = if self.line.is_double_wide(cell_index) {
@@ -507,6 +560,10 @@ impl<'a> Iterator for ClusterLineCellIter<'a> {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "tests/grapheme_fastpath_test.rs"]
+mod grapheme_fastpath_test;
 
 #[cfg(test)]
 mod test {
