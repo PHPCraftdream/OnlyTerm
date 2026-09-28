@@ -36,7 +36,7 @@ onlyterm-bidi.workspace = true
 onlyterm-dynamic = {workspace = true, features=["std"]}
 onlyterm-cell = {workspace = true, features=["std", "use_image"]}
 onlyterm-escape-parser = {workspace = true, features=["std", "use_image"]}
-onlyterm-surface = {workspace = true, features=["std", "appdata", "use_image"]}
+onlyterm-surface = {workspace = true, features=["std", "use_image"]}
 
 [dev-dependencies]
 env_logger.workspace = true

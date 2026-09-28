@@ -62,12 +62,6 @@ fn decorate_copy_line(
     search_bar: &CopySearchBarInfo,
     highlights: CopyMatchHighlights,
     colors: &onlyterm_config::Palette,
-    // `with_lines_mut` operates on clones of lines that may carry forward
-    // stale cached appdata, so it explicitly clears it after mutating.
-    // `get_lines` historically does not do this. Preserve that pre-existing
-    // asymmetry via this flag rather than changing behavior as part of this
-    // refactor.
-    clear_appdata: bool,
 ) {
     if is_search_row {
         // Replace with search UI
@@ -100,9 +94,6 @@ fn decorate_copy_line(
             rev,
             render_seqno,
         );
-        if clear_appdata {
-            line.clear_appdata();
-        }
         return;
     }
 
@@ -148,9 +139,6 @@ fn decorate_copy_line(
     // bumping the line's seqno; do it explicitly so downstream seqno-keyed
     // caches see this pass as a new version of the line.
     line.update_last_change_seqno(render_seqno);
-    if clear_appdata {
-        line.clear_appdata();
-    }
 }
 
 impl Pane for CopyOverlay {
@@ -511,7 +499,6 @@ impl Pane for CopyOverlay {
                             active_result_index: self.renderer.result_pos,
                         },
                         colors,
-                        /* clear_appdata */ true,
                     );
                     overlay_lines.push(line);
                 }
@@ -573,10 +560,6 @@ impl Pane for CopyOverlay {
                     active_result_index: renderer.result_pos,
                 },
                 colors,
-                // get_lines historically does not clear_appdata; see
-                // decorate_copy_line's doc comment.
-                /* clear_appdata */
-                false,
             );
         }
 
@@ -679,7 +662,6 @@ mod render_seqno_test {
                 active_result_index: None,
             },
             &onlyterm_config::Palette::default(),
-            true,
         );
 
         let mut line2 = make_line_with_seqno(delegate_seqno);
@@ -694,7 +676,6 @@ mod render_seqno_test {
                 active_result_index: None,
             },
             &onlyterm_config::Palette::default(),
-            true,
         );
 
         assert_eq!(line1.current_seqno(), pass1_seqno);
@@ -751,7 +732,6 @@ mod render_seqno_test {
                 active_result_index: Some(0),
             },
             &onlyterm_config::Palette::default(),
-            true,
         );
 
         assert_eq!(

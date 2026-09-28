@@ -53,7 +53,6 @@ pub(super) fn decorate_quickselect_line(
             .iter_mut()
             .for_each(|cell| cell.attrs_mut().clear());
         line.update_last_change_seqno(render_seqno);
-        line.clear_appdata();
     }
 
     if is_search_row {
@@ -78,7 +77,6 @@ pub(super) fn decorate_quickselect_line(
             rev,
             render_seqno,
         );
-        line.clear_appdata();
         return;
     }
 
@@ -135,7 +133,6 @@ pub(super) fn decorate_quickselect_line(
     // without bumping the line's seqno; do it explicitly so downstream
     // seqno-keyed caches see this pass as a new version of the line.
     line.update_last_change_seqno(render_seqno);
-    line.clear_appdata();
 }
 
 /// Regression tests for the overlay-render-seqno fix.

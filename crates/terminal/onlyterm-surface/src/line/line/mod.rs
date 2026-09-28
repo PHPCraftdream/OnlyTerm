@@ -4,20 +4,14 @@ use crate::line::storage::{CellStorage, VecStorage};
 use crate::line::ZoneRange;
 use crate::{SequenceNo, SEQ_ZERO};
 use alloc::sync::Arc;
-#[cfg(feature = "appdata")]
-use alloc::sync::Weak;
 use alloc::vec;
 use alloc::vec::Vec;
-#[cfg(feature = "appdata")]
-use core::any::Any;
 use core::hash::Hash;
 use finl_unicode::grapheme_clusters::Graphemes;
 use onlyterm_cell::{Cell, CellAttributes, UnicodeVersion};
 #[cfg(feature = "use_serde")]
 use serde::{Deserialize, Serialize};
 use siphasher::sip128::{Hasher128, SipHasher};
-#[cfg(feature = "appdata")]
-use std::sync::Mutex;
 
 extern crate alloc;
 
@@ -31,9 +25,6 @@ pub struct Line {
     zones: Arc<Vec<ZoneRange>>,
     seqno: SequenceNo,
     bits: LineBits,
-    #[cfg(feature = "appdata")]
-    #[cfg_attr(feature = "use_serde", serde(skip))]
-    appdata: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
     // Memoizes `last_cell_was_wrapped`'s grapheme-cluster scan (expensive:
     // it's re-run for every visible line on every paint by the
     // wrap-boundary walk in `Screen::for_each_logical_line_in_stable_range_mut`).
@@ -60,12 +51,8 @@ fn never_valid_cached_seqno() -> core::sync::atomic::AtomicUsize {
     core::sync::atomic::AtomicUsize::new(usize::MAX)
 }
 
-// Manual impl (rather than `#[derive(Debug)]`) so that `Debug` output is
-// identical regardless of whether the `appdata` feature is enabled: the
-// field holds a `Weak` reference with no meaningful printable state, and a
-// derived impl would make Debug-based snapshots (see line/test.rs) depend
-// on which other workspace member happened to pull the feature in, since
-// Cargo unifies features workspace-wide.
+// Manual impl (rather than `#[derive(Debug)]`) so that `Debug` output only
+// covers the line's content, not the internal wrap-state cache fields.
 impl core::fmt::Debug for Line {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Line")
@@ -92,8 +79,6 @@ impl Clone for Line {
                 self.cached_last_cell_wrapped_seqno
                     .load(core::sync::atomic::Ordering::Relaxed),
             ),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(self.appdata.lock().unwrap().clone()),
         }
     }
 }
@@ -116,8 +101,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 
@@ -130,8 +113,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 
@@ -147,8 +128,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 
@@ -180,8 +159,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 
@@ -209,8 +186,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 
@@ -228,38 +203,6 @@ impl Line {
         // unobservable.
         line.set_last_cell_was_wrapped(true, seqno);
         line
-    }
-
-    /// Set arbitrary application specific data for the line.
-    /// Only one piece of appdata can be tracked per line,
-    /// so this is only suitable for the overall application
-    /// and not for use by "middleware" crates.
-    /// A Weak reference is stored.
-    /// `get_appdata` is used to retrieve a previously stored reference.
-    #[cfg(feature = "appdata")]
-    pub fn set_appdata<T: Any + Send + Sync>(&self, appdata: Arc<T>) {
-        let appdata: Arc<dyn Any + Send + Sync> = appdata;
-        self.appdata
-            .lock()
-            .unwrap()
-            .replace(Arc::downgrade(&appdata));
-    }
-
-    #[cfg(feature = "appdata")]
-    pub fn clear_appdata(&self) {
-        self.appdata.lock().unwrap().take();
-    }
-
-    /// Retrieve the appdata for the line, if any.
-    /// This may return None in the case where the underlying data has
-    /// been released: Line only stores a Weak reference to it.
-    #[cfg(feature = "appdata")]
-    pub fn get_appdata(&self) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.appdata
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|data| data.upgrade())
     }
 
     /// Returns true if the line's last changed seqno is more recent

@@ -3,7 +3,7 @@
 use super::*;
 use crate::hyperlink::{Hyperlink, Rule};
 use crate::line::clusterline::ClusteredLine;
-use crate::SEQ_ZERO;
+use crate::{SequenceNo, SEQ_ZERO};
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -903,4 +903,83 @@ fn wrap_keeping_zero_is_wrap() {
             .collect();
         std::assert_eq!(actual, expected, "{:?}", text);
     }
+}
+
+/// Size regression test for Task A2 (removal of the dead `appdata` feature):
+/// `Line` used to carry a `Mutex<Option<Weak<dyn Any + Send + Sync>>>` field
+/// (72 bytes on 64-bit with the `appdata` feature, which every consumer of
+/// `Line` enabled) that had no production reader/writer. Pin the new size so
+/// a future field addition doesn't silently regrow `Line` back to its old
+/// footprint -- it's cloned on every visible row of every rendered frame.
+#[test]
+fn size_of_line_is_stable_on_64bit() {
+    #[cfg(target_pointer_width = "64")]
+    assert_eq!(
+        core::mem::size_of::<Line>(),
+        48,
+        "Line grew or shrank; update this pinned size (was 72 bytes before \
+         the `appdata` field was removed) after confirming the change is intended"
+    );
+}
+
+/// Builds a line with two distinct semantic zones (so `semantic_zone_ranges`
+/// has more than one entry to preserve), a non-zero seqno, and a warmed
+/// `last_cell_was_wrapped` cache -- to exercise `Line::clone` against every
+/// piece of state it's supposed to carry over.
+fn line_with_zones_and_wrap_cache(seqno: SequenceNo, use_cluster_storage: bool) -> Line {
+    let prompt = CellAttributes::default()
+        .set_semantic_type(onlyterm_cell::SemanticType::Prompt)
+        .clone();
+    let output = CellAttributes::default()
+        .set_semantic_type(onlyterm_cell::SemanticType::Output)
+        .clone();
+    let mut line = Line::from_cells(
+        vec![
+            Cell::new('a', prompt.clone()),
+            Cell::new('b', prompt),
+            Cell::new('c', output.clone()),
+            Cell::new('d', output),
+        ],
+        seqno,
+    );
+    if use_cluster_storage {
+        line.compress_for_scrollback();
+    }
+    line.set_last_cell_was_wrapped(true, seqno);
+    // Force the wrap-cache read path (not just the setter's own cache-priming)
+    // and the zone-cache computation, so clone must preserve already-cached
+    // results, not just the raw data they were derived from.
+    assert!(line.last_cell_was_wrapped());
+    assert_eq!(line.semantic_zone_ranges().len(), 2);
+    line
+}
+
+fn assert_clone_preserves_state(mut original: Line) {
+    let mut cloned = original.clone();
+
+    assert_eq!(
+        cloned, original,
+        "Line::clone must preserve cells, seqno and bits (Line's PartialEq)"
+    );
+    assert_eq!(
+        cloned.last_cell_was_wrapped(),
+        original.last_cell_was_wrapped(),
+        "clone must agree with the original on last_cell_was_wrapped()"
+    );
+    assert!(cloned.last_cell_was_wrapped());
+    assert_eq!(
+        cloned.semantic_zone_ranges(),
+        original.semantic_zone_ranges(),
+        "clone must preserve zones"
+    );
+}
+
+#[test]
+fn clone_preserves_cells_seqno_bits_zones_and_wrap_cache_v_storage() {
+    assert_clone_preserves_state(line_with_zones_and_wrap_cache(3, false));
+}
+
+#[test]
+fn clone_preserves_cells_seqno_bits_zones_and_wrap_cache_clustered_storage() {
+    assert_clone_preserves_state(line_with_zones_and_wrap_cache(3, true));
 }

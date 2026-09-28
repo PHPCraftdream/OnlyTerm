@@ -11,8 +11,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::ops::Range;
 use onlyterm_bidi::ParagraphDirectionHint;
-#[cfg(feature = "appdata")]
-use std::sync::Mutex;
 
 extern crate alloc;
 
@@ -51,8 +49,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 
@@ -144,8 +140,6 @@ impl Line {
             zones: Arc::new(vec![]),
             cached_last_cell_was_wrapped: core::sync::atomic::AtomicBool::new(false),
             cached_last_cell_wrapped_seqno: core::sync::atomic::AtomicUsize::new(usize::MAX),
-            #[cfg(feature = "appdata")]
-            appdata: Mutex::new(None),
         }
     }
 

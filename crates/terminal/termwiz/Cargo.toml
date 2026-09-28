@@ -45,7 +45,7 @@ onlyterm-color-types = {workspace = true, features=["std"]}
 onlyterm-dynamic = {workspace = true, features=["std"]}
 onlyterm-escape-parser = {workspace = true, features=["std"]}
 onlyterm-input-types.workspace = true
-onlyterm-surface = {workspace = true, features=["std", "appdata"]}
+onlyterm-surface = {workspace = true, features=["std"]}
 
 [features]
 default = ["image", "tmux_cc"]
