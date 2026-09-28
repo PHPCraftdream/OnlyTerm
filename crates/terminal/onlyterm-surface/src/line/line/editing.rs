@@ -31,6 +31,51 @@ impl Line {
         self.bits = LineBits::NONE;
     }
 
+    /// Resets `self` in place to the same observable state as
+    /// `Line::new(seqno)`. Used by `Screen::scroll_up` to recycle a line
+    /// that just scrolled off the top of a full scrollback into the blank
+    /// row needed at the bottom, instead of allocating a fresh one.
+    ///
+    /// Reuses the underlying `ClusteredLine`'s `text`/`clusters` storage
+    /// when `self` is the sole owner of it (checked via `Arc::get_mut`).
+    /// A render snapshot elsewhere (the GUI keeps `Arc` clones of lines
+    /// across frames) may still hold a clone of that storage; mutating it
+    /// in place then would corrupt the snapshot, so this falls back to a
+    /// fresh allocation rather than cloning the (about to be discarded)
+    /// shared content just to immediately clear it.
+    pub fn recycle_as_blank(mut self, seqno: SequenceNo) -> Self {
+        match &mut self.cells {
+            CellStorage::C(cl) => match Arc::get_mut(cl) {
+                Some(cl) => cl.clear_in_place(),
+                None => self.cells = CellStorage::C(Arc::new(ClusteredLine::new())),
+            },
+            CellStorage::V(_) => self.cells = CellStorage::C(Arc::new(ClusteredLine::new())),
+        }
+        self.bits = LineBits::NONE;
+        self.seqno = seqno;
+        self.invalidate_zones();
+        use core::sync::atomic::Ordering::Relaxed;
+        self.cached_last_cell_was_wrapped.store(false, Relaxed);
+        self.cached_last_cell_wrapped_seqno
+            .store(usize::MAX, Relaxed);
+        self
+    }
+
+    /// Diagnostic/test-only: exposes the identity (pointer address) and
+    /// capacity of the underlying `ClusteredLine` text buffer, if this
+    /// line currently uses cluster storage. Used by tests across the
+    /// crate boundary (the `term` crate's scroll-recycling tests) to
+    /// prove that `recycle_as_blank` reuses the same allocation instead of
+    /// allocating a fresh one, and that it never touches storage a render
+    /// snapshot still holds a clone of.
+    #[doc(hidden)]
+    pub fn debug_cluster_text_storage(&self) -> Option<(usize, usize)> {
+        match &self.cells {
+            CellStorage::C(cl) => Some((cl.text.as_ptr() as usize, cl.text.capacity())),
+            CellStorage::V(_) => None,
+        }
+    }
+
     pub fn resize(&mut self, width: usize, seqno: SequenceNo) {
         self.coerce_vec_storage().resize_with(width, Cell::blank);
         self.update_last_change_seqno(seqno);

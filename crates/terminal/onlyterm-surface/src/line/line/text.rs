@@ -168,7 +168,6 @@ impl Line {
     ) -> Vec<CellCluster> {
         let continues_next = self.last_cell_was_wrapped();
         CellCluster::make_cluster(
-            self.len(),
             self.visible_cells(),
             bidi_hint,
             is_wrap_continuation,

@@ -48,28 +48,20 @@ impl CellCluster {
     /// Compute the list of CellClusters from a set of visible cells.
     /// The input is typically the result of calling `Line::visible_cells()`.
     pub fn make_cluster<'a>(
-        hint: usize,
         iter: impl Iterator<Item = CellRef<'a>>,
         bidi_hint: Option<ParagraphDirectionHint>,
         is_wrap_continuation: bool,
         continues_next: bool,
     ) -> Vec<CellCluster> {
         match bidi_hint {
-            Some(dir_hint) => Self::make_cluster_with_bidi(
-                hint,
-                dir_hint,
-                iter,
-                is_wrap_continuation,
-                continues_next,
-            ),
-            None => Self::make_cluster_no_bidi(hint, iter),
+            Some(dir_hint) => {
+                Self::make_cluster_with_bidi(dir_hint, iter, is_wrap_continuation, continues_next)
+            }
+            None => Self::make_cluster_no_bidi(iter),
         }
     }
 
-    fn make_cluster_no_bidi<'a>(
-        hint: usize,
-        iter: impl Iterator<Item = CellRef<'a>>,
-    ) -> Vec<CellCluster> {
+    fn make_cluster_no_bidi<'a>(iter: impl Iterator<Item = CellRef<'a>>) -> Vec<CellCluster> {
         let mut last_cluster = None;
         let mut clusters = Vec::new();
         let mut whitespace_run = 0;
@@ -93,7 +85,6 @@ impl CellCluster {
                     only_whitespace = cell_str == " ";
                     whitespace_run = if only_whitespace { 1 } else { 0 };
                     Some(CellCluster::new(
-                        hint,
                         presentation,
                         normalized_attr.into_owned(),
                         cell_str,
@@ -109,7 +100,6 @@ impl CellCluster {
                         only_whitespace = cell_str == " ";
                         whitespace_run = if only_whitespace { 1 } else { 0 };
                         Some(CellCluster::new(
-                            hint,
                             presentation,
                             normalized_attr.into_owned(),
                             cell_str,
@@ -147,7 +137,6 @@ impl CellCluster {
                                 whitespace_run = 1;
                             }
                             Some(CellCluster::new(
-                                hint,
                                 presentation,
                                 normalized_attr.into_owned(),
                                 cell_str,
@@ -338,7 +327,6 @@ impl CellCluster {
     }
 
     fn make_cluster_with_bidi<'a>(
-        capacity_hint: usize,
         _dir_hint: ParagraphDirectionHint,
         iter: impl Iterator<Item = CellRef<'a>>,
         is_wrap_continuation: bool,
@@ -387,7 +375,6 @@ impl CellCluster {
                     only_whitespace = cell_str == " ";
                     whitespace_run = if only_whitespace { 1 } else { 0 };
                     Some(CellCluster::new(
-                        capacity_hint,
                         presentation,
                         normalized_attr.into_owned(),
                         cell_str,
@@ -401,7 +388,6 @@ impl CellCluster {
                         only_whitespace = cell_str == " ";
                         whitespace_run = if only_whitespace { 1 } else { 0 };
                         Some(CellCluster::new(
-                            capacity_hint,
                             presentation,
                             normalized_attr.into_owned(),
                             cell_str,
@@ -426,7 +412,6 @@ impl CellCluster {
                                 whitespace_run = 1;
                             }
                             Some(CellCluster::new(
-                                capacity_hint,
                                 presentation,
                                 normalized_attr.into_owned(),
                                 cell_str,
@@ -451,7 +436,6 @@ impl CellCluster {
 
     /// Start off a new cluster with some initial data
     fn new(
-        hint: usize,
         presentation: Presentation,
         attrs: CellAttributes,
         text: &str,
@@ -474,7 +458,13 @@ impl CellCluster {
                 byte_to_cell_width.push(width as u8);
             }
         }
-        let mut storage = String::with_capacity(hint);
+        // Reserve exactly what this cell's text needs; `add()` grows the
+        // buffer (amortized) if later cells join the cluster. A caller-
+        // supplied "whole line length" hint used to be reserved here for
+        // EVERY cluster, so a line with k clusters over-reserved roughly
+        // k * line_len bytes -- most of which a short cluster (typically
+        // a single word) never touches.
+        let mut storage = String::with_capacity(text.len());
         storage.push_str(text);
 
         CellCluster {
@@ -558,7 +548,6 @@ mod test {
         let s = "(\u{05D0}\u{05D1})";
         let line = Line::from_text(s, &CellAttributes::default(), SEQ_ZERO, None);
         let clusters = CellCluster::make_cluster(
-            line.len(),
             line.visible_cells(),
             Some(ParagraphDirectionHint::AutoLeftToRight),
             false,
@@ -611,7 +600,6 @@ mod test {
         let s = "(hello world)";
         let line = Line::from_text(s, &CellAttributes::default(), SEQ_ZERO, None);
         let clusters = CellCluster::make_cluster(
-            line.len(),
             line.visible_cells(),
             Some(ParagraphDirectionHint::AutoLeftToRight),
             false,
@@ -619,5 +607,92 @@ mod test {
         );
         let joined: String = clusters.iter().map(|c| c.text.as_str()).collect();
         assert_eq!(joined, s);
+    }
+
+    /// Regression: `CellCluster::new` used to `String::with_capacity(hint)`
+    /// where `hint` was the length of the WHOLE LINE, for every cluster --
+    /// a line with k clusters over-reserved roughly k * line_len bytes
+    /// total. Builds a worst-case line (attributes alternate cell-by-cell,
+    /// so every cluster holds exactly one cell) and checks both that the
+    /// over-reservation is gone AND that the clustering itself (text/attrs/
+    /// width/first_cell_idx per cluster) is unaffected by the
+    /// allocation-strategy change.
+    #[test]
+    fn per_cluster_capacity_is_not_whole_line_hint() {
+        use onlyterm_cell::color::AnsiColor;
+
+        let seqno = SEQ_ZERO;
+        let mut line = Line::new(seqno);
+        let alphabet: Vec<char> = "abcdefghijklmnopqrstuvwxyz".chars().collect();
+        let n = 4 * alphabet.len(); // 104 single-width ascii cells
+        for i in 0..n {
+            let mut attrs = CellAttributes::default();
+            if i % 2 == 1 {
+                attrs.set_foreground(AnsiColor::Red);
+            }
+            line.set_cell_grapheme(
+                i,
+                &alphabet[i % alphabet.len()].to_string(),
+                1,
+                attrs,
+                seqno,
+            );
+        }
+
+        let clusters = CellCluster::make_cluster(line.visible_cells(), None, false, false);
+
+        // Alternating attrs on every cell forces every cluster to hold
+        // exactly one cell: the worst case for the old "reserve the whole
+        // line" bug.
+        assert_eq!(
+            clusters.len(),
+            n,
+            "each attribute change must start a new cluster"
+        );
+
+        let total_len: usize = clusters.iter().map(|c| c.text.len()).sum();
+        let total_cap: usize = clusters.iter().map(|c| c.text.capacity()).sum();
+        assert_eq!(total_len, n);
+
+        // The old bug reserved `hint` (= whole line length, n) bytes for
+        // EACH of the n clusters: total capacity would have been n * n
+        // bytes for this input. Reserving exactly `text.len()` per cluster
+        // keeps total capacity tracking total length, not
+        // clusters-times-line-length.
+        let old_buggy_total = n * n;
+        assert!(
+            total_cap < old_buggy_total / 10,
+            "total cluster text capacity {} still looks like it reserves \
+             whole-line-sized buffers per cluster (old buggy bound: {})",
+            total_cap,
+            old_buggy_total
+        );
+        // Tight bound: a cluster that never grows past its initial push (all
+        // of them here, since each holds exactly one cell) should reserve
+        // exactly its own text length.
+        assert_eq!(
+            total_cap, total_len,
+            "single-cell clusters should reserve exactly their own text length"
+        );
+
+        // Cluster-by-cluster correctness: content/metadata must be exactly
+        // what the clustering algorithm produces -- only the allocation
+        // strategy changed, not the grouping/attrs/width/index logic.
+        for (i, cluster) in clusters.iter().enumerate() {
+            let expected_char = alphabet[i % alphabet.len()];
+            assert_eq!(
+                cluster.text,
+                expected_char.to_string(),
+                "cluster {} text",
+                i
+            );
+            assert_eq!(cluster.width, 1, "cluster {} width", i);
+            assert_eq!(cluster.first_cell_idx, i, "cluster {} first_cell_idx", i);
+            let mut expect_attrs = CellAttributes::default();
+            if i % 2 == 1 {
+                expect_attrs.set_foreground(AnsiColor::Red);
+            }
+            assert_eq!(cluster.attrs, expect_attrs, "cluster {} attrs", i);
+        }
     }
 }

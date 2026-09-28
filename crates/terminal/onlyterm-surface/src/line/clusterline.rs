@@ -78,14 +78,36 @@ where
 }
 
 impl ClusteredLine {
+    /// `text` starts with no reservation: most `Line::new()` calls create
+    /// rows that are never printed into (e.g. every blank row below the
+    /// cursor on `Screen::new`/resize, or a row that gets scrolled off
+    /// again before anything is written to it), so an eager reservation
+    /// would be wasted for those. A row that *does* get appended to pays
+    /// for exactly one allocation sized to what it actually needed, via
+    /// `String::push_str`'s own amortized growth -- no worse than before
+    /// for the common case, and free for the blank case.
     pub fn new() -> Self {
         Self {
-            text: String::with_capacity(80),
+            text: String::new(),
             is_double_wide: None,
             clusters: vec![],
             len: 0,
             last_cell_width: None,
         }
+    }
+
+    /// Resets this line back to the same observable state as `new()`
+    /// (empty text, no clusters, no double-wide bits, zero length), but
+    /// keeps the already-allocated `text`/`clusters` capacity so the
+    /// caller can recycle this storage for a future blank line instead of
+    /// allocating a fresh one. Only safe to call on storage that isn't
+    /// shared (see `Line::recycle_as_blank`, the only caller).
+    pub(crate) fn clear_in_place(&mut self) {
+        self.text.clear();
+        self.clusters.clear();
+        self.is_double_wide = None;
+        self.len = 0;
+        self.last_cell_width = None;
     }
 
     pub fn to_cell_vec(&self) -> Vec<Cell> {
@@ -577,5 +599,46 @@ mod test {
         assert_eq!(core::mem::size_of::<Vec<Cluster>>(), 24);
         assert_eq!(core::mem::size_of::<Option<Box<FixedBitSet>>>(), 8);
         assert_eq!(core::mem::size_of::<Option<NonZeroU8>>(), 1);
+    }
+
+    /// Regression: `new()` used to eagerly `String::with_capacity(80)`, even
+    /// though most `Line::new()` calls create blank rows that are never
+    /// printed into (every blank row `Screen::new`/resize/`scroll_up` fills
+    /// ahead of the cursor). Reserve nothing up front; `push_str`'s own
+    /// amortized growth pays for exactly what a row that DOES get appended
+    /// to actually needs.
+    #[test]
+    fn new_reserves_no_text_capacity() {
+        let cl = ClusteredLine::new();
+        assert_eq!(cl.text.capacity(), 0);
+        assert_eq!(cl.text.len(), 0);
+    }
+
+    /// `clear_in_place` must produce something indistinguishable (by value)
+    /// from a fresh `ClusteredLine::new()`, while actually keeping the
+    /// allocation around -- that's the entire point of using it to recycle a
+    /// scrolled-off line's storage instead of allocating a new one.
+    #[test]
+    fn clear_in_place_matches_new_but_keeps_capacity() {
+        let mut cl = ClusteredLine::new();
+        cl.append(Cell::new_grapheme("h", CellAttributes::default(), None));
+        cl.append(Cell::new_grapheme("i", CellAttributes::default(), None));
+        let cap_before = cl.text.capacity();
+        assert!(
+            cap_before >= 2,
+            "precondition: appending must have allocated"
+        );
+
+        cl.clear_in_place();
+
+        assert_eq!(
+            cl,
+            ClusteredLine::new(),
+            "clear_in_place must match a fresh ClusteredLine::new() by value"
+        );
+        assert!(
+            cl.text.capacity() >= cap_before,
+            "clear_in_place must keep the allocation, not reset it"
+        );
     }
 }

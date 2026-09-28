@@ -181,7 +181,10 @@ impl Screen {
             for _ in 0..to_move {
                 let mut line = self.lines.remove(remove_idx).unwrap();
                 let line = if default_blank == blank_attr {
-                    Line::new(seqno)
+                    // Recycle the evicted line's storage (its `text`/
+                    // `clusters` allocations) into the blank row needed at
+                    // the bottom, rather than allocating a fresh one.
+                    line.recycle_as_blank(seqno)
                 } else {
                     // Make the line like a new one of the appropriate width
                     line.resize_and_clear(self.physical_cols, seqno, blank_attr.clone());
