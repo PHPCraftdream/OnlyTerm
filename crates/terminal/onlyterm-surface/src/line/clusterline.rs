@@ -168,11 +168,89 @@ impl ClusteredLine {
         self.len as usize
     }
 
-    fn is_double_wide(&self, cell_index: usize) -> bool {
+    pub(crate) fn is_double_wide(&self, cell_index: usize) -> bool {
         match &self.is_double_wide {
             Some(bitset) => bitset.contains(cell_index),
             None => false,
         }
+    }
+
+    /// Attributes of the cluster covering `cell_index`, if any. Cost is
+    /// proportional to the number of attribute runs scanned, not to
+    /// `cell_index` itself.
+    pub(crate) fn attrs_at(&self, cell_index: usize) -> Option<&CellAttributes> {
+        let mut pos = 0usize;
+        for cluster in &self.clusters {
+            let end = pos + cluster.cell_width as usize;
+            if cell_index < end {
+                return Some(&cluster.attrs);
+            }
+            pos = end;
+        }
+        None
+    }
+
+    /// Removes cells from `new_len` onward; `new_len` must be a cell
+    /// boundary. Segments the text the same way `iter` does, so the cut
+    /// always agrees with the cells the rest of the line sees.
+    pub(crate) fn truncate(&mut self, new_len: usize) {
+        let len = self.len();
+        if new_len >= len {
+            return;
+        }
+        if new_len == 0 {
+            *self = ClusteredLine::new();
+            return;
+        }
+
+        let mut cell_index = 0;
+        let mut byte_cut = 0;
+        for grapheme in Graphemes::new(&self.text) {
+            if cell_index >= new_len {
+                break;
+            }
+            cell_index += if self.is_double_wide(cell_index) {
+                2
+            } else {
+                1
+            };
+            byte_cut += grapheme.len();
+        }
+        debug_assert_eq!(cell_index, new_len, "truncate must cut on a cell boundary");
+        self.text.truncate(byte_cut);
+
+        if let Some(bitset) = self.is_double_wide.as_mut() {
+            if new_len < bitset.len() {
+                bitset.set_range(new_len.., false);
+            }
+        }
+        // The new last cell is wide if a wide cell starts right before it.
+        let last_width = if new_len >= 2 && self.is_double_wide(new_len - 2) {
+            2
+        } else {
+            1
+        };
+
+        // Trim clusters from the tail; cost is proportional to the
+        // number of attribute runs touched by the removed range.
+        let mut remaining = len - new_len;
+        while remaining > 0 {
+            let last = self
+                .clusters
+                .last_mut()
+                .expect("a cluster exists while cells remain");
+            let cw = last.cell_width as usize;
+            if cw <= remaining {
+                remaining -= cw;
+                self.clusters.pop();
+            } else {
+                last.cell_width -= remaining as u16;
+                remaining = 0;
+            }
+        }
+
+        self.len = new_len as u32;
+        self.last_cell_width = NonZeroU8::new(last_width as u8);
     }
 
     pub fn iter(&self) -> ClusterLineCellIter<'_> {

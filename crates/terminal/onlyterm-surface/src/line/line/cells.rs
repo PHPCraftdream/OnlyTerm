@@ -1,5 +1,6 @@
 use super::Line;
 use crate::alloc::string::ToString;
+use crate::line::clusterline::ClusteredLine;
 use crate::line::linebits::LineBits;
 use crate::line::storage::{CellStorage, VecStorageIter, VisibleCellIter};
 use crate::line::CellRef;
@@ -283,11 +284,78 @@ impl Line {
             // them all away again before we return; NOP
             return;
         }
-        for x in cols {
-            // FIXME: we can skip the look-back for second and subsequent iterations
-            self.set_cell_impl(x, cell.clone(), true, seqno);
+        let mut already_pruned = false;
+        if cols.start < cols.end {
+            if cell.width() > 1 {
+                // Wide fill cells are not a real-world erase pattern; keep
+                // the simple, obviously-correct per-cell path for them.
+                for x in cols {
+                    self.set_cell_impl(x, cell.clone(), true, seqno);
+                }
+            } else {
+                already_pruned = self.fill_range_narrow(cols.start, cols.end, cell, seqno);
+            }
         }
-        self.prune_trailing_blanks(seqno);
+        if !already_pruned {
+            self.prune_trailing_blanks(seqno);
+        }
+    }
+
+    /// Bulk implementation of `fill_range` for a fill cell of width <= 1
+    /// (covers EL/ED/ECH, which always fill with a single blank or plain
+    /// character). Does at most one storage conversion, and when the
+    /// range reaches or extends past the end of a clustered line with a
+    /// blank fill cell, does no conversion at all.
+    ///
+    /// Returns `true` if pruning has already been fully resolved and the
+    /// caller must *not* call `prune_trailing_blanks` again: the clustered
+    /// blank-fill fast path below replicates a legacy quirk (see
+    /// `fill_cluster_to_end`) that a second, storage-agnostic prune pass
+    /// would silently undo.
+    fn fill_range_narrow(
+        &mut self,
+        start: usize,
+        end: usize,
+        cell: &Cell,
+        seqno: SequenceNo,
+    ) -> bool {
+        self.invalidate_implicit_hyperlinks(seqno);
+        self.invalidate_zones();
+        self.update_last_change_seqno(seqno);
+        if cell.attrs().hyperlink().is_some() {
+            self.bits |= LineBits::HAS_HYPERLINK;
+        }
+
+        if let CellStorage::C(cl) = &mut self.cells {
+            if end >= cl.len() {
+                return fill_cluster_to_end(Arc::make_mut(cl), start, end, cell);
+            }
+            // Interior range: falls through to the Vec-storage path below,
+            // exactly like the old per-cell loop would once it reached an
+            // index inside the existing clustered content.
+        }
+
+        self.fill_range_vec_bulk(start, end, cell);
+        false
+    }
+
+    /// Bulk-fills `[start, end)` in Vec storage: pads once (if needed),
+    /// nerfs a wide character straddling `start` once, then does a plain
+    /// slice fill. `clear_image_placement` is always true for fill_range's
+    /// callers, so (unlike `raw_set_cell`) no per-cell image bookkeeping
+    /// is needed.
+    fn fill_range_vec_bulk(&mut self, start: usize, end: usize, cell: &Cell) {
+        {
+            let cells = self.coerce_vec_storage();
+            if end > cells.len() {
+                cells.resize_with(end, Cell::blank);
+            }
+        }
+        self.invalidate_grapheme_at_or_before(start);
+        let cells = self.coerce_vec_storage();
+        for c in &mut cells[start..end] {
+            *c = cell.clone();
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -415,4 +483,78 @@ impl Line {
 
         result
     }
+}
+
+/// Fills `[start, end)` in a clustered line whose current length is <=
+/// `end`, without ever converting to Vec storage. Since everything from
+/// `start` onward either already ends at/before `start` or is about to be
+/// fully overwritten/erased, this reduces to: nerf a wide character that
+/// straddles `start` (matching `invalidate_grapheme_at_or_before`),
+/// truncate there, then append the fill cell (skipped entirely when it is
+/// the default blank, since a trailing default blank would just be
+/// pruned straight back off).
+///
+/// Returns `true` if the caller must *not* run its own, storage-agnostic
+/// `prune_trailing_blanks` afterward: see the `is_blank` branch below.
+fn fill_cluster_to_end(cl: &mut ClusteredLine, start: usize, end: usize, cell: &Cell) -> bool {
+    let len = cl.len();
+    let is_blank = *cell == Cell::blank();
+
+    if start >= len {
+        if is_blank {
+            // Already implicitly blank beyond the current content; NOP.
+            // Storage is untouched, so the generic caller-side prune must
+            // still run (it may have pre-existing trailing blanks of its
+            // own to clean up).
+            return false;
+        }
+        while cl.len() < start {
+            cl.append_grapheme(" ", 1, CellAttributes::blank());
+        }
+        for _ in start..end {
+            cl.append(cell.clone());
+        }
+        return false;
+    }
+
+    let nerf_attrs = if start > 0 && cl.is_double_wide(start - 1) {
+        cl.attrs_at(start - 1).cloned()
+    } else {
+        None
+    };
+
+    match nerf_attrs {
+        Some(attrs) => {
+            cl.truncate(start - 1);
+            cl.append(Cell::blank_with_attrs(attrs));
+        }
+        None => cl.truncate(start),
+    }
+
+    if !is_blank {
+        for _ in start..end {
+            cl.append(cell.clone());
+        }
+        return false;
+    }
+
+    // `start < len` means the old per-cell loop would have hit an
+    // in-bounds index and converted to Vec storage for the rest of this
+    // call, including the final `prune_trailing_blanks`. Vec storage's
+    // version can't fully collapse an all-default-blank line (its
+    // `rposition` finds nothing and leaves it at the padded length
+    // instead of truncating) -- reproduce that: prune the truncated
+    // prefix ourselves, and if that would empty it completely,
+    // materialize `end` blank cells instead of collapsing to empty. This
+    // result must not be re-pruned by a generic, storage-agnostic pass
+    // afterward (which would use the *stronger*, always-fully-collapsing
+    // clustered pruning and undo exactly this), so signal that to the
+    // caller.
+    cl.prune_trailing_blanks();
+    if cl.len() == 0 {
+        for _ in 0..end {
+            cl.append(cell.clone());
+        }
+    }
+    true
 }
