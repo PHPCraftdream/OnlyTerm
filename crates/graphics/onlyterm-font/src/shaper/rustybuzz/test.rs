@@ -1,6 +1,8 @@
 use super::*;
 mod baseline;
 mod bidi;
+pub(crate) mod clustering_differential;
+mod clustering_differential_strings;
 mod fallback_cache;
 mod shaping;
 use crate::locator::{FontDataHandle, FontDataSource};

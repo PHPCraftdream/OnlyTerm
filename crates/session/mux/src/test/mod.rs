@@ -8,7 +8,7 @@ use crossbeam::channel::{unbounded, Sender};
 use onlyterm_rangeset::RangeSet;
 use onlyterm_term::color::ColorPalette;
 use onlyterm_term::{KeyCode, KeyModifiers, MouseEvent, StableRowIndex, TerminalSize};
-use parking_lot::{MappedMutexGuard, Mutex};
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Once, Weak};
@@ -31,26 +31,40 @@ pub(crate) static MUX_TEST_GUARD: Mutex<()> = Mutex::new(());
 
 pub(crate) struct RecordingPane {
     batches: Mutex<Vec<Vec<Action>>>,
+    /// Held (uncontended) by `perform_actions` on every call. Tests that
+    /// need to simulate a stalled/slow pane (e.g. pty_reader's backpressure
+    /// test) acquire this externally via `lock_gate()` first, which makes
+    /// every subsequent `perform_actions` call block until the guard is
+    /// dropped.
+    gate: Mutex<()>,
 }
 
 impl RecordingPane {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             batches: Mutex::new(vec![]),
+            gate: Mutex::new(()),
         }
     }
 
-    fn flattened_actions(&self) -> Vec<Action> {
+    pub(crate) fn flattened_actions(&self) -> Vec<Action> {
         self.batches.lock().iter().flatten().cloned().collect()
     }
 
     fn recorded_batches(&self) -> Vec<Vec<Action>> {
         self.batches.lock().clone()
     }
+
+    /// Holds `gate`, blocking every `perform_actions` call made by another
+    /// thread until the returned guard is dropped.
+    pub(crate) fn lock_gate(&self) -> MutexGuard<'_, ()> {
+        self.gate.lock()
+    }
 }
 
 impl Pane for RecordingPane {
     fn perform_actions(&self, actions: Vec<Action>) {
+        let _gate = self.gate.lock();
         self.batches.lock().push(actions);
     }
 
@@ -174,11 +188,17 @@ fn start_parser(
     onlyterm_config::use_this_configuration(config);
 
     let (tx, rx) = unbounded();
+    // The buffer-recycling return channel (task C3.2) isn't part of what
+    // these byte-stream-oriented tests exercise -- they write straight to
+    // `tx` via `TestWriter`, not through the real reader thread/buffer
+    // pool -- so its receiver is simply dropped; `parse_buffered_data`'s
+    // `try_send` on a disconnected return channel is a documented no-op.
+    let (ret_tx, _ret_rx) = unbounded();
     let pane = Arc::new(RecordingPane::new());
     let pane_for_parser: Weak<dyn Pane> = Arc::downgrade(&(pane.clone() as Arc<dyn Pane>));
     let parser = thread::spawn(move || {
         let dead = Arc::new(AtomicBool::new(false));
-        parse_buffered_data(pane_for_parser, &dead, rx);
+        parse_buffered_data(pane_for_parser, &dead, rx, ret_tx);
     });
     (TestWriter(tx), pane, parser)
 }

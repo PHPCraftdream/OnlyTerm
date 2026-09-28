@@ -385,9 +385,24 @@ impl TripleVertexBuffer {
 
     /// Merges instances collected by one `with_quad_allocator` call (i.e.
     /// one `MappedQuadsView`'s worth) into this frame's accumulator.
-    /// Returns the scratch Vec to the pool for reuse (preserving capacity).
+    /// Returns a scratch Vec to the pool for reuse (preserving capacity).
+    ///
+    /// When the accumulator is still empty (the first call this frame, e.g.
+    /// the main content pass), there is nothing to copy into: swap the
+    /// scratch Vec in as the accumulator directly, and send the (empty,
+    /// former-accumulator) Vec to the pool instead. This avoids copying
+    /// every quad of the frame's main pass. Subsequent calls (e.g. the
+    /// UI-chrome pass, or nested `with_quad_allocator` calls) find a
+    /// non-empty accumulator and fall back to extend, appending in call
+    /// order exactly as before.
     pub fn accumulate_instances(&self, mut instances: Vec<crate::quad::QuadInstance>) {
-        self.instances.borrow_mut().extend(&instances);
+        let mut acc = self.instances.borrow_mut();
+        if acc.is_empty() {
+            std::mem::swap(&mut *acc, &mut instances);
+        } else {
+            acc.extend_from_slice(&instances);
+        }
+        drop(acc);
         // Clear the Vec (preserving capacity) and return to pool for reuse
         instances.clear();
         self.scratch_pool.borrow_mut().push(instances);
@@ -723,187 +738,5 @@ impl RenderState {
 mod wire_transfer_tests;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Test that the scratch pool actually reuses Vec capacity across calls.
-    /// This exercises the REAL `TripleVertexBuffer::map_instances` and
-    /// `TripleVertexBuffer::accumulate_instances` methods. If someone reverts
-    /// the pooling fix (changes `map_instances` back to `Vec::with_capacity`
-    /// on every call), this test would fail because the second call would
-    /// allocate a fresh Vec (different pointer).
-    #[test]
-    fn test_scratch_pool_reuses_capacity() {
-        // TripleVertexBuffer::new accepts an empty vec for bufs.
-        // Neither map_instances nor accumulate_instances touches self.bufs,
-        // so this is safe for testing the pool logic without a real wgpu device.
-        let tvb = TripleVertexBuffer::new(vec![], 100);
-
-        // First call: should allocate fresh Vec with capacity 100
-        let mut view1 = tvb.map_instances();
-        let ptr1 = view1.instances.as_ptr();
-        let cap1 = view1.instances.capacity();
-        assert_eq!(
-            cap1, 100,
-            "First call should get capacity matching TripleVertexBuffer.capacity"
-        );
-
-        // Push distinguishable quads
-        let quad_a = crate::quad::QuadInstance {
-            position: [10.0, 20.0, 30.0, 40.0],
-            ..Default::default()
-        };
-        view1.instances.push(quad_a);
-        let quad_b = crate::quad::QuadInstance {
-            position: [50.0, 60.0, 70.0, 80.0],
-            ..Default::default()
-        };
-        view1.instances.push(quad_b);
-
-        // Accumulate: this should return the Vec to the pool (capacity preserved)
-        tvb.accumulate_instances(view1.instances);
-
-        // Second call: should REUSE the pooled Vec (same pointer and capacity)
-        let view2 = tvb.map_instances();
-        let ptr2 = view2.instances.as_ptr();
-        let cap2 = view2.instances.capacity();
-        assert_eq!(
-            ptr1, ptr2,
-            "Second call should reuse pooled Vec (same pointer)"
-        );
-        assert_eq!(
-            cap1, cap2,
-            "Second call should reuse pooled Vec (same capacity)"
-        );
-
-        // Assert that the first call's quads made it to the accumulator
-        assert_eq!(
-            tvb.instance_count(),
-            2,
-            "Accumulator should have 2 instances from first call"
-        );
-
-        let acc_instances = tvb.instances.borrow();
-        assert_eq!(
-            acc_instances[0].position,
-            [10.0, 20.0, 30.0, 40.0],
-            "First quad's position should match"
-        );
-        assert_eq!(
-            acc_instances[1].position,
-            [50.0, 60.0, 70.0, 80.0],
-            "Second quad's position should match"
-        );
-    }
-
-    /// Test that reentrant nested calls on the same TripleVertexBuffer
-    /// get different buffers and don't lose data.
-    ///
-    /// This exercises the REAL `TripleVertexBuffer::map_instances` and
-    /// `TripleVertexBuffer::accumulate_instances` methods in the exact
-    /// reentrancy pattern that occurs in production (see box_model.rs:844's
-    /// recursive `render_element` calls).
-    ///
-    /// A naive implementation that uses a single shared Vec with
-    /// `std::mem::take` (or similar) would FAIL this test because the inner
-    /// call would steal the outer call's in-progress Vec, discarding its data.
-    /// The pooling implementation passes because each call gets its own
-    /// exclusively-owned Vec from the pool.
-    #[test]
-    fn test_reentrant_calls_use_different_buffers() {
-        let tvb = TripleVertexBuffer::new(vec![], 100);
-
-        // Outer call: get a buffer and add distinguishable quads
-        let mut outer = tvb.map_instances();
-        let outer_ptr = outer.instances.as_ptr();
-        let outer_cap = outer.instances.capacity();
-        for i in 0..2 {
-            let quad = crate::quad::QuadInstance {
-                position: [
-                    100.0 + i as f32,
-                    200.0 + i as f32,
-                    300.0 + i as f32,
-                    400.0 + i as f32,
-                ],
-                ..Default::default()
-            };
-            outer.instances.push(quad);
-        }
-
-        // Inner call (while outer is still alive and un-accumulated):
-        // This simulates the reentrancy from box_model.rs where a child element's
-        // render_element is called while the parent's with_quad_allocator is still active.
-        let mut inner = tvb.map_instances();
-        let inner_ptr = inner.instances.as_ptr();
-        let inner_cap = inner.instances.capacity();
-
-        // CRITICAL: outer and inner must be DIFFERENT Vecs
-        assert_ne!(
-            outer_ptr, inner_ptr,
-            "Outer and inner calls must use different Vecs. A naive shared-Vec implementation fails here."
-        );
-        assert_eq!(
-            outer_cap, inner_cap,
-            "Both should have the same capacity (from TripleVertexBuffer.capacity)"
-        );
-
-        // Add distinguishable quads to inner
-        for i in 0..3 {
-            let quad = crate::quad::QuadInstance {
-                position: [
-                    500.0 + i as f32,
-                    600.0 + i as f32,
-                    700.0 + i as f32,
-                    800.0 + i as f32,
-                ],
-                ..Default::default()
-            };
-            inner.instances.push(quad);
-        }
-
-        // Accumulate inner first (this is what happens in real recursion:
-        // the inner call finishes before the outer one)
-        tvb.accumulate_instances(inner.instances);
-
-        // Accumulate outer
-        tvb.accumulate_instances(outer.instances);
-
-        // Verify ALL instances from both calls survived
-        assert_eq!(
-            tvb.instance_count(),
-            5,
-            "Accumulator should have 5 instances total (2 outer + 3 inner)"
-        );
-
-        // Verify the actual data (not just count) to catch corruption bugs
-        let acc_instances = tvb.instances.borrow();
-        let mut found_outer = [false; 2];
-        let mut found_inner = [false; 3];
-
-        for instance in acc_instances.iter() {
-            // Check for outer quads using exact position matching
-            if instance.position == [100.0, 200.0, 300.0, 400.0] {
-                found_outer[0] = true;
-            } else if instance.position == [101.0, 201.0, 301.0, 401.0] {
-                found_outer[1] = true;
-            }
-            // Check for inner quads using exact position matching
-            else if instance.position == [500.0, 600.0, 700.0, 800.0] {
-                found_inner[0] = true;
-            } else if instance.position == [501.0, 601.0, 701.0, 801.0] {
-                found_inner[1] = true;
-            } else if instance.position == [502.0, 602.0, 702.0, 802.0] {
-                found_inner[2] = true;
-            }
-        }
-
-        assert!(
-            found_outer.iter().all(|&x| x),
-            "Not all outer quads found in accumulator"
-        );
-        assert!(
-            found_inner.iter().all(|&x| x),
-            "Not all inner quads found in accumulator"
-        );
-    }
-}
+#[path = "renderstate_accumulate_test.rs"]
+mod accumulate_tests;

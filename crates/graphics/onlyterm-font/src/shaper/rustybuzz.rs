@@ -297,6 +297,96 @@ fn rb_feature_from_string(s: &str) -> anyhow::Result<rustybuzz::Feature> {
         .map_err(|e| anyhow!("failed to parse harfbuzz feature {s:?}: {e}"))
 }
 
+/// Groups shaped glyphs into per-cluster `Info` runs: a flat `Vec<Info>`
+/// holding every entry in shaping order, plus `group_starts[i]` = the
+/// index into that Vec where the i-th group begins (a group's end is the
+/// next group's start, or the Vec's length for the last group). Each
+/// group is exactly what the old `Vec<Vec<Info>>` representation's i-th
+/// inner Vec held -- see `test::clustering_differential` for that version,
+/// kept as a test-only oracle this is checked against on every shape call
+/// in test builds.
+///
+/// Mutates `cluster_resolver` (marks clusters `incomplete` when a glyph
+/// came back unresolved), matching the original behavior.
+fn cluster_shaped_infos(
+    rb_infos: &[rustybuzz::GlyphInfo],
+    positions: &[rustybuzz::GlyphPosition],
+    cluster_resolver: &mut ClusterResolver,
+    range: &Range<usize>,
+    no_more_fallbacks: bool,
+    scale: f64,
+) -> (Vec<Info>, Vec<usize>) {
+    // Round scaled advances to the nearest whole pixel to approximate
+    // FreeType's grid-fit hinting (see the module doc comment for the
+    // rationale). Offsets are left as fractional pixels, matching the
+    // fact that FreeType only grid-fits the advance width/height, not
+    // mark/attachment offsets.
+    let scaled_advance = |raw: i32| -> f64 { (raw as f64 * scale).round() };
+    let scaled_offset = |raw: i32| -> f64 { raw as f64 * scale };
+
+    let mut flat_infos: Vec<Info> = Vec::with_capacity(rb_infos.len());
+    let mut group_starts: Vec<usize> = Vec::new();
+
+    for (info, pos) in rb_infos.iter().zip(positions.iter()) {
+        // rustybuzz reports `cluster` as a byte offset into whatever was
+        // actually pushed into its buffer (`&s[range]`), i.e. 0-based
+        // *relative to `range.start`* -- not an absolute offset into the
+        // full `s`. `ClusterResolver` stores/looks up absolute offsets
+        // (matching how it slices `s` directly), so this must be
+        // converted before use.
+        let cluster_info = match cluster_resolver.get_mut(info.cluster as usize + range.start) {
+            Some(i) => i,
+            None => panic!(
+                "expected cluster info.cluster {} to be in cluster_resolver",
+                info.cluster
+            ),
+        };
+        let len = cluster_info.byte_len;
+
+        let mut info = Info {
+            cluster: cluster_info.start,
+            len,
+            codepoint: info.glyph_id,
+            x_advance: scaled_advance(pos.x_advance),
+            y_advance: scaled_advance(pos.y_advance),
+            x_offset: scaled_offset(pos.x_offset),
+            y_offset: scaled_offset(pos.y_offset),
+        };
+        log::debug!("rb info.cluster {} -> {info:?}", info.cluster);
+
+        if info.codepoint == 0 && !no_more_fallbacks {
+            cluster_info.incomplete = true;
+        }
+
+        if let Some(prior) = flat_infos.last_mut() {
+            if info.codepoint == 0
+                && !no_more_fallbacks
+                && (prior.codepoint == 0 || prior.cluster == info.cluster)
+            {
+                if prior.cluster + prior.len == info.cluster {
+                    prior.len += info.len;
+                    continue;
+                } else if info.cluster + info.len == prior.cluster {
+                    std::mem::swap(&mut info, prior);
+                    prior.len += info.len;
+                    continue;
+                } else if info.cluster + info.len == prior.cluster + prior.len {
+                    continue;
+                }
+            }
+
+            if prior.cluster == info.cluster {
+                flat_infos.push(info);
+                continue;
+            }
+        }
+        group_starts.push(flat_infos.len());
+        flat_infos.push(info);
+    }
+
+    (flat_infos, group_starts)
+}
+
 impl RustybuzzShaper {
     pub fn new(config: &ConfigHandle, handles: &[ParsedFont]) -> anyhow::Result<Self> {
         let handles = handles.to_vec();
@@ -598,8 +688,7 @@ impl RustybuzzShaper {
         let rb_infos = glyph_buffer.glyph_infos();
         let positions = glyph_buffer.glyph_positions();
 
-        let mut cluster = Vec::with_capacity(s.len());
-        let mut info_clusters: Vec<Vec<Info>> = Vec::with_capacity(s.len());
+        let mut cluster = Vec::with_capacity(rb_infos.len());
 
         // See the lengthy comment in shaper/harfbuzz.rs::do_shape for the
         // rationale behind this cluster-resolution dance; the logic here is
@@ -610,73 +699,48 @@ impl RustybuzzShaper {
         cluster_resolver.build(rb_infos, s, &range);
         log::debug!("cluster_resolver: {cluster_resolver:#?}");
 
-        // Round scaled advances to the nearest whole pixel to approximate
-        // FreeType's grid-fit hinting (see the module doc comment for the
-        // rationale). Offsets are left as fractional pixels, matching the
-        // fact that FreeType only grid-fits the advance width/height, not
-        // mark/attachment offsets.
-        let scaled_advance = |raw: i32| -> f64 { (raw as f64 * scale).round() };
-        let scaled_offset = |raw: i32| -> f64 { raw as f64 * scale };
+        let (flat_infos, group_starts) = cluster_shaped_infos(
+            rb_infos,
+            positions,
+            &mut cluster_resolver,
+            &range,
+            no_more_fallbacks,
+            scale,
+        );
+        log::debug!(
+            "font_idx={font_idx} flat_infos: {:#?} group_starts: {:?}",
+            flat_infos,
+            group_starts
+        );
 
-        let info_iter = rb_infos.iter().zip(positions.iter()).peekable();
-        for (info, pos) in info_iter {
-            // rustybuzz reports `cluster` as a byte offset into whatever
-            // was actually pushed into its buffer (`&s[range]`), i.e.
-            // 0-based *relative to `range.start`* -- not an absolute
-            // offset into the full `s`. `ClusterResolver` stores/looks up
-            // absolute offsets (matching how it slices `s` directly), so
-            // this must be converted before use.
-            let cluster_info = match cluster_resolver.get_mut(info.cluster as usize + range.start) {
-                Some(i) => i,
-                None => panic!(
-                    "expected cluster info.cluster {} to be in cluster_resolver",
-                    info.cluster
-                ),
-            };
-            let len = cluster_info.byte_len;
+        // Test-only differential check (task C3.3): re-groups the same
+        // `rb_infos`/`positions` with the old `Vec<Vec<Info>>` algorithm
+        // (kept in `test::clustering_differential` as a reference/oracle)
+        // against a freshly built, independent `ClusterResolver`, and
+        // asserts the two groupings are identical. The per-group
+        // processing below is unchanged code (just iterating a slice
+        // instead of a `Vec`), so grouping equivalence implies the final
+        // `Vec<GlyphInfo>` this call returns is unaffected by the
+        // flat/nested representation change.
+        #[cfg(test)]
+        test::clustering_differential::assert_clustering_matches_reference(
+            rb_infos,
+            positions,
+            presentation_width,
+            s,
+            &range,
+            no_more_fallbacks,
+            scale,
+            &flat_infos,
+            &group_starts,
+        );
 
-            let mut info = Info {
-                cluster: cluster_info.start,
-                len,
-                codepoint: info.glyph_id,
-                x_advance: scaled_advance(pos.x_advance),
-                y_advance: scaled_advance(pos.y_advance),
-                x_offset: scaled_offset(pos.x_offset),
-                y_offset: scaled_offset(pos.y_offset),
-            };
-            log::debug!("rb info.cluster {} -> {info:?}", info.cluster);
-
-            if info.codepoint == 0 && !no_more_fallbacks {
-                cluster_info.incomplete = true;
-            }
-
-            if let Some(ref mut cluster) = info_clusters.last_mut() {
-                if info.codepoint == 0 && !no_more_fallbacks {
-                    let prior = cluster.last_mut().unwrap();
-                    if prior.codepoint == 0 || prior.cluster == info.cluster {
-                        if prior.cluster + prior.len == info.cluster {
-                            prior.len += info.len;
-                            continue;
-                        } else if info.cluster + info.len == prior.cluster {
-                            std::mem::swap(&mut info, prior);
-                            prior.len += info.len;
-                            continue;
-                        } else if info.cluster + info.len == prior.cluster + prior.len {
-                            continue;
-                        }
-                    }
-                }
-
-                if cluster.last().unwrap().cluster == info.cluster {
-                    cluster.push(info);
-                    continue;
-                }
-            }
-            info_clusters.push(vec![info]);
-        }
-        log::debug!("font_idx={font_idx} info_clusters: {:#?}", info_clusters);
-
-        for infos in &info_clusters {
+        for (group_idx, &start) in group_starts.iter().enumerate() {
+            let end = group_starts
+                .get(group_idx + 1)
+                .copied()
+                .unwrap_or(flat_infos.len());
+            let infos = &flat_infos[start..end];
             let cluster_info = cluster_resolver
                 .get(infos[0].cluster)
                 .expect("assigned above");

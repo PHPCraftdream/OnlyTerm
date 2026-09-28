@@ -30,6 +30,21 @@ const BUFSIZE: usize = 64 * 1024;
 // bounding how far the pty reader can run ahead of the parser.
 const CHANNEL_CAPACITY: usize = 4;
 
+// Capacity of the return channel that carries drained buffers from the
+// parser thread back to the reader thread for reuse. This is purely a
+// reuse-hint path (`try_send`/`try_recv`, never blocking), so it needs no
+// relationship to `CHANNEL_CAPACITY`'s backpressure role -- it just bounds
+// how many idle buffers can sit in the channel unclaimed. Every pooled
+// buffer holds `BUFSIZE` bytes for the pane's lifetime, and in steady flow
+// the parser hands back about one buffer per read, so two is enough.
+const RETURN_CHANNEL_CAPACITY: usize = 2;
+
+// A pooled buffer larger than this is dropped instead of returned to the
+// reader: reads never produce a chunk bigger than `BUFSIZE`, so anything
+// larger (e.g. an unusually large startup banner) would otherwise sit in
+// the pool forever, since the reader never needs more than `BUFSIZE`.
+const MAX_POOLED_BUFFER_CAPACITY: usize = BUFSIZE;
+
 /// This function applies parsed actions to the pane and notifies any
 /// mux subscribers about the output event
 fn send_actions_to_mux(pane: &Weak<dyn Pane>, dead: &Arc<AtomicBool>, actions: Vec<Action>) {
@@ -89,6 +104,30 @@ pub(crate) fn hold_timeout_from(config: &onlyterm_config::ConfigHandle) -> Durat
             .mux_synchronized_output_timeout_ms
             .min(i32::MAX as u64),
     )
+}
+
+/// Hands a drained read-buffer back to the reader thread for reuse.
+/// Best-effort only: an oversized buffer is dropped rather than pooled, and
+/// a full or disconnected return channel just drops `buf` too -- recycling
+/// is an allocator optimization, never required for correctness.
+fn recycle_buffer(return_tx: &crossbeam::channel::Sender<Vec<u8>>, buf: Vec<u8>) {
+    if buf.capacity() > MAX_POOLED_BUFFER_CAPACITY {
+        return;
+    }
+    let _ = return_tx.try_send(buf);
+}
+
+/// Gets a buffer to receive the next pty read into: reuses one returned by
+/// the parser thread (cleared, capacity intact) if one is available,
+/// otherwise allocates fresh.
+fn take_pooled_buffer(return_rx: &crossbeam::channel::Receiver<Vec<u8>>) -> Vec<u8> {
+    match return_rx.try_recv() {
+        Ok(mut buf) => {
+            buf.clear();
+            buf
+        }
+        Err(_) => Vec::with_capacity(BUFSIZE),
+    }
 }
 
 /// Mutable parser state threaded through `process_chunk` across calls.
@@ -166,6 +205,7 @@ pub(crate) fn parse_buffered_data(
     pane: Weak<dyn Pane>,
     dead: &Arc<AtomicBool>,
     rx: crossbeam::channel::Receiver<Vec<u8>>,
+    return_tx: crossbeam::channel::Sender<Vec<u8>>,
 ) {
     let mut parser = termwiz::escape::parser::Parser::new();
     let mut delay = Duration::from_millis(configuration().mux_output_parser_coalesce_delay_ms);
@@ -194,6 +234,7 @@ pub(crate) fn parse_buffered_data(
                         // the unconditional `rx.recv()` below, which would
                         // otherwise consume a second, unrelated message.
                         process_chunk(&pane, dead, &mut state, &mut parser, &bytes);
+                        recycle_buffer(&return_tx, bytes);
                         continue;
                     }
                     Err(RecvTimeoutError::Disconnected) => {
@@ -227,6 +268,7 @@ pub(crate) fn parse_buffered_data(
             }
             Ok(bytes) => {
                 process_chunk(&pane, dead, &mut state, &mut parser, &bytes);
+                recycle_buffer(&return_tx, bytes);
 
                 // If we haven't accumulated too much data, pause for a
                 // short while to increase the chances that we coalesce a
@@ -259,6 +301,7 @@ pub(crate) fn parse_buffered_data(
                     match rx.recv_timeout(remaining) {
                         Ok(more) => {
                             process_chunk(&pane, dead, &mut state, &mut parser, &more);
+                            recycle_buffer(&return_tx, more);
                         }
                         // Timeout or disconnect: flush what we have. A
                         // disconnect will be observed by the next
@@ -310,11 +353,12 @@ pub(crate) fn read_from_pane_pty(
     };
 
     let (tx, rx) = crossbeam::channel::bounded::<Vec<u8>>(CHANNEL_CAPACITY);
+    let (ret_tx, ret_rx) = crossbeam::channel::bounded::<Vec<u8>>(RETURN_CHANNEL_CAPACITY);
 
     // Spawn parser thread for this pane
     std::thread::spawn({
         let dead = Arc::clone(&dead);
-        move || parse_buffered_data(pane, &dead, rx)
+        move || parse_buffered_data(pane, &dead, rx, ret_tx)
     });
 
     if let Some(banner) = banner {
@@ -336,11 +380,15 @@ pub(crate) fn read_from_pane_pty(
             Ok(size) => {
                 onlyterm_metrics::cached_histogram!("read_from_pane_pty.bytes.rate")
                     .record(size as f64);
+                // Reuse a buffer the parser thread drained and returned, if
+                // one is available, instead of always allocating fresh.
+                let mut msg = take_pooled_buffer(&ret_rx);
+                msg.extend_from_slice(&buf[..size]);
                 // Send received data to this pane's parser thread. This
                 // blocks if the channel is full, which is the intended
                 // backpressure: it bounds how far the pty reader can run
                 // ahead of the parser.
-                if tx.send(buf[..size].to_vec()).is_err() {
+                if tx.send(msg).is_err() {
                     error!(
                         "read_pty failed to send to parser for pane {}: parser thread is gone",
                         pane_id
@@ -373,3 +421,7 @@ pub(crate) fn read_from_pane_pty(
 
     dead.store(true, Ordering::Relaxed);
 }
+
+#[cfg(test)]
+#[path = "pty_reader_test.rs"]
+mod pty_reader_test;
