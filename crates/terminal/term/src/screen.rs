@@ -206,6 +206,22 @@ impl Screen {
         line.set_cell_grapheme(x, text, width, attr, seqno);
     }
 
+    /// Bulk equivalent of `set_cell_grapheme` for a run of single-width
+    /// printable ASCII sharing one attribute set; see `Line::set_ascii_run`.
+    pub fn set_ascii_run(
+        &mut self,
+        x: usize,
+        y: VisibleRowIndex,
+        text: &str,
+        attr: &CellAttributes,
+        seqno: SequenceNo,
+    ) {
+        self.note_output_row(y);
+        let line_idx = self.phys_row(y);
+        let line = self.line_mut(line_idx);
+        line.set_ascii_run(x, text, attr, seqno);
+    }
+
     pub fn cell_mut(&mut self, x: usize, y: VisibleRowIndex) -> Option<&mut Cell> {
         self.note_output_row(y);
         let line_idx = self.phys_row(y);

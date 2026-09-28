@@ -9,6 +9,7 @@ mod mouse;
 mod osc;
 mod perf_bench;
 mod perf_probe;
+mod print_bulk;
 mod screen;
 use crate::color::ColorPalette;
 use k9::assert_equal as assert_eq;

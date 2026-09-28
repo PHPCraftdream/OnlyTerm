@@ -73,6 +73,91 @@ impl Line {
         self.set_cell(idx, Cell::new_grapheme_with_width(text, width, attr), seqno);
     }
 
+    /// Writes a run of single-width printable ASCII (0x20..=0x7E) cells
+    /// starting at `idx`, all sharing `attr`, in one call. Equivalent to
+    /// calling `set_cell_grapheme(idx + i, &text[i..i+1], 1, attr.clone(),
+    /// seqno)` for each byte of `text` (ASCII is one byte per cell), but
+    /// does at most one storage conversion/resize and one left-edge
+    /// nerf-lookback instead of one per cell.
+    ///
+    /// Right-edge behavior matches the per-cell loop too: if the old
+    /// content had a wide character whose leading column falls inside
+    /// `[idx, idx + text.len())`, both of its columns get overwritten by
+    /// new narrow cells (same as calling `set_cell` on each in turn); if a
+    /// wide character's leading column is the last cell *before* the
+    /// range, only the lookback at `idx` nerfs it. A wide character whose
+    /// leading column is the last cell *overwritten* by this run leaves
+    /// its own continuation cell (just past the run) untouched, exactly
+    /// like the per-cell loop.
+    pub fn set_ascii_run(
+        &mut self,
+        idx: usize,
+        text: &str,
+        attr: &CellAttributes,
+        seqno: SequenceNo,
+    ) {
+        debug_assert!(!text.is_empty());
+        debug_assert!(
+            text.bytes().all(|b| (0x20..=0x7e).contains(&b)),
+            "set_ascii_run requires printable ASCII"
+        );
+
+        if attr.hyperlink().is_some() {
+            self.bits |= LineBits::HAS_HYPERLINK;
+        }
+
+        if let CellStorage::C(cl) = &mut self.cells {
+            if idx >= cl.len() {
+                // Like `set_cell_grapheme`, default blanks past the end are
+                // implicit: skip them without touching the line.
+                let mut idx = idx;
+                let mut text = text;
+                if *attr == CellAttributes::blank() {
+                    while idx > cl.len() && text.starts_with(' ') {
+                        idx += 1;
+                        text = &text[1..];
+                    }
+                    if text.is_empty() {
+                        return;
+                    }
+                }
+                let cl = Arc::make_mut(cl);
+                while cl.len() < idx {
+                    // Fill out any implied blanks until we can append
+                    // their intended cell content
+                    cl.append_grapheme(" ", 1, CellAttributes::blank());
+                }
+                cl.append_ascii_run(text, attr.clone());
+                self.invalidate_implicit_hyperlinks(seqno);
+                self.invalidate_zones();
+                self.update_last_change_seqno(seqno);
+                return;
+            }
+            // Interior write into existing clustered content: falls
+            // through to the Vec-storage path below, same as
+            // `set_cell_grapheme`.
+        }
+
+        let end = idx + text.len();
+        {
+            let cells = self.coerce_vec_storage();
+            if end > cells.len() {
+                cells.resize_with(end, Cell::blank);
+            }
+        }
+        self.invalidate_grapheme_at_or_before(idx);
+        let cells = self.coerce_vec_storage();
+        for (i, byte) in text.bytes().enumerate() {
+            // `set_cell` (not a raw assignment) so that, like the per-cell
+            // loop's `raw_set_cell(.., clear=false)`, any image placement
+            // attached to the cell being overwritten is preserved.
+            cells.set_cell(idx + i, Cell::new(byte as char, attr.clone()), false);
+        }
+        self.invalidate_implicit_hyperlinks(seqno);
+        self.invalidate_zones();
+        self.update_last_change_seqno(seqno);
+    }
+
     pub fn set_cell_clearing_image_placements(
         &mut self,
         idx: usize,

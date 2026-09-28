@@ -389,6 +389,13 @@ pub struct TerminalState {
     /// applied to lines.
     /// If none, then the default value specified by the config is used.
     bidi_hint: Option<ParagraphDirectionHint>,
+
+    /// Test-only escape hatch: forces `Performer::flush_print` to use the
+    /// per-grapheme slow path even for runs that would otherwise qualify
+    /// for the bulk ASCII fast path, so tests can differentially compare
+    /// the two paths against the same input.
+    #[cfg(test)]
+    pub(crate) force_slow_print_path: bool,
 }
 
 #[derive(Debug)]
@@ -620,6 +627,8 @@ impl TerminalState {
             bidi_enabled: None,
             bidi_hint: None,
             progress: Progress::default(),
+            #[cfg(test)]
+            force_slow_print_path: false,
         }
     }
 
@@ -894,6 +903,13 @@ impl TerminalState {
             },
             seqno: self.cursor.seqno,
         }
+    }
+
+    /// Test-only accessor for the pending-wrap flag, so differential tests
+    /// outside the `terminalstate` module tree can compare it directly.
+    #[cfg(test)]
+    pub(crate) fn wrap_next(&self) -> bool {
+        self.wrap_next
     }
 
     /// Returns the current cell attributes of the screen

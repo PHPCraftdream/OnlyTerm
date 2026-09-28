@@ -16,6 +16,9 @@ use siphasher::sip128::{Hasher128, SipHasher};
 extern crate alloc;
 
 #[cfg(test)]
+#[path = "../tests/ascii_run_test.rs"]
+mod ascii_run_test;
+#[cfg(test)]
 #[path = "../tests/cow_test.rs"]
 mod cow_test;
 #[cfg(test)]

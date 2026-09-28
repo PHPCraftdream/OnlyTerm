@@ -353,6 +353,51 @@ impl ClusteredLine {
         self.len += cell_width as u32;
     }
 
+    /// Appends a run of single-width printable ASCII (0x20..=0x7E) cells
+    /// that all share `attrs`, in one pass. Equivalent to calling
+    /// `append_grapheme(&text[i..i+1], 1, attrs.clone())` for each byte of
+    /// `text`, but avoids the per-byte cluster/bitset bookkeeping: since
+    /// every cell is single-width, `is_double_wide` never needs updating,
+    /// and `text.len()` (bytes) equals the number of cells added (ASCII is
+    /// one byte per char).
+    pub fn append_ascii_run(&mut self, text: &str, attrs: CellAttributes) {
+        debug_assert!(
+            text.bytes().all(|b| (0x20..=0x7e).contains(&b)),
+            "append_ascii_run requires printable ASCII"
+        );
+        if text.is_empty() {
+            return;
+        }
+
+        let mut remaining = text;
+        while !remaining.is_empty() {
+            let extend_last = matches!(
+                self.clusters.last(),
+                Some(c) if c.attrs == attrs && (c.cell_width as usize) < u16::MAX as usize
+            );
+            let cap = if extend_last {
+                u16::MAX as usize - self.clusters.last().unwrap().cell_width as usize
+            } else {
+                u16::MAX as usize
+            };
+            let take = remaining.len().min(cap);
+            let (piece, rest) = remaining.split_at(take);
+            if extend_last {
+                self.clusters.last_mut().unwrap().cell_width += take as u16;
+            } else {
+                self.clusters.push(Cluster {
+                    attrs: attrs.clone(),
+                    cell_width: take as u16,
+                });
+            }
+            self.text.push_str(piece);
+            remaining = rest;
+        }
+
+        self.len += text.len() as u32;
+        self.last_cell_width = NonZeroU8::new(1);
+    }
+
     pub fn prune_trailing_blanks(&mut self) -> bool {
         let num_spaces = self.text.chars().rev().take_while(|&c| c == ' ').count();
         if num_spaces == 0 {
