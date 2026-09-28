@@ -1,4 +1,6 @@
 use super::*;
+use crate::selection::SelectionRange;
+use onlyterm_rangeset::RangeSet;
 
 impl TermWindow {
     pub(in crate::termwindow) fn set_inner_size(
@@ -298,38 +300,34 @@ impl TermWindow {
         }
     }
 
-    pub(in crate::termwindow) fn check_for_dirty_lines_and_invalidate_selection(
+    /// Clears the pane's selection if any of `changed` (the rows that
+    /// changed since the selection's seqno, over the pane's visible range)
+    /// intersects it.
+    ///
+    /// `changed` comes from `Pane::get_render_snapshot`'s
+    /// `PaneRenderSnapshot::changed_since` field these days -- `paint_pane`
+    /// fetches it as part of the single-lock render snapshot rather than
+    /// via a separate `get_changed_since` call/lock, but the check itself
+    /// (including the search-overlay exemption below) is unchanged.
+    pub(in crate::termwindow) fn invalidate_selection_for_changed_rows(
         &mut self,
         pane: &Arc<dyn Pane>,
+        changed: &RangeSet<StableRowIndex>,
     ) {
-        let dims = pane.get_dimensions();
-        let viewport = self
-            .get_viewport(pane.pane_id())
-            .unwrap_or(dims.physical_top);
-        let visible_range = viewport..viewport + dims.viewport_rows as StableRowIndex;
-        let seqno = self.selection(pane.pane_id()).seqno;
-        let dirty = pane.get_changed_since(visible_range, seqno);
-
-        if dirty.is_empty() {
+        if changed.is_empty() {
             return;
         }
+        // Not when the search overlay is active; the search overlay marks
+        // lines as dirty to force invalidate them for highlighting purpose
+        // but also manipulates the selection and we want to allow it to
+        // retain the selection it made!
         if pane.downcast_ref::<CopyOverlay>().is_none()
             && pane.downcast_ref::<QuickSelectOverlay>().is_none()
         {
-            // If any of the changed lines intersect with the
-            // selection, then we need to clear the selection, but not
-            // when the search overlay is active; the search overlay
-            // marks lines as dirty to force invalidate them for
-            // highlighting purpose but also manipulates the selection
-            // and we want to allow it to retain the selection it made!
-
-            let clear_selection =
-                if let Some(selection_range) = self.selection(pane.pane_id()).range.as_ref() {
-                    let selection_rows = selection_range.rows();
-                    selection_rows.into_iter().any(|row| dirty.contains(row))
-                } else {
-                    false
-                };
+            let clear_selection = changed_rows_intersect_selection(
+                changed,
+                self.selection(pane.pane_id()).range.as_ref(),
+            );
 
             if clear_selection {
                 self.selection(pane.pane_id()).range.take();
@@ -337,5 +335,67 @@ impl TermWindow {
                 self.selection(pane.pane_id()).seqno = pane.get_current_seqno();
             }
         }
+    }
+}
+
+/// Pure decision core of `invalidate_selection_for_changed_rows`: does
+/// `selection_range` intersect any row in `changed`? Split out from the
+/// `TermWindow` method (which also needs pane/window state to apply the
+/// resulting clear) so it can be unit tested without constructing a full
+/// `TermWindow`.
+fn changed_rows_intersect_selection(
+    changed: &RangeSet<StableRowIndex>,
+    selection_range: Option<&SelectionRange>,
+) -> bool {
+    match selection_range {
+        Some(selection_range) => selection_range
+            .rows()
+            .into_iter()
+            .any(|row| changed.contains(row)),
+        None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::selection::SelectionCoordinate;
+
+    fn range_of(rows: impl IntoIterator<Item = StableRowIndex>) -> RangeSet<StableRowIndex> {
+        let mut set = RangeSet::new();
+        for row in rows {
+            set.add(row);
+        }
+        set
+    }
+
+    fn selection_over(start_y: StableRowIndex, end_y: StableRowIndex) -> SelectionRange {
+        SelectionRange {
+            start: SelectionCoordinate::x_y(0, start_y),
+            end: SelectionCoordinate::x_y(10, end_y),
+        }
+    }
+
+    #[test]
+    fn clears_when_a_changed_row_intersects_the_selection() {
+        let changed = range_of([5, 6, 7]);
+        let selection = selection_over(6, 9);
+        assert!(changed_rows_intersect_selection(&changed, Some(&selection)));
+    }
+
+    #[test]
+    fn keeps_selection_when_no_changed_row_intersects_it() {
+        let changed = range_of([0, 1, 2]);
+        let selection = selection_over(6, 9);
+        assert!(!changed_rows_intersect_selection(
+            &changed,
+            Some(&selection)
+        ));
+    }
+
+    #[test]
+    fn no_selection_never_triggers_a_clear() {
+        let changed = range_of([0, 1, 2]);
+        assert!(!changed_rows_intersect_selection(&changed, None));
     }
 }

@@ -120,6 +120,174 @@ impl Pane for FakePane {
     }
 }
 
+/// Backs `default_get_render_snapshot_composes_from_individual_getters`:
+/// unlike `FakePane` above, every getter the default
+/// `Pane::get_render_snapshot` composes from (`get_cursor_position`,
+/// `get_dimensions`, `palette`, `get_changed_since`, `get_lines`) is
+/// actually implemented here, so the test can assert the snapshot matches
+/// what calling them individually would produce.
+struct DefaultSnapshotPane {
+    lines: Mutex<Vec<Line>>,
+    cursor: StableCursorPosition,
+    dims: RenderableDimensions,
+    palette: ColorPalette,
+    changed: RangeSet<StableRowIndex>,
+    current_seqno: SequenceNo,
+}
+
+impl Pane for DefaultSnapshotPane {
+    fn pane_id(&self) -> PaneId {
+        1
+    }
+    fn get_cursor_position(&self) -> StableCursorPosition {
+        self.cursor
+    }
+    fn get_current_seqno(&self) -> SequenceNo {
+        self.current_seqno
+    }
+    fn get_changed_since(
+        &self,
+        _lines: Range<StableRowIndex>,
+        _seqno: SequenceNo,
+    ) -> RangeSet<StableRowIndex> {
+        self.changed.clone()
+    }
+    fn with_lines_mut(
+        &self,
+        stable_range: Range<StableRowIndex>,
+        with_lines: &mut dyn WithPaneLines,
+    ) {
+        let mut line_refs = vec![];
+        let mut lines = self.lines.lock();
+        for line in lines
+            .iter_mut()
+            .skip(stable_range.start as usize)
+            .take((stable_range.end - stable_range.start) as usize)
+        {
+            line_refs.push(line);
+        }
+        with_lines.with_lines_mut(stable_range.start, &mut line_refs);
+    }
+    fn for_each_logical_line_in_stable_range_mut(
+        &self,
+        lines: Range<StableRowIndex>,
+        for_line: &mut dyn ForEachPaneLogicalLine,
+    ) {
+        crate::pane::impl_for_each_logical_line_via_get_logical_lines(self, lines, for_line)
+    }
+    fn get_logical_lines(&self, lines: Range<StableRowIndex>) -> Vec<LogicalLine> {
+        crate::pane::impl_get_logical_lines_via_get_lines(self, lines)
+    }
+    fn get_lines(&self, lines: Range<StableRowIndex>) -> (StableRowIndex, Vec<Line>) {
+        let first = lines.start;
+        (
+            first,
+            self.lines
+                .lock()
+                .iter()
+                .skip(lines.start as usize)
+                .take((lines.end - lines.start) as usize)
+                .cloned()
+                .collect(),
+        )
+    }
+    fn get_dimensions(&self) -> RenderableDimensions {
+        self.dims
+    }
+    fn get_title(&self) -> String {
+        unimplemented!()
+    }
+    fn send_paste(&self, _: &str) -> anyhow::Result<()> {
+        unimplemented!()
+    }
+    fn reader(&self) -> anyhow::Result<Option<Box<dyn std::io::Read + Send>>> {
+        Ok(None)
+    }
+    fn writer(&self) -> MappedMutexGuard<'_, dyn std::io::Write> {
+        unimplemented!()
+    }
+    fn resize(&self, _: TerminalSize) -> anyhow::Result<()> {
+        unimplemented!()
+    }
+    fn mouse_event(&self, _: MouseEvent) -> anyhow::Result<()> {
+        unimplemented!()
+    }
+    fn is_dead(&self) -> bool {
+        unimplemented!()
+    }
+    fn palette(&self) -> ColorPalette {
+        self.palette.clone()
+    }
+    fn domain_id(&self) -> DomainId {
+        unimplemented!()
+    }
+    fn is_mouse_grabbed(&self) -> bool {
+        false
+    }
+    fn is_alt_screen_active(&self) -> bool {
+        false
+    }
+    fn get_current_working_dir(&self, _policy: CachePolicy) -> Option<Url> {
+        None
+    }
+    fn key_down(&self, _: KeyCode, _: KeyModifiers) -> anyhow::Result<()> {
+        unimplemented!()
+    }
+    fn key_up(&self, _: KeyCode, _: KeyModifiers) -> anyhow::Result<()> {
+        unimplemented!()
+    }
+}
+
+/// Regression test for the `Pane::get_render_snapshot` default
+/// implementation (used by every `Pane` impl that doesn't override it --
+/// `ClientPane`, `CopyOverlay`, `QuickSelectOverlay`, etc): it must compose
+/// `PaneRenderSnapshot` from exactly the same individual getters a caller
+/// would otherwise call by hand, including the new `palette` and
+/// `changed_since` fields added alongside `LocalPane`'s single-lock
+/// override.
+#[test]
+fn default_get_render_snapshot_composes_from_individual_getters() {
+    let mut changed = RangeSet::new();
+    changed.add(1);
+
+    let pane = DefaultSnapshotPane {
+        lines: Mutex::new(physical_lines_from_text("one\ntwo\nthree\nfour\nfive", 20)),
+        cursor: StableCursorPosition {
+            x: 1,
+            y: 2,
+            ..Default::default()
+        },
+        dims: RenderableDimensions {
+            cols: 20,
+            viewport_rows: 3,
+            scrollback_rows: 5,
+            physical_top: 0,
+            scrollback_top: 0,
+            dpi: 0,
+            pixel_width: 0,
+            pixel_height: 0,
+            reverse_video: false,
+        },
+        palette: ColorPalette::default(),
+        changed,
+        current_seqno: 7,
+    };
+
+    let snapshot = pane.get_render_snapshot(None, &[], 5);
+
+    assert_eq!(snapshot.cursor, pane.get_cursor_position());
+    assert_eq!(snapshot.dims, pane.get_dimensions());
+    assert_eq!(snapshot.palette, pane.palette());
+    assert_eq!(snapshot.changed_since, pane.get_changed_since(0..3, 5));
+
+    let (stable_top, lines) = pane.get_lines(0..3);
+    assert_eq!(snapshot.stable_top, stable_top);
+    assert_eq!(snapshot.lines.len(), lines.len());
+    for (a, b) in snapshot.lines.iter().zip(lines.iter()) {
+        assert_eq!(a.as_str(), b.as_str());
+    }
+}
+
 fn physical_lines_from_text(text: &str, width: usize) -> Vec<Line> {
     let mut physical_lines = vec![];
     for logical in text.split('\n') {

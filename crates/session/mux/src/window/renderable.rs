@@ -1,6 +1,7 @@
 use crate::pane::{ForEachPaneLogicalLine, WithPaneLines};
 use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use onlyterm_rangeset::RangeSet;
+use onlyterm_term::color::ColorPalette;
 use onlyterm_term::{Line, StableRowIndex, Terminal};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
@@ -138,9 +139,10 @@ pub fn terminal_get_dimensions(term: &mut Terminal) -> RenderableDimensions {
     }
 }
 
-/// A render snapshot: the cursor position, the renderable dimensions, and
-/// the cloned lines for the pane's visible range, captured as ONE logical
-/// read of the pane state.
+/// A render snapshot: the cursor position, the renderable dimensions, the
+/// color palette, the set of rows changed since a caller-supplied seqno,
+/// and the cloned lines for the pane's visible range, captured as ONE
+/// logical read of the pane state.
 ///
 /// See `Pane::get_render_snapshot` for why this exists.
 #[derive(Debug, Clone)]
@@ -151,4 +153,11 @@ pub struct PaneRenderSnapshot {
     /// range start when the terminal clamps the range; see `get_lines`).
     pub stable_top: StableRowIndex,
     pub lines: Vec<Line>,
+    pub palette: ColorPalette,
+    /// The subset of the visible range (`stable_top..stable_top +
+    /// dims.viewport_rows`) that changed since the seqno passed to
+    /// `Pane::get_render_snapshot`. Lets a caller (e.g. the GUI's
+    /// selection-invalidation check) reuse this snapshot's single lock
+    /// acquisition instead of making a separate `get_changed_since` call.
+    pub changed_since: RangeSet<StableRowIndex>,
 }

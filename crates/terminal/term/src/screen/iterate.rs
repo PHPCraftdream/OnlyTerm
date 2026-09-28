@@ -145,6 +145,93 @@ impl Screen {
         }
     }
 
+    /// Returns `true` if `for_each_logical_line_in_stable_range_mut` would
+    /// find at least one physical line it actually visits (i.e. that
+    /// passes the same in-range filter that function applies) whose
+    /// `Line::implicit_hyperlinks_scanned()` bit is unset -- meaning a
+    /// hyperlink-scanning walk over `stable_range` has real work to do.
+    /// Returns `false` when every such line is already scanned, which lets
+    /// a caller skip calling the mutating walk (and its per-logical-line
+    /// `Vec<&mut Line>` allocation via `with_phys_lines_mut`) entirely.
+    ///
+    /// Mirrors `for_each_logical_line_in_stable_range_mut`'s backward
+    /// (wrapped predecessor rows) and forward logical-line boundary
+    /// extension exactly, including the `MAX_LOGICAL_LINE_LEN` pathological
+    /// case guard and the `logical_stable_range` in-range filter, so this
+    /// reports "no work to do" only when the real walk would genuinely
+    /// invoke its callback zero times or with already-scanned lines only.
+    pub fn hyperlink_scan_needed_in_stable_range(
+        &self,
+        stable_range: Range<StableRowIndex>,
+    ) -> bool {
+        let mut phys_range = self.stable_range(&stable_range);
+
+        const MAX_LOGICAL_LINE_LEN: usize = 1024;
+
+        let mut back_len = 0;
+        while phys_range.start > 0 {
+            let prior = &self.lines[phys_range.start - 1];
+            if !prior.last_cell_was_wrapped() {
+                break;
+            }
+            if prior.len() + back_len > MAX_LOGICAL_LINE_LEN {
+                break;
+            }
+            back_len += prior.len();
+            phys_range.start -= 1;
+        }
+
+        let mut phys_row = phys_range.start;
+        while phys_row < phys_range.end {
+            let mut total_len = 0;
+            let mut end_inclusive = phys_row;
+            let mut any_unscanned = false;
+
+            for idx in phys_row.. {
+                match self.lines.get(idx) {
+                    Some(line) => {
+                        if total_len > 0 && total_len + line.len() > MAX_LOGICAL_LINE_LEN {
+                            break;
+                        }
+                        end_inclusive = idx;
+                        total_len += line.len();
+                        if !line.implicit_hyperlinks_scanned() {
+                            any_unscanned = true;
+                        }
+                        if !line.last_cell_was_wrapped() {
+                            break;
+                        }
+                    }
+                    None => {
+                        if idx == phys_row {
+                            // No more rows exist.
+                            return false;
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let logical_stable_range = self.phys_to_stable_row_index(phys_row)
+                ..self.phys_to_stable_row_index(end_inclusive + 1);
+
+            phys_row = end_inclusive + 1;
+
+            if logical_stable_range.end < stable_range.start {
+                continue;
+            }
+            if logical_stable_range.start > stable_range.end {
+                break;
+            }
+
+            if any_unscanned {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn for_each_logical_line_in_stable_range<F>(
         &self,
         stable_range: Range<StableRowIndex>,

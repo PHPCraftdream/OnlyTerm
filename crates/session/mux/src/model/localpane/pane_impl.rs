@@ -83,18 +83,20 @@ impl Pane for LocalPane {
 
     /// Single-lock snapshot for rendering (ghost-cursor-fix-plan Phase C;
     /// investigation `2026-08-25-render-and-resource-bug-hunt` section 1.3,
-    /// bug B): dimensions, the hyperlink-rule pass, the cursor position and
-    /// the cloned viewport lines are all captured under ONE
-    /// `terminal.lock()` acquisition, so the pty parser thread cannot apply
-    /// output between them and a paint can no longer combine a cursor
-    /// position from moment t0 with line contents from t2. The lock is
-    /// still held only for the duration of the clone (one viewport's worth
-    /// of lines), not across shaping/quad-building: input handling and the
-    /// parser keep interleaving between frames exactly as before.
+    /// bug B): dimensions, the hyperlink-rule pass, the cursor position,
+    /// the palette, the changed-since-`changed_since_seqno` rows and the
+    /// cloned viewport lines are all captured under ONE `terminal.lock()`
+    /// acquisition, so the pty parser thread cannot apply output between
+    /// them and a paint can no longer combine a cursor position from
+    /// moment t0 with line contents from t2. The lock is still held only
+    /// for the duration of the clone (one viewport's worth of lines), not
+    /// across shaping/quad-building: input handling and the parser keep
+    /// interleaving between frames exactly as before.
     fn get_render_snapshot(
         &self,
         viewport: Option<StableRowIndex>,
         hyperlink_rules: &[Rule],
+        changed_since_seqno: SequenceNo,
     ) -> PaneRenderSnapshot {
         let mut snapshot = lock_terminal_timed(
             &self.terminal,
@@ -103,23 +105,41 @@ impl Pane for LocalPane {
                 let dims = terminal_get_dimensions(term);
                 let top = viewport.unwrap_or(dims.physical_top);
                 let lines = top..top + dims.viewport_rows as StableRowIndex;
+                // Before the hyperlink pass, which can raise the seqno of
+                // rows sharing a logical line with a changed row.
+                let changed_since =
+                    terminal_get_dirty_lines(term, lines.clone(), changed_since_seqno);
                 // Same application of the hyperlink rules that the default
                 // (multi-lock) path performs via `Pane::apply_hyperlinks`,
-                // done here under the same lock acquisition.
-                terminal_for_each_logical_line_in_stable_range_mut(
-                    term,
-                    lines.clone(),
-                    &mut ApplyHyperlinksInLock {
-                        rules: hyperlink_rules,
-                    },
-                );
+                // done here under the same lock acquisition -- but skip the
+                // walk entirely (and the per-logical-line `Vec<&mut Line>`
+                // allocation `with_phys_lines_mut` makes for it) when there
+                // are no rules to apply, or every line the walk would visit
+                // already has its `SCANNED_IMPLICIT_HYPERLINKS` bit set, so
+                // the walk would find nothing to do.
+                let needs_hyperlink_scan = !hyperlink_rules.is_empty()
+                    && term
+                        .screen()
+                        .hyperlink_scan_needed_in_stable_range(lines.clone());
+                if needs_hyperlink_scan {
+                    terminal_for_each_logical_line_in_stable_range_mut(
+                        term,
+                        lines.clone(),
+                        &mut ApplyHyperlinksInLock {
+                            rules: hyperlink_rules,
+                        },
+                    );
+                }
                 let cursor = terminal_get_cursor_position(term);
+                let palette = term.palette();
                 let (stable_top, lines) = terminal_get_lines(term, lines);
                 PaneRenderSnapshot {
                     cursor,
                     dims,
                     stable_top,
                     lines,
+                    palette,
+                    changed_since,
                 }
             },
         );

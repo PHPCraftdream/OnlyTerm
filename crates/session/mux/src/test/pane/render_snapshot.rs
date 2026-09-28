@@ -156,7 +156,7 @@ fn render_snapshot_is_consistent_with_individual_getters() {
     let top = dims.physical_top;
     let range = top..top + dims.viewport_rows as isize;
 
-    let snapshot = pane.get_render_snapshot(None, &[]);
+    let snapshot = pane.get_render_snapshot(None, &[], 0);
     assert_eq!(snapshot.cursor, pane.get_cursor_position());
     assert_eq!(snapshot.dims, dims);
     let (stable_top, lines) = pane.get_lines(range.clone());
@@ -172,13 +172,56 @@ fn render_snapshot_is_consistent_with_individual_getters() {
     // requested range.
     let scrolled_top = top - 2;
     let scrolled_range = scrolled_top..scrolled_top + dims.viewport_rows as isize;
-    let snapshot = pane.get_render_snapshot(Some(scrolled_top), &[]);
+    let snapshot = pane.get_render_snapshot(Some(scrolled_top), &[], 0);
     let (stable_top, lines) = pane.get_lines(scrolled_range);
     assert_eq!(snapshot.stable_top, stable_top);
     assert_eq!(snapshot.lines.len(), lines.len());
     for (a, b) in snapshot.lines.iter().zip(lines.iter()) {
         assert_eq!(a.as_str(), b.as_str());
     }
+}
+
+/// Regression test for task B2: `LocalPane::get_render_snapshot` must
+/// return the palette and the changed-since-`changed_since_seqno` rows
+/// under the same single `terminal.lock()` acquisition as
+/// dims/cursor/lines, consistent with what calling `palette()` and
+/// `get_changed_since()` separately would report.
+#[test]
+fn render_snapshot_bundles_palette_and_changed_rows_under_one_lock() {
+    use termwiz::escape::{Action, ControlCode};
+
+    let pane = make_pane();
+    let baseline_seqno = pane.get_current_seqno();
+
+    let mut actions = Vec::new();
+    for n in 0..3 {
+        actions.extend(format!("line {}", n).chars().map(Action::Print));
+        actions.push(Action::Control(ControlCode::CarriageReturn));
+        actions.push(Action::Control(ControlCode::LineFeed));
+    }
+    pane.perform_actions(actions);
+
+    let dims = pane.get_dimensions();
+    let range = dims.physical_top..dims.physical_top + dims.viewport_rows as isize;
+
+    let snapshot = pane.get_render_snapshot(None, &[], baseline_seqno);
+    assert_eq!(snapshot.cursor, pane.get_cursor_position());
+    assert_eq!(snapshot.dims, dims);
+    assert_eq!(snapshot.palette, pane.palette());
+
+    let expected_changed = pane.get_changed_since(range, baseline_seqno);
+    assert_eq!(snapshot.changed_since, expected_changed);
+    assert!(
+        !snapshot.changed_since.is_empty(),
+        "rows written after baseline_seqno must show up as changed"
+    );
+
+    // A snapshot taken with the pane's current (post-write) seqno as the
+    // threshold must report no changed rows: nothing has changed "since
+    // now".
+    let now_seqno = pane.get_current_seqno();
+    let quiet = pane.get_render_snapshot(None, &[], now_seqno);
+    assert!(quiet.changed_since.is_empty());
 }
 
 #[test]
@@ -197,7 +240,7 @@ fn render_snapshot_stale_reflow_viewport_does_not_jump_to_oldest_history() {
     pane.perform_actions(actions);
     let old_dims = pane.get_dimensions();
     let anchor = old_dims.physical_top - 1;
-    let before = pane.get_render_snapshot(Some(anchor), &[]);
+    let before = pane.get_render_snapshot(Some(anchor), &[], 0);
     assert_eq!(before.stable_top, anchor);
 
     pane.resize(TerminalSize {
@@ -210,7 +253,7 @@ fn render_snapshot_stale_reflow_viewport_does_not_jump_to_oldest_history() {
     assert!(anchor >= dims.scrollback_top + dims.scrollback_rows as isize);
 
     // An obsolete anchor beyond the new end must clamp to the newest page.
-    let snapshot = pane.get_render_snapshot(Some(anchor), &[]);
+    let snapshot = pane.get_render_snapshot(Some(anchor), &[], 0);
     assert_eq!(snapshot.stable_top, dims.physical_top);
     assert_eq!(snapshot.lines.len(), ROWS);
     assert!(snapshot.lines[0].as_str().starts_with("25"));
@@ -234,7 +277,7 @@ fn render_snapshot_partly_past_bottom_returns_exactly_one_viewport() {
     let request = dims.physical_top + 1;
     assert!(request < dims.scrollback_top + dims.scrollback_rows as isize);
 
-    let snapshot = pane.get_render_snapshot(Some(request), &[]);
+    let snapshot = pane.get_render_snapshot(Some(request), &[], 0);
     assert_eq!(snapshot.stable_top, dims.physical_top);
     assert_eq!(snapshot.lines.len(), ROWS);
     assert_eq!(snapshot.lines[0].as_str(), "line 7");
@@ -270,23 +313,63 @@ fn render_snapshot_after_unobserved_output_keeps_bottom_and_clamps_expired_histo
     write_lines(0, 20);
     let anchor = pane.get_dimensions().physical_top - 1;
     assert_eq!(
-        pane.get_render_snapshot(Some(anchor), &[]).stable_top,
+        pane.get_render_snapshot(Some(anchor), &[], 0).stable_top,
         anchor
     );
 
     // No reads, resize, or elapsed-time dependency while history rolls over.
     write_lines(20, 40);
     pane.perform_actions("prompt> ".chars().map(Action::Print).collect());
-    let bottom = pane.get_render_snapshot(None, &[]);
+    let bottom = pane.get_render_snapshot(None, &[], 0);
     assert_eq!(bottom.stable_top, 35);
     assert_eq!(bottom.lines.len(), ROWS);
     assert_eq!(bottom.lines[0].as_str(), "line 35");
     assert_eq!(bottom.lines[ROWS - 1].as_str(), "prompt> ");
     assert_eq!(bottom.cursor.y - bottom.stable_top, 5);
 
-    let history = pane.get_render_snapshot(Some(anchor), &[]);
+    let history = pane.get_render_snapshot(Some(anchor), &[], 0);
     assert!(anchor < history.dims.scrollback_top);
     assert_eq!(history.stable_top, 15);
     assert_eq!(history.lines.len(), ROWS);
     assert_eq!(history.lines[0].as_str(), "line 15");
+}
+
+/// Applying hyperlinks rewrites every row of a logical line with the
+/// newest seqno among them; the changed rows must be taken before that, so
+/// an untouched first half of a wrapped URL does not read as changed.
+#[test]
+fn render_snapshot_changed_rows_precede_the_hyperlink_pass() {
+    use termwiz::escape::csi::{Cursor, CSI};
+    use termwiz::escape::{Action, ControlCode, OneBased};
+    use termwiz::hyperlink::Rule;
+
+    let rules = vec![Rule::new(r"\b\w+://(?:[\w.-]+)\.[a-z]{2,15}\S*\b", "$0").unwrap()];
+    let pane = make_pane();
+    let url = format!("http://example.com/{}", "a".repeat(COLS));
+    let mut actions: Vec<Action> = url.chars().map(Action::Print).collect();
+    actions.push(Action::Control(ControlCode::CarriageReturn));
+    actions.push(Action::Control(ControlCode::LineFeed));
+    pane.perform_actions(actions);
+
+    // Scan once so both halves carry the link and the scanned bit.
+    let _ = pane.get_render_snapshot(None, &rules, 0);
+    let baseline = pane.get_current_seqno();
+
+    // Touch only the second half of the wrapped URL.
+    pane.perform_actions(vec![
+        Action::CSI(CSI::Cursor(Cursor::Position {
+            line: OneBased::new(2),
+            col: OneBased::new(COLS as u32 - 2),
+        })),
+        Action::Print('x'),
+    ]);
+
+    let top = pane.get_dimensions().physical_top;
+    let snapshot = pane.get_render_snapshot(None, &rules, baseline);
+    assert!(snapshot.changed_since.contains(top + 1));
+    assert!(
+        !snapshot.changed_since.contains(top),
+        "the untouched first row must not read as changed"
+    );
+    assert!(snapshot.lines[0].has_hyperlink());
 }

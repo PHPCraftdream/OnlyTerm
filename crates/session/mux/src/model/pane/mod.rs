@@ -210,6 +210,14 @@ pub trait Pane: Downcast + Send + Sync {
     fn get_logical_lines(&self, lines: Range<StableRowIndex>) -> Vec<LogicalLine>;
 
     fn apply_hyperlinks(&self, lines: Range<StableRowIndex>, rules: &[Rule]) {
+        // No rules means `Line::apply_hyperlink_rules` would be a no-op for
+        // every logical line anyway; skip the walk (and the per-logical-line
+        // `Vec<&mut Line>` allocation `for_each_logical_line_in_stable_range_mut`
+        // makes to call it) entirely rather than discovering that per-line.
+        if rules.is_empty() {
+            return;
+        }
+
         struct ApplyHyperLinks<'a> {
             rules: &'a [Rule],
         }
@@ -229,23 +237,31 @@ pub trait Pane: Downcast + Send + Sync {
     }
 
     /// Returns a render snapshot -- cursor position, renderable dimensions,
-    /// and the cloned lines for the pane's visible range -- as one logical
-    /// read (see `PaneRenderSnapshot`).
+    /// palette, the rows changed since `changed_since_seqno`, and the
+    /// cloned lines for the pane's visible range -- as one logical read
+    /// (see `PaneRenderSnapshot`).
     ///
     /// `viewport` is the stable row index the GUI is currently scrolled to
     /// (the same value `get_lines` would be called with as range start),
     /// or `None` to use the pane's own `physical_top`.
     ///
+    /// `changed_since_seqno` is the seqno to diff the visible range against
+    /// for `PaneRenderSnapshot::changed_since` -- the GUI passes its
+    /// current selection seqno so the snapshot can also answer "did any
+    /// visible row change since the selection was made" without a separate
+    /// `get_changed_since` call/lock.
+    ///
     /// The default implementation composes this from the same separate
     /// getters the renderer historically used (`get_cursor_position`,
-    /// `get_dimensions`, `apply_hyperlinks`, `get_lines`), so panes without
-    /// a single-lock implementation keep their exact prior behavior --
-    /// including the windows between acquisitions where a pty parser
-    /// thread can apply output mid-read (investigation
-    /// `2026-08-25-render-and-resource-bug-hunt` section 1.3, bug B: a
-    /// paint could combine a cursor position from moment t0 with line
-    /// contents from t2, drawing the cursor block on the old prompt row
-    /// while the input box has already visually moved to a new row).
+    /// `get_dimensions`, `apply_hyperlinks`, `get_lines`, `palette`,
+    /// `get_changed_since`), so panes without a single-lock implementation
+    /// keep their exact prior behavior -- including the windows between
+    /// acquisitions where a pty parser thread can apply output mid-read
+    /// (investigation `2026-08-25-render-and-resource-bug-hunt` section
+    /// 1.3, bug B: a paint could combine a cursor position from moment t0
+    /// with line contents from t2, drawing the cursor block on the old
+    /// prompt row while the input box has already visually moved to a new
+    /// row).
     ///
     /// Implementations backed by a single terminal mutex (`LocalPane`)
     /// override this to capture everything under one short lock
@@ -256,18 +272,25 @@ pub trait Pane: Downcast + Send + Sync {
         &self,
         viewport: Option<StableRowIndex>,
         hyperlink_rules: &[Rule],
+        changed_since_seqno: SequenceNo,
     ) -> PaneRenderSnapshot {
         let cursor = self.get_cursor_position();
         let dims = self.get_dimensions();
         let top = viewport.unwrap_or(dims.physical_top);
         let lines = top..top + dims.viewport_rows as StableRowIndex;
+        // Before the hyperlink pass, which can raise the seqno of rows
+        // sharing a logical line with a changed row.
+        let changed_since = self.get_changed_since(lines.clone(), changed_since_seqno);
         self.apply_hyperlinks(lines.clone(), hyperlink_rules);
+        let palette = self.palette();
         let (stable_top, lines) = self.get_lines(lines);
         PaneRenderSnapshot {
             cursor,
             dims,
             stable_top,
             lines,
+            palette,
+            changed_since,
         }
     }
 

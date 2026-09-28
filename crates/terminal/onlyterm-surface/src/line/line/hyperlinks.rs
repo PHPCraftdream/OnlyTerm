@@ -143,4 +143,16 @@ impl Line {
         (self.bits & (LineBits::HAS_HYPERLINK | LineBits::HAS_IMPLICIT_HYPERLINKS))
             != LineBits::NONE
     }
+
+    /// Returns true if this line has already been scanned for implicit
+    /// hyperlinks (`scan_and_create_hyperlinks` is then a no-op for it
+    /// until the line changes again). Lets a caller skip a whole
+    /// per-frame hyperlink walk (which would otherwise allocate a
+    /// `Vec<&mut Line>` per logical line just to find out there was
+    /// nothing to scan) when every line it would touch already has this
+    /// bit set.
+    #[inline]
+    pub fn implicit_hyperlinks_scanned(&self) -> bool {
+        self.bits.contains(LineBits::SCANNED_IMPLICIT_HYPERLINKS)
+    }
 }

@@ -42,7 +42,29 @@ impl crate::TermWindow {
             return self.paint_pane_box_model(pos);
         }
 
-        self.check_for_dirty_lines_and_invalidate_selection(&pos.pane);
+        let pane_id = pos.pane.pane_id();
+        let current_viewport = self.get_viewport(pane_id);
+        let selection_seqno = self.selection(pane_id).seqno;
+
+        // Bug B (investigation `2026-08-25-render-and-resource-bug-hunt`
+        // section 1.3): take the cursor position, dimensions, hyperlink
+        // pass, palette, the rows changed since the selection's seqno, and
+        // viewport line contents as ONE consistent snapshot under a single
+        // short terminal-lock acquisition, instead of separate
+        // `get_cursor_position` / `get_dimensions` / `apply_hyperlinks` /
+        // `get_lines` / `palette` / `get_changed_since` calls with windows
+        // between them where the pty parser thread can apply output --
+        // that tearing is what put the cursor block on the old prompt row
+        // while the input box had already visually moved to a new row, for
+        // one frame.
+        let snapshot = pos.pane.get_render_snapshot(
+            current_viewport,
+            &self.config.hyperlink_rules,
+            selection_seqno,
+        );
+
+        self.invalidate_selection_for_changed_rows(&pos.pane, &snapshot.changed_since);
+
         /*
         let zone = {
             let dims = pos.pane.get_dimensions();
@@ -62,7 +84,7 @@ impl crate::TermWindow {
         let global_cursor_fg = self.palette().cursor_fg;
         let global_cursor_bg = self.palette().cursor_bg;
         let config = self.config.clone();
-        let palette = pos.pane.palette();
+        let palette = snapshot.palette;
 
         let (padding_left, padding_top) = self.padding_left_top();
 
@@ -81,21 +103,6 @@ impl crate::TermWindow {
         let border = self.get_os_border();
         let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
 
-        let pane_id = pos.pane.pane_id();
-        let current_viewport = self.get_viewport(pane_id);
-
-        // Bug B (investigation `2026-08-25-render-and-resource-bug-hunt`
-        // section 1.3): take the cursor position, dimensions, hyperlink
-        // pass and viewport line contents as ONE consistent snapshot under
-        // a single short terminal-lock acquisition, instead of separate
-        // `get_cursor_position` / `get_dimensions` / `apply_hyperlinks` /
-        // `get_lines` calls with windows between them where the pty parser
-        // thread can apply output -- that tearing is what put the cursor
-        // block on the old prompt row while the input box had already
-        // visually moved to a new row, for one frame.
-        let snapshot = pos
-            .pane
-            .get_render_snapshot(current_viewport, &self.config.hyperlink_rules);
         let cursor = snapshot.cursor;
         if pos.is_active {
             self.prev_cursor.update(&cursor);
@@ -252,10 +259,11 @@ impl crate::TermWindow {
         // do a per-pane scrollbar.  That will require more extensive
         // changes to ScrollHit, mouse positioning, PositionedPane
         // and tab size calculation.
-        let has_scrollback = pos.is_active && self.show_scroll_bar && {
-            let render_dims = pos.pane.get_dimensions();
-            render_dims.scrollback_rows > render_dims.viewport_rows
-        };
+        // `dims` is the snapshot's dimensions (captured under the same lock
+        // as everything else above), not a fresh `pos.pane.get_dimensions()`
+        // call/lock.
+        let has_scrollback =
+            pos.is_active && self.show_scroll_bar && dims.scrollback_rows > dims.viewport_rows;
         if has_scrollback {
             let thumb_y_offset = top_bar_height as usize + border.top.get();
 
@@ -561,16 +569,7 @@ impl crate::TermWindow {
                                 _ => None,
                             },
                             if self.term_window.config.detect_password_input {
-                                match self.pos.pane.get_metadata() {
-                                    Value::Object(obj) => {
-                                        match obj.get(&Value::String("password_input".to_string()))
-                                        {
-                                            Some(Value::Bool(b)) => *b,
-                                            _ => false,
-                                        }
-                                    }
-                                    _ => false,
-                                }
+                                pane_reports_password_input(&self.pos.pane.get_metadata())
                             } else {
                                 false
                             },
@@ -983,3 +982,18 @@ impl crate::TermWindow {
         Ok(())
     }
 }
+
+/// Whether a pane's `get_metadata()` result declares `password_input:
+/// true`. Looks the key up via `Object::get_by_str`, which doesn't
+/// allocate a `String` to build the lookup key (unlike `obj.get(&Value::
+/// String("password_input".to_string()))`) -- this runs on the cursor row
+/// every frame `detect_password_input` is enabled.
+fn pane_reports_password_input(metadata: &Value) -> bool {
+    match metadata {
+        Value::Object(obj) => matches!(obj.get_by_str("password_input"), Some(Value::Bool(true))),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod password_input_tests;
