@@ -7,6 +7,7 @@ use bitflags::bitflags;
 mod image;
 mod mouse;
 mod osc;
+mod perf_bench;
 mod perf_probe;
 mod screen;
 use crate::color::ColorPalette;
