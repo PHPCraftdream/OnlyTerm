@@ -19,6 +19,12 @@ try to boost the contrast ratio to meet the specified minimum.
 This may cause the foreground color to either increase or decrease in
 luminance, typically making it either more white or more black.
 
+Recognized graphical glyphs, such as block elements, box drawing and braille,
+retain their requested colors when neither selected nor under the cursor. Their
+foreground represents a fill or drawing color rather than text requiring
+legibility. This preserves subtle backgrounds assembled from `▄` and `▀`,
+such as Gemini CLI message and input blocks.
+
 It may not be possible to achieve the requested minimum ratio, in which
 case a slightly better or the original color (if no better color can
 be computed) will be used.

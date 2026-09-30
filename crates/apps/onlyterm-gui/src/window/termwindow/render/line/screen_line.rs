@@ -343,6 +343,7 @@ impl crate::TermWindow {
             } = self.compute_cell_fg_bg(ComputeCellFgBgParams {
                 cursor: Some(params.cursor),
                 selected: false,
+                is_graphic: false,
                 fg_color,
                 bg_color,
                 is_active_pane: params.is_active,
@@ -624,6 +625,7 @@ impl crate::TermWindow {
                             } = self.compute_cell_fg_bg(ComputeCellFgBgParams {
                                 cursor: if is_cursor { Some(params.cursor) } else { None },
                                 selected,
+                                is_graphic: info.block_key.is_some(),
                                 fg_color: item.fg_color,
                                 bg_color: item.bg_color,
                                 is_active_pane: params.is_active,

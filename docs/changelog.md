@@ -12,6 +12,15 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.33-alpha — 2026-10-01
+
+#### Fixed
+
+* Text contrast correction preserves unselected graphical glyphs outside the
+  cursor. Gemini CLI's light message/input backgrounds keep their requested
+  colors instead of acquiring black half-block borders; ordinary text retains
+  contrast correction.
+
 ### v0.0.32-alpha — 2026-09-30
 
 #### Fixed

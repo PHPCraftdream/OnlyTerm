@@ -374,6 +374,7 @@ pub struct CursorProperties {
 
 pub struct ComputeCellFgBgParams<'a> {
     pub selected: bool,
+    pub is_graphic: bool,
     pub cursor: Option<&'a StableCursorPosition>,
     pub fg_color: LinearRgba,
     pub bg_color: LinearRgba,

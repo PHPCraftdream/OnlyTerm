@@ -457,8 +457,13 @@ impl crate::TermWindow {
             _ => (params.fg_color, params.bg_color, params.cursor_border_color),
         };
 
+        // Block graphics encode fill colors, not text requiring legibility.
         let (fg_color, bg_color) =
-            self.ensure_min_contrast(fg_color, bg_color, params.default_fg, params.default_bg);
+            if params.is_graphic && !params.selected && params.cursor.is_none() {
+                (fg_color, bg_color)
+            } else {
+                self.ensure_min_contrast(fg_color, bg_color, params.default_fg, params.default_bg)
+            };
 
         let blinking = params.cursor.is_some()
             && params.is_active_pane
