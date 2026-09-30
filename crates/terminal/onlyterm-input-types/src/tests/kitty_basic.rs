@@ -2,6 +2,66 @@ use super::kitty_protocol::make_event_with_raw;
 use crate::*;
 
 #[test]
+fn encode_kitty_shifted_unicode_preserves_text() {
+    for flags in [
+        KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES,
+        KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES | KittyKeyboardFlags::REPORT_EVENT_TYPES,
+        KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES | KittyKeyboardFlags::REPORT_ALTERNATE_KEYS,
+    ] {
+        for c in "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯÉй".chars() {
+            let event = KeyEvent {
+                key: KeyCode::Char(c),
+                modifiers: Modifiers::SHIFT,
+                leds: KeyboardLedStatus::empty(),
+                repeat_count: 1,
+                key_is_down: true,
+                raw: None,
+                #[cfg(windows)]
+                win32_uni_char: None,
+            };
+            assert_eq!(event.encode_kitty(flags), c.to_string());
+        }
+    }
+}
+
+#[test]
+fn encode_kitty_shifted_text_keeps_non_text_events() {
+    let mut event = KeyEvent {
+        key: KeyCode::Char('Й'),
+        modifiers: Modifiers::SHIFT,
+        leds: KeyboardLedStatus::empty(),
+        repeat_count: 1,
+        key_is_down: true,
+        raw: None,
+        #[cfg(windows)]
+        win32_uni_char: None,
+    };
+    let flags = KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES;
+    assert_eq!(
+        event.encode_kitty(flags | KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES),
+        "\x1b[1081;2u"
+    );
+    event.key_is_down = false;
+    assert_eq!(event.encode_kitty(flags), "");
+    assert_eq!(
+        event.encode_kitty(flags | KittyKeyboardFlags::REPORT_EVENT_TYPES),
+        "\x1b[1081;2:3u"
+    );
+    event.key_is_down = true;
+    for (c, mods, expected) in [
+        ('\r', Modifiers::SHIFT, "\x1b[13;2u"),
+        ('\r', Modifiers::CTRL, "\x1b[13;5u"),
+        ('j', Modifiers::CTRL, "\n"),
+        ('\t', Modifiers::SHIFT, "\x1b[9;2u"),
+        ('\x1b', Modifiers::SHIFT, "\x1b[27;2u"),
+    ] {
+        event.key = KeyCode::Char(c);
+        event.modifiers = mods;
+        assert_eq!(event.encode_kitty(flags), expected);
+    }
+}
+
+#[test]
 fn encode_issue_3220() {
     let flags =
         KittyKeyboardFlags::DISAMBIGUATE_ESCAPE_CODES | KittyKeyboardFlags::REPORT_EVENT_TYPES;

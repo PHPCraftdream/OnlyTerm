@@ -12,6 +12,14 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.32-alpha — 2026-09-30
+
+#### Fixed
+
+* Kitty keyboard input preserves the case of Shift-only Unicode text, including
+  all Cyrillic capitals in omp on Windows. Modified Enter, Ctrl+J, key releases,
+  and explicit all-key reporting retain their protocol encoding.
+
 ### Continuous/Nightly
 
 A bleeding edge build is produced continually (as commits are made, and at

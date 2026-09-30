@@ -348,7 +348,12 @@ impl KeyEvent {
             return String::new();
         }
 
-        if self.modifiers.is_empty()
+        // Shift-only text stays UTF-8 unless the application requests all key codes.
+        let shift_only_text = (self.modifiers
+            - (Modifiers::SHIFT | Modifiers::LEFT_SHIFT | Modifiers::RIGHT_SHIFT))
+            .is_empty()
+            && matches!(&self.key, Char(c) if !c.is_control());
+        if (self.modifiers.is_empty() || shift_only_text)
             && !flags.contains(KittyKeyboardFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES)
             && self.key_is_down
         {
