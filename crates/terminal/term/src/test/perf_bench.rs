@@ -48,6 +48,14 @@ fn make_terminal() -> Terminal {
     term
 }
 
+fn make_resize_terminal(conpty: bool) -> Terminal {
+    let mut term = make_terminal();
+    if conpty {
+        term.enable_conpty_quirks();
+    }
+    term
+}
+
 /// Parses the way the mux does: consecutive prints merge into `PrintString`.
 fn mux_actions(bytes: &[u8]) -> Vec<Action> {
     let mut parser = Parser::new();
@@ -97,6 +105,62 @@ fn text_lines(n: usize, width: usize) -> Vec<u8> {
             i += 1;
         }
         out.extend_from_slice(line.as_bytes());
+        out.extend_from_slice(b"\r\n");
+    }
+    out
+}
+
+/// The same word stream as `text_lines`, with the words transliterated to
+/// Cyrillic (same replacements as the `cyrillic mix` apply bench), so the
+/// narrow/widen scenarios exercise non-ASCII grapheme segmentation.
+fn cyrillic_lines(n: usize, width: usize) -> Vec<u8> {
+    String::from_utf8(text_lines(n, width))
+        .unwrap()
+        .replace("lorem", "\u{43f}\u{440}\u{438}\u{432}\u{435}\u{442}")
+        .replace("ipsum", "\u{43c}\u{438}\u{440}")
+        .replace("dolor", "\u{442}\u{435}\u{43a}\u{441}\u{442}")
+        .replace("sit", "\u{436}\u{438}\u{437}\u{43d}\u{44c}")
+        .replace("amet", "\u{441}\u{43b}\u{43e}\u{432}\u{43e}")
+        .replace("error:", "\u{43e}\u{448}\u{438}\u{431}\u{43a}\u{430}:")
+        .replace("fn", "\u{444}\u{43d}")
+        .replace("let", "\u{43f}\u{443}\u{441}\u{442}\u{44c}")
+        .into_bytes()
+}
+
+/// Mixed content: 70% short plain lines, 30% lines of length 150..300
+/// with a 24-bit foreground SGR sequence before every word.
+fn mixed_text_lines(n: usize) -> Vec<u8> {
+    let words = [
+        "lorem", "ipsum", "dolor", "sit", "amet", "error:", "fn", "let",
+    ];
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    for line_no in 0..n {
+        if line_no % 10 < 3 {
+            // `target` counts visible cells (escape sequences do not), so
+            // these lines really wrap at the bench widths.
+            let target = 150 + (line_no * 61) % 151;
+            let mut line = String::new();
+            let mut visible = 0usize;
+            while visible + 8 < target {
+                let r = (i * 37 % 256) as u8;
+                let g = (i * 91 % 256) as u8;
+                let b = (i * 149 % 256) as u8;
+                let word = words[i % words.len()];
+                line.push_str(&format!("\x1b[38;2;{};{};{}m{} ", r, g, b, word));
+                visible += word.len() + 1;
+                i += 1;
+            }
+            out.extend_from_slice(line.as_bytes());
+        } else {
+            let mut line = String::new();
+            while line.len() + 8 < 70 {
+                line.push_str(words[i % words.len()]);
+                line.push(' ');
+                i += 1;
+            }
+            out.extend_from_slice(line.as_bytes());
+        }
         out.extend_from_slice(b"\r\n");
     }
     out
@@ -157,14 +221,72 @@ fn perf_bench_apply() {
     apply_throughput("SGR per word", &sgr, reps);
 }
 
+/// One narrow (120 -> 100) and one widen (100 -> 120) resize, measured
+/// separately, averaged over `reps` fresh terminals.
+fn bench_narrow_widen(name: &str, conpty: bool, content: &[u8]) {
+    let reps = 10;
+    let mut narrow = Duration::ZERO;
+    let mut widen = Duration::ZERO;
+    for _ in 0..reps {
+        let mut term = make_resize_terminal(conpty);
+        term.advance_bytes(content);
+        let start = Instant::now();
+        term.resize(size(ROWS, 100));
+        narrow += start.elapsed();
+        let start = Instant::now();
+        term.resize(size(ROWS, COLS));
+        widen += start.elapsed();
+    }
+    eprintln!(
+        "[perf_bench] resize narrow 120->100 ({}), {} rows history (conpty={}): {:?}/op",
+        name,
+        SCROLLBACK,
+        conpty,
+        narrow / reps as u32
+    );
+    eprintln!(
+        "[perf_bench] resize widen 100->120 ({}), {} rows history (conpty={}): {:?}/op",
+        name,
+        SCROLLBACK,
+        conpty,
+        widen / reps as u32
+    );
+}
+
+/// Drag: resize by one column at a time, 120 -> 80 -> 120, averaged over
+/// `passes` fresh terminals.
+fn bench_drag(name: &str, conpty: bool, content: &[u8]) {
+    let passes = 3;
+    let steps = 80;
+    let mut total = Duration::ZERO;
+    for _ in 0..passes {
+        let mut term = make_resize_terminal(conpty);
+        term.advance_bytes(content);
+        let start = Instant::now();
+        for step in 0..steps {
+            let cols = if step < 40 {
+                119 - step
+            } else {
+                80 + (step - 40)
+            };
+            term.resize(size(ROWS, cols));
+        }
+        total += start.elapsed();
+    }
+    eprintln!(
+        "[perf_bench] resize drag 1col 120->80->120 ({}), {} rows history (conpty={}): {:?}/step",
+        name,
+        SCROLLBACK,
+        conpty,
+        total / (passes * steps) as u32
+    );
+}
+
 #[test]
 #[ignore]
 fn perf_bench_resize() {
     for conpty in [false, true] {
-        let mut term = make_terminal();
-        if conpty {
-            term.enable_conpty_quirks();
-        }
+        let mut term = make_resize_terminal(conpty);
         term.advance_bytes(text_lines(SCROLLBACK + 500, 110));
 
         let steps = 20;
@@ -191,5 +313,13 @@ fn perf_bench_resize() {
             conpty,
             start.elapsed() / steps
         );
+
+        let ascii = text_lines(SCROLLBACK + 500, 110);
+        bench_narrow_widen("ascii", conpty, &ascii);
+        let cyrillic = cyrillic_lines(SCROLLBACK + 500, 110);
+        bench_narrow_widen("cyrillic", conpty, &cyrillic);
+        bench_drag("ascii", conpty, &ascii);
+        let mixed = mixed_text_lines(SCROLLBACK + 500);
+        bench_drag("mixed 24bit", conpty, &mixed);
     }
 }

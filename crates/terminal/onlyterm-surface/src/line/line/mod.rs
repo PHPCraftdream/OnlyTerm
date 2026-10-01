@@ -28,6 +28,9 @@ mod fill_range_test;
 #[path = "../tests/recycle_test.rs"]
 mod recycle_test;
 #[cfg(test)]
+#[path = "../tests/reflow_fastpath_test.rs"]
+mod reflow_fastpath_test;
+#[cfg(test)]
 #[path = "../tests/wrap_whitespace_fastpath_test.rs"]
 mod wrap_whitespace_fastpath_test;
 

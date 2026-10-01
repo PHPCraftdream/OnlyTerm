@@ -91,6 +91,14 @@ impl Line {
     /// Like `wrap`, but blank cells before column `keep` count as content
     /// instead of being trimmed as trailing whitespace.
     pub fn wrap_keeping(self, width: usize, keep: usize, seqno: SequenceNo) -> Vec<Self> {
+        self.wrap_keeping_reference(width, keep, seqno)
+    }
+
+    /// Verbatim copy of the pre-optimization `wrap_keeping` body. This is
+    /// the correctness oracle for the OPT-4 fast path: the fast path must
+    /// produce results equal to this one (see `reflow_fastpath_test.rs`).
+    #[doc(hidden)]
+    pub fn wrap_keeping_reference(self, width: usize, keep: usize, seqno: SequenceNo) -> Vec<Self> {
         // Every piece is still the same line, so each must keep its bidi
         // settings: a fresh `Line` defaults to bidi *disabled*, which
         // would silently switch right-to-left reordering off for anything
@@ -243,6 +251,14 @@ impl Line {
     /// This function is used by rewrapping logic when joining wrapped
     /// lines back together.
     pub fn append_line(&mut self, other: Line, seqno: SequenceNo) {
+        self.append_line_reference(other, seqno)
+    }
+
+    /// Verbatim copy of the pre-optimization `append_line` body. This is
+    /// the correctness oracle for the OPT-4 fast path: the fast path must
+    /// produce results equal to this one (see `reflow_fastpath_test.rs`).
+    #[doc(hidden)]
+    pub fn append_line_reference(&mut self, other: Line, seqno: SequenceNo) {
         match &mut self.cells {
             CellStorage::V(cells) => {
                 let cells = Arc::make_mut(cells);
