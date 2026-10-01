@@ -1,5 +1,34 @@
 use super::*;
 
+pub(super) fn link_copy_text(text: &str) -> &str {
+    let trimmed = text.trim();
+    let Some(link) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(')')) else {
+        return text;
+    };
+    let Some((label, target)) = link.rsplit_once("](") else {
+        return text;
+    };
+    if label.contains("](") || label.contains(['\r', '\n']) {
+        return text;
+    }
+    let target = if let Some(angled) = target.strip_prefix('<') {
+        let Some(target) = angled.strip_suffix('>') else {
+            return text;
+        };
+        target
+    } else {
+        target
+    };
+    if target.is_empty()
+        || target
+            .chars()
+            .any(|c| c.is_whitespace() || c == '<' || c == '>')
+    {
+        return text;
+    }
+    target
+}
+
 impl TermWindow {
     pub(super) fn do_open_link_at_mouse_cursor(&self, _pane: &Arc<dyn Pane>) {
         // They clicked on a link, so let's open it!
@@ -20,7 +49,7 @@ impl TermWindow {
         // Right-click on a hyperlink copies its URL instead of opening it;
         // see `hyperlink_click_action` for the pure decision logic.
         if let Some(link) = self.current_highlight.as_ref().cloned() {
-            self.copy_to_clipboard(destination, link.uri().to_string());
+            self.copy_to_clipboard(destination, link_copy_text(link.uri()).to_owned());
             if let Some(window) = self.window.as_ref() {
                 window.invalidate();
             }
@@ -397,6 +426,43 @@ impl TermWindow {
                     .unwrap_or_default();
                 MuxPattern::CaseSensitiveString(first_line)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod link_copy_tests {
+    use super::link_copy_text;
+
+    #[test]
+    fn right_click_copies_markdown_destination_not_label() {
+        assert_eq!(
+            link_copy_text("[https://github.com/aleksey-hoffman/sigma-file-manager](<https://github.com/aleksey-hoffman/sigma-file-manager>)"),
+            "https://github.com/aleksey-hoffman/sigma-file-manager"
+        );
+        assert_eq!(
+            link_copy_text("[different label](https://example.com/Foo_(Bar)?x=1#part)"),
+            "https://example.com/Foo_(Bar)?x=1#part"
+        );
+        assert_eq!(
+            link_copy_text(" \r\n[документ](<https://example.com/%D0%B0>)\r\n "),
+            "https://example.com/%D0%B0"
+        );
+    }
+
+    #[test]
+    fn right_click_preserves_plain_text_and_non_single_links() {
+        for text in [
+            "https://example.com/Foo_(Bar)",
+            "plain text",
+            "See [label](https://example.com)",
+            "[a](https://a.example)[b](https://b.example)",
+            "[label]()",
+            "[label](<https://example.com)",
+            "[label](https://example.com \"title\")",
+            "[multi\nline](https://example.com)",
+        ] {
+            assert_eq!(link_copy_text(text), text);
         }
     }
 }

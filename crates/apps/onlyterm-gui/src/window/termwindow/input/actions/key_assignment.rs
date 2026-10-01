@@ -520,6 +520,12 @@ impl TermWindow {
                 } else {
                     let text = self.selection_text(pane);
                     if !text.is_empty() {
+                        let link_text = super::pane_actions::link_copy_text(&text);
+                        let text = if link_text.len() == text.len() {
+                            text
+                        } else {
+                            link_text.to_owned()
+                        };
                         self.copy_to_clipboard(*destination, text);
                         self.clear_selection(pane);
                         if let Some(window) = self.window.as_ref() {

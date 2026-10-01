@@ -12,6 +12,14 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.34-alpha — 2026-10-01
+
+#### Fixed
+
+* Right-click link copying unwraps a single Markdown link into its destination,
+  including Codex's `[label](<url>)` form. The same applies to a single-link
+  selection copied by right-click; ordinary Ctrl+C text copying is unchanged.
+
 ### v0.0.33-alpha — 2026-10-01
 
 #### Fixed
