@@ -8,6 +8,7 @@ use onlyterm_cell::{Cell, CellAttributes};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 extern crate alloc;
+use crate::alloc::string::ToString;
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec;
@@ -505,6 +506,230 @@ impl ClusteredLine {
     /// its backing text is nothing but ASCII space bytes.
     pub(crate) fn is_all_spaces(&self) -> bool {
         self.text.bytes().all(|b| b == b' ')
+    }
+}
+
+/// One output line of a fast-path wrap: the wrapped `ClusteredLine`
+/// itself plus whether any of its cells carry a hyperlink (so the caller
+/// can set `HAS_HYPERLINK` on the assembled `Line`).
+pub(crate) struct WrapPiece {
+    pub(crate) line: ClusteredLine,
+    pub(crate) has_hyperlink: bool,
+}
+
+/// State of the output piece currently being filled by the general-tier
+/// wrap pass (`PieceBuilder::finish` turns it into a `WrapPiece`).
+struct PieceBuilder {
+    byte_from: usize,
+    byte_to: usize,
+    clusters: Vec<Cluster>,
+    wide: Vec<usize>,
+    has_hyperlink: bool,
+    len: usize,
+    last_cell_width: usize,
+}
+
+impl PieceBuilder {
+    /// Freezes the piece: slices `text` to the piece's byte range and
+    /// builds the double-wide bitset the same way `append_grapheme` does
+    /// (`with_capacity(first+1)`, then `grow(idx+1)` + `set` for each
+    /// subsequent wide cell), so the bit length equals the highest wide
+    /// cell index + 1 -- exactly what the per-cell reference path builds.
+    fn finish(self, text: &str) -> WrapPiece {
+        let is_double_wide = match self.wide.as_slice() {
+            [] => None,
+            [first, rest @ ..] => {
+                let mut bitset = FixedBitSet::with_capacity(first + 1);
+                bitset.set(*first, true);
+                for &idx in rest {
+                    bitset.grow(idx + 1);
+                    bitset.set(idx, true);
+                }
+                Some(Box::new(bitset))
+            }
+        };
+        WrapPiece {
+            line: ClusteredLine {
+                text: text[self.byte_from..self.byte_to].to_string(),
+                is_double_wide,
+                clusters: self.clusters,
+                len: self.len as u32,
+                last_cell_width: NonZeroU8::new(self.last_cell_width as u8),
+            },
+            has_hyperlink: self.has_hyperlink,
+        }
+    }
+}
+
+impl ClusteredLine {
+    /// Fast-path gate: every cluster covers at least one cell and the
+    /// clusters tile the line exactly (sum of cluster widths == `len`).
+    /// Degenerate storage (zero-width clusters, or clusters not reaching
+    /// `len`) must go through the reference path instead.
+    pub(crate) fn clusters_consistent(&self) -> bool {
+        let mut total = 0usize;
+        if !self.clusters.iter().all(|c| {
+            total += c.cell_width as usize;
+            c.cell_width > 0
+        }) {
+            return false;
+        }
+        total == self.len()
+    }
+
+    /// OPT-4 fast path: split into pieces of at most `width` cells each,
+    /// after trimming trailing blank cells (a cell counts as visible when
+    /// its text is not a single space or its cell index is below `keep`).
+    /// Returns `None` when no cell is visible; the caller must then leave
+    /// the line unchanged, like the reference path does.
+    ///
+    /// Must only be called on lines passing `clusters_consistent()`.
+    pub(crate) fn wrap_pieces(&self, width: usize, keep: usize) -> Option<Vec<WrapPiece>> {
+        if self.is_double_wide.is_none()
+            && self.text.len() == self.len as usize
+            && self.text.bytes().all(|b| (0x20..=0x7e).contains(&b))
+        {
+            self.wrap_pieces_ascii(width, keep)
+        } else {
+            self.wrap_pieces_general(width, keep)
+        }
+    }
+
+    /// ASCII tier: every cell is exactly one printable-ASCII byte of width
+    /// 1 (no wide bits, `text.len() == len`), so cell indices equal byte
+    /// offsets and piece boundaries are plain arithmetic; only the cluster
+    /// attributes need to be intersected with each piece.
+    fn wrap_pieces_ascii(&self, width: usize, keep: usize) -> Option<Vec<WrapPiece>> {
+        let end = self
+            .text
+            .bytes()
+            .enumerate()
+            .rev()
+            .find(|&(idx, b)| b != b' ' || idx < keep)
+            .map(|(idx, _)| idx + 1)?;
+
+        let mut cluster_ends = Vec::with_capacity(self.clusters.len());
+        let mut pos = 0usize;
+        for cluster in &self.clusters {
+            pos += cluster.cell_width as usize;
+            cluster_ends.push(pos);
+        }
+        debug_assert_eq!(pos, self.len as usize, "clusters tile the line");
+
+        let mut pieces = Vec::new();
+        let mut begin = 0usize;
+        // Index of the cluster covering `begin`; pieces are cut left to
+        // right, so the cursor only ever moves forward.
+        let mut cursor = 0usize;
+        while begin < end {
+            let stop = (begin + width).min(end);
+            while cluster_ends[cursor] <= begin {
+                cursor += 1;
+            }
+            let mut base = if cursor == 0 {
+                0
+            } else {
+                cluster_ends[cursor - 1]
+            };
+            let mut clusters: Vec<Cluster> = Vec::new();
+            let mut has_hyperlink = false;
+            let mut ci = cursor;
+            while base < stop {
+                let cluster = &self.clusters[ci];
+                let cend = base + cluster.cell_width as usize;
+                let take = cend.min(stop) - base.max(begin);
+                if take > 0 {
+                    has_hyperlink |= cluster.attrs.hyperlink().is_some();
+                    match clusters.last_mut() {
+                        Some(last) if last.attrs == cluster.attrs => {
+                            last.cell_width += take as u16;
+                        }
+                        _ => clusters.push(Cluster {
+                            cell_width: take as u16,
+                            attrs: cluster.attrs.clone(),
+                        }),
+                    }
+                }
+                base = cend;
+                ci += 1;
+            }
+            pieces.push(WrapPiece {
+                line: ClusteredLine {
+                    text: self.text[begin..stop].to_string(),
+                    is_double_wide: None,
+                    clusters,
+                    len: (stop - begin) as u32,
+                    last_cell_width: NonZeroU8::new(1),
+                },
+                has_hyperlink,
+            });
+            begin = stop;
+        }
+        Some(pieces)
+    }
+
+    /// General tier: one pass over the visible cells (grapheme iteration)
+    /// to find the last visible cell, then a second pass to cut pieces on
+    /// cell boundaries, tracking byte offsets, per-cell widths and the
+    /// double-wide cells.
+    fn wrap_pieces_general(&self, width: usize, keep: usize) -> Option<Vec<WrapPiece>> {
+        let mut end_ord = 0usize;
+        for (ord, cell) in self.iter().enumerate() {
+            if cell.str() != " " || cell.cell_index() < keep {
+                end_ord = ord + 1;
+            }
+        }
+        if end_ord == 0 {
+            return None;
+        }
+
+        let mut pieces: Vec<PieceBuilder> = Vec::new();
+        let mut pos = 0usize;
+        for (ord, cell) in self.iter().enumerate() {
+            if ord == end_ord {
+                break;
+            }
+            let w = cell.width();
+            let need_new_piece = match pieces.last() {
+                Some(last) => last.len + w > width,
+                None => true,
+            };
+            if need_new_piece {
+                pieces.push(PieceBuilder {
+                    byte_from: pos,
+                    byte_to: pos,
+                    clusters: Vec::new(),
+                    wide: Vec::new(),
+                    has_hyperlink: false,
+                    len: 0,
+                    last_cell_width: 0,
+                });
+            }
+            let last = pieces.last_mut().expect("a piece was just created");
+            let attrs = cell.attrs();
+            last.has_hyperlink |= attrs.hyperlink().is_some();
+            match last.clusters.last_mut() {
+                Some(cluster) if cluster.attrs == *attrs => cluster.cell_width += w as u16,
+                _ => last.clusters.push(Cluster {
+                    cell_width: w as u16,
+                    attrs: attrs.clone(),
+                }),
+            }
+            if w > 1 {
+                last.wide.push(last.len);
+            }
+            last.len += w;
+            last.last_cell_width = w;
+            pos += cell.str().len();
+            last.byte_to = pos;
+        }
+
+        Some(
+            pieces
+                .into_iter()
+                .map(|piece| piece.finish(&self.text))
+                .collect(),
+        )
     }
 }
 

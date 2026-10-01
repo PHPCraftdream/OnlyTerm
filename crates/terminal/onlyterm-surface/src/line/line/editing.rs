@@ -11,6 +11,26 @@ use onlyterm_cell::{Cell, CellAttributes};
 
 extern crate alloc;
 
+#[cfg(test)]
+thread_local! {
+    static WRAP_FAST_PATH_HITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Test-only: how many times `wrap_keeping` took the OPT-4 fast path on
+/// this thread. The differential tests alone cannot tell whether the fast
+/// path ran (public and reference results are equal by contract), so the
+/// tests use this counter to prove the fast path is actually reached for
+/// ordinary C-storage input.
+#[cfg(test)]
+pub(crate) fn wrap_fast_path_hits() -> u64 {
+    WRAP_FAST_PATH_HITS.with(|hits| hits.get())
+}
+
+#[cfg(test)]
+pub(crate) fn reset_wrap_fast_path_hits() {
+    WRAP_FAST_PATH_HITS.with(|hits| hits.set(0));
+}
+
 impl Line {
     pub fn resize_and_clear(
         &mut self,
@@ -91,6 +111,36 @@ impl Line {
     /// Like `wrap`, but blank cells before column `keep` count as content
     /// instead of being trimmed as trailing whitespace.
     pub fn wrap_keeping(self, width: usize, keep: usize, seqno: SequenceNo) -> Vec<Self> {
+        let (bidi_enabled, bidi_direction) = self.bidi_info();
+        if let CellStorage::C(cl) = &self.cells {
+            // OPT-4 fast path: consistent clustered storage and a width
+            // small enough that per-piece cluster widths cannot overflow
+            // `u16`. Anything else (Vec storage, degenerate clusters,
+            // huge widths) goes through the reference oracle below.
+            if width >= 1 && width + 2 <= u16::MAX as usize && cl.clusters_consistent() {
+                if let Some(pieces) = cl.wrap_pieces(width, keep) {
+                    #[cfg(test)]
+                    {
+                        WRAP_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
+                    }
+                    let last = pieces.len() - 1;
+                    let mut lines: Vec<Self> = Vec::with_capacity(pieces.len());
+                    for (i, piece) in pieces.into_iter().enumerate() {
+                        let mut line = Line::new(seqno);
+                        line.set_bidi_info(bidi_enabled, bidi_direction, seqno);
+                        if piece.has_hyperlink {
+                            line.bits |= LineBits::HAS_HYPERLINK;
+                        }
+                        line.cells = CellStorage::C(Arc::new(piece.line));
+                        if i != last {
+                            line.set_last_cell_was_wrapped(true, seqno);
+                        }
+                        lines.push(line);
+                    }
+                    return lines;
+                }
+            }
+        }
         self.wrap_keeping_reference(width, keep, seqno)
     }
 

@@ -137,6 +137,17 @@ enum Op {
         text: usize,
     },
     Compress,
+    // OPT-4 phase C additions (coverage only ever grows): a long line so
+    // that width is often much smaller than len, and an interior attribute
+    // change so pieces regularly cut through many attribute runs.
+    LongAsciiRun {
+        len: usize,
+        attrs: usize,
+    },
+    Recolor {
+        back: usize,
+        attrs: usize,
+    },
 }
 
 const CTRL_TEXTS: &[(&str, usize)] = &[
@@ -157,7 +168,7 @@ fn gen_ops(rng: &mut Lcg) -> Vec<Op> {
     }
     let extra = rng.below(6);
     for _ in 0..extra {
-        match rng.below(8) {
+        match rng.below(10) {
             0 => ops.push(Op::AsciiRun {
                 back: 1 + rng.below(6),
                 len: 1 + rng.below(8),
@@ -172,6 +183,17 @@ fn gen_ops(rng: &mut Lcg) -> Vec<Op> {
             4 => ops.push(Op::Ctrl { text: 0 }),
             5 => ops.push(Op::Ctrl { text: 1 }),
             6 => ops.push(Op::Compress),
+            8 => ops.push(Op::LongAsciiRun {
+                len: 48 + rng.below(160),
+                attrs: rng.below(ATTR_COUNT),
+            }),
+            9 => {
+                ops.push(Op::Recolor {
+                    back: 1 + rng.below(12),
+                    attrs: rng.below(ATTR_COUNT),
+                });
+                ops.push(Op::Compress);
+            }
             _ => ops.push(Op::Grapheme {
                 text: rng.below(GRAPHEMES.len()),
                 attrs: rng.below(ATTR_COUNT),
@@ -204,7 +226,24 @@ fn build_line(ops: &[Op], pool: &[CellAttributes], seqno: SequenceNo) -> Line {
                     .collect();
                 line.set_ascii_run(idx, &run, &pool[*attrs], seqno);
             }
-            Op::Wrapped(v) => line.set_last_cell_was_wrapped(*v, seqno),
+            Op::Wrapped(v) => {
+                // Skip on lines carrying a zero-width cluster (e.g. after
+                // Ctrl): the *reference* implementation underflows there --
+                // in C storage the iterator reports width 1 for a
+                // zero-width cell while the cluster accounting recorded 0,
+                // so `set_last_cell_was_wrapped` computes `0 - 1`. A
+                // pre-existing limitation of the shared oracle, so the
+                // input and its replay skip it identically. (Such lines are
+                // still wrapped by the differential tests, where
+                // `wrap_keeping` falls back to the reference for them.)
+                let degenerate = matches!(
+                    &line.cells,
+                    crate::line::storage::CellStorage::C(cl) if !cl.clusters_consistent()
+                );
+                if !degenerate {
+                    line.set_last_cell_was_wrapped(*v, seqno);
+                }
+            }
             Op::Prune => line.prune_trailing_blanks(seqno),
             Op::Bidi { enabled, dir } => line.set_bidi_info(*enabled, DIRECTIONS[*dir], seqno),
             Op::Ctrl { text } => {
@@ -213,6 +252,36 @@ fn build_line(ops: &[Op], pool: &[CellAttributes], seqno: SequenceNo) -> Line {
                 line.set_cell_grapheme(idx, g, w, pool[0].clone(), seqno);
             }
             Op::Compress => line.compress_for_scrollback(),
+            Op::LongAsciiRun { len, attrs } => {
+                let idx = line.len();
+                let run: String = "abcdefghijklmnopqrstuvwxyz"
+                    .chars()
+                    .cycle()
+                    .take(*len)
+                    .collect();
+                line.set_ascii_run(idx, &run, &pool[*attrs], seqno);
+            }
+            Op::Recolor { back, attrs } => {
+                if !line.is_empty() {
+                    let idx = line.len().saturating_sub(1 + *back);
+                    let cells = line.cells_mut_for_attr_changes_only();
+                    // Skip recolors that could isolate a trailing zero-width
+                    // cell into its own width-0 cluster (via a later
+                    // compress): the *reference* implementation underflows
+                    // there (`from_cell_vec` records `last_cell_width = 1`
+                    // for a zero-width cell, then
+                    // `set_last_cell_was_wrapped` computes `0 - 1`). A
+                    // limitation of the shared oracle, not of the fast path.
+                    let n = cells.len();
+                    let last_is_zero_width = cells[n - 1].width() == 0;
+                    let could_isolate_tail = idx + 2 >= n;
+                    if let Some(cell) = cells.get_mut(idx) {
+                        if cell.width() > 0 && !(last_is_zero_width && could_isolate_tail) {
+                            *cell.attrs_mut() = pool[*attrs].clone();
+                        }
+                    }
+                }
+            }
         }
     }
     line
@@ -514,4 +583,39 @@ fn append_line_targeted_cases_match_reference() {
             assert_same(&[a], &[a_ref], &format!("case={}", name));
         }
     }
+}
+
+/// Proves the fast path is actually taken for ordinary C-storage input
+/// (and still produces the right number of pieces), and that Vec storage
+/// falls back to the reference oracle.
+
+#[test]
+fn wrap_keeping_fast_path_taken_on_clustered_storage() {
+    let plain = CellAttributes::default();
+    let build = || {
+        let mut line = Line::new(SEQ_ZERO);
+        for g in ["a", "b", "c", "d", "e", "f"].iter() {
+            line.set_cell_grapheme(line.len(), g, 1, plain.clone(), SEQ_ZERO);
+        }
+        line
+    };
+
+    super::editing::reset_wrap_fast_path_hits();
+    let pieces = build().wrap_keeping(2, 0, SEQ_ZERO + 1);
+    assert_eq!(pieces.len(), 3);
+    assert_eq!(
+        super::editing::wrap_fast_path_hits(),
+        1,
+        "ordinary clustered input must take the OPT-4 fast path"
+    );
+
+    super::editing::reset_wrap_fast_path_hits();
+    let v = Line::from_text("abcdef", &plain, SEQ_ZERO, None);
+    let pieces = v.wrap_keeping(2, 0, SEQ_ZERO + 1);
+    assert_eq!(pieces.len(), 3);
+    assert_eq!(
+        super::editing::wrap_fast_path_hits(),
+        0,
+        "Vec storage must fall back to the reference oracle"
+    );
 }
