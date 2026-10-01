@@ -9,7 +9,7 @@ use termwiz::input::KeyboardEncoding;
 
 mod iterate;
 mod ranges;
-mod resize;
+pub(crate) mod resize;
 mod resize_history;
 mod scroll;
 

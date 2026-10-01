@@ -1,5 +1,65 @@
 use super::*;
 
+#[cfg(test)]
+thread_local! {
+    static REFERENCE_REFLOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Test-only: run `f` with the reflow helpers routed to the verbatim
+/// reference implementations (`wrap_keeping_reference` /
+/// `append_line_reference`). Absent in non-test builds.
+#[cfg(test)]
+pub(crate) fn with_reference_reflow<R>(f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            REFERENCE_REFLOW.with(|flag| flag.set(self.0));
+        }
+    }
+    let _restore = REFERENCE_REFLOW.with(|flag| {
+        let prior = flag.get();
+        flag.set(true);
+        Restore(prior)
+    });
+    f()
+}
+
+/// Joins a wrapped line with its successor; the test hook routes this
+/// to the reference implementation.
+#[inline]
+fn join_rows(prior: &mut Line, line: Line, seqno: SequenceNo) {
+    #[cfg(test)]
+    {
+        if REFERENCE_REFLOW.with(std::cell::Cell::get) {
+            prior.append_line_reference(line, seqno);
+        } else {
+            prior.append_line(line, seqno);
+        }
+    }
+    #[cfg(not(test))]
+    {
+        prior.append_line(line, seqno);
+    }
+}
+
+/// Splits an over-wide line for the new width; the test hook routes
+/// this to the reference implementation.
+#[inline]
+fn split_row(line: Line, cols: usize, keep: usize, seqno: SequenceNo) -> Vec<Line> {
+    #[cfg(test)]
+    {
+        if REFERENCE_REFLOW.with(std::cell::Cell::get) {
+            line.wrap_keeping_reference(cols, keep, seqno)
+        } else {
+            line.wrap_keeping(cols, keep, seqno)
+        }
+    }
+    #[cfg(not(test))]
+    {
+        line.wrap_keeping(cols, keep, seqno)
+    }
+}
+
 impl Screen {
     /// `conpty_top` is the first row of ConPTY's buffer (the old viewport
     /// top) in ConPTY mode; the third result is where that row now starts.
@@ -55,7 +115,7 @@ impl Screen {
             let line = match logical_line.take() {
                 None => line,
                 Some(mut prior) => {
-                    prior.append_line(line, seqno);
+                    join_rows(&mut prior, line, seqno);
                     prior
                 }
             };
@@ -97,7 +157,7 @@ impl Screen {
             if line.len() <= physical_cols {
                 rewrapped.push_back(line);
             } else {
-                for line in line.wrap_keeping(physical_cols, keep, seqno) {
+                for line in split_row(line, physical_cols, keep, seqno) {
                     rewrapped.push_back(line);
                 }
             }
