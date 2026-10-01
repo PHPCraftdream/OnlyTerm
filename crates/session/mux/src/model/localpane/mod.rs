@@ -107,12 +107,6 @@ impl CachedProcInfo {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum LocalPaneConnectionState {
-    Connecting,
-    Connected,
-}
-
 /// Records, via the `metrics` crate, how long the calling thread had to
 /// wait to acquire `LocalPane::terminal` before running `body`.
 ///

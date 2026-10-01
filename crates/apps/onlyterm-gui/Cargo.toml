@@ -89,7 +89,6 @@ sefer-alloc.workspace = true
 serde = {workspace=true, features = ["rc", "derive"]}
 serde_json.workspace = true
 serde_with.workspace = true
-shlex.workspace = true
 smol.workspace = true
 tabout.workspace = true
 tempfile.workspace = true

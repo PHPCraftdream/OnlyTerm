@@ -15,12 +15,10 @@ use onlyterm_config::{AllowSquareGlyphOverflow, TextStyle};
 use onlyterm_font::{FontConfiguration, GlyphInfo, LoadedFont, RasterizedGlyph};
 use onlyterm_lfucache::LfuCache;
 use onlyterm_term::Underline;
-use ordered_float::NotNan;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use termwiz::color::RgbColor;
 use termwiz::image::{ImageData, ImageDataType};
 
 #[cfg(test)]
@@ -557,27 +555,6 @@ impl GlyphCache {
             self.image_cache.put(hash, decoded);
             Ok(res)
         }
-    }
-
-    pub fn cached_color(&mut self, color: RgbColor, alpha: f32) -> anyhow::Result<Sprite> {
-        let key = (color, NotNan::new(alpha).unwrap());
-
-        if let Some(s) = self.color.get(&key) {
-            return Ok(s.clone());
-        }
-
-        let (red, green, blue) = color.to_tuple_rgb8();
-        let alpha = (alpha * 255.0) as u8;
-
-        let data = vec![
-            red, green, blue, alpha, red, green, blue, alpha, red, green, blue, alpha, red, green,
-            blue, alpha,
-        ];
-        let image = Image::from_raw(2, 2, data);
-
-        let sprite = self.atlas.allocate(&image)?;
-        self.color.insert(key, sprite.clone());
-        Ok(sprite)
     }
 
     pub fn cached_block(

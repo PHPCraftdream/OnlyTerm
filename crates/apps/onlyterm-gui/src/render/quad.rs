@@ -8,9 +8,7 @@ use std::ops::Deref;
 // `onlyterm-gpu-render` crate now -- they are the GPU wire format shared with the
 // `--gpu-tab-host` child process -- and are re-exported here so this crate's
 // existing `crate::quad::...` paths keep working.
-pub use onlyterm_gpu_render::{
-    QuadInstance, VERTICES_PER_CELL, V_BOT_LEFT, V_BOT_RIGHT, V_TOP_LEFT, V_TOP_RIGHT,
-};
+pub use onlyterm_gpu_render::{QuadInstance, V_BOT_LEFT, V_BOT_RIGHT, V_TOP_LEFT, V_TOP_RIGHT};
 
 /// a regular monochrome text glyph
 const IS_GLYPH: f32 = 0.0;
@@ -37,26 +35,6 @@ pub struct Vertex {
     pub hsv: [f32; 3],
     pub has_color: f32,
     pub mix_value: f32,
-}
-
-impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
-    0 => Float32x2,
-    1 => Float32x2,
-    2 => Float32x4,
-    3 => Float32x4,
-    4 => Float32x3,
-    5 => Float32,
-    6 => Float32,
-    ];
-
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
-        }
-    }
 }
 
 pub trait QuadTrait {
@@ -232,7 +210,6 @@ impl<'a> QuadTrait for Quad<'a> {
 
 pub trait QuadAllocator {
     fn allocate(&mut self) -> anyhow::Result<QuadImpl<'_>>;
-    fn extend_with(&mut self, vertices: &[Vertex]);
     fn extend_with_instance(&mut self, instance: QuadInstance);
 }
 
@@ -371,8 +348,6 @@ impl<T: Deref<Target = HeapQuadAllocator>> HeapQuadAllocatorExt for T {
 #[cfg(test)]
 #[test]
 fn size() {
-    // Old: 4 vertices per quad, each 68 bytes = 272 bytes per quad
-    assert_eq!(std::mem::size_of::<Vertex>() * VERTICES_PER_CELL, 272);
     // QuadInstance is the GPU instance format, 84 bytes
     assert_eq!(std::mem::size_of::<QuadInstance>(), 84);
     // CornerVertex is 8 bytes (2 f32s)

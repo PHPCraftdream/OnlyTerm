@@ -77,14 +77,6 @@ impl BBox {
         self.x1 <= self.x0 || self.y1 <= self.y0
     }
 
-    pub fn from_points<I: IntoIterator<Item = (f32, f32)>>(points: I) -> Self {
-        let mut bbox = Self::empty();
-        for (x, y) in points {
-            bbox.add_point(x, y);
-        }
-        bbox
-    }
-
     pub fn add_point(&mut self, x: f32, y: f32) {
         self.x0 = self.x0.min(x);
         self.y0 = self.y0.min(y);
@@ -238,10 +230,6 @@ impl Painter {
             path_builder: PathBuilder::new(),
             current_path_bbox: BBox::empty(),
         }
-    }
-
-    pub fn is_dry_run(&self) -> bool {
-        matches!(self.surface, Surface::DryRun { .. })
     }
 
     /// Returns the accumulated bounding box (only meaningful after
@@ -509,19 +497,6 @@ impl Painter {
                 }
             }
         }
-    }
-
-    /// Fills the current path (without consuming the clip) - a
-    /// convenience used by simpler callers/tests that just want to
-    /// paint a shape without going through the clip+paint dance. Not a
-    /// direct cairo equivalent, but expressible in terms of the same
-    /// primitives (`clip()` + `paint_solid()` inside a `save`/`restore`
-    /// pair achieves the same result).
-    pub fn fill_path_solid(&mut self, color: Color) {
-        self.save();
-        self.clip();
-        self.paint_solid(color);
-        self.restore();
     }
 
     /// Fills the current clip region with per-pixel colors computed by

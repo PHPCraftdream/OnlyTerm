@@ -115,14 +115,6 @@ impl Constraints {
         self
     }
 
-    pub fn set_pct_height(&mut self, height: u8) -> &mut Self {
-        self.height = Dimension {
-            spec: DimensionSpec::Percentage(height),
-            ..Default::default()
-        };
-        self
-    }
-
     pub fn set_valign(&mut self, valign: VerticalAlignment) -> &mut Self {
         self.valign = valign;
         self

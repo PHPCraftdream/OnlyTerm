@@ -87,8 +87,7 @@ fn build_commands(
     _pane: Option<MuxPane>,
     filter_copy_mode: bool,
 ) -> Vec<ExpandedCommand> {
-    let mut commands =
-        CommandDef::actions_for_palette_and_menubar(&onlyterm_config::configuration());
+    let mut commands = CommandDef::actions_for_palette(&onlyterm_config::configuration());
 
     commands.retain(|cmd| {
         if filter_copy_mode {

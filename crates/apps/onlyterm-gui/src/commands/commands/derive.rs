@@ -37,7 +37,7 @@ fn label_string(action: &KeyAssignment, candidate: String) -> String {
 }
 
 /// Describes a key assignment action; returns a bunch
-/// of metadata that is useful in the command palette/menubar context.
+/// of metadata that is useful in the command palette context.
 /// This function will be called for the result of compute_default_actions(),
 /// but can also be used to describe user-provided commands
 mod clipboard_window;

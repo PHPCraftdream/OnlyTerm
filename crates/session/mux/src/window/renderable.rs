@@ -83,18 +83,6 @@ pub fn terminal_for_each_logical_line_in_stable_range_mut(
     });
 }
 
-/// Implements Pane::with_lines for Terminal
-pub fn terminal_with_lines<F>(term: &mut Terminal, lines: Range<StableRowIndex>, mut func: F)
-where
-    F: FnMut(StableRowIndex, &[&Line]),
-{
-    let screen = term.screen_mut();
-    let phys_range = screen.stable_range(&lines);
-    let first = screen.phys_to_stable_row_index(phys_range.start);
-
-    screen.with_phys_lines(phys_range, |lines| func(first, lines));
-}
-
 /// Implements Pane::with_lines_mut for Terminal
 pub fn terminal_with_lines_mut(
     term: &mut Terminal,

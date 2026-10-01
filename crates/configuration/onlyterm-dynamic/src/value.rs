@@ -70,26 +70,4 @@ impl Value {
             _ => None,
         }
     }
-
-    pub fn coerce_signed(&self) -> Option<i64> {
-        match self {
-            Self::I64(u) => Some(*u),
-            Self::U64(i) => (*i).try_into().ok(),
-            Self::F64(OrderedFloat(f))
-                if f.fract() == 0.0 && *f >= i64::MIN as f64 && *f <= i64::MAX as f64 =>
-            {
-                Some(*f as i64)
-            }
-            _ => None,
-        }
-    }
-
-    pub fn coerce_float(&self) -> Option<f64> {
-        match self {
-            Self::I64(u) => Some(*u as f64),
-            Self::U64(i) => Some(*i as f64),
-            Self::F64(OrderedFloat(f)) => Some(*f),
-            _ => None,
-        }
-    }
 }

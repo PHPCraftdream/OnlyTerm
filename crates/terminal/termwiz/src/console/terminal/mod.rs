@@ -41,13 +41,6 @@ pub struct ScreenSize {
     pub ypixel: usize,
 }
 
-#[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Blocking {
-    DoNotWait,
-    Wait,
-}
-
 /// `Terminal` abstracts over some basic terminal capabilities.
 /// If the `set_raw_mode` or `set_cooked_mode` functions are used in
 /// any combination, the implementation is required to restore the

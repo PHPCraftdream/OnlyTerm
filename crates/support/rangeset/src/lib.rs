@@ -201,13 +201,6 @@ impl<T: Integer + Copy + Debug + ToPrimitive> RangeSet<T> {
         }
     }
 
-    /// Remove a set of ranges from this set
-    pub fn remove_set(&mut self, set: &Self) {
-        for r in set.iter() {
-            self.remove_range(r.clone());
-        }
-    }
-
     /// Add a single integer to the set
     pub fn add(&mut self, value: T) {
         self.add_range(value..value + num::one());
@@ -245,11 +238,6 @@ impl<T: Integer + Copy + Debug + ToPrimitive> RangeSet<T> {
                 self.ranges.insert(idx, range.clone());
             }
         }
-    }
-
-    pub fn add_range_unchecked(&mut self, range: Range<T>) {
-        self.ranges.push(range);
-        self.needs_sort = true;
     }
 
     /// Add a set of ranges to this set

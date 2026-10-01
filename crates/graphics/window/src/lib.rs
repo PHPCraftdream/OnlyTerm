@@ -130,12 +130,6 @@ impl WindowState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum WindowKeyEvent {
-    RawKeyEvent(RawKeyEvent),
-    KeyEvent(KeyEvent),
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeadKeyStatus {
     /// Not in a dead key processing hold
@@ -202,9 +196,6 @@ pub enum WindowEvent {
 
     // Called when text is dropped into the window
     DroppedString(String),
-
-    /// Called by menubar dispatching stuff on some systems
-    PerformKeyAssignment(onlyterm_config::keyassignment::KeyAssignment),
 
     AdviseModifiersLedStatus(Modifiers, KeyboardLedStatus),
 }

@@ -107,18 +107,6 @@ pub fn set_config_overrides(items: &[(String, String)]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn is_config_overridden() -> bool {
-    CONFIG_SKIP.load(Ordering::Relaxed)
-        || !CONFIG_OVERRIDES.lock().unwrap().is_empty()
-        || CONFIG_FILE_OVERRIDE.lock().unwrap().is_some()
-}
-
-/// Discard the current configuration and replace it with
-/// the default configuration
-pub fn use_default_configuration() {
-    CONFIG.use_defaults();
-}
-
 /// Use a config that doesn't depend on the user's
 /// environment and is suitable for unit testing
 pub fn use_test_configuration() {
@@ -456,14 +444,6 @@ impl Configuration {
             result.push(warning.clone());
         }
         result
-    }
-
-    /// Returns any captured error message, and clears
-    /// it from the config state.
-    #[allow(dead_code)]
-    pub fn clear_error(&self) -> Option<String> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.error.take()
     }
 }
 

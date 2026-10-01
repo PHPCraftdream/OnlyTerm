@@ -247,10 +247,6 @@ impl FontDataHandle {
         self.index
     }
 
-    pub fn set_index(&mut self, idx: u32) {
-        self.index = idx;
-    }
-
     pub fn diagnostic_string(&self) -> String {
         let source = match &self.source {
             FontDataSource::OnDisk(path) => format!("{}", path.display()),

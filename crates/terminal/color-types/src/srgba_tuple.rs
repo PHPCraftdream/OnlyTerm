@@ -369,23 +369,6 @@ impl SrgbaTuple {
     }
 
     #[cfg(feature = "std")]
-    fn lab_value(&self) -> deltae::LabValue {
-        let (l, a, b, _alpha) = self.to_laba();
-        deltae::LabValue {
-            l: l as f32,
-            a: a as f32,
-            b: b as f32,
-        }
-    }
-
-    #[cfg(feature = "std")]
-    pub fn delta_e(&self, other: &Self) -> f32 {
-        let a = self.lab_value();
-        let b = other.lab_value();
-        *deltae::DeltaE::new(a, b, deltae::DEMethod::DE2000).value()
-    }
-
-    #[cfg(feature = "std")]
     pub fn contrast_ratio(&self, other: &Self) -> f32 {
         self.to_linear().contrast_ratio(&other.to_linear())
     }

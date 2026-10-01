@@ -1,8 +1,7 @@
-use governor::clock::{Clock, DefaultClock};
-use governor::{NegativeMultiDecision, Quota, RateLimiter as Limiter};
+use governor::clock::DefaultClock;
+use governor::{Quota, RateLimiter as Limiter};
 use onlyterm_config::{configuration, ConfigHandle};
 use std::num::NonZeroU32;
-use std::time::Duration;
 
 pub struct RateLimiter {
     lim: Limiter<governor::state::direct::NotKeyed, governor::state::InMemoryState, DefaultClock>,
@@ -54,35 +53,5 @@ impl RateLimiter {
         self.lim
             .check_n(NonZeroU32::new(amount).expect("amount to be non-zero"))
             .is_ok()
-    }
-
-    /// Attempt to admit up to `amount` number of items.
-    /// On success, returns the amount that were actually admitted,
-    /// which may be less than the requested amount.
-    /// If no items can be admitted immediately, returns a duration
-    /// of time after which the caller should retry to admit.
-    pub fn admit_check(&mut self, mut amount: u32) -> Result<u32, Duration> {
-        self.check_config_reload();
-        loop {
-            let non_zero_amount = match NonZeroU32::new(amount) {
-                Some(n) => n,
-                None => return Ok(0),
-            };
-            match self.lim.check_n(non_zero_amount) {
-                Ok(_) => return Ok(amount),
-                Err(NegativeMultiDecision::BatchNonConforming(_, over)) if amount == 1 => {
-                    return Err(over.wait_time_from(DefaultClock::default().now()));
-                }
-                _ => {}
-            };
-
-            // try again with half the size.
-            // This isn't a perfectly efficient approach, especially
-            // with a very large input buffer size, but it is reasonable;
-            // we use a 32k buffer which means that in the worst case
-            // (where the buffer is 100% full), we'll take ~15 iterations
-            // to reach a decision of a single byte or a sleep delay.
-            amount /= 2;
-        }
     }
 }

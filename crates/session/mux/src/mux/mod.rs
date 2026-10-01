@@ -12,13 +12,12 @@ use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };
 use percent_encoding::percent_decode_str;
-use portable_pty::{CommandBuilder, ExitStatus, PtySize};
+use portable_pty::{CommandBuilder, PtySize};
 use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
-use thiserror::*;
 
 use crate::activity::Activity;
 
@@ -178,17 +177,6 @@ impl Drop for IdentityHolder {
             mux.replace_identity(self.prior.take());
         }
     }
-}
-
-#[derive(Debug, Error)]
-#[allow(dead_code)]
-pub enum SessionTerminated {
-    #[error("Process exited: {:?}", status)]
-    ProcessStatus { status: ExitStatus },
-    #[error("Error: {:?}", err)]
-    Error { err: Error },
-    #[error("Window Closed")]
-    WindowClosed,
 }
 
 pub(crate) fn terminal_size_to_pty_size(size: TerminalSize) -> anyhow::Result<PtySize> {

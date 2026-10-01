@@ -58,12 +58,6 @@ impl<'a> ProbeCapabilities<'a> {
         self.xt_version_impl(false)
     }
 
-    /// Assuming that we are talking to tmux, probe for the XTVERSION response
-    /// of its outer terminal.
-    pub fn outer_xt_version(&mut self) -> Result<XtVersion> {
-        self.xt_version_impl(true)
-    }
-
     fn xt_version_impl(&mut self, tmux_escape: bool) -> Result<XtVersion> {
         let xt_version = CSI::Device(Box::new(Device::RequestTerminalNameAndVersion));
         let dev_attributes = CSI::Device(Box::new(Device::RequestPrimaryDeviceAttributes));

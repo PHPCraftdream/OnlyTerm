@@ -10,10 +10,7 @@ pub(crate) mod pass_through;
 mod protocol;
 
 use crate::termwindow::InputMap;
-use ::window::{
-    DeadKeyStatus, KeyCode, KeyEvent, KeyboardLedStatus, Modifiers, PhysKeyCode, RawKeyEvent,
-    WindowOps,
-};
+use ::window::{KeyCode, KeyEvent, Modifiers, PhysKeyCode, RawKeyEvent, WindowOps};
 use anyhow::Context;
 use onlyterm_config::keyassignment::{KeyAssignment, KeyTableEntry};
 use onlyterm_mux::pane::{Pane, PerformAssignmentResult};
@@ -503,10 +500,6 @@ impl super::TermWindow {
         }
     }
 
-    pub fn current_modifier_and_led_state(&self) -> (Modifiers, KeyboardLedStatus) {
-        self.current_modifier_and_leds
-    }
-
     pub fn leader_is_active(&self) -> bool {
         match self.leader_is_down.as_ref() {
             Some(expiry) if *expiry > std::time::Instant::now() => {
@@ -530,34 +523,6 @@ impl super::TermWindow {
             }
             None => false,
         }
-    }
-
-    pub fn current_key_table_name(&mut self) -> Option<String> {
-        let mut name = None;
-
-        if let Some(pane) = self.get_active_pane_or_overlay() {
-            if let Some(overlay) = self.pane_state(pane.pane_id()).overlay.as_mut() {
-                name = overlay
-                    .key_table_state
-                    .current_table()
-                    .map(|s| s.to_string());
-
-                if let Some(expiry) = overlay.key_table_state.current_expiration() {
-                    self.update_next_frame_time(Some(expiry));
-                }
-            }
-        }
-        if name.is_none() {
-            name = self.key_table_state.current_table().map(|s| s.to_string());
-        }
-        if let Some(expiry) = self.key_table_state.current_expiration() {
-            self.update_next_frame_time(Some(expiry));
-        }
-        name
-    }
-
-    pub fn composition_status(&self) -> &DeadKeyStatus {
-        &self.dead_key_status
     }
 
     fn leader_done(&mut self) {

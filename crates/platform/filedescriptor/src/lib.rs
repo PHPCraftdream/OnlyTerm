@@ -268,13 +268,6 @@ pub struct FileDescriptor {
     handle: OwnedHandle,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum StdioDescriptor {
-    Stdin,
-    Stdout,
-    Stderr,
-}
-
 impl FileDescriptor {
     /// Create a new descriptor from some object that is convertible into
     /// the system `RawFileDescriptor` type.  This consumes the parameter
@@ -313,13 +306,6 @@ impl FileDescriptor {
         self.as_stdio_impl()
     }
 
-    /// A convenience method for creating a `std::fs::File` object.
-    /// The `File` is created using a duplicated handle so
-    /// that the source handle remains alive.
-    pub fn as_file(&self) -> Result<std::fs::File> {
-        self.as_file_impl()
-    }
-
     /// Attempt to change the non-blocking IO mode of the file descriptor.
     /// Not all kinds of file descriptor can be placed in non-blocking mode
     /// on all systems, and some file descriptors will claim to be in
@@ -328,15 +314,6 @@ impl FileDescriptor {
     /// that can be successfully made non-blocking.
     pub fn set_non_blocking(&mut self, non_blocking: bool) -> Result<()> {
         self.set_non_blocking_impl(non_blocking)
-    }
-
-    /// Attempt to redirect stdio to the underlying handle and return
-    /// a `FileDescriptor` wrapped around the original stdio source.
-    /// Since the redirection requires kernel resources that may not be
-    /// available, this is a potentially fallible operation.
-    /// Supports stdin, stdout, and stderr redirections.
-    pub fn redirect_stdio<F: AsRawFileDescriptor>(f: &F, stdio: StdioDescriptor) -> Result<Self> {
-        Self::redirect_stdio_impl(f, stdio)
     }
 }
 

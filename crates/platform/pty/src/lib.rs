@@ -153,14 +153,6 @@ impl ExitStatus {
         Self { code, signal: None }
     }
 
-    /// Construct an ExitStatus from a signal name
-    pub fn with_signal(signal: &str) -> Self {
-        Self {
-            code: 1,
-            signal: Some(signal.to_string()),
-        }
-    }
-
     /// Returns true if the status indicates successful completion
     pub fn success(&self) -> bool {
         match self.signal {

@@ -222,13 +222,6 @@ impl Screen {
         line.set_ascii_run(x, text, attr, seqno);
     }
 
-    pub fn cell_mut(&mut self, x: usize, y: VisibleRowIndex) -> Option<&mut Cell> {
-        self.note_output_row(y);
-        let line_idx = self.phys_row(y);
-        let line = self.lines.get_mut(line_idx)?;
-        line.cells_mut().get_mut(x)
-    }
-
     pub fn get_cell(&mut self, x: usize, y: VisibleRowIndex) -> Option<&Cell> {
         let line_idx = self.phys_row(y);
         let line = self.lines.get_mut(line_idx)?;

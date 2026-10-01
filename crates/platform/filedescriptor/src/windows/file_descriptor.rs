@@ -1,17 +1,9 @@
-use crate::{
-    AsRawFileDescriptor, AsRawSocketDescriptor, Error, FileDescriptor, OwnedHandle, Result,
-    StdioDescriptor,
-};
+use crate::{AsRawSocketDescriptor, Error, FileDescriptor, OwnedHandle, Result};
 use std::io::{self, Error as IoError};
 use std::os::windows::prelude::*;
 use std::ptr;
 use winapi::um::fileapi::*;
-use winapi::um::processenv::{GetStdHandle, SetStdHandle};
 use winapi::um::winsock2::{ioctlsocket, recv, send, SOCKET};
-
-const STD_INPUT_HANDLE: u32 = 4294967286; // -10
-const STD_OUTPUT_HANDLE: u32 = 4294967285; // -11
-const STD_ERROR_HANDLE: u32 = 4294967284; // -12
 
 impl FileDescriptor {
     #[inline]
@@ -21,16 +13,6 @@ impl FileDescriptor {
         // SAFETY: `handle` is a duplicated, valid HANDLE obtained via
         // DuplicateHandle; ownership is transferred to `Stdio`.
         let stdio = unsafe { std::process::Stdio::from_raw_handle(handle) };
-        Ok(stdio)
-    }
-
-    #[inline]
-    pub(crate) fn as_file_impl(&self) -> Result<std::fs::File> {
-        let duped = self.handle.try_clone()?;
-        let handle = duped.into_raw_handle();
-        // SAFETY: `handle` is a duplicated, valid HANDLE obtained via
-        // DuplicateHandle; ownership is transferred to `File`.
-        let stdio = unsafe { std::fs::File::from_raw_handle(handle) };
         Ok(stdio)
     }
 
@@ -54,32 +36,6 @@ impl FileDescriptor {
             Err(Error::FionBio(std::io::Error::last_os_error()))
         } else {
             Ok(())
-        }
-    }
-
-    pub(crate) fn redirect_stdio_impl<F: AsRawFileDescriptor>(
-        f: &F,
-        stdio: StdioDescriptor,
-    ) -> Result<Self> {
-        let std_handle = match stdio {
-            StdioDescriptor::Stdin => STD_INPUT_HANDLE,
-            StdioDescriptor::Stdout => STD_OUTPUT_HANDLE,
-            StdioDescriptor::Stderr => STD_ERROR_HANDLE,
-        };
-
-        // SAFETY: `std_handle` is a valid STD_* constant.
-        let raw_std_handle = unsafe { GetStdHandle(std_handle) } as *mut _;
-        // SAFETY: `raw_std_handle` is a valid (possibly NULL) stdio handle;
-        // ownership is transferred to the returned `FileDescriptor`.
-        let std_original = unsafe { FileDescriptor::from_raw_handle(raw_std_handle) };
-
-        let cloned_handle = OwnedHandle::dup(f)?;
-        // SAFETY: `std_handle` is a valid STD_* constant; `cloned_handle`
-        // is a valid duplicated handle.
-        if unsafe { SetStdHandle(std_handle, cloned_handle.into_raw_handle() as *mut _) } == 0 {
-            Err(Error::SetStdHandle(std::io::Error::last_os_error()))
-        } else {
-            Ok(std_original)
         }
     }
 }

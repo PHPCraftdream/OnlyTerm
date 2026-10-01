@@ -138,11 +138,7 @@ bitflags! {
     }
 }
 
-impl FreeTypeLoadFlags {
-    pub fn default_hidpi() -> Self {
-        Self::NO_HINTING
-    }
-}
+impl FreeTypeLoadFlags {}
 
 impl Default for FreeTypeLoadFlags {
     fn default() -> Self {

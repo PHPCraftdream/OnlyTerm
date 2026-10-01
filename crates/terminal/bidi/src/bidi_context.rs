@@ -67,19 +67,6 @@ impl BidiContext {
         }
     }
 
-    /// Given a line_range (a subslice of the current paragraph that represents
-    /// a single wrapped line), this method resets whitespace levels for the line
-    /// boundaries, and then returns the set of runs for that line.
-    pub fn line_runs(&self, line_range: Range<usize>) -> impl Iterator<Item = BidiRun> {
-        let levels = self.reset_whitespace_levels(line_range.clone());
-
-        RunIter {
-            pos: 0,
-            levels: levels.into(),
-            line_range,
-        }
-    }
-
     pub fn reordered_runs(&self, line_range: Range<usize>) -> Vec<ReorderedRun> {
         // reorder_line's `level` result includes entries that were
         // removed_by_x9() but `reordered` does NOT (for compatibility with

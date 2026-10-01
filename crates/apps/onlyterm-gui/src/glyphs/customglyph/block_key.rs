@@ -352,24 +352,4 @@ impl BlockKey {
             .or_else(|| block_shapes::lookup(c))
             .or_else(|| custom_shapes::lookup(c))
     }
-
-    pub fn from_cell_iter(cell: termwiz::surface::line::CellRef) -> Option<Self> {
-        let mut chars = cell.str().chars();
-        let first_char = chars.next()?;
-        if chars.next().is_some() {
-            None
-        } else {
-            Self::from_char(first_char)
-        }
-    }
-
-    pub fn from_cell(cell: &termwiz::cell::Cell) -> Option<Self> {
-        let mut chars = cell.str().chars();
-        let first_char = chars.next()?;
-        if chars.next().is_some() {
-            None
-        } else {
-            Self::from_char(first_char)
-        }
-    }
 }

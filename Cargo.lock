@@ -3303,7 +3303,6 @@ name = "onlyterm-color-types"
 version = "0.3.0"
 dependencies = [
  "csscolorparser",
- "deltae",
  "num-traits",
  "onlyterm-dynamic",
  "serde",
@@ -3581,7 +3580,6 @@ dependencies = [
  "serde_json",
  "serde_with",
  "shared_library",
- "shlex 1.3.0",
  "smol",
  "tabout",
  "tempfile",

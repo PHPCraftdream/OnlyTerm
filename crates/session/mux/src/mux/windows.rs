@@ -85,11 +85,6 @@ impl Mux {
             == 0
     }
 
-    pub fn is_active_workspace_empty(&self) -> bool {
-        let workspace = self.active_workspace();
-        self.is_workspace_empty(&workspace)
-    }
-
     pub fn iter_panes(&self) -> Vec<Arc<dyn Pane>> {
         self.panes.read().values().map(Arc::clone).collect()
     }

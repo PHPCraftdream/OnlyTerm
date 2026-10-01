@@ -21,14 +21,6 @@ impl Screen {
             as usize
     }
 
-    #[inline]
-    pub fn scrollback_or_visible_range(
-        &self,
-        range: &Range<ScrollbackOrVisibleRowIndex>,
-    ) -> Range<PhysRowIndex> {
-        self.scrollback_or_visible_row(range.start)..self.scrollback_or_visible_row(range.end)
-    }
-
     /// Converts a StableRowIndex range to the current effective
     /// physical row index range.  If the StableRowIndex goes off the top
     /// of the scrollback, we'll return the top n rows, but if it goes off

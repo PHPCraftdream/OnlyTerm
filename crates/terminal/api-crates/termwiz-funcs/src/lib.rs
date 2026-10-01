@@ -2,7 +2,7 @@ use finl_unicode::grapheme_clusters::Graphemes;
 use onlyterm_dynamic::{FromDynamic, ToDynamic};
 use std::str::FromStr;
 use termwiz::caps::{Capabilities, ColorLevel, ProbeHints};
-use termwiz::cell::{grapheme_column_width, unicode_column_width, AttributeChange, CellAttributes};
+use termwiz::cell::{grapheme_column_width, AttributeChange, CellAttributes};
 use termwiz::color::{AnsiColor, ColorAttribute, ColorSpec, SrgbaTuple};
 use termwiz::render::terminfo::TerminfoRenderer;
 use termwiz::surface::change::Change;
@@ -86,43 +86,6 @@ pub fn format_as_escapes(items: Vec<FormatItem>) -> anyhow::Result<String> {
     let mut target = FormatTarget { target: vec![] };
     renderer.render_to(&changes, &mut target)?;
     Ok(String::from_utf8(target.target)?)
-}
-
-pub fn pad_right(mut result: String, width: usize) -> String {
-    let mut len = unicode_column_width(&result, None);
-    while len < width {
-        result.push(' ');
-        len += 1;
-    }
-
-    result
-}
-
-pub fn pad_left(mut result: String, width: usize) -> String {
-    let mut len = unicode_column_width(&result, None);
-    while len < width {
-        result.insert(0, ' ');
-        len += 1;
-    }
-
-    result
-}
-
-pub fn truncate_left(s: &str, max_width: usize) -> String {
-    let mut result = vec![];
-    let mut len = 0;
-    let graphemes: Vec<_> = Graphemes::new(s).collect();
-    for &g in graphemes.iter().rev() {
-        let g_len = grapheme_column_width(g, None);
-        if g_len + len > max_width {
-            break;
-        }
-        result.push(g);
-        len += g_len;
-    }
-
-    result.reverse();
-    result.join("")
 }
 
 pub fn truncate_right(s: &str, max_width: usize) -> String {

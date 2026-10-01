@@ -864,10 +864,6 @@ impl Parser {
         }
     }
 
-    pub fn advance_string(&mut self, s: &str) -> Result<Vec<Event>> {
-        self.advance_bytes(s.as_bytes())
-    }
-
     pub fn advance_bytes(&mut self, bytes: &[u8]) -> Result<Vec<Event>> {
         let mut events = vec![];
         for (i, &b) in bytes.iter().enumerate() {

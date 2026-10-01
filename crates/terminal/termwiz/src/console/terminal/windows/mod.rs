@@ -15,7 +15,7 @@ use crate::{bail, format_err, Result};
 use filedescriptor::FileDescriptor;
 use std::collections::VecDeque;
 use std::fs::OpenOptions;
-use std::io::{stdin, stdout, Error as IoError, Read, Result as IoResult, Write};
+use std::io::{Error as IoError, Read, Result as IoResult, Write};
 use std::os::windows::io::AsRawHandle;
 use std::sync::Arc;
 use std::time::Duration;
@@ -90,15 +90,6 @@ impl Drop for WindowsTerminal {
 }
 
 impl WindowsTerminal {
-    /// Attempt to create an instance from the stdin and stdout of the
-    /// process.  This will fail unless both are associated with a tty.
-    /// Note that this will duplicate the underlying file descriptors
-    /// and will no longer participate in the stdin/stdout locking
-    /// provided by the rust standard library.
-    pub fn new_from_stdio(caps: Capabilities) -> Result<Self> {
-        Self::new_with(caps, stdin(), stdout())
-    }
-
     /// Create an instance using the provided capabilities, read and write
     /// handles. The read and write handles must be tty handles of this
     /// will return an error.

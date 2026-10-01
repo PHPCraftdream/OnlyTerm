@@ -125,22 +125,6 @@ impl Surface {
         diff_state.changes
     }
 
-    pub fn diff_lines(&self, other_lines: Vec<&Line>) -> Vec<Change> {
-        let mut diff_state = DiffState::default();
-        for ((row_num, line), other_line) in self.lines.iter().enumerate().zip(other_lines.iter()) {
-            diff_line(&mut diff_state, line, row_num, other_line, 0, line.len(), 0);
-        }
-        diff_state.changes
-    }
-
-    pub fn diff_against_numbered_line(&self, row_num: usize, other_line: &Line) -> Vec<Change> {
-        let mut diff_state = DiffState::default();
-        if let Some(line) = self.lines.get(row_num) {
-            diff_line(&mut diff_state, line, row_num, other_line, 0, line.len(), 0);
-        }
-        diff_state.changes
-    }
-
     /// Computes the change stream required to make `self` have the same
     /// screen contents as `other`.
     pub fn diff_screens(&self, other: &Surface) -> Vec<Change> {

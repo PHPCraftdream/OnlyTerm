@@ -150,35 +150,6 @@ impl crate::TermWindow {
         Ok(Rc::clone(&shape_info[0].glyph))
     }
 
-    #[allow(clippy::too_many_arguments)] // rendering pipeline: params are the inherent block/glyph data model
-    pub fn populate_block_quad(
-        &self,
-        block: BlockKey,
-        gl_state: &RenderState,
-        quads: &mut dyn QuadAllocator,
-        pos_x: f32,
-        params: &RenderScreenLineParams,
-        hsv: Option<onlyterm_config::HsbTransform>,
-        glyph_color: LinearRgba,
-    ) -> anyhow::Result<()> {
-        let sprite = gl_state
-            .glyph_cache
-            .borrow_mut()
-            .cached_block(block, &params.render_metrics)?
-            .texture_coords();
-
-        let mut quad = quads.allocate()?;
-        let cell_width = params.render_metrics.cell_size.width as f32;
-        let cell_height = params.render_metrics.cell_size.height as f32;
-        let pos_y = (self.dimensions.pixel_height as f32 / -2.) + params.top_pixel_y;
-        quad.set_position(pos_x, pos_y, pos_x + cell_width, pos_y + cell_height);
-        quad.set_hsv(hsv);
-        quad.set_fg_color(glyph_color);
-        quad.set_texture(sprite);
-        quad.set_has_color(false);
-        Ok(())
-    }
-
     /// Render iTerm2 style image attributes
     #[allow(clippy::too_many_arguments)] // rendering pipeline: params are the inherent image/glyph data model
     pub fn populate_image_quad(

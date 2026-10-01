@@ -794,13 +794,6 @@ impl TerminalState {
         self.screen.is_alt_screen_active()
     }
 
-    /// Returns true if the associated application has enabled
-    /// bracketed paste mode, which can be helpful to the hosting
-    /// GUI application to decide about fragmenting a large paste.
-    pub fn bracketed_paste_enabled(&self) -> bool {
-        self.bracketed_paste
-    }
-
     /// Advise the terminal about a change in its focus state
     pub fn focus_changed(&mut self, focused: bool) {
         if focused == self.focused {

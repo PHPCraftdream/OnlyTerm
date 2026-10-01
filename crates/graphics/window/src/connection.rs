@@ -1,29 +1,16 @@
 use crate::screen::Screens;
 use crate::{Appearance, Connection, GeometryOrigin, RequestedWindowGeometry, ResolvedGeometry};
 use anyhow::Result as Fallible;
-use onlyterm_config::keyassignment::KeyAssignment;
 use onlyterm_config::DimensionContext;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Mutex;
 
 thread_local! {
     static CONN: RefCell<Option<Rc<Connection>>> = const { RefCell::new(None) };
 }
 
-fn nop_event_handler(_event: ApplicationEvent) {}
-
-static EVENT_HANDLER: Mutex<fn(ApplicationEvent)> = Mutex::new(nop_event_handler);
-
 pub fn shutdown() {
     CONN.with(|m| drop(m.borrow_mut().take()));
-}
-
-#[derive(Debug)]
-pub enum ApplicationEvent {
-    /// The system wants to open a command in the terminal
-    OpenCommandScript(String),
-    PerformKeyAssignment(Box<KeyAssignment>),
 }
 
 pub trait ConnectionOps {
@@ -38,16 +25,6 @@ pub trait ConnectionOps {
     }
 
     fn name(&self) -> String;
-
-    fn set_event_handler(&self, func: fn(ApplicationEvent)) {
-        let mut handler = EVENT_HANDLER.lock().unwrap();
-        *handler = func;
-    }
-
-    fn dispatch_app_event(&self, event: ApplicationEvent) {
-        let func = EVENT_HANDLER.lock().unwrap();
-        func(event);
-    }
 
     fn default_dpi(&self) -> f64 {
         crate::DEFAULT_DPI

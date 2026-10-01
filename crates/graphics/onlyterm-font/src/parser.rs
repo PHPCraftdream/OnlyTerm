@@ -1,17 +1,10 @@
 use crate::locator::{FontDataHandle, FontDataSource, FontOrigin};
-use crate::shaper::GlyphInfo;
 use crate::swash_metrics::SwashFontInfo;
 use onlyterm_config::{FontAttributes, FontStyle, FreeTypeLoadFlags, FreeTypeLoadTarget};
 pub use onlyterm_config::{FontStretch, FontWeight};
 use onlyterm_rangeset::RangeSet;
 use std::cmp::Ordering;
 use std::sync::Mutex;
-
-#[derive(Debug)]
-pub enum MaybeShaped {
-    Resolved(GlyphInfo),
-    Unresolved { raw: String, slice_start: usize },
-}
 
 #[derive(Debug, Clone)]
 pub struct FontPaletteInfo {

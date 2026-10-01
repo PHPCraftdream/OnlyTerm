@@ -91,7 +91,3 @@ fn shell_execute(url: String, with: Option<String>) {
 pub fn open_url(url: &str) {
     shell_execute(url.to_string(), None);
 }
-
-pub fn open_with(url: &str, app: &str) {
-    shell_execute(url.to_string(), Some(app.to_string()));
-}

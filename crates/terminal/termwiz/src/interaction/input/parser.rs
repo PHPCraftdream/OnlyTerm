@@ -877,11 +877,4 @@ impl InputParser {
         self.parse(bytes, |event| result.push(event), maybe_more);
         result
     }
-
-    #[cfg(windows)]
-    pub fn decode_input_records_as_vec(&mut self, records: &[INPUT_RECORD]) -> Vec<InputEvent> {
-        let mut result = Vec::new();
-        self.decode_input_records(records, &mut |event| result.push(event));
-        result
-    }
 }

@@ -8,7 +8,6 @@ use onlyterm_gpu_render::{adapter_info_to_gpu_info, WebGpuState, WebGpuTexture};
 use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 #[derive(Clone)]
 pub struct RenderContext(pub Arc<WebGpuState>);
@@ -18,10 +17,6 @@ pub enum RenderFrame {
 }
 
 impl RenderContext {
-    pub fn allocate_index_buffer(&self, indices: &[u32]) -> anyhow::Result<IndexBuffer> {
-        Ok(IndexBuffer(WebGpuIndexBuffer::new(indices, &self.0)))
-    }
-
     pub fn allocate_vertex_buffer_initializer(
         &self,
         _num_quads: usize,
@@ -49,22 +44,11 @@ impl RenderContext {
     }
 }
 
-pub struct IndexBuffer(WebGpuIndexBuffer);
-
-impl IndexBuffer {
-    pub fn webgpu(&self) -> &WebGpuIndexBuffer {
-        &self.0
-    }
-}
-
 pub struct VertexBuffer(WebGpuInstanceBuffer);
 
 impl VertexBuffer {
     pub fn webgpu(&self) -> &WebGpuInstanceBuffer {
         &self.0
-    }
-    pub fn webgpu_mut(&mut self) -> &mut WebGpuInstanceBuffer {
-        &mut self.0
     }
 }
 
@@ -187,31 +171,6 @@ impl WebGpuInstanceBuffer {
     }
 }
 
-pub struct WebGpuIndexBuffer {
-    buf: wgpu::Buffer,
-}
-
-impl std::ops::Deref for WebGpuIndexBuffer {
-    type Target = wgpu::Buffer;
-    fn deref(&self) -> &Self::Target {
-        &self.buf
-    }
-}
-
-impl WebGpuIndexBuffer {
-    pub fn new(indices: &[u32], state: &WebGpuState) -> Self {
-        Self {
-            buf: state
-                .device()
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Index Buffer"),
-                    usage: wgpu::BufferUsages::INDEX,
-                    contents: bytemuck::cast_slice(indices),
-                }),
-        }
-    }
-}
-
 pub struct MappedQuadsView {
     instances: Vec<crate::quad::QuadInstance>,
     next: Cell<usize>,
@@ -240,65 +199,6 @@ impl QuadAllocator for MappedQuadsView {
 
         self.instances.push(crate::quad::QuadInstance::default());
         Ok(QuadImpl::Boxed(self.instances.last_mut().unwrap()))
-    }
-
-    fn extend_with(&mut self, vertices: &[Vertex]) {
-        // Legacy path: expand vertices to instances
-        let idx = self.next.get();
-        let len = vertices.len();
-
-        // idx and next are number of quads, so divide by number of vertices
-        let num_quads = len / VERTICES_PER_CELL;
-        self.next.set(idx + num_quads);
-
-        if num_quads == 0 {
-            return;
-        }
-
-        let start_quad_idx = self.instances.len();
-        self.instances.resize(
-            start_quad_idx + num_quads,
-            crate::quad::QuadInstance::default(),
-        );
-
-        // SAFETY: `vertices` is a `&[Vertex]` whose length is a multiple of
-        // `VERTICES_PER_CELL` (asserted below); reinterpreting it as a slice
-        // of `[Vertex; VERTICES_PER_CELL]` chunks is layout-compatible since
-        // both sides are the same repr and alignment.
-        assert_eq!(vertices.len() % VERTICES_PER_CELL, 0);
-        // SAFETY: `vertices` is a `&[Vertex]` whose length is a multiple of `VERTICES_PER_CELL`
-        // (asserted above); reinterpreting it as a slice of `[Vertex; VERTICES_PER_CELL]` chunks
-        // is layout-compatible since both sides are the same repr and alignment.
-        let src_quads: &[[Vertex; VERTICES_PER_CELL]] = unsafe {
-            std::slice::from_raw_parts(vertices.as_ptr().cast(), vertices.len() / VERTICES_PER_CELL)
-        };
-
-        for (i, quad) in src_quads.iter().enumerate() {
-            let instance = &mut self.instances[start_quad_idx + i];
-            // Extract instance data from the 4 vertices (all should be identical for per-quad data)
-            let tex_top_left = quad[V_TOP_LEFT].tex;
-            let tex_bot_right = quad[V_BOT_RIGHT].tex;
-            let position_top_left = quad[V_TOP_LEFT].position;
-            let position_bot_right = quad[V_BOT_RIGHT].position;
-
-            instance.tex = [
-                tex_top_left[0],
-                tex_bot_right[0],
-                tex_top_left[1],
-                tex_bot_right[1],
-            ];
-            instance.position = [
-                position_top_left[0],
-                position_top_left[1],
-                position_bot_right[0],
-                position_bot_right[1],
-            ];
-            instance.has_color = quad[V_TOP_LEFT].has_color;
-            instance.alt_color = quad[V_TOP_LEFT].alt_color;
-            instance.fg_color = quad[V_TOP_LEFT].fg_color;
-            instance.hsv = quad[V_TOP_LEFT].hsv;
-            instance.mix_value = quad[V_TOP_LEFT].mix_value;
-        }
     }
 
     fn extend_with_instance(&mut self, instance: crate::quad::QuadInstance) {

@@ -30,10 +30,6 @@ pub struct KeyTableState {
 }
 
 impl KeyTableState {
-    pub(super) fn current_expiration(&self) -> Option<Instant> {
-        self.stack.last().and_then(|entry| entry.expiration)
-    }
-
     pub fn activate(&mut self, args: KeyTableArgs) {
         if args.replace_current {
             self.pop();

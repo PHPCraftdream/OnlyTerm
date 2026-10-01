@@ -105,13 +105,6 @@ impl ScreenRelativeCoords {
     pub fn new(x: usize, y: usize) -> Self {
         Self { x, y }
     }
-
-    pub fn offset_by(&self, rel: &ParentRelativeCoords) -> Self {
-        Self {
-            x: self.x + rel.x,
-            y: self.y + rel.y,
-        }
-    }
 }
 
 static WIDGET_ID: ::std::sync::atomic::AtomicUsize = ::std::sync::atomic::AtomicUsize::new(0);

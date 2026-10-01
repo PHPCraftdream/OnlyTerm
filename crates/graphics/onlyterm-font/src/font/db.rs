@@ -5,7 +5,7 @@ use crate::parser::{load_built_in_fonts, parse_and_collect_font_info, ParsedFont
 use anyhow::Context;
 use onlyterm_config::{Config, ConfigHandle, FontAttributes};
 use onlyterm_rangeset::RangeSet;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -149,21 +149,6 @@ impl FontDatabase {
         let db = Arc::new(Self::with_built_in()?);
         cache.replace(Arc::clone(&db));
         Ok(db)
-    }
-
-    pub fn resolve_multiple(
-        &self,
-        fonts: &[FontAttributes],
-        handles: &mut Vec<ParsedFont>,
-        loaded: &mut HashSet<FontAttributes>,
-        pixel_size: u16,
-    ) {
-        for attr in fonts {
-            if let Some(handle) = self.resolve(attr, pixel_size) {
-                handles.push(handle.clone().synthesize(attr));
-                loaded.insert(attr.clone());
-            }
-        }
     }
 
     /// Equivalent to FontLocator::locate_fallback_for_codepoints

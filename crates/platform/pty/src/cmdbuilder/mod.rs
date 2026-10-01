@@ -60,10 +60,6 @@ impl CommandBuilder {
         self.controlling_tty = controlling_tty;
     }
 
-    pub fn get_controlling_tty(&self) -> bool {
-        self.controlling_tty
-    }
-
     /// Create a new builder instance that will run some idea of a default
     /// program.  Such a builder will panic if `arg` is called on it.
     pub fn new_default_prog() -> Self {

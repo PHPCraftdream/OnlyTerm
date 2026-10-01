@@ -2,8 +2,7 @@ use crate::colorease::ColorEase;
 use crate::customglyph::{BlockKey, *};
 use crate::glyphcache::{CachedGlyph, GlyphCache, LoadState};
 use crate::quad::{
-    HeapQuadAllocator, QuadAllocator, QuadImpl, QuadTrait, TripleLayerQuadAllocator,
-    TripleLayerQuadAllocatorTrait,
+    HeapQuadAllocator, QuadImpl, QuadTrait, TripleLayerQuadAllocator, TripleLayerQuadAllocatorTrait,
 };
 use crate::shapecache::*;
 use crate::termwindow::render::paint::AllowImage;

@@ -301,21 +301,6 @@ impl ConnectionUI {
         Self { tx }
     }
 
-    pub fn run_and_log_error<T, F>(&self, f: F) -> anyhow::Result<T>
-    where
-        F: FnOnce() -> anyhow::Result<T>,
-    {
-        match f() {
-            Err(e) => {
-                let what = format!("\r\nFailed: {:?}\r\n", e);
-                log::error!("{}", what);
-                self.output_str(&what);
-                Err(e)
-            }
-            result => result,
-        }
-    }
-
     pub async fn async_run_and_log_error<T, F>(&self, f: F) -> anyhow::Result<T>
     where
         F: std::future::Future<Output = anyhow::Result<T>>,

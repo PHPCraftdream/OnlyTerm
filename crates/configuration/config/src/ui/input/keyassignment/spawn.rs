@@ -1,5 +1,4 @@
 use onlyterm_dynamic::{FromDynamic, ToDynamic};
-use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -210,31 +209,5 @@ impl SpawnCommand {
         } else {
             None
         }
-    }
-
-    pub fn from_command_builder(cmd: &CommandBuilder) -> anyhow::Result<Self> {
-        let mut args = vec![];
-        let mut set_environment_variables = HashMap::new();
-        for arg in cmd.get_argv() {
-            args.push(
-                arg.to_str()
-                    .ok_or_else(|| anyhow::anyhow!("command argument is not utf8"))?
-                    .to_string(),
-            );
-        }
-        for (k, v) in cmd.iter_full_env_as_str() {
-            set_environment_variables.insert(k.to_string(), v.to_string());
-        }
-        let cwd = cmd.get_cwd().map(PathBuf::from);
-        Ok(Self {
-            label: None,
-            title: None,
-            domain: SpawnTabDomain::DefaultDomain,
-            args: if args.is_empty() { None } else { Some(args) },
-            set_environment_variables,
-            cwd,
-            position: None,
-            priority: None,
-        })
     }
 }

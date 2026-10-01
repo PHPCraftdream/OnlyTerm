@@ -59,13 +59,6 @@ pub fn get_latest_release_info() -> anyhow::Result<Release> {
     get_github_release_info("https://api.github.com/repos/PHPCraftdream/OnlyTerm/releases/latest")
 }
 
-#[allow(unused)]
-pub fn get_nightly_release_info() -> anyhow::Result<Release> {
-    get_github_release_info(
-        "https://api.github.com/repos/PHPCraftdream/OnlyTerm/releases/tags/nightly",
-    )
-}
-
 lazy_static::lazy_static! {
     static ref UPDATER_WINDOW: Mutex<Option<ConnectionUI>> = Mutex::new(None);
 }

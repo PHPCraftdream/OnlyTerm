@@ -30,7 +30,7 @@ pub struct CommandDef {
     pub keys: Vec<(Modifiers, String)>,
     /// The argument types/context in which this command is valid.
     pub args: &'static [ArgType],
-    /// Where to place the command in a menubar
+    /// Palette group the command is listed under
     pub menubar: &'static [&'static str],
     pub icon: Option<&'static str>,
 }

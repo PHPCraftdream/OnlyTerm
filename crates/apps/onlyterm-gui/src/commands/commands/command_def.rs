@@ -213,7 +213,7 @@ impl CommandDef {
         result
     }
 
-    pub fn actions_for_palette_and_menubar(config: &ConfigHandle) -> Vec<ExpandedCommand> {
+    pub fn actions_for_palette(config: &ConfigHandle) -> Vec<ExpandedCommand> {
         let mut result = Self::expanded_commands(config);
 
         // Generate some stuff based on the config
@@ -376,8 +376,6 @@ impl CommandDef {
 
         result
     }
-
-    pub fn recreate_menubar(_config: &ConfigHandle) {}
 }
 
 /// Returns a list of key assignment actions that should be

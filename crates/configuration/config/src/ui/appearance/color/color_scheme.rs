@@ -1,9 +1,6 @@
 use crate::color::Palette;
-use anyhow::Context;
 use onlyterm_dynamic::{FromDynamic, ToDynamic, Value};
 use std::convert::TryInto;
-use std::fs;
-use std::path::Path;
 
 #[derive(Debug, Default, Clone, Eq, PartialEq, FromDynamic, ToDynamic)]
 pub struct ColorSchemeMetaData {
@@ -86,12 +83,5 @@ impl ColorSchemeFile {
     pub fn from_json_value(value: &serde_json::Value) -> anyhow::Result<Self> {
         Self::from_dynamic(&crate::json_to_dynamic(value), Default::default())
             .map_err(|e| anyhow::anyhow!("{}", e))
-    }
-
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> anyhow::Result<()> {
-        let value = self.to_toml_value()?;
-        let text = toml::to_string_pretty(&value)?;
-        fs::write(&path, text)
-            .with_context(|| format!("writing toml to {}", path.as_ref().display()))
     }
 }

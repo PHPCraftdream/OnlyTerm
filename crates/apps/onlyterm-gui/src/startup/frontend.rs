@@ -1,11 +1,9 @@
 use crate::gui_api::guiwin::GuiWin;
-use crate::spawn::SpawnWhere;
 use crate::termwindow::TermWindowNotif;
 use crate::TermWindow;
 use ::window::*;
 use anyhow::{Context, Error};
-use onlyterm_config::keyassignment::{KeyAssignment, SpawnCommand};
-use onlyterm_config::{ConfigSubscription, NotificationHandling};
+use onlyterm_config::NotificationHandling;
 use onlyterm_mux::client::ClientId;
 use onlyterm_mux::window::WindowId as MuxWindowId;
 use onlyterm_mux::{Mux, MuxNotification};
@@ -23,7 +21,6 @@ pub struct GuiFrontEnd {
     spawned_mux_window: RefCell<HashSet<MuxWindowId>>,
     known_windows: RefCell<BTreeMap<Window, MuxWindowId>>,
     client_id: Arc<ClientId>,
-    config_subscription: RefCell<Option<ConfigSubscription>>,
 }
 
 impl Drop for GuiFrontEnd {
@@ -35,7 +32,6 @@ impl Drop for GuiFrontEnd {
 impl GuiFrontEnd {
     pub fn try_new() -> anyhow::Result<Rc<GuiFrontEnd>> {
         let connection = Connection::init()?;
-        connection.set_event_handler(Self::app_event_handler);
 
         let mux = Mux::get();
         let client_id = mux.active_identity().expect("to have set my own id");
@@ -46,7 +42,6 @@ impl GuiFrontEnd {
             spawned_mux_window: RefCell::new(HashSet::new()),
             known_windows: RefCell::new(BTreeMap::new()),
             client_id: client_id.clone(),
-            config_subscription: RefCell::new(None),
         });
 
         mux.subscribe(move |n| {
@@ -214,116 +209,7 @@ impl GuiFrontEnd {
         // before any windows are created
         onlyterm_config::reload();
 
-        // And build the initial menu bar.
-        // TODO: arrange for this to happen on config reload.
-        crate::commands::CommandDef::recreate_menubar(&onlyterm_config::configuration());
-
         Ok(front_end)
-    }
-
-    fn app_event_handler(event: ApplicationEvent) {
-        log::trace!("Got app event {event:?}");
-        match event {
-            ApplicationEvent::OpenCommandScript(file_name) => {
-                let quoted_file_name = match shlex::try_quote(&file_name) {
-                    Ok(name) => name.to_string(),
-                    Err(_) => {
-                        log::error!(
-                            "OpenCommandScript: {file_name} has embedded NUL bytes and
-                             cannot be launched via the shell"
-                        );
-                        return;
-                    }
-                };
-                onlyterm_promise::spawn::spawn(async move {
-                    use onlyterm_config::keyassignment::SpawnTabDomain;
-                    use onlyterm_term::TerminalSize;
-
-                    // We send the script to execute to the shell on stdin, rather than ask the
-                    // shell to execute it directly, so that we start the shell and read in the
-                    // user's rc files before running the script.  Without this, onlyterm on macOS
-                    // is launched with a default and very anemic path, and that is frustrating for
-                    // users.
-
-                    let mux = Mux::get();
-                    let window_id = None;
-                    let pane_id = None;
-                    let cmd = None;
-                    let cwd = None;
-                    let workspace = mux.active_workspace();
-
-                    match mux
-                        .spawn_tab_or_window(
-                            window_id,
-                            SpawnTabDomain::DomainName("local".to_string()),
-                            cmd,
-                            cwd,
-                            TerminalSize::default(),
-                            pane_id,
-                            workspace,
-                            None, // optional position
-                        )
-                        .await
-                    {
-                        Ok((_tab, pane, _window_id)) => {
-                            log::trace!("Spawned {file_name} as pane_id {}", pane.pane_id());
-                            let mut writer = pane.writer();
-                            writeln!(writer, "{quoted_file_name} ; exit").ok();
-                        }
-                        Err(err) => {
-                            log::error!("Failed to spawn {file_name}: {err:#?}");
-                        }
-                    };
-                })
-                .detach();
-            }
-            ApplicationEvent::PerformKeyAssignment(action) => {
-                // We should only get here when there are no windows open
-                // and the user picks an action from the menubar.
-                // This is not currently possible, but could be in the
-                // future.
-
-                fn spawn_command(spawn: &SpawnCommand, spawn_where: SpawnWhere) {
-                    let config = onlyterm_config::configuration();
-                    let dpi = config.dpi.unwrap_or_else(::window::default_dpi);
-                    let size =
-                        config.initial_size(dpi as u32, crate::cell_pixel_dims(&config, dpi).ok());
-                    let term_config = Arc::new(onlyterm_config::TermConfig::with_config(config));
-
-                    crate::spawn::spawn_command_impl(spawn, spawn_where, size, None, term_config)
-                }
-
-                match *action {
-                    KeyAssignment::QuitApplication => {
-                        // If we get here, there are no windows that could have received
-                        // the QuitApplication command, therefore it must be ok to quit
-                        // immediately
-                        Connection::get().unwrap().terminate_message_loop();
-                    }
-                    KeyAssignment::SpawnWindow => {
-                        spawn_command(&SpawnCommand::default(), SpawnWhere::NewWindow);
-                    }
-                    KeyAssignment::SpawnTab(spawn_where) => {
-                        spawn_command(
-                            &SpawnCommand {
-                                domain: spawn_where,
-                                ..Default::default()
-                            },
-                            SpawnWhere::NewWindow,
-                        );
-                    }
-                    KeyAssignment::SpawnCommandInNewTab(spawn) => {
-                        spawn_command(&spawn, SpawnWhere::NewTab);
-                    }
-                    KeyAssignment::SpawnCommandInNewWindow(spawn) => {
-                        spawn_command(&spawn, SpawnWhere::NewWindow);
-                    }
-                    _ => {
-                        log::warn!("unhandled perform: {action:?}");
-                    }
-                }
-            }
-        }
     }
 
     pub fn run_forever(&self) -> anyhow::Result<()> {
@@ -564,20 +450,6 @@ pub fn shutdown() {
 pub fn try_new() -> Result<Rc<GuiFrontEnd>, Error> {
     let front_end = GuiFrontEnd::try_new()?;
     FRONT_END.with(|f| *f.borrow_mut() = Some(Rc::clone(&front_end)));
-
-    let config_subscription = onlyterm_config::subscribe_to_config_reload({
-        move || {
-            onlyterm_promise::spawn::spawn_into_main_thread(async {
-                crate::commands::CommandDef::recreate_menubar(&onlyterm_config::configuration());
-            })
-            .detach();
-            true
-        }
-    });
-    front_end
-        .config_subscription
-        .borrow_mut()
-        .replace(config_subscription);
 
     Ok(front_end)
 }

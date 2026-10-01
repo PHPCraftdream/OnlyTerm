@@ -154,10 +154,6 @@ impl Surface {
         lines
     }
 
-    pub fn screen_lines(&self) -> Vec<Cow<'_, Line>> {
-        self.lines.iter().map(Cow::Borrowed).collect()
-    }
-
     /// Returns a stream of changes suitable to update the screen
     /// to match the model.  The input `seq` argument should be 0
     /// on the first call, or in any situation where the screen
@@ -187,10 +183,6 @@ impl Surface {
         } else {
             (self.seqno, Cow::Borrowed(&self.changes[seq - first..]))
         }
-    }
-
-    pub fn has_changes(&self, seq: SequenceNo) -> bool {
-        self.seqno != seq
     }
 
     pub fn current_seqno(&self) -> SequenceNo {

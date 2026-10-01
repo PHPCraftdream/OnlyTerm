@@ -53,16 +53,6 @@ impl LinearRgba {
         )
     }
 
-    /// Convert linear RGBA u8 components to LinearRgba (f32)
-    pub fn with_rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        Self(
-            rgb_to_linear_f32(red),
-            rgb_to_linear_f32(green),
-            rgb_to_linear_f32(blue),
-            rgb_to_linear_f32(alpha),
-        )
-    }
-
     /// Create using the provided f32 components in the range 0.0-1.0
     pub const fn with_components(red: f32, green: f32, blue: f32, alpha: f32) -> Self {
         Self(red, green, blue, alpha)

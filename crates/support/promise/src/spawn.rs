@@ -32,10 +32,6 @@ fn schedule_runnable(runnable: Runnable, high_pri: bool) {
     func(runnable);
 }
 
-pub fn is_scheduler_configured() -> bool {
-    SCHEDULER_CONFIGURED.load(Ordering::Relaxed)
-}
-
 /// Set callbacks for scheduling normal and low priority futures.
 /// Why this and not "just tokio"?  In a GUI application there is typically
 /// a special GUI processing loop that may need to run on the "main thread",
