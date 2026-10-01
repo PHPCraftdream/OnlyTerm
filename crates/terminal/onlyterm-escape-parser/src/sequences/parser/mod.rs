@@ -212,6 +212,21 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
         (self.callback)(Action::Print(c));
     }
 
+    fn print_run(&mut self, bytes: &[u8]) {
+        // `bytes` is guaranteed to be 0x20..=0x7f, so every byte is a
+        // printable ASCII character and the conversion is lossless.
+        if bytes.len() == 1 {
+            // A single character is reported exactly as the per-character
+            // path would report it, so that consumers which don't merge
+            // actions observe an unchanged stream.
+            (self.callback)(Action::Print(bytes[0] as char));
+        } else {
+            (self.callback)(Action::PrintString(
+                String::from_utf8_lossy(bytes).into_owned(),
+            ));
+        }
+    }
+
     fn execute_c0_or_c1(&mut self, byte: u8) {
         match FromPrimitive::from_u8(byte) {
             Some(code) => (self.callback)(Action::Control(code)),

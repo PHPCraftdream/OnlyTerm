@@ -47,6 +47,22 @@ pub trait VTActor {
     /// character.
     fn print(&mut self, b: char);
 
+    /// Print a run of printable ASCII characters.
+    ///
+    /// The parser only ever calls this while the state machine is in the
+    /// Ground state, and guarantees that every byte in `bytes` lies in the
+    /// range 0x20..=0x7f, which is precisely the range that `print` handles
+    /// in Ground without any intervening state transition.  Invoking
+    /// `print` once per byte therefore yields the same sequence of events
+    /// as invoking `print_run` with the whole run; the default
+    /// implementation does exactly that, and implementations that can
+    /// consume a run of characters more efficiently should override it.
+    fn print_run(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.print(b as char);
+        }
+    }
+
     /// The C0 or C1 control function should be executed, which may have any one of a variety of
     /// effects, including changing the cursor position, suspending or resuming communications or
     /// changing the shift states in effect.

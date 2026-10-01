@@ -446,9 +446,48 @@ impl VTParser {
     /// Parse a sequence of bytes.  The sequence need not be complete.
     /// This may result in some number of calls to the methods on the
     /// provided `actor`.
+    ///
+    /// While the state machine is in the Ground state, runs of printable
+    /// ASCII bytes (0x20..=0x7f) are collected and handed to the actor in
+    /// a single `print_run` call rather than one `print` per byte; see
+    /// `VTActor::print_run`.  Everything else is parsed byte by byte, so
+    /// the chunking of the input cannot change the resulting events: a run
+    /// that is cut short by the end of a chunk simply ends there, and the
+    /// remainder starts a new run in the next chunk.
     pub fn parse(&mut self, bytes: &[u8], actor: &mut dyn VTActor) {
-        for b in bytes {
-            self.parse_byte(*b, actor);
+        let mut pos = 0;
+        while pos < bytes.len() {
+            if self.state == State::Ground {
+                let start = pos;
+                while pos < bytes.len() && (0x20..=0x7f).contains(&bytes[pos]) {
+                    pos += 1;
+                }
+                if pos > start {
+                    // In Ground, every byte in 0x20..=0x7f maps to
+                    // (Print, Ground): no state change, no entry/exit
+                    // action, no parser state is consulted.  Bulk printing
+                    // the run is therefore equivalent to running
+                    // `parse_byte` over each of its bytes.
+                    actor.print_run(&bytes[start..pos]);
+                    continue;
+                }
+            }
+            let byte = bytes[pos];
+            self.parse_byte(byte, actor);
+            pos += 1;
+        }
+    }
+
+    /// Parse a sequence of bytes strictly one byte at a time via
+    /// `parse_byte`, which is the algorithm `parse` implemented before the
+    /// Ground-state printable-ASCII fast path was added.
+    ///
+    /// This exists purely as a differential reference for the tests: it
+    /// must always produce the same sequence of actor calls as `parse`.
+    #[cfg(test)]
+    pub fn parse_reference(&mut self, bytes: &[u8], actor: &mut dyn VTActor) {
+        for &b in bytes {
+            self.parse_byte(b, actor);
         }
     }
 }
@@ -458,6 +497,73 @@ mod test {
     use super::*;
     use crate::{CollectingVTActor, VTAction};
     use k9::assert_equal as assert_eq;
+
+    /// A `VTActor` that records the size of every `print_run` call while
+    /// forwarding everything to a `CollectingVTActor`, so that tests can
+    /// check both the resulting actions and how the printable runs were
+    /// grouped.
+    #[derive(Default)]
+    struct RunRecordingActor {
+        inner: CollectingVTActor,
+        run_lens: Vec<usize>,
+    }
+
+    impl VTActor for RunRecordingActor {
+        fn print(&mut self, b: char) {
+            self.inner.print(b);
+        }
+
+        fn print_run(&mut self, bytes: &[u8]) {
+            self.run_lens.push(bytes.len());
+            self.inner.print_run(bytes);
+        }
+
+        fn execute_c0_or_c1(&mut self, control: u8) {
+            self.inner.execute_c0_or_c1(control);
+        }
+
+        fn dcs_hook(
+            &mut self,
+            byte: u8,
+            params: &[i64],
+            intermediates: &[u8],
+            ignored_excess_intermediates: bool,
+        ) {
+            self.inner
+                .dcs_hook(byte, params, intermediates, ignored_excess_intermediates);
+        }
+
+        fn dcs_put(&mut self, byte: u8) {
+            self.inner.dcs_put(byte);
+        }
+
+        fn dcs_unhook(&mut self) {
+            self.inner.dcs_unhook();
+        }
+
+        fn esc_dispatch(
+            &mut self,
+            params: &[i64],
+            intermediates: &[u8],
+            ignored_excess_intermediates: bool,
+            byte: u8,
+        ) {
+            self.inner
+                .esc_dispatch(params, intermediates, ignored_excess_intermediates, byte);
+        }
+
+        fn csi_dispatch(&mut self, params: &[CsiParam], parameters_truncated: bool, byte: u8) {
+            self.inner.csi_dispatch(params, parameters_truncated, byte);
+        }
+
+        fn osc_dispatch(&mut self, params: &[&[u8]]) {
+            self.inner.osc_dispatch(params);
+        }
+
+        fn apc_dispatch(&mut self, data: Vec<u8>) {
+            self.inner.apc_dispatch(data);
+        }
+    }
 
     fn parse_as_vec(bytes: &[u8]) -> Vec<VTAction> {
         let mut parser = VTParser::new();
@@ -956,5 +1062,442 @@ mod test {
                 },
             ]
         );
+    }
+
+    /// Deterministic PRNG (splitmix64) so that the differential tests are
+    /// reproducible without pulling in an external `rand` dependency.
+    struct Rng(u64);
+
+    impl Rng {
+        fn new(seed: u64) -> Self {
+            Rng(seed ^ 0x9E37_79B9_7F4A_7C15)
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        fn below(&mut self, bound: usize) -> usize {
+            if bound == 0 {
+                0
+            } else {
+                (self.next_u64() % bound as u64) as usize
+            }
+        }
+
+        fn byte(&mut self) -> u8 {
+            (self.next_u64() & 0xff) as u8
+        }
+    }
+
+    /// Build a random byte stream mixing printable ASCII runs, C0/C1
+    /// controls, escape sequences (CSI, OSC, DCS, APC, ESC and their 8-bit
+    /// forms), UTF-8 multi-byte characters (sometimes truncated mid
+    /// sequence) and invalid/stray bytes.
+    fn gen_bytes(rng: &mut Rng, events: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        for _ in 0..events {
+            match rng.below(18) {
+                // A run of printable ASCII, sometimes long enough that the
+                // chunked variants of the tests cut it in half.
+                0..=2 => {
+                    let len = 1 + rng.below(64);
+                    for _ in 0..len {
+                        out.push(0x20 + rng.below(0x60) as u8);
+                    }
+                }
+                // C0 controls (includes ESC, CAN and SUB)
+                3 => out.push(rng.below(0x20) as u8),
+                // DEL, which is printed in the Ground state
+                4 => out.push(0x7f),
+                // 8-bit controls and introducers
+                5 => out.push(0x80 + rng.below(0x20) as u8),
+                // Any byte at all, including invalid utf-8 lead bytes
+                6 => out.push(rng.byte()),
+                7 => {
+                    // CSI: ESC [ params intermediate final
+                    out.push(0x1b);
+                    out.push(b'[');
+                    for _ in 0..rng.below(4) {
+                        out.extend_from_slice(format!("{}", rng.below(1000)).as_bytes());
+                        out.push(b';');
+                    }
+                    out.push(0x40 + rng.below(0x3f) as u8);
+                }
+                8 => {
+                    // OSC: ESC ] code ; payload, terminated by BEL or ST
+                    out.push(0x1b);
+                    out.push(b']');
+                    out.extend_from_slice(format!("{}", rng.below(8)).as_bytes());
+                    out.push(b';');
+                    for _ in 0..rng.below(20) {
+                        out.push(0x20 + rng.below(0x5f) as u8);
+                    }
+                    out.push(if rng.below(2) == 0 { 0x07 } else { 0x9c });
+                }
+                9 => {
+                    // DCS: ESC P params final payload ST
+                    out.push(0x1b);
+                    out.push(b'P');
+                    for _ in 0..rng.below(3) {
+                        out.extend_from_slice(format!("{}", rng.below(100)).as_bytes());
+                        out.push(b';');
+                    }
+                    out.push(0x40 + rng.below(0x3f) as u8);
+                    for _ in 0..rng.below(20) {
+                        out.push(0x20 + rng.below(0x5f) as u8);
+                    }
+                    out.extend_from_slice(b"\x1b\\");
+                }
+                10 => {
+                    // APC: ESC _ payload ST
+                    out.push(0x1b);
+                    out.push(b'_');
+                    for _ in 0..rng.below(20) {
+                        out.push(0x20 + rng.below(0x5f) as u8);
+                    }
+                    out.extend_from_slice(b"\x1b\\");
+                }
+                11 => {
+                    // ESC, a couple of intermediates and a final byte
+                    out.push(0x1b);
+                    for _ in 0..rng.below(3) {
+                        out.push(0x20 + rng.below(0x10) as u8);
+                    }
+                    out.push(0x30 + rng.below(0x4f) as u8);
+                }
+                12 => out.push(0x9b), // 8-bit CSI
+                13 => out.push(0x9d), // 8-bit OSC
+                14 => out.push(0x90), // 8-bit DCS
+                15 => {
+                    // A 2, 3 or 4 byte utf-8 sequence; a quarter of the time
+                    // the continuation bytes are dropped so that the next
+                    // chunk has to finish the sequence.
+                    let len = 2 + rng.below(3);
+                    let lead: u8 = match len {
+                        2 => 0xc2 + rng.below(0x1e) as u8,
+                        3 => 0xe0 + rng.below(0x10) as u8,
+                        _ => 0xf0 + rng.below(5) as u8,
+                    };
+                    out.push(lead);
+                    for _ in 0..(len - 1) {
+                        out.push(0x80 + rng.below(0x40) as u8);
+                    }
+                    if rng.below(4) == 0 {
+                        out.truncate(out.len() - (len - 1));
+                    }
+                }
+                16 => out.extend_from_slice(b"\x1b[0m"),
+                _ => match rng.below(6) {
+                    0 => out.push(0x98),
+                    1 => out.push(0x9e),
+                    2 => out.push(0x9f),
+                    3 => out.push(0x9c),
+                    4 => out.push(0x18),
+                    _ => out.push(0x1a),
+                },
+            }
+        }
+        out
+    }
+
+    fn parse_fast(bytes: &[u8]) -> Vec<VTAction> {
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+        parser.parse(bytes, &mut actor);
+        actor.into_vec()
+    }
+
+    /// Parse `bytes` in fixed size chunks with a single parser instance.
+    fn parse_chunked(bytes: &[u8], chunk: usize) -> Vec<VTAction> {
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+        for chunk in bytes.chunks(chunk.max(1)) {
+            parser.parse(chunk, &mut actor);
+        }
+        actor.into_vec()
+    }
+
+    /// Parse `bytes`, cutting it at the given sizes, with a single parser
+    /// instance.  Any trailing bytes are parsed as a final chunk.
+    fn parse_random_chunks(bytes: &[u8], plan: &[usize]) -> Vec<VTAction> {
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+        let mut pos = 0;
+        for &len in plan {
+            if pos >= bytes.len() {
+                break;
+            }
+            let end = (pos + len.max(1)).min(bytes.len());
+            parser.parse(&bytes[pos..end], &mut actor);
+            pos = end;
+        }
+        if pos < bytes.len() {
+            parser.parse(&bytes[pos..], &mut actor);
+        }
+        actor.into_vec()
+    }
+
+    /// The bulk printable-ASCII fast path in `parse` must produce exactly
+    /// the same sequence of actions as the original per-byte algorithm, for
+    /// the whole stream and for every chunking of it.
+    #[test]
+    fn fast_path_matches_reference_for_random_streams() {
+        for seed in 0..256u64 {
+            let mut rng = Rng::new(seed);
+            let events = 1 + rng.below(600);
+            let stream = gen_bytes(&mut rng, events);
+
+            let mut reference_parser = VTParser::new();
+            let mut reference_actor = CollectingVTActor::default();
+            reference_parser.parse_reference(&stream, &mut reference_actor);
+            let reference = reference_actor.into_vec();
+
+            assert_eq!(
+                parse_fast(&stream),
+                reference,
+                "seed {}: whole-stream parse diverged",
+                seed
+            );
+
+            for &chunk in &[1usize, 2, 3, 5, 7, 13, 64, 4096] {
+                assert_eq!(
+                    parse_chunked(&stream, chunk),
+                    reference,
+                    "seed {}: chunk size {} diverged",
+                    seed,
+                    chunk
+                );
+            }
+
+            // A random chunking, including single byte chunks.
+            let mut plan = Vec::new();
+            let mut remaining = stream.len();
+            while remaining > 0 {
+                let len = 1 + rng.below(128);
+                plan.push(len);
+                remaining = remaining.saturating_sub(len);
+            }
+            assert_eq!(
+                parse_random_chunks(&stream, &plan),
+                reference,
+                "seed {}: random chunking diverged",
+                seed
+            );
+        }
+    }
+
+    /// `print_run` must be handed maximal runs of printable ASCII bytes
+    /// while the parser is in the Ground state, and nothing at all while it
+    /// is inside an escape sequence.
+    #[test]
+    fn fast_path_reports_maximal_ground_runs() {
+        let input = b"abc\x1b[0mde\x07f";
+
+        let mut parser = VTParser::new();
+        let mut actor = RunRecordingActor::default();
+        parser.parse(input, &mut actor);
+        assert_eq!(actor.run_lens, vec![3, 2, 1]);
+        assert_eq!(actor.inner.into_vec(), parse_fast(input));
+
+        // The same input, chunked at different points.  A run is cut short
+        // by a chunk boundary and the remainder is reported as a new run,
+        // but the resulting actions are always the same.
+        let cases: &[(&[usize], &[usize])] = &[
+            (&[12], &[3, 2, 1]),
+            (&[6, 6], &[3, 2, 1]),
+            (&[3, 1, 8], &[3, 2, 1]),
+            (&[3, 4, 2, 3], &[3, 2, 1]),
+            (&[4, 4, 4], &[3, 1, 1, 1]),
+            (&[1; 12], &[1; 6]),
+        ];
+        for (plan, expected_runs) in cases {
+            let mut parser = VTParser::new();
+            let mut actor = RunRecordingActor::default();
+            let mut pos = 0;
+            for &len in plan.iter() {
+                if pos >= input.len() {
+                    break;
+                }
+                let end = (pos + len).min(input.len());
+                parser.parse(&input[pos..end], &mut actor);
+                pos = end;
+            }
+            assert_eq!(pos, input.len(), "plan {:?} does not cover the input", plan);
+            assert_eq!(
+                actor.run_lens,
+                expected_runs.to_vec(),
+                "unexpected print runs for plan {:?}",
+                plan
+            );
+            assert_eq!(
+                actor.inner.into_vec(),
+                parse_fast(input),
+                "actions diverged for plan {:?}",
+                plan
+            );
+        }
+    }
+
+    #[test]
+    fn fast_path_empty_input() {
+        assert_eq!(parse_fast(b""), Vec::<VTAction>::new());
+
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+        parser.parse(b"", &mut actor);
+        assert_eq!(actor.into_vec(), Vec::<VTAction>::new());
+    }
+
+    /// A run that ends exactly at a chunk boundary, including the case where
+    /// an escape sequence starts on the very next byte.
+    #[test]
+    fn fast_path_run_ending_at_chunk_end() {
+        let stream = b"abc\x1b[0mxyz";
+        let reference = {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse_reference(stream, &mut actor);
+            actor.into_vec()
+        };
+        assert_eq!(
+            reference,
+            vec![
+                VTAction::Print('a'),
+                VTAction::Print('b'),
+                VTAction::Print('c'),
+                VTAction::CsiDispatch {
+                    params: vec![CsiParam::Integer(0)],
+                    parameters_truncated: false,
+                    byte: b'm',
+                },
+                VTAction::Print('x'),
+                VTAction::Print('y'),
+                VTAction::Print('z'),
+            ]
+        );
+        for len in 1..=stream.len() {
+            assert_eq!(
+                parse_chunked(stream, len),
+                reference,
+                "chunk size {} diverged",
+                len
+            );
+        }
+    }
+
+    /// DEL (0x7f) is a printable character in the Ground state, so it must
+    /// be reported through the fast path just like any other byte in
+    /// 0x20..=0x7f.
+    #[test]
+    fn fast_path_prints_del_in_ground() {
+        assert_eq!(
+            parse_fast(b"\x7f"),
+            vec![VTAction::Print('\x7f')],
+            "DEL should be printed in the Ground state"
+        );
+
+        let stream = b"abc\x7fdef";
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+        parser.parse_reference(stream, &mut actor);
+        assert_eq!(parse_fast(stream), actor.into_vec());
+    }
+
+    /// Printable bytes inside an OSC or DCS payload are not in the Ground
+    /// state, so they must not go through the fast path: they are OSC/DCS
+    /// data instead of printed characters.
+    #[test]
+    fn fast_path_not_used_inside_osc_or_dcs_payload() {
+        let stream = b"\x1b]0;hello world\x07\x1bP1;2qabc def\x1b\\";
+
+        let mut parser = VTParser::new();
+        let mut actor = RunRecordingActor::default();
+        parser.parse(stream, &mut actor);
+        // No printable run is ever reported: everything between the OSC/DCS
+        // introducer and their terminators belongs to those sequences.
+        assert!(
+            actor.run_lens.is_empty(),
+            "unexpected print runs inside escape sequence payloads: {:?}",
+            actor.run_lens
+        );
+        assert_eq!(
+            actor.inner.into_vec(),
+            parse_fast(stream),
+            "OSC/DCS payload must not be treated as printable text"
+        );
+
+        assert_eq!(
+            parse_fast(stream),
+            vec![
+                VTAction::OscDispatch(vec![b"0".to_vec(), b"hello world".to_vec()]),
+                VTAction::DcsHook {
+                    params: vec![1, 2, 0],
+                    intermediates: vec![],
+                    ignored_excess_intermediates: false,
+                    byte: b'q',
+                },
+                VTAction::DcsPut(b'a'),
+                VTAction::DcsPut(b'b'),
+                VTAction::DcsPut(b'c'),
+                VTAction::DcsPut(b' '),
+                VTAction::DcsPut(b'd'),
+                VTAction::DcsPut(b'e'),
+                VTAction::DcsPut(b'f'),
+                VTAction::DcsUnhook,
+                VTAction::EscDispatch {
+                    params: vec![],
+                    intermediates: vec![],
+                    ignored_excess_intermediates: false,
+                    byte: b'\\',
+                },
+            ]
+        );
+    }
+
+    /// Printable ASCII that follows a utf-8 sequence which was split across
+    /// chunk boundaries must still be printed by the fast path, and the
+    /// partially received sequence must be finished by the next chunk.
+    #[test]
+    fn fast_path_after_utf8_split_across_chunks() {
+        let stream = "a\u{451}bc\u{1f915}d".as_bytes().to_vec();
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+        parser.parse_reference(&stream, &mut actor);
+        let reference = actor.into_vec();
+
+        assert_eq!(parse_fast(&stream), reference);
+
+        // Every chunk size, so that each possible split of the multi-byte
+        // sequences is exercised.
+        for len in 1..=stream.len() {
+            assert_eq!(
+                parse_chunked(&stream, len),
+                reference,
+                "chunk size {} diverged",
+                len
+            );
+        }
+
+        // Explicitly: "a" plus the lead byte of "ё" in one chunk, the rest of
+        // the sequence plus "bc" in the next.
+        let mut parser = VTParser::new();
+        let mut actor = RunRecordingActor::default();
+        parser.parse(b"a\xd1", &mut actor);
+        assert_eq!(actor.run_lens, vec![1], "runs: {:?}", actor.run_lens);
+        parser.parse(b"\x91bc", &mut actor);
+        assert_eq!(
+            actor.run_lens,
+            vec![1, 2],
+            "the pending utf-8 sequence must be completed before printing"
+        );
+        let mut reference_parser = VTParser::new();
+        let mut reference_actor = CollectingVTActor::default();
+        reference_parser.parse_reference("a\u{451}bc".as_bytes(), &mut reference_actor);
+        assert_eq!(actor.inner.into_vec(), reference_actor.into_vec());
     }
 }

@@ -71,7 +71,10 @@ impl Action {
     /// Append this `Action` to a `Vec<Action>`.
     /// If this `Action` is `Print` and the last element is `Print` or
     /// `PrintString` then the elements are combined into `PrintString`
-    /// to reduce heap utilization.
+    /// to reduce heap utilization.  The same coalescing is applied to a
+    /// `PrintString` that follows a `Print` or `PrintString`, so that a
+    /// printable run which the parser happened to split across two
+    /// `parse` calls still ends up as a single `PrintString`.
     pub fn append_to(self, dest: &mut Vec<Self>) {
         if let Action::Print(c) = &self {
             match dest.last_mut() {
@@ -84,6 +87,21 @@ impl Action {
                     dest.pop();
                     s.push(*c);
                     dest.push(Action::PrintString(s));
+                    return;
+                }
+                _ => {}
+            }
+        } else if let Action::PrintString(s) = &self {
+            match dest.last_mut() {
+                Some(Action::PrintString(prior)) => {
+                    prior.push_str(s);
+                    return;
+                }
+                Some(Action::Print(prior)) => {
+                    let mut merged = prior.to_string();
+                    dest.pop();
+                    merged.push_str(s);
+                    dest.push(Action::PrintString(merged));
                     return;
                 }
                 _ => {}

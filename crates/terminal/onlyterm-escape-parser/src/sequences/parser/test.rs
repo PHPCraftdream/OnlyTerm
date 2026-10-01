@@ -192,16 +192,7 @@ fn osc_st_parse_first_as_vec() {
 fn basic_parse() {
     let mut p = Parser::new();
     let actions = p.parse_as_vec(b"hello");
-    assert_eq!(
-        vec![
-            Action::Print('h'),
-            Action::Print('e'),
-            Action::Print('l'),
-            Action::Print('l'),
-            Action::Print('o'),
-        ],
-        actions
-    );
+    assert_eq!(vec![Action::PrintString("hello".to_string())], actions);
     assert_eq!(encode(&actions), "hello");
 }
 
@@ -376,11 +367,9 @@ fn tmux_title_escape() {
     assert_eq!(
         vec![
             Action::Esc(Esc::Code(EscCode::TmuxTitle)),
-            Action::Print('t'),
-            Action::Print('i'),
-            Action::Print('t'),
-            Action::Print('l'),
-            Action::Print('e'),
+            // The bulk printable-ASCII fast path reports the run of text
+            // as a single `PrintString`.
+            Action::PrintString("title".to_string()),
             Action::Esc(Esc::Code(EscCode::StringTerminator)),
         ],
         actions
@@ -932,4 +921,402 @@ fn dynamic_colors() {
 ]
 "
     );
+}
+
+/// Deterministic PRNG (splitmix64) so that the differential tests are
+/// reproducible without pulling in an external `rand` dependency.
+struct Rng(u64);
+
+impl Rng {
+    fn new(seed: u64) -> Self {
+        Rng(seed ^ 0x9E37_79B9_7F4A_7C15)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    fn below(&mut self, bound: usize) -> usize {
+        if bound == 0 {
+            0
+        } else {
+            (self.next_u64() % bound as u64) as usize
+        }
+    }
+
+    fn byte(&mut self) -> u8 {
+        (self.next_u64() & 0xff) as u8
+    }
+}
+
+/// Build a random byte stream mixing printable ASCII runs, C0/C1 controls,
+/// escape sequences (CSI, OSC, DCS, APC, ESC and their 8-bit forms), UTF-8
+/// multi-byte characters (sometimes truncated mid sequence) and
+/// invalid/stray bytes.
+///
+/// The OSC numeric codes are drawn from a set whose semantic parsing copes
+/// with arbitrary payloads; the point of these tests is the escape-sequence
+/// state machine, not the OSC payload interpreters.
+fn gen_bytes(rng: &mut Rng, events: usize) -> Vec<u8> {
+    const OSC_CODES: &[&str] = &["0", "1", "2", "8", "52", "777"];
+    let mut out = Vec::new();
+    for _ in 0..events {
+        match rng.below(18) {
+            // A run of printable ASCII, sometimes long enough that the
+            // chunked variants of the tests cut it in half.
+            0..=2 => {
+                let len = 1 + rng.below(64);
+                for _ in 0..len {
+                    out.push(0x20 + rng.below(0x60) as u8);
+                }
+            }
+            // C0 controls (includes ESC, CAN and SUB)
+            3 => out.push(rng.below(0x20) as u8),
+            // DEL, which is printed in the Ground state
+            4 => out.push(0x7f),
+            // 8-bit controls and introducers
+            5 => out.push(0x80 + rng.below(0x20) as u8),
+            // Any byte at all, including invalid utf-8 lead bytes
+            6 => out.push(rng.byte()),
+            7 => {
+                // CSI: ESC [ params intermediate final
+                out.push(0x1b);
+                out.push(b'[');
+                for _ in 0..rng.below(4) {
+                    out.extend_from_slice(format!("{}", rng.below(100)).as_bytes());
+                    out.push(b';');
+                }
+                if rng.below(6) == 0 {
+                    out.push(0x20 + rng.below(0x10) as u8);
+                }
+                if rng.below(8) == 0 {
+                    out.push(0x3c + rng.below(4) as u8);
+                }
+                out.push(0x40 + rng.below(0x3f) as u8);
+            }
+            8 => {
+                // OSC: ESC ] code ; payload, terminated by BEL or ST
+                out.push(0x1b);
+                out.push(b']');
+                out.extend_from_slice(OSC_CODES[rng.below(OSC_CODES.len())].as_bytes());
+                if rng.below(4) != 0 {
+                    out.push(b';');
+                    for _ in 0..rng.below(20) {
+                        out.push(0x20 + rng.below(0x5f) as u8);
+                    }
+                }
+                out.push(if rng.below(2) == 0 { 0x07 } else { 0x9c });
+            }
+            9 => {
+                // DCS: ESC P params final payload ST
+                out.push(0x1b);
+                out.push(b'P');
+                for _ in 0..rng.below(3) {
+                    out.extend_from_slice(format!("{}", rng.below(100)).as_bytes());
+                    out.push(b';');
+                }
+                out.push(0x40 + rng.below(0x3f) as u8);
+                for _ in 0..rng.below(20) {
+                    out.push(0x20 + rng.below(0x5f) as u8);
+                }
+                out.extend_from_slice(b"\x1b\\");
+            }
+            10 => {
+                // APC: ESC _ payload ST
+                out.push(0x1b);
+                out.push(b'_');
+                out.push(b'G');
+                for _ in 0..rng.below(20) {
+                    out.push(0x20 + rng.below(0x5f) as u8);
+                }
+                out.extend_from_slice(b"\x1b\\");
+            }
+            11 => {
+                // ESC, a couple of intermediates and a final byte
+                out.push(0x1b);
+                for _ in 0..rng.below(3) {
+                    out.push(0x20 + rng.below(0x10) as u8);
+                }
+                out.push(0x30 + rng.below(0x4f) as u8);
+            }
+            12 => out.push(0x9b), // 8-bit CSI
+            13 => out.push(0x9d), // 8-bit OSC
+            14 => out.push(0x90), // 8-bit DCS
+            15 => {
+                // A 2, 3 or 4 byte utf-8 sequence; a quarter of the time
+                // the continuation bytes are dropped so that the next
+                // chunk has to finish the sequence.
+                let len = 2 + rng.below(3);
+                let lead: u8 = match len {
+                    2 => 0xc2 + rng.below(0x1e) as u8,
+                    3 => 0xe0 + rng.below(0x10) as u8,
+                    _ => 0xf0 + rng.below(5) as u8,
+                };
+                out.push(lead);
+                for _ in 0..(len - 1) {
+                    out.push(0x80 + rng.below(0x40) as u8);
+                }
+                if rng.below(4) == 0 {
+                    out.truncate(out.len() - (len - 1));
+                }
+            }
+            16 => out.extend_from_slice(b"\x1b[0m"),
+            _ => match rng.below(6) {
+                0 => out.push(0x98),
+                1 => out.push(0x9e),
+                2 => out.push(0x9f),
+                3 => out.push(0x9c),
+                4 => out.push(0x18),
+                _ => out.push(0x1a),
+            },
+        }
+    }
+    out
+}
+
+/// Parse `bytes` one byte at a time through `VTParser::parse_byte`, which is
+/// the algorithm that `Parser::parse` used before the Ground-state
+/// printable-ASCII fast path was added to `VTParser::parse`.  The resulting
+/// actions are coalesced with `Action::append_to`, exactly like the mux does.
+fn parse_reference_as_vec(bytes: &[u8]) -> Vec<Action> {
+    let mut parser = Parser::new();
+    let mut actions: Vec<Action> = Vec::new();
+    let mut perform = Performer {
+        callback: &mut |action: Action| action.append_to(&mut actions),
+        state: &mut parser.state.borrow_mut(),
+    };
+    for &b in bytes {
+        parser.state_machine.parse_byte(b, &mut perform);
+    }
+    actions
+}
+
+/// Parse `bytes` through `Parser::parse` as a single call, coalescing the
+/// resulting actions with `Action::append_to`.
+fn parse_merged_as_vec(bytes: &[u8]) -> Vec<Action> {
+    let mut actions: Vec<Action> = Vec::new();
+    Parser::new().parse(bytes, |action| action.append_to(&mut actions));
+    actions
+}
+
+/// Parse `bytes` through `Parser::parse` in fixed size chunks.
+fn parse_merged_fixed_chunks_as_vec(bytes: &[u8], chunk: usize) -> Vec<Action> {
+    let mut parser = Parser::new();
+    let mut actions: Vec<Action> = Vec::new();
+    for c in bytes.chunks(chunk.max(1)) {
+        parser.parse(c, |action| action.append_to(&mut actions));
+    }
+    actions
+}
+
+/// Parse `bytes` through `Parser::parse`, cutting it at the given offsets.
+fn parse_merged_random_chunks_as_vec(bytes: &[u8], plan: &[usize]) -> Vec<Action> {
+    let mut parser = Parser::new();
+    let mut actions: Vec<Action> = Vec::new();
+    let mut pos = 0;
+    for &len in plan {
+        if pos >= bytes.len() {
+            break;
+        }
+        let end = (pos + len.max(1)).min(bytes.len());
+        parser.parse(&bytes[pos..end], |action| action.append_to(&mut actions));
+        pos = end;
+    }
+    if pos < bytes.len() {
+        parser.parse(&bytes[pos..], |action| action.append_to(&mut actions));
+    }
+    actions
+}
+
+/// The bulk printable-ASCII fast path must produce exactly the same
+/// coalesced action stream as the original per-byte algorithm, whether the
+/// input is parsed as a whole or cut into arbitrary chunks.
+#[test]
+fn bulk_print_run_matches_reference_for_random_streams() {
+    for seed in 0..256u64 {
+        let mut rng = Rng::new(seed);
+        let events = 1 + rng.below(600);
+        let stream = gen_bytes(&mut rng, events);
+
+        let reference = parse_reference_as_vec(&stream);
+        assert_eq!(
+            parse_merged_as_vec(&stream),
+            reference,
+            "seed {}: whole-stream parse diverged",
+            seed
+        );
+
+        for &chunk in &[1usize, 2, 3, 5, 7, 13, 64, 4096] {
+            assert_eq!(
+                parse_merged_fixed_chunks_as_vec(&stream, chunk),
+                reference,
+                "seed {}: chunk size {} diverged",
+                seed,
+                chunk
+            );
+        }
+
+        // A random chunking, including single byte chunks.
+        let mut plan = Vec::new();
+        let mut remaining = stream.len();
+        while remaining > 0 {
+            let len = 1 + rng.below(128);
+            plan.push(len);
+            remaining = remaining.saturating_sub(len);
+        }
+        assert_eq!(
+            parse_merged_random_chunks_as_vec(&stream, &plan),
+            reference,
+            "seed {}: random chunking diverged",
+            seed
+        );
+    }
+}
+
+#[test]
+fn bulk_print_run_empty_input() {
+    assert_eq!(parse_merged_as_vec(b""), Vec::<Action>::new());
+    assert_eq!(parse_reference_as_vec(b""), Vec::<Action>::new());
+}
+
+/// A run of printable ASCII that ends exactly at a chunk boundary, with an
+/// escape sequence starting on the very next byte.
+#[test]
+fn bulk_print_run_ending_at_chunk_boundary() {
+    let stream = b"abc\x1b[0mxyz";
+    let reference = parse_reference_as_vec(stream);
+    assert_eq!(
+        reference,
+        vec![
+            Action::PrintString("abc".to_string()),
+            Action::CSI(CSI::Sgr(crate::csi::Sgr::Reset)),
+            Action::PrintString("xyz".to_string()),
+        ]
+    );
+
+    for len in 1..=stream.len() {
+        assert_eq!(
+            parse_merged_fixed_chunks_as_vec(stream, len),
+            reference,
+            "chunk size {} diverged",
+            len
+        );
+    }
+
+    let plan = vec![3, 6, 9, 1, 1];
+    assert_eq!(
+        parse_merged_random_chunks_as_vec(stream, &plan),
+        reference,
+        "chunk plan {:?} diverged",
+        plan
+    );
+}
+
+/// DEL (0x7f) is printable in the Ground state, so it must be printed by the
+/// fast path just like any other byte in 0x20..=0x7f.
+#[test]
+fn bulk_print_run_prints_del_in_ground() {
+    assert_eq!(parse_merged_as_vec(b"\x7f"), vec![Action::Print('\x7f')]);
+    let stream = b"abc\x7fdef";
+    assert_eq!(parse_merged_as_vec(stream), parse_reference_as_vec(stream));
+}
+
+/// Printable bytes inside an OSC or DCS payload are not in the Ground state,
+/// so they must not be printed: they belong to those sequences.
+#[test]
+fn bulk_print_run_not_used_inside_osc_or_dcs_payload() {
+    let stream = b"\x1b]0;hello world\x07\x1bP1;2qabc def\x1b\\";
+    let actions = parse_merged_as_vec(stream);
+    assert_eq!(actions, parse_reference_as_vec(stream));
+
+    // The OSC payload goes to the OSC dispatcher...
+    match &actions[0] {
+        Action::OperatingSystemCommand(osc) => match osc.as_ref() {
+            OperatingSystemCommand::SetIconNameAndWindowTitle(title) => {
+                assert_eq!(title, "hello world");
+            }
+            other => panic!("unexpected osc command: {:?}", other),
+        },
+        other => panic!("unexpected first action: {:?}", other),
+    }
+    // ...and nothing at all is printed: the DCS payload is consumed by the
+    // sixel builder rather than by the Ground fast path.
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, Action::Print(_) | Action::PrintString(_))),
+        "OSC/DCS payload must not be treated as printable text: {:?}",
+        actions
+    );
+
+    // A printable run that starts after the sequences are back in the
+    // Ground state still goes through the fast path.
+    let stream = b"\x1b]0;hello world\x07after\x1bP1;2qabc def\x1b\\tail";
+    let actions = parse_merged_as_vec(stream);
+    assert_eq!(actions, parse_reference_as_vec(stream));
+
+    let mut printed = String::new();
+    for action in &actions {
+        match action {
+            Action::PrintString(s) => printed.push_str(s),
+            Action::Print(c) => printed.push(*c),
+            _ => {}
+        }
+    }
+    assert_eq!(printed, "aftertail");
+}
+
+/// Printable ASCII following a utf-8 sequence that was split across chunk
+/// boundaries must still be printed by the fast path, and the partially
+/// received sequence must be completed by the next chunk.
+#[test]
+fn bulk_print_run_after_utf8_split_across_chunks() {
+    let stream = "a\u{451}bc\u{1f915}d".as_bytes().to_vec();
+    let reference = parse_reference_as_vec(&stream);
+    assert_eq!(parse_merged_as_vec(&stream), reference);
+
+    // Every chunk size, so that each possible split of the multi-byte
+    // sequences is exercised.
+    for len in 1..=stream.len() {
+        assert_eq!(
+            parse_merged_fixed_chunks_as_vec(&stream, len),
+            reference,
+            "chunk size {} diverged",
+            len
+        );
+    }
+
+    // Explicitly: "a" plus the lead byte of "ё" in one chunk, the rest of
+    // the sequence plus "bc" in the next.
+    let actions = parse_merged_random_chunks_as_vec(&stream, &[2, 5]);
+    assert_eq!(actions, reference);
+}
+
+/// `Performer::print_run` reports a whole run of printable ASCII as a single
+/// `PrintString`, which is what `Action::append_to` produces from the
+/// equivalent run of `Print` actions.
+#[test]
+fn bulk_print_run_reports_runs_as_print_string() {
+    assert_eq!(
+        Parser::new().parse_as_vec(b"hello world"),
+        vec![Action::PrintString("hello world".to_string())]
+    );
+
+    // A run split across two `parse` calls coalesces back into a single
+    // PrintString via `Action::append_to`.
+    let mut parser = Parser::new();
+    let mut actions: Vec<Action> = Vec::new();
+    parser.parse(b"hel", |action| action.append_to(&mut actions));
+    parser.parse(b"lo world", |action| action.append_to(&mut actions));
+    assert_eq!(
+        actions,
+        vec![Action::PrintString("hello world".to_string())]
+    );
+
+    // ...and single characters are still reported as `Print`.
+    assert_eq!(Parser::new().parse_as_vec(b"x"), vec![Action::Print('x')]);
 }
