@@ -6,6 +6,7 @@ mod control_codes;
 use bitflags::bitflags;
 mod image;
 mod mouse;
+mod narrow_table_test;
 mod osc;
 mod perf_bench;
 mod perf_probe;

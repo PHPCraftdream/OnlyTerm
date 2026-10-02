@@ -396,6 +396,11 @@ pub struct TerminalState {
     /// the two paths against the same input.
     #[cfg(test)]
     pub(crate) force_slow_print_path: bool,
+
+    /// Test-only counter of cells written through the narrow/ASCII bulk
+    /// print fast path; used to prove the fast path is (or is not) taken.
+    #[cfg(test)]
+    pub(crate) bulk_print_cells: usize,
 }
 
 #[derive(Debug)]
@@ -629,6 +634,8 @@ impl TerminalState {
             progress: Progress::default(),
             #[cfg(test)]
             force_slow_print_path: false,
+            #[cfg(test)]
+            bulk_print_cells: 0,
         }
     }
 

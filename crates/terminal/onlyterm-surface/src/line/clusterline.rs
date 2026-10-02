@@ -420,6 +420,61 @@ impl ClusteredLine {
         self.last_cell_width = NonZeroU8::new(1);
     }
 
+    /// Appends a run of single-cell characters (printable ASCII and/or
+    /// the term crate's `is_narrow_table_char` codepoints; chars ==
+    /// cells) that all share `attrs`, in one pass. Equivalent to calling
+    /// `append_grapheme(&char_i, 1, attrs.clone())` for each char of
+    /// `text` (cluster merge, `len`, `last_cell_width`, no wide bits),
+    /// but avoids the per-char cluster/bitset bookkeeping: since every
+    /// cell is single-width, `is_double_wide` never needs updating, and
+    /// the number of cells added is `text.chars().count()`.
+    pub fn append_narrow_run(&mut self, text: &str, attrs: CellAttributes) {
+        debug_assert!(!text.is_empty());
+        if text.is_empty() {
+            return;
+        }
+
+        let mut remaining = text;
+        while !remaining.is_empty() {
+            let extend_last = matches!(
+                self.clusters.last(),
+                Some(c) if c.attrs == attrs && (c.cell_width as usize) < u16::MAX as usize
+            );
+            let cap = if extend_last {
+                u16::MAX as usize - self.clusters.last().unwrap().cell_width as usize
+            } else {
+                u16::MAX as usize
+            };
+            // Byte offset of the first `cap` chars of `remaining` (all of
+            // it if it has no more than `cap` chars).
+            let mut take_bytes = remaining.len();
+            let mut left = cap;
+            for (i, _) in remaining.char_indices() {
+                if left == 0 {
+                    take_bytes = i;
+                    break;
+                }
+                left -= 1;
+            }
+            let (piece, rest) = remaining.split_at(take_bytes);
+            let piece_cells = piece.chars().count();
+            debug_assert!(piece_cells <= cap);
+            if extend_last {
+                self.clusters.last_mut().unwrap().cell_width += piece_cells as u16;
+            } else {
+                self.clusters.push(Cluster {
+                    attrs: attrs.clone(),
+                    cell_width: piece_cells as u16,
+                });
+            }
+            self.text.push_str(piece);
+            remaining = rest;
+        }
+
+        self.len += text.chars().count() as u32;
+        self.last_cell_width = NonZeroU8::new(1);
+    }
+
     pub fn prune_trailing_blanks(&mut self) -> bool {
         let num_spaces = self.text.chars().rev().take_while(|&c| c == ' ').count();
         if num_spaces == 0 {

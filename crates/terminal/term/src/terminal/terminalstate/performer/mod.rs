@@ -50,6 +50,57 @@ fn is_hebrew_diacritic(c: char) -> bool {
     )
 }
 
+/// Conservative allow-list of codepoints for which ALL of the following
+/// hold (verified by `narrow_table_soundness` in `test/narrow_table_test.rs`):
+///
+/// * `grapheme_column_width` is 1 for the terminal's configured
+///   `UnicodeVersion` (only when `ambiguous_are_wide` is false and no
+///   config `cell_widths` override is active -- the run detector gates on
+///   exactly that before consulting this table);
+/// * the char is not a grapheme extender, ZWJ, SpacingMark, Prepend,
+///   regional indicator, emoji modifier, Hangul jamo or control;
+/// * it forms its own single-codepoint grapheme next to any other member
+///   of this table or any printable ASCII, and is unchanged by NFC
+///   (whether as a lone char or adjacent to table members/ASCII).
+///
+/// Ranges (and why they are believed safe):
+/// * `0x00a1..=0x00ac`, `0x00ae..=0x00ff`: Latin-1 letters/punct minus the
+///   soft hyphen `0x00ad` (a format char, zero-width under NFC-stripping
+///   interpretations). All letters there are precomposed (NFC fixed
+///   points) and not Extend.
+/// * `0x0100..=0x024f`: Latin Extended-A/B, all precomposed letters.
+/// * `0x0384..=0x0386`, `0x0388..=0x03ff`: Greek (minus U+0387
+///   GREEK MIDDLE DOT, which NFC rewrites to U+00B7) (all codepoints in the range are assigned;
+///   none has Extend/SpacingMark GCB).
+/// * `0x0400..=0x0481`: Cyrillic up to just before the combining marks at
+///   `0x0482..=0x0489` (U+0482 COMBINING CYRILLIC TEN MILLIONS SIGN and
+///   friends are grapheme extenders and must NOT be bulked);
+///   `0x048a..=0x04ff`: the rest of Cyrillic after those combining marks.
+/// * `0x2010..=0x2027` and `0x2030..=0x205e`: general punctuation,
+///   deliberately excluding `0x2028..0x202f` (line/paragraph separators,
+///   directional marks, narrow no-break space) and `0x2000..0x200f`
+///   (spaces and format chars such as ZWJ at `0x200d`).
+/// * `0x2500..=0x259f`: box drawing and block elements.
+///
+/// Deliberately NOT included: arrows/math/currency (width table churn),
+/// East-Asian Ambiguous-sensitive ranges under `ambiguous_are_wide`
+/// (handled by the gate in `narrow_bulk_run_len`), Hebrew (niqqud
+/// handling), and anything above `0x259f`.
+pub(crate) fn is_narrow_table_char(c: char) -> bool {
+    matches!(c as u32,
+        0x00a1..=0x00ac
+        | 0x00ae..=0x00ff
+        | 0x0100..=0x024f
+        | 0x0384..=0x0386
+        | 0x0388..=0x03ff
+        | 0x0400..=0x0481
+        | 0x048a..=0x04ff
+        | 0x2010..=0x2027
+        | 0x2030..=0x205e
+        | 0x2500..=0x259f
+    )
+}
+
 /// A helper struct for implementing `vtparse::VTActor` while compartmentalizing
 /// the terminal state and the embedding/host terminal interface
 pub(crate) struct Performer<'a> {
@@ -167,9 +218,9 @@ impl<'a> Performer<'a> {
         let mut pos = 0usize;
         while pos < text.len() {
             if bulk_eligible && !self.wrap_next {
-                let run_len = self.ascii_bulk_run_len(&text[pos..]);
+                let (run_len, run_cells) = self.narrow_bulk_run_len(&text[pos..]);
                 if run_len > 0 {
-                    self.print_ascii_run(&text[pos..pos + run_len], seqno);
+                    self.print_narrow_run(&text[pos..pos + run_len], run_cells, seqno);
                     pos += run_len;
                     continue;
                 }
@@ -205,59 +256,111 @@ impl<'a> Performer<'a> {
         charset == CharSet::Ascii
     }
 
-    /// Returns the number of bytes (== number of cells, since ASCII is one
-    /// byte per cell) of `rest` that can be written via the bulk path
-    /// starting at the current cursor position: a maximal run of
-    /// printable ASCII (0x20..=0x7E), clipped to strictly before the last
-    /// column of the right margin (that column is left to the slow path,
-    /// so wrap handling stays in one place), and with its last character
-    /// dropped if the character right after the run is non-ASCII (it
-    /// could be a combining mark, ZWJ, or variation selector that joins
-    /// with it into one grapheme).
-    fn ascii_bulk_run_len(&self, rest: &str) -> usize {
+    /// Returns the number of bytes of `rest` that can be written via the
+    /// bulk path starting at the current cursor position: a maximal run of
+    /// printable ASCII and/or `is_narrow_table_char` codepoints (chars ==
+    /// cells for every member of that set), clipped to strictly before the
+    /// last column of the right margin (that column is left to the slow
+    /// path, so wrap handling stays in one place), and with its last
+    /// character dropped if the run stops before the end of `rest` (the
+    /// next character could be a combining mark, ZWJ, or variation
+    /// selector that joins with it into one grapheme).
+    ///
+    /// Non-ASCII table chars are only accepted when the configured
+    /// `UnicodeVersion` cannot make them wider than 1: no
+    /// `ambiguous_are_wide` (several table ranges are East-Asian
+    /// Ambiguous) and no config `cell_widths` override. Under either,
+    /// only plain ASCII is bulked.
+    fn narrow_bulk_run_len(&self, rest: &str) -> (usize, usize) {
         let x = self.cursor.x;
         let margins = &self.left_and_right_margins;
         if x < margins.start || x >= margins.end {
-            return 0;
+            return (0, 0);
         }
         let last_col = margins.end.saturating_sub(1);
         if x >= last_col {
-            return 0;
+            return (0, 0);
         }
-        let max_by_margin = last_col - x;
+        let max_cells = last_col - x;
+
+        // Non-ASCII table chars are only accepted when the configured
+        // `UnicodeVersion` cannot make them wider than 1: no
+        // `ambiguous_are_wide` (several table ranges are East-Asian
+        // Ambiguous) and no config `cell_widths` override. Under either,
+        // only plain ASCII is bulked.
+        let allow_table =
+            !self.unicode_version.ambiguous_are_wide && self.unicode_version.cell_widths.is_none();
 
         let bytes = rest.as_bytes();
-        let cap = max_by_margin.min(bytes.len());
+        // Alternating scan: a tight tight-loop over printable ASCII bytes
+        // (cells == bytes, identical in shape to the pre-OPT-2
+        // `ascii_bulk_run_len`) interleaved with per-char table lookups
+        // for non-ASCII runs, so a single mixed run (e.g. Cyrillic word,
+        // space, Cyrillic word) is still ONE bulk run.
         let mut n = 0usize;
-        while n < cap && (0x20..=0x7e).contains(&bytes[n]) {
-            n += 1;
+        let mut cells = 0usize;
+        loop {
+            let start = n;
+            let ascii_cap = max_cells.min(bytes.len());
+            while n < ascii_cap && (0x20..=0x7e).contains(&bytes[n]) {
+                n += 1;
+            }
+            cells += n - start;
+
+            if !(allow_table && n < bytes.len() && bytes[n] >= 0x80 && cells < max_cells) {
+                break;
+            }
+            let c = match rest[n..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
+            if !is_narrow_table_char(c) {
+                break;
+            }
+            n += c.len_utf8();
+            cells += 1;
         }
+
         if n == 0 {
-            return 0;
+            return (0, 0);
         }
-        if n < bytes.len() && bytes[n] >= 0x80 {
-            // The next character is non-ASCII and might be a combining
-            // mark/ZWJ/variation selector for the last ASCII char in the
-            // run; leave that char to the slow path so it stays joined.
-            n -= 1;
+        if n < bytes.len() {
+            // The run stops before the end of the buffer and whatever
+            // follows is not a member of the run set (printable ASCII and
+            // table chars would have been absorbed above); it could be a
+            // combining mark/ZWJ/variation selector joining with the run's
+            // last char into one grapheme, so leave that char to the slow
+            // path so it stays joined.
+            let last_len = rest[..n].chars().last().map(|c| c.len_utf8()).unwrap_or(0);
+            n -= last_len;
+            cells -= 1;
+            if cells == 0 {
+                return (0, 0);
+            }
         }
-        n
+        (n, cells)
     }
 
-    /// Bulk-prints a run of single-width printable ASCII produced by
-    /// `ascii_bulk_run_len`. By construction the run never reaches the
+    /// Bulk-prints a run of single-cell characters (printable ASCII and/or
+    /// `is_narrow_table_char` codepoints) produced by
+    /// `narrow_bulk_run_len`. By construction the run never reaches the
     /// last column of the right margin, so it can never wrap: `wrap_next`
     /// handling, DECAWM and the ConPTY wrap-mark logic all stay solely in
     /// `print_one_grapheme`.
-    fn print_ascii_run(&mut self, run: &str, seqno: SequenceNo) {
+    fn print_narrow_run(&mut self, run: &str, cells: usize, seqno: SequenceNo) {
         let x = self.cursor.x;
         let y = self.cursor.y;
         let pen = self.pen.clone();
 
         log::trace!("print bulk x={} y={} len={} {:?}", x, y, run.len(), pen);
-        self.screen_mut().set_ascii_run(x, y, run, &pen, seqno);
+        self.screen_mut().set_narrow_run(x, y, run, &pen, seqno);
 
-        self.cursor.x += run.len();
+        #[cfg(test)]
+        {
+            self.state.bulk_print_cells += cells;
+        }
+
+        self.cursor.x += cells;
         self.wrap_next = false;
     }
 

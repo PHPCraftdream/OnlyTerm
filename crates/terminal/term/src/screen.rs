@@ -222,6 +222,23 @@ impl Screen {
         line.set_ascii_run(x, text, attr, seqno);
     }
 
+    /// Bulk equivalent of `set_cell_grapheme` for a run of single-cell
+    /// characters (printable ASCII and/or the performer's narrow table)
+    /// sharing one attribute set; see `Line::set_narrow_run`.
+    pub fn set_narrow_run(
+        &mut self,
+        x: usize,
+        y: VisibleRowIndex,
+        text: &str,
+        attr: &CellAttributes,
+        seqno: SequenceNo,
+    ) {
+        self.note_output_row(y);
+        let line_idx = self.phys_row(y);
+        let line = self.line_mut(line_idx);
+        line.set_narrow_run(x, text, attr, seqno);
+    }
+
     pub fn get_cell(&mut self, x: usize, y: VisibleRowIndex) -> Option<&Cell> {
         let line_idx = self.phys_row(y);
         let line = self.lines.get_mut(line_idx)?;

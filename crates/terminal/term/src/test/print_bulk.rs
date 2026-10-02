@@ -7,7 +7,8 @@
 //! cursor and `wrap_next` state. Covers plain ASCII, CR/LF, cursor moves,
 //! SGR, OSC 8 hyperlinks, combining marks right after ASCII, CJK wide
 //! chars, VS16 emoji, G0/G1 charset switches + SO/SI, insert mode,
-//! DECAWM, DECLRMM/DECSLRM margins and scroll regions, crossed with NFC
+//! DECAWM, DECLRMM/DECSLRM margins and scroll regions, Hebrew diacritics,
+//! random mid-run chunk splits, crossed with NFC
 //! normalization and ConPTY quirks on/off.
 use super::*;
 use k9::assert_equal as assert_eq;
@@ -43,9 +44,33 @@ impl Lcg {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DiffConfig {
     nfc: bool,
+    unicode_version: UnicodeVersion,
+}
+
+impl DiffConfig {
+    fn new(nfc: bool) -> Self {
+        DiffConfig {
+            nfc,
+            // Matches `TerminalConfiguration::unicode_version`'s default
+            // (version 9, ambiguous narrow, no cell_widths overrides), so
+            // the pre-existing differential tests are unchanged.
+            unicode_version: UnicodeVersion {
+                version: 9,
+                ambiguous_are_wide: false,
+                cell_widths: None,
+            },
+        }
+    }
+
+    fn with_unicode_version(nfc: bool, unicode_version: UnicodeVersion) -> Self {
+        DiffConfig {
+            nfc,
+            unicode_version,
+        }
+    }
 }
 
 impl TerminalConfiguration for DiffConfig {
@@ -57,6 +82,9 @@ impl TerminalConfiguration for DiffConfig {
     }
     fn scrollback_size(&self) -> usize {
         SCROLLBACK
+    }
+    fn unicode_version(&self) -> UnicodeVersion {
+        self.unicode_version.clone()
     }
 }
 
@@ -73,7 +101,7 @@ fn make_term(nfc: bool, conpty: bool, force_slow: bool) -> Terminal {
             pixel_height: ROWS * 16,
             dpi: 0,
         },
-        Arc::new(DiffConfig { nfc }),
+        Arc::new(DiffConfig::new(nfc)),
         "OnlyTerm",
         "0.0.0",
         Box::new(Vec::new()),
@@ -105,10 +133,20 @@ fn gen_stream(rng: &mut Lcg, events: usize) -> Vec<u8> {
     ];
     const SGR_CODES: &[u32] = &[0, 1, 4, 7, 22, 27, 31, 32, 34, 41, 44, 90];
     const CJK: &[&str] = &["日", "本", "中", "文", "国"];
+    const CYRILLIC: &[&str] = &["привет", "мир", "ЁЖИК", "ъэюя", "Эпопея"];
+    const GREEK: &[&str] = &["αβγδε", "Ωμέγα"];
+    const LATIN: &[&str] = &["café", "naïve", "Straße", "ĐžŔ", "ændřę"];
+    const BOX: &[&str] = &["┌─┐│└┘", "████▓▒░", "╔═╝"];
+    const PUNCT: &[&str] = &["«…»", "—–", "†‡•", "‰′″"];
+    // Hebrew consonant + niqqud/cantillation (dropped by the slow path).
+    const HEBREW: &[&str] = &["אְ", "בּ", "שָׁ", "לְ"];
+    // Combining mark directly after a table char.
+    const TABLE_PLUS_MARK: &[&str] = &["я́", "α̈", "ё̑"];
+    const ZWJ_SEQ: &[&str] = &["👨‍👩", "❤️"];
 
     let mut out = Vec::new();
     for _ in 0..events {
-        match rng.below(20) {
+        match rng.below(27) {
             0 | 1 => {
                 let w = ASCII_WORDS[rng.below(ASCII_WORDS.len())];
                 out.extend_from_slice(w.as_bytes());
@@ -133,6 +171,16 @@ fn gen_stream(rng: &mut Lcg, events: usize) -> Vec<u8> {
             10 => out.extend_from_slice("e\u{0301}".as_bytes()), // "e" + combining acute
             11 => out.extend_from_slice("n\u{0303}".as_bytes()), // "n" + combining tilde
             12 => out.extend_from_slice(CJK[rng.below(CJK.len())].as_bytes()),
+            19 => out.extend_from_slice(CYRILLIC[rng.below(CYRILLIC.len())].as_bytes()),
+            20 => out.extend_from_slice(GREEK[rng.below(GREEK.len())].as_bytes()),
+            21 => out.extend_from_slice(LATIN[rng.below(LATIN.len())].as_bytes()),
+            22 => out.extend_from_slice(BOX[rng.below(BOX.len())].as_bytes()),
+            23 => out.extend_from_slice(PUNCT[rng.below(PUNCT.len())].as_bytes()),
+            24 => out.extend_from_slice(HEBREW[rng.below(HEBREW.len())].as_bytes()),
+            25 => {
+                out.extend_from_slice(TABLE_PLUS_MARK[rng.below(TABLE_PLUS_MARK.len())].as_bytes())
+            }
+            26 => out.extend_from_slice(ZWJ_SEQ[rng.below(ZWJ_SEQ.len())].as_bytes()),
             13 => out.extend_from_slice("1\u{fe0f}\u{20e3}".as_bytes()), // keycap "1" + VS16
             14 => out.extend_from_slice(if rng.chance_one_in(2) {
                 b"\x1b(0"
@@ -221,8 +269,17 @@ fn bulk_ascii_print_matches_slow_path_for_random_streams() {
                 let mut fast = make_term(nfc, conpty, false);
                 let mut slow = make_term(nfc, conpty, true);
 
-                fast.advance_bytes(&stream);
-                slow.advance_bytes(&stream);
+                // Feed in randomly-sized chunks so the print buffer is
+                // flushed at arbitrary byte offsets, including in the
+                // middle of a multi-byte run.
+                let mut off = 0usize;
+                while off < stream.len() {
+                    let step = 1 + rng.below(24);
+                    let end = (off + step).min(stream.len());
+                    fast.advance_bytes(&stream[off..end]);
+                    slow.advance_bytes(&stream[off..end]);
+                    off = end;
+                }
 
                 assert_eq!(
                     observe(&fast),
@@ -254,4 +311,154 @@ fn space_run_past_end_of_clustered_line_matches_slow_path() {
         slow.advance_bytes(&stream);
         assert_eq!(observe(&fast), observe(&slow), "conpty={}", conpty);
     }
+}
+
+/// The bulk fast path must be taken for Cyrillic text, and must NOT be
+/// taken in insert mode, under `force_slow_print_path`, or for combining
+/// sequences (a base char directly followed by a combining mark is left
+/// to the slow path).
+#[test]
+fn fast_path_counter_cyrillic_taken_and_conditions() {
+    fn make() -> Terminal {
+        let mut term = make_term(false, false, false);
+        term.bulk_print_cells = 0;
+        term
+    }
+
+    // Plain Cyrillic must hit the bulk path.
+    let mut term = make();
+    term.advance_bytes("привет мир".as_bytes());
+    assert_eq!(
+        term.bulk_print_cells, 10,
+        "Cyrillic must be printed via the bulk fast path"
+    );
+
+    // Box drawing too.
+    let mut term = make();
+    term.advance_bytes("┌─┐".as_bytes());
+    assert_eq!(term.bulk_print_cells, 3);
+
+    // force_slow_print_path disables it entirely.
+    let mut slow = make_term(false, false, true);
+    slow.bulk_print_cells = 0;
+    slow.advance_bytes("привет".as_bytes());
+    assert_eq!(slow.bulk_print_cells, 0);
+
+    // Insert mode disables it.
+    let mut ins = make();
+    ins.advance_bytes(b"\x1b[4h");
+    ins.bulk_print_cells = 0;
+    ins.advance_bytes("привет".as_bytes());
+    assert_eq!(ins.bulk_print_cells, 0);
+
+    // A combining mark directly after a Cyrillic base: the base must be
+    // left to the slow path (the mark fuses with it into one grapheme).
+    let mut marks = make();
+    marks.advance_bytes("я́".as_bytes());
+    assert_eq!(
+        marks.bulk_print_cells, 0,
+        "a base directly followed by a combining mark must not be bulked"
+    );
+
+    // ...but the same text followed by regular members resumes bulking.
+    let mut resume = make();
+    resume.advance_bytes("я́привет".as_bytes());
+    assert_eq!(resume.bulk_print_cells, 6);
+}
+
+/// Builds a terminal configured with an explicit `UnicodeVersion`.
+fn make_term_uv(uv: UnicodeVersion, conpty: bool, force_slow: bool) -> Terminal {
+    let mut term = Terminal::new(
+        TerminalSize {
+            rows: ROWS,
+            cols: COLS,
+            pixel_width: COLS * 8,
+            pixel_height: ROWS * 16,
+            dpi: 0,
+        },
+        Arc::new(DiffConfig::with_unicode_version(false, uv)),
+        "OnlyTerm",
+        "0.0.0",
+        Box::new(Vec::new()),
+    );
+    if conpty {
+        term.enable_conpty_quirks();
+    }
+    term.force_slow_print_path = force_slow;
+    term
+}
+
+/// Table chars that are East-Asian Ambiguous (box drawing, dashes,
+/// punctuation) must NOT be bulked when the config says
+/// `ambiguous_are_wide`: the fast path would write width-1 cells where the
+/// slow path writes width 2. ASCII stays eligible for the bulk path.
+#[test]
+fn bulk_skips_table_chars_when_ambiguous_are_wide() {
+    let uv = UnicodeVersion {
+        version: 9,
+        ambiguous_are_wide: true,
+        cell_widths: None,
+    };
+    // Short enough to stay on one line (COLS=12), so the assertion below
+    // is not confounded by wrap/handback effects at the right margin.
+    let stream: &str = "ab\u{410}\u{44f}\u{00ab}cd";
+
+    let mut fast = make_term_uv(uv.clone(), false, false);
+    fast.bulk_print_cells = 0;
+    let mut slow = make_term_uv(uv, false, true);
+    slow.bulk_print_cells = 0;
+
+    fast.advance_bytes(stream.as_bytes());
+    slow.advance_bytes(stream.as_bytes());
+
+    // With allow_table off, only ASCII is bulked; the run "ab" stops at
+    // the table char and its last char is left to the slow path (possible
+    // combining mark), as is "b". So the bulked cells are "a" + "cd" = 3.
+    assert_eq!(
+        fast.bulk_print_cells, 3,
+        "with ambiguous_are_wide, only ASCII cells may be bulked"
+    );
+    assert_eq!(slow.bulk_print_cells, 0);
+    assert_eq!(
+        observe(&fast),
+        observe(&slow),
+        "ambiguous_are_wide terminal state must match the slow path"
+    );
+}
+
+/// A config `cell_widths` override that widens a table char must disable
+/// the table-char fast path for the whole flush: bulk only for ASCII.
+#[test]
+fn bulk_skips_table_chars_when_cell_widths_override() {
+    let mut widths = std::collections::HashMap::new();
+    // Make a Cyrillic letter and a box-drawing char 2 cells wide.
+    widths.insert(0x0410u32, 2u8);
+    widths.insert(0x2500u32, 2u8);
+    let uv = UnicodeVersion {
+        version: 9,
+        ambiguous_are_wide: false,
+        cell_widths: Some(Arc::new(widths)),
+    };
+    let stream: &str = "ab\u{410}\u{431}\u{2500}cd";
+
+    let mut fast = make_term_uv(uv.clone(), false, false);
+    fast.bulk_print_cells = 0;
+    let mut slow = make_term_uv(uv, false, true);
+    slow.bulk_print_cells = 0;
+
+    fast.advance_bytes(stream.as_bytes());
+    slow.advance_bytes(stream.as_bytes());
+
+    // Same handback arithmetic as in the ambiguous_are_wide test:
+    // only "a" + "cd" = 3 ASCII cells may be bulked.
+    assert_eq!(
+        fast.bulk_print_cells, 3,
+        "with cell_widths overrides, only ASCII cells may be bulked"
+    );
+    assert_eq!(slow.bulk_print_cells, 0);
+    assert_eq!(
+        observe(&fast),
+        observe(&slow),
+        "cell_widths-overridden terminal state must match the slow path"
+    );
 }
