@@ -281,9 +281,12 @@ impl Line {
         self.update_last_change_seqno(seqno);
         if let CellStorage::C(cl) = &mut self.cells {
             let cl = Arc::make_mut(cl);
-            if cl.len() == 0 {
+            if cl.len() == 0 && cl.has_no_clusters() {
                 // Need to mark that implicit space as wrapped, so
-                // explicitly add it
+                // explicitly add it. The cluster check matters for a line
+                // whose only cell is zero-width: `len()` is 0 there too,
+                // but the cell is real content (matching Vec storage,
+                // which sets the flag on it without appending anything).
                 cl.append(Cell::blank());
             }
             cl.set_last_cell_was_wrapped(wrapped);

@@ -227,22 +227,11 @@ fn build_line(ops: &[Op], pool: &[CellAttributes], seqno: SequenceNo) -> Line {
                 line.set_ascii_run(idx, &run, &pool[*attrs], seqno);
             }
             Op::Wrapped(v) => {
-                // Skip on lines carrying a zero-width cluster (e.g. after
-                // Ctrl): the *reference* implementation underflows there --
-                // in C storage the iterator reports width 1 for a
-                // zero-width cell while the cluster accounting recorded 0,
-                // so `set_last_cell_was_wrapped` computes `0 - 1`. A
-                // pre-existing limitation of the shared oracle, so the
-                // input and its replay skip it identically. (Such lines are
-                // still wrapped by the differential tests, where
-                // `wrap_keeping` falls back to the reference for them.)
-                let degenerate = matches!(
-                    &line.cells,
-                    crate::line::storage::CellStorage::C(cl) if !cl.clusters_consistent()
-                );
-                if !degenerate {
-                    line.set_last_cell_was_wrapped(*v, seqno);
-                }
+                // BUG-33 (zero-width trailing cluster underflow) is fixed in
+                // `ClusteredLine::set_last_cell_was_wrapped`, so this no
+                // longer skips degenerate (zero-width-cluster) lines: the
+                // property tests exercise them directly.
+                line.set_last_cell_was_wrapped(*v, seqno);
             }
             Op::Prune => line.prune_trailing_blanks(seqno),
             Op::Bidi { enabled, dir } => line.set_bidi_info(*enabled, DIRECTIONS[*dir], seqno),
@@ -265,18 +254,11 @@ fn build_line(ops: &[Op], pool: &[CellAttributes], seqno: SequenceNo) -> Line {
                 if !line.is_empty() {
                     let idx = line.len().saturating_sub(1 + *back);
                     let cells = line.cells_mut_for_attr_changes_only();
-                    // Skip recolors that could isolate a trailing zero-width
-                    // cell into its own width-0 cluster (via a later
-                    // compress): the *reference* implementation underflows
-                    // there (`from_cell_vec` records `last_cell_width = 1`
-                    // for a zero-width cell, then
-                    // `set_last_cell_was_wrapped` computes `0 - 1`). A
-                    // limitation of the shared oracle, not of the fast path.
-                    let n = cells.len();
-                    let last_is_zero_width = cells[n - 1].width() == 0;
-                    let could_isolate_tail = idx + 2 >= n;
+                    // Recolors that isolate a trailing zero-width cell into
+                    // its own width-0 cluster are exercised too since the
+                    // BUG-33 fix in `set_last_cell_was_wrapped`.
                     if let Some(cell) = cells.get_mut(idx) {
-                        if cell.width() > 0 && !(last_is_zero_width && could_isolate_tail) {
+                        if cell.width() > 0 {
                             *cell.attrs_mut() = pool[*attrs].clone();
                         }
                     }

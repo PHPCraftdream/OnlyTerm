@@ -36,6 +36,9 @@ mod reflow_fastpath_test;
 #[cfg(test)]
 #[path = "../tests/wrap_whitespace_fastpath_test.rs"]
 mod wrap_whitespace_fastpath_test;
+#[cfg(test)]
+#[path = "../tests/zero_width_wrap_test.rs"]
+mod zero_width_wrap_test;
 
 #[cfg_attr(feature = "use_serde", derive(Serialize, Deserialize))]
 pub struct Line {

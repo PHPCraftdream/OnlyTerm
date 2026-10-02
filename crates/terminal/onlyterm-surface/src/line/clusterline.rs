@@ -515,6 +515,14 @@ impl ClusteredLine {
                 .unwrap_or(false)
     }
 
+    /// True when the line carries no cells at all. Unlike `len() == 0`,
+    /// this is false for a line whose only cell is zero-width (its cluster
+    /// exists but covers zero columns): such a line has real content and
+    /// must not have an implicit blank appended in front of it.
+    pub(crate) fn has_no_clusters(&self) -> bool {
+        self.clusters.is_empty()
+    }
+
     fn compute_last_cell_width(&mut self) -> Option<NonZeroU8> {
         if self.last_cell_width.is_none() {
             if let Some(last_cell) = self.iter().last() {
@@ -531,15 +539,26 @@ impl ClusteredLine {
                 let mut attrs = last_cluster.attrs.clone();
                 attrs.set_wrapped(wrapped);
 
-                if last_cluster.cell_width == width {
-                    // Re-purpose final cluster
-                    last_cluster.attrs = attrs;
+                if last_cluster.cell_width >= width {
+                    if last_cluster.cell_width == width {
+                        // Re-purpose final cluster
+                        last_cluster.attrs = attrs;
+                    } else {
+                        last_cluster.cell_width -= width;
+                        self.clusters.push(Cluster {
+                            cell_width: width,
+                            attrs,
+                        });
+                    }
                 } else {
-                    last_cluster.cell_width -= width;
-                    self.clusters.push(Cluster {
-                        cell_width: width,
-                        attrs,
-                    });
+                    // Degenerate trailing zero-width cell (e.g. a control
+                    // byte or combining mark stored at width 0): its
+                    // cluster covers zero columns, so there is nothing to
+                    // split off -- the wrapped attribute goes on that
+                    // cluster itself, exactly like Vec storage sets it on
+                    // the last visible cell. (BUG-33: this used to compute
+                    // `0 - width`.)
+                    last_cluster.attrs = attrs;
                 }
             }
         }
