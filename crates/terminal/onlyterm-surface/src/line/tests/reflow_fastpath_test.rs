@@ -419,8 +419,26 @@ fn append_line_matches_reference_on_random_pairs() {
         let mut rng = Lcg::new(seed);
         let pool = attrs_pool(&link_a, &link_b);
         let seqno = SEQ_ZERO + (seed % 5) as SequenceNo;
-        let ops_a = gen_ops(&mut rng);
-        let ops_b = gen_ops(&mut rng);
+        let mut ops_a = gen_ops(&mut rng);
+        let mut ops_b = gen_ops(&mut rng);
+
+        // OPT-4 phase D coverage arms (additive): gap cases the
+        // shared op generator only reaches by luck.
+        match rng.below(8) {
+            0 => ops_a.clear(), // empty self
+            1 => ops_b.clear(), // empty other
+            // self ends with a wide cell
+            2 => ops_a.push(Op::Grapheme {
+                text: 5,
+                attrs: rng.below(ATTR_COUNT),
+            }),
+            // other is a single huge cluster
+            3 => ops_b.push(Op::LongAsciiRun {
+                len: 200 + rng.below(400),
+                attrs: rng.below(ATTR_COUNT),
+            }),
+            _ => {}
+        }
 
         let shared_other = seed % 2 == 0;
         let ctx = format!("seed={} shared_other={}", seed, shared_other);
@@ -585,6 +603,200 @@ fn append_line_targeted_cases_match_reference() {
     }
 }
 
+/// Cells that the text segmentation fuses into one grapheme, either inside
+/// `other` or across the join with `self`: the recorded cells and the real
+/// segmentation disagree, so the append fast path must fall back to the
+/// reference. Covers one codepoint class per UTF-8 leading-byte group used by
+/// the cheap gate (combining marks, ZWJ, variation selector, emoji modifier,
+/// regional indicators, Hangul jamo, Prepend and SpacingMark characters).
+#[test]
+fn append_line_fusing_graphemes_match_reference() {
+    type Cells = &'static [(&'static str, usize)];
+    let cases: &[(&str, Cells, Cells)] = &[
+        // Fusing inside `other`.
+        (
+            "other: base + combining",
+            &[("a", 1)],
+            &[("k", 1), ("\u{301}", 1)],
+        ),
+        (
+            "other: emoji + zwj",
+            &[("a", 1)],
+            &[("👍", 2), ("\u{200d}", 1)],
+        ),
+        (
+            "other: emoji + modifier",
+            &[("a", 1)],
+            &[("👍", 2), ("\u{1f3fb}", 2)],
+        ),
+        (
+            "other: regional indicator pair",
+            &[("a", 1)],
+            &[("\u{1f1f7}", 1), ("\u{1f1fa}", 1)],
+        ),
+        (
+            "other: hangul jamo",
+            &[("a", 1)],
+            &[("\u{1100}", 2), ("\u{1161}", 1)],
+        ),
+        (
+            "other: prepend + base",
+            &[("a", 1)],
+            &[("\u{600}", 1), ("a", 1)],
+        ),
+        (
+            "other: base + variation selector",
+            &[("a", 1)],
+            &[("a", 1), ("\u{fe0f}", 1)],
+        ),
+        (
+            "other: base + spacing mark",
+            &[("a", 1)],
+            &[("\u{915}", 1), ("\u{93e}", 1)],
+        ),
+        // One extender per distinct UTF-8 leading byte of the cheap gate, so
+        // that dropping any single byte from its set is caught.
+        (
+            "other: base + U+0345 (CD)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{345}", 1)],
+        ),
+        (
+            "other: base + U+0483 (D2)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{483}", 1)],
+        ),
+        (
+            "other: base + U+05B0 (D6)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{5b0}", 1)],
+        ),
+        (
+            "other: base + U+05C1 (D7)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{5c1}", 1)],
+        ),
+        (
+            "other: base + U+064B (D9)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{64b}", 1)],
+        ),
+        (
+            "other: base + U+0E31 (E0)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{e31}", 1)],
+        ),
+        (
+            "other: base + zwnj (E2)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{200c}", 1)],
+        ),
+        (
+            "other: base + zwj (E2)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{200d}", 1)],
+        ),
+        (
+            "other: base + U+20D0 (E2)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{20d0}", 1)],
+        ),
+        (
+            "other: base + U+3099 (E3)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{3099}", 1)],
+        ),
+        (
+            "other: base + tag char (F3)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{e0020}", 1)],
+        ),
+        (
+            "other: base + U+E0100 (F3)",
+            &[("a", 1)],
+            &[("a", 1), ("\u{e0100}", 1)],
+        ),
+        // Fusing across the join.
+        (
+            "join: base | combining",
+            &[("a", 1), ("e", 1)],
+            &[("\u{301}", 1), ("b", 1)],
+        ),
+        (
+            "join: base | zwj",
+            &[("a", 1)],
+            &[("\u{200d}", 1), ("b", 1)],
+        ),
+        (
+            "join: emoji | modifier",
+            &[("👍", 2)],
+            &[("\u{1f3fb}", 2), ("b", 1)],
+        ),
+        (
+            "join: regional indicator | regional indicator",
+            &[("\u{1f1f7}", 1)],
+            &[("\u{1f1fa}", 1), ("b", 1)],
+        ),
+        (
+            "join: hangul | hangul",
+            &[("\u{1100}", 2)],
+            &[("\u{1161}", 1), ("b", 1)],
+        ),
+        (
+            "join: prepend | base",
+            &[("\u{600}", 1)],
+            &[("a", 1), ("b", 1)],
+        ),
+        (
+            "join: base | variation selector",
+            &[("a", 1)],
+            &[("\u{fe0f}", 1), ("b", 1)],
+        ),
+        (
+            "join: base | spacing mark",
+            &[("\u{915}", 1)],
+            &[("\u{93e}", 1), ("b", 1)],
+        ),
+        (
+            "join: emoji zwj | emoji",
+            &[("👍", 2), ("\u{200d}", 1)],
+            &[("👍", 2), ("b", 1)],
+        ),
+        // Sanity: nothing fuses, the fast path is allowed.
+        ("plain", &[("a", 1)], &[("b", 1), ("ж", 1), ("漢", 2)]),
+    ];
+    let plain = CellAttributes::default();
+    let bold = CellAttributes::default()
+        .set_intensity(Intensity::Bold)
+        .clone();
+    for (name, first, second) in cases {
+        for self_clustered in [false, true] {
+            for other_attrs in [&plain, &bold] {
+                let build = |cells: Cells, attrs: &CellAttributes, clustered: bool| {
+                    let mut line = Line::new(SEQ_ZERO);
+                    for (text, width) in cells {
+                        line.set_cell_grapheme(line.len(), text, *width, attrs.clone(), SEQ_ZERO);
+                    }
+                    if clustered {
+                        line.compress_for_scrollback();
+                    }
+                    line
+                };
+                let seq = SEQ_ZERO + 20;
+                let mut a = build(first, &plain, self_clustered);
+                let mut a_ref = build(first, &plain, self_clustered);
+                a.append_line(build(second, other_attrs, false), seq);
+                a_ref.append_line_reference(build(second, other_attrs, false), seq);
+                assert_same(
+                    &[a],
+                    &[a_ref],
+                    &format!("case={} self_clustered={}", name, self_clustered),
+                );
+            }
+        }
+    }
+}
+
 /// Proves the fast path is actually taken for ordinary C-storage input
 /// (and still produces the right number of pieces), and that Vec storage
 /// falls back to the reference oracle.
@@ -617,5 +829,97 @@ fn wrap_keeping_fast_path_taken_on_clustered_storage() {
         super::editing::wrap_fast_path_hits(),
         0,
         "Vec storage must fall back to the reference oracle"
+    );
+}
+
+/// Proves the append fast path is taken for ordinary C+C input and NOT
+/// taken for the fallback cases (V storage on either side, control bytes
+/// in `other`, `u16` length overflow); every fallback must still equal
+/// the reference oracle.
+#[test]
+fn append_line_fast_path_taken_on_clustered_storage() {
+    let plain = CellAttributes::default();
+    let build = |texts: &[&str]| -> Line {
+        let mut line = Line::new(SEQ_ZERO);
+        for (i, g) in texts.iter().enumerate() {
+            line.set_cell_grapheme(line.len(), g, 1, plain.clone(), SEQ_ZERO + i as SequenceNo);
+        }
+        line
+    };
+    let assert_equal = |mut a: Line, b: Line, ctx: &str| {
+        let mut a_ref = a.clone();
+        let b_ref = b.clone();
+        a.append_line(b, SEQ_ZERO + 30);
+        a_ref.append_line_reference(b_ref, SEQ_ZERO + 30);
+        assert_same(&[a], &[a_ref], ctx);
+    };
+
+    // Ordinary C + C: fast path, one hit.
+    super::editing::reset_append_fast_path_hits();
+    let mut a = build(&["a", "b", "c"]);
+    a.compress_for_scrollback();
+    let mut b = build(&["d", "e"]);
+    b.compress_for_scrollback();
+    a.append_line(b, SEQ_ZERO + 30);
+    assert_eq!(
+        super::editing::append_fast_path_hits(),
+        1,
+        "ordinary C+C input must take the OPT-4 append fast path"
+    );
+
+    // `other` in Vec storage: fallback.
+    super::editing::reset_append_fast_path_hits();
+    let a = build(&["a", "b", "c"]);
+    let b = Line::from_text("de", &plain, SEQ_ZERO, None);
+    assert_eq!(
+        super::editing::append_fast_path_hits(),
+        0,
+        "V storage in other must not take the fast path"
+    );
+    assert_equal(a, b, "v-storage other");
+
+    // `self` in Vec storage: fallback.
+    super::editing::reset_append_fast_path_hits();
+    let a = Line::from_text("abc", &plain, SEQ_ZERO, None);
+    let mut b = build(&["d", "e"]);
+    b.compress_for_scrollback();
+    assert_eq!(
+        super::editing::append_fast_path_hits(),
+        0,
+        "no append attempted yet"
+    );
+    assert_equal(a, b, "v-storage self");
+    assert_eq!(
+        super::editing::append_fast_path_hits(),
+        0,
+        "V storage in self must not take the fast path"
+    );
+
+    // Control bytes in `other`: the reference neutralises them via
+    // `as_cell()`/`TeenyString`; the fast path must fall back.
+    super::editing::reset_append_fast_path_hits();
+    let mut a = build(&["a", "b", "c"]);
+    a.compress_for_scrollback();
+    let mut b = build(&["\x07", "d"]);
+    b.compress_for_scrollback();
+    assert_equal(a, b, "control byte in other");
+    assert_eq!(
+        super::editing::append_fast_path_hits(),
+        0,
+        "control bytes in other.text must fall back to the reference"
+    );
+
+    // Combined length beyond `u16::MAX`: fallback.
+    super::editing::reset_append_fast_path_hits();
+    let mut a = Line::new(SEQ_ZERO);
+    let run: String = core::iter::repeat_n("x", 40_000).collect();
+    a.set_ascii_run(0, &run, &plain, SEQ_ZERO);
+    let mut b = Line::new(SEQ_ZERO);
+    b.set_ascii_run(0, &run, &plain, SEQ_ZERO);
+    assert_equal(a, b, "u16 overflow");
+    assert_eq!(
+        super::editing::append_fast_path_hits(),
+        0,
+        "total len > u16::MAX must fall back to the reference"
     );
 }

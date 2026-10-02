@@ -31,6 +31,23 @@ pub(crate) fn reset_wrap_fast_path_hits() {
     WRAP_FAST_PATH_HITS.with(|hits| hits.set(0));
 }
 
+#[cfg(test)]
+thread_local! {
+    static APPEND_FAST_PATH_HITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Test-only: how many times `append_line` took the OPT-4 fast path on
+/// this thread (see `wrap_fast_path_hits` for why a counter is needed).
+#[cfg(test)]
+pub(crate) fn append_fast_path_hits() -> u64 {
+    APPEND_FAST_PATH_HITS.with(|hits| hits.get())
+}
+
+#[cfg(test)]
+pub(crate) fn reset_append_fast_path_hits() {
+    APPEND_FAST_PATH_HITS.with(|hits| hits.set(0));
+}
+
 impl Line {
     pub fn resize_and_clear(
         &mut self,
@@ -301,7 +318,59 @@ impl Line {
     /// This function is used by rewrapping logic when joining wrapped
     /// lines back together.
     pub fn append_line(&mut self, other: Line, seqno: SequenceNo) {
-        self.append_line_reference(other, seqno)
+        // OPT-4 fast path: both sides in clustered storage with
+        // consistent clusters, a combined length within `u16::MAX` (which
+        // also rules out `u16` overflow when merging cluster runs), and
+        // no control bytes in `other.text` -- the reference path
+        // re-creates cells through `as_cell()`/`TeenyString`, which
+        // neutralises them, so the fast path must not copy them verbatim
+        // and falls back to the reference for such input instead.
+        let fast = match (&self.cells, &other.cells) {
+            (CellStorage::C(mine), CellStorage::C(theirs)) => {
+                mine.len() + theirs.len() <= u16::MAX as usize
+                    && mine.clusters_consistent()
+                    && theirs.clusters_consistent()
+                    && theirs.text.bytes().all(|b| b >= 0x20 && b != 0x7f)
+                    && theirs.append_fast_path_safe(&mine.text)
+            }
+            _ => false,
+        };
+        if !fast {
+            self.append_line_reference(other, seqno);
+            return;
+        }
+
+        let other_cl = match other.cells {
+            CellStorage::C(cl) => cl,
+            CellStorage::V(_) => unreachable!("the gate above required C storage"),
+        };
+        #[cfg(test)]
+        {
+            APPEND_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
+        }
+        if let CellStorage::C(cl) = &mut self.cells {
+            // Same shared-storage discipline as the reference path's
+            // `Arc::make_mut`: never mutate in place while a snapshot
+            // elsewhere still holds a clone of the storage.
+            let cl = Arc::make_mut(cl);
+            // Move `other`'s clusters when its storage is unshared;
+            // otherwise borrow and clone the attributes.
+            match Arc::try_unwrap(other_cl) {
+                Ok(owned) => cl.append_clustered_owned(owned),
+                Err(shared) => cl.append_clustered(&shared),
+            }
+        }
+        self.update_last_change_seqno(seqno);
+        self.invalidate_zones();
+        // `update_last_change_seqno` takes `max(self.seqno, seqno)`, and
+        // callers that join already-existing lines (e.g.
+        // `apply_hyperlink_rules`) pass `self.seqno.max(other.seqno)`,
+        // which is a no-op when `self` already has the larger seqno --
+        // even though the append always changes the last cell. Relying on
+        // the seqno alone would leave a stale cached value in that case,
+        // so invalidate directly instead.
+        self.cached_last_cell_wrapped_seqno
+            .store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Verbatim copy of the pre-optimization `append_line` body. This is

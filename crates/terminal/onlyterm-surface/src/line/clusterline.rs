@@ -808,6 +808,198 @@ impl<'a> Iterator for ClusterLineCellIter<'a> {
     }
 }
 
+impl ClusteredLine {
+    /// OPT-4 fast path for `Line::append_line`: append the whole of
+    /// `other` in bulk (`push_str` + cluster merge + wide-bit shift)
+    /// instead of cell by cell. The caller must have gated the input so
+    /// that both sides pass `clusters_consistent()` and
+    /// `self.len + other.len <= u16::MAX` (which also rules out `u16`
+    /// overflow when merging cluster runs). The result must be exactly
+    /// equal -- including cluster splitting and `FixedBitSet` length --
+    /// to what the per-cell reference path produces; see
+    /// `reflow_fastpath_test.rs`.
+    pub(crate) fn append_clustered(&mut self, other: &Self) {
+        if other.len == 0 {
+            return;
+        }
+        let base = self.len as usize;
+        self.text.push_str(&other.text);
+        for cluster in &other.clusters {
+            self.merge_cluster(cluster.cell_width, cluster.attrs.clone());
+        }
+        self.append_shifted_wide_bits(base, other.is_double_wide.as_deref());
+        self.last_cell_width = other
+            .last_cell_width
+            .or_else(|| other.last_cell_width_from_bits());
+        self.len += other.len;
+    }
+
+    /// Same as `append_clustered`, but takes `other` by value so that
+    /// cluster attributes are moved instead of cloned when the caller
+    /// knows the source storage is unshared (`Arc::try_unwrap`
+    /// succeeded).
+    pub(crate) fn append_clustered_owned(&mut self, mut other: Self) {
+        if other.len == 0 {
+            return;
+        }
+        let base = self.len as usize;
+        self.text.push_str(&other.text);
+        let clusters = core::mem::take(&mut other.clusters);
+        for cluster in clusters {
+            self.merge_cluster(cluster.cell_width, cluster.attrs);
+        }
+        self.append_shifted_wide_bits(base, other.is_double_wide.as_deref());
+        self.last_cell_width = other
+            .last_cell_width
+            .or_else(|| other.last_cell_width_from_bits());
+        self.len += other.len;
+    }
+
+    /// Extends the last cluster when its attributes match the appended
+    /// run, exactly like the per-cell `append` does -- including merging
+    /// the first appended cluster into `self`'s last one. The caller's
+    /// gate (`total len <= u16::MAX`) guarantees this cannot overflow.
+    fn merge_cluster(&mut self, cell_width: u16, attrs: CellAttributes) {
+        match self.clusters.last_mut() {
+            Some(cluster) if cluster.attrs == attrs => {
+                cluster.cell_width += cell_width;
+            }
+            _ => self.clusters.push(Cluster { cell_width, attrs }),
+        }
+    }
+
+    /// Shifts `other`'s double-wide bits by `base` cells, using the same
+    /// `grow(idx+1)` + `set` sequence the per-cell reference path ends up
+    /// with, so the resulting bitset *length* (which `PartialEq`
+    /// compares) matches exactly: highest shifted wide index + 1, grown
+    /// only when a wide cell is actually recorded.
+    fn append_shifted_wide_bits(&mut self, base: usize, other_bits: Option<&FixedBitSet>) {
+        let bits = match other_bits {
+            Some(bits) => bits,
+            None => return,
+        };
+        for idx in bits.ones() {
+            let idx = base + idx;
+            let bitset = match self.is_double_wide.take() {
+                Some(mut bitset) => {
+                    bitset.grow(idx + 1);
+                    bitset.set(idx, true);
+                    bitset
+                }
+                None => {
+                    let mut bitset = FixedBitSet::with_capacity(idx + 1);
+                    bitset.set(idx, true);
+                    Box::new(bitset)
+                }
+            };
+            self.is_double_wide = Some(bitset);
+        }
+    }
+
+    /// Width of the last cell computed from the wide bits. Used when the
+    /// stored `last_cell_width` is `None` for a non-empty line, which
+    /// `prune_trailing_blanks` can leave behind; the per-cell reference
+    /// path always recomputes this from the appended cell, so the fast
+    /// path must too.
+    fn last_cell_width_from_bits(&self) -> Option<NonZeroU8> {
+        let width = if self.len() >= 2 && self.is_double_wide(self.len() - 2) {
+            2
+        } else {
+            1
+        };
+        NonZeroU8::new(width)
+    }
+
+    /// OPT-4 append gate, second half: the fast path copies `other`'s
+    /// recorded cluster/bitset/`len` bookkeeping in bulk, so that
+    /// bookkeeping must agree with how the *joined* text actually
+    /// segments. Two things can disagree, and in both cases the caller
+    /// must fall back to the reference (which counts real cells):
+    ///
+    /// 1. `other`'s own text merges recorded neighbours into one
+    ///    grapheme (e.g. cells `"k"` and `U+0301` recorded separately
+    ///    become `"k" + U+0301`): then `other.len()` overcounts what the
+    ///    reference appends.
+    /// 2. the boundary between `prev_text` (self's text) and `other`'s
+    ///    text is not a grapheme boundary (e.g. self ends "e", other
+    ///    starts `U+0301`): then bulk-appending shifts every later
+    ///    cell index, unlike the reference, which appends cell by cell.
+    pub(crate) fn append_fast_path_safe(&self, prev_text: &str) -> bool {
+        // Cheap tier: if no byte of `other.text` can begin a
+        // non-starter char (Extender, ZWJ, SpacingMark, second
+        // regional indicator, emoji modifier -- their UTF-8 leading
+        // bytes are all in the set below), recorded cells cannot
+        // fuse internally and the width scan is unnecessary. The
+        // join boundary can then only fuse if self's last char is
+        // a Prepend char or a regional indicator; every such char
+        // has a leading byte >= 0xD8, testable by walking back over
+        // at most three continuation bytes.
+        if !self.text.bytes().any(dirty_non_starter_lead) {
+            return match last_char_lead(prev_text) {
+                Some(lead) => lead < 0xD8,
+                None => true,
+            };
+        }
+        let mut width_sum = 0usize;
+        for cell in self.iter() {
+            width_sum += cell.width();
+        }
+        if width_sum != self.len() {
+            return false;
+        }
+        !boundary_merges_graphemes(prev_text, &self.text)
+    }
+}
+
+/// True when the join of `a` and `b` would fuse `a`'s last grapheme with
+/// `b`'s first grapheme into one cluster. Pure-ASCII boundaries (printable
+/// bytes on both sides) are always breaks, so the common case costs four
+/// byte compares; anything else segments the two edge graphemes.
+/// UTF-8 leading byte of a char that can be a grapheme non-starter
+/// (Extend, ZWJ, SpacingMark, second regional indicator, emoji
+/// modifier). Every such codepoint is >= U+0300 and its encoding
+/// starts with one of these bytes; bytes outside the set always
+/// begin a grapheme starter. Conservative: some starter-only
+/// scripts (Hebrew, CJK, Thai...) share leading bytes in the upper
+/// range and just take the precise path.
+fn dirty_non_starter_lead(b: u8) -> bool {
+    matches!(b, 0xCC | 0xCD | 0xD2 | 0xD5..=0xF4)
+}
+
+/// Leading byte of the last char of `text`, or `None` when empty.
+fn last_char_lead(text: &str) -> Option<u8> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+    let mut i = bytes.len() - 1;
+    while i > 0 && bytes[i] & 0xC0 == 0x80 {
+        i -= 1;
+    }
+    Some(bytes[i])
+}
+
+fn boundary_merges_graphemes(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let a_bytes = a.as_bytes();
+    let a_last = a_bytes[a_bytes.len() - 1];
+    let b_first = b.as_bytes()[0];
+    if (0x20..=0x7e).contains(&a_last) && (0x20..=0x7e).contains(&b_first) {
+        return false;
+    }
+    let mut last_start = 0usize;
+    let mut pos = 0usize;
+    for g in Graphemes::new(a) {
+        last_start = pos;
+        pos += g.len();
+    }
+    let mut probe = String::with_capacity(a.len() - last_start + b.len());
+    probe.push_str(&a[last_start..]);
+    probe.push_str(next_grapheme_at(b, 0));
+    Graphemes::new(&probe).count() < 2
+}
 #[cfg(test)]
 #[path = "tests/grapheme_fastpath_test.rs"]
 mod grapheme_fastpath_test;
