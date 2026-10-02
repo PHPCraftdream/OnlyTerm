@@ -12,6 +12,7 @@ mod perf_bench;
 mod perf_probe;
 mod print_bulk;
 mod screen;
+mod sgr_heavy;
 use crate::color::ColorPalette;
 use k9::assert_equal as assert_eq;
 use onlyterm_escape_parser::csi::{Edit, EraseInDisplay, EraseInLine};
