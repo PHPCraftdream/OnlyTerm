@@ -63,6 +63,26 @@ pub trait VTActor {
         }
     }
 
+    /// Print a run of printable text in the Ground state.
+    ///
+    /// The parser only ever calls this while the state machine is in the
+    /// Ground state, and guarantees that every character in `text` is one
+    /// that `print` would emit without any intervening state transition:
+    /// either a printable ASCII character (0x20..=0x7f) or a code point of
+    /// at least U+0100 (code points in U+0080..=U+00FF are excluded because the
+    /// parser defers them to the byte-by-byte path, which double-checks
+    /// them against the C1 control range).  Invalid sequences, truncated
+    /// characters and code points <= U+009F never reach this method.
+    /// Invoking `print` once per character yields the same sequence of
+    /// events as invoking `print_text_run` with the whole run; the default
+    /// implementation does exactly that, and implementations that can
+    /// consume a run of characters more efficiently should override it.
+    fn print_text_run(&mut self, text: &str) {
+        for c in text.chars() {
+            self.print(c);
+        }
+    }
+
     /// The C0 or C1 control function should be executed, which may have any one of a variety of
     /// effects, including changing the cursor position, suspending or resuming communications or
     /// changing the shift states in effect.

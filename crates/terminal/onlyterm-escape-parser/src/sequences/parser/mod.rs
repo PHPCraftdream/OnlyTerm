@@ -227,6 +227,18 @@ impl<'a, F: FnMut(Action)> VTActor for Performer<'a, F> {
         }
     }
 
+    fn print_text_run(&mut self, text: &str) {
+        // Same convention as `print_run`: a single character is reported
+        // exactly as the per-character path would report it, so that
+        // consumers which don't merge actions observe an unchanged stream.
+        let mut chars = text.chars();
+        if let (Some(first), None) = (chars.next(), chars.next()) {
+            (self.callback)(Action::Print(first));
+        } else {
+            (self.callback)(Action::PrintString(text.to_string()));
+        }
+    }
+
     fn execute_c0_or_c1(&mut self, byte: u8) {
         match FromPrimitive::from_u8(byte) {
             Some(code) => (self.callback)(Action::Control(code)),

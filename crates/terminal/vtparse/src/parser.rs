@@ -138,6 +138,11 @@ pub struct VTParser {
 
     utf8_parser: Utf8Parser,
     utf8_return_state: State,
+
+    /// Test-only counter of how many times the Ground-state multi-byte
+    /// text fast path fired; see `fast_text_run_count`.
+    #[cfg(test)]
+    fast_text_runs: usize,
 }
 
 impl VTParser {
@@ -166,6 +171,8 @@ impl VTParser {
             current_param: None,
 
             utf8_parser: Utf8Parser::new(),
+            #[cfg(test)]
+            fast_text_runs: 0,
             #[cfg(any(feature = "std", feature = "alloc"))]
             apc_data: Vec::new(),
         }
@@ -443,6 +450,128 @@ impl VTParser {
         }
     }
 
+    /// Number of times the Ground-state multi-byte text fast path
+    /// (`print_text_run`) fired.  Only available in test builds.
+    #[cfg(test)]
+    pub fn fast_text_run_count(&self) -> usize {
+        self.fast_text_runs
+    }
+
+    /// Try the Ground-state fast path for a run of complete, valid UTF-8
+    /// text at the front of `bytes`.
+    ///
+    /// The run may mix printable ASCII with multi-byte characters, but
+    /// every decoded code point must be either printable ASCII
+    /// (0x20..=0x7f) or >= U+0100.  Those are exactly the code points for
+    /// which the byte-by-byte path, when `utf8_return_state` is Ground,
+    /// performs no state transition and calls `actor.print` once: the
+    /// `c as u32 <= 0xff` special case in `next_utf8` (which reroutes
+    /// C1-range code points such as U+009B through the state tables) is
+    /// only consulted for code points <= U+00FF, and in Ground every byte
+    /// 0x20..=0x7f maps to (Print, Ground).  Code points in
+    /// U+0080..=U+009F must keep going through the state tables (U+009B
+    /// acts as CSI, U+009D as OSC, and so on) and U+00A0..=U+00FF are
+    /// conservatively excluded too, even though most of them would be
+    /// plain prints.
+    ///
+    /// Incomplete tails and invalid bytes are never consumed here: the
+    /// method only takes the longest prefix that `core::str::from_utf8`
+    /// accepts and that consists entirely of safe code points, and leaves
+    /// everything from the first unsafe or invalid byte onwards to the
+    /// ordinary byte-by-byte state machine.
+    ///
+    /// Returns the number of bytes consumed, or `None` if the fast path
+    /// did not apply.
+    fn try_print_text_run(&mut self, bytes: &[u8], actor: &mut dyn VTActor) -> Option<usize> {
+        // First find the candidate run end with a cheap manual walk, so
+        // that the cost of an attempt is proportional to the run it takes
+        // and never to the remaining input (validating the whole tail
+        // up-front would rescan the tail once per short run).  The walk
+        // mirrors the std UTF-8 grammar, including the overlong and
+        // surrogate exclusions, and stops at the first byte that is not
+        // part of a safe character (see below for "safe").
+        let mut end = 0usize;
+        while end < bytes.len() {
+            let b = bytes[end];
+            if b < 0x80 {
+                if !(0x20..=0x7f).contains(&b) {
+                    break;
+                }
+                end += 1;
+            } else if (0xc2..=0xdf).contains(&b) {
+                // 2-byte sequence.  Code points U+0080..=U+00FF (leads
+                // C2..C3 with C2 covering U+0080..=U+00BF) must not take
+                // the fast path: the byte-by-byte path reroutes C1-range
+                // code points through the state tables, and U+00A0..=U+00FF
+                // are conservatively excluded too.
+                match bytes.get(end + 1) {
+                    Some(&b1) if (0x80..=0xbf).contains(&b1) => {
+                        let cp = (((b as u32) & 0x1f) << 6) | ((b1 as u32) & 0x3f);
+                        if cp < 0x100 {
+                            break;
+                        }
+                        end += 2;
+                    }
+                    _ => break,
+                }
+            } else if (0xe0..=0xef).contains(&b) {
+                // 3-byte sequence (code points >= U+0800, so always safe);
+                // the first continuation range excludes overlong forms and
+                // surrogates exactly as std does.
+                let (lo, hi) = match b {
+                    0xe0 => (0xa0, 0xbf),
+                    0xed => (0x80, 0x9f),
+                    _ => (0x80, 0xbf),
+                };
+                match (bytes.get(end + 1), bytes.get(end + 2)) {
+                    (Some(&b1), Some(&b2))
+                        if (lo..=hi).contains(&b1) && (0x80..=0xbf).contains(&b2) =>
+                    {
+                        end += 3;
+                    }
+                    _ => break,
+                }
+            } else if (0xf0..=0xf4).contains(&b) {
+                // 4-byte sequence (code points >= U+10000, always safe);
+                // the first continuation range excludes overlong forms and
+                // code points above U+10FFFF.
+                let (lo, hi) = if b == 0xf0 {
+                    (0x90, 0xbf)
+                } else {
+                    (0x80, 0x8f)
+                };
+                match (bytes.get(end + 1), bytes.get(end + 2), bytes.get(end + 3)) {
+                    (Some(&b1), Some(&b2), Some(&b3))
+                        if (lo..=hi).contains(&b1)
+                            && (0x80..=0xbf).contains(&b2)
+                            && (0x80..=0xbf).contains(&b3) =>
+                    {
+                        end += 4;
+                    }
+                    _ => break,
+                }
+            } else {
+                // 0x80..=0xbf (stray continuation) and 0xc0, 0xc1, 0xf5..=0xff
+                // (invalid leads) are left to the state machine.
+                break;
+            }
+        }
+        if end == 0 {
+            return None;
+        }
+        // `core::str::from_utf8` is the authoritative validation of the
+        // candidate prefix; the manual walk above accepts a superset only
+        // by ending early, never by accepting an invalid sequence, so the
+        // prefix must be accepted in full.
+        let text = core::str::from_utf8(&bytes[..end]).ok()?;
+        actor.print_text_run(text);
+        #[cfg(test)]
+        {
+            self.fast_text_runs += 1;
+        }
+        Some(end)
+    }
+
     /// Parse a sequence of bytes.  The sequence need not be complete.
     /// This may result in some number of calls to the methods on the
     /// provided `actor`.
@@ -450,10 +579,13 @@ impl VTParser {
     /// While the state machine is in the Ground state, runs of printable
     /// ASCII bytes (0x20..=0x7f) are collected and handed to the actor in
     /// a single `print_run` call rather than one `print` per byte; see
-    /// `VTActor::print_run`.  Everything else is parsed byte by byte, so
-    /// the chunking of the input cannot change the resulting events: a run
-    /// that is cut short by the end of a chunk simply ends there, and the
-    /// remainder starts a new run in the next chunk.
+    /// `VTActor::print_run`.  Runs of complete, valid multi-byte UTF-8
+    /// text (mixed with printable ASCII) whose code points are all >=
+    /// U+0100 are handed over in a single `print_text_run` call; see
+    /// `try_print_text_run`.  Everything else is parsed byte by byte, so
+    /// the chunking of the input cannot change the resulting events: a
+    /// run that is cut short by the end of a chunk simply ends there, and
+    /// the remainder starts a new run in the next chunk.
     pub fn parse(&mut self, bytes: &[u8], actor: &mut dyn VTActor) {
         let mut pos = 0;
         while pos < bytes.len() {
@@ -470,6 +602,12 @@ impl VTParser {
                     // `parse_byte` over each of its bytes.
                     actor.print_run(&bytes[start..pos]);
                     continue;
+                }
+                if bytes[pos] >= 0xC2 {
+                    if let Some(consumed) = self.try_print_text_run(&bytes[pos..], actor) {
+                        pos += consumed;
+                        continue;
+                    }
                 }
             }
             let byte = bytes[pos];
@@ -1499,5 +1637,511 @@ mod test {
         let mut reference_actor = CollectingVTActor::default();
         reference_parser.parse_reference("a\u{451}bc".as_bytes(), &mut reference_actor);
         assert_eq!(actor.inner.into_vec(), reference_actor.into_vec());
+    }
+
+    /// Build a random byte stream that is dominated by valid multi-byte
+    /// UTF-8 text (Cyrillic, Greek, CJK, emoji), mixed with printable
+    /// ASCII, CRLF, C0 controls, raw and UTF-8-encoded C1 controls, escape
+    /// sequences (including OSC payloads containing multi-byte
+    /// characters), invalid UTF-8 and truncated sequences.
+    fn gen_text_bytes(rng: &mut Rng, events: usize) -> Vec<u8> {
+        const TEXT: &[&str] = &[
+            "\u{043f}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} ", // привет
+            "\u{0416}\u{0443}\u{0440}\u{043d}\u{0430}\u{043b}\r\n", // Журнал
+            "\u{03b1}\u{03b2}\u{03b3}\u{03b4}\u{03b5} ",         // alpha..
+            "\u{4f60}\u{597d}\u{4e16}\u{754c}",                  // ni hao shi jie
+            "\u{1f600}\u{1f915}\u{1f389} ",                      // emoji
+            "log: ",                                             // plain ascii
+            "done\r\n",                                          // ascii + crlf
+        ];
+        let mut out = Vec::new();
+        for _ in 0..events {
+            match rng.below(16) {
+                0..=4 => out.extend_from_slice(TEXT[rng.below(TEXT.len())].as_bytes()),
+                // C0 controls
+                5 => out.push(rng.below(0x20) as u8),
+                // Raw 8-bit C1 controls and introducers
+                6 => out.push(0x80 + rng.below(0x20) as u8),
+                // UTF-8-encoded C1 controls (C2 80..=C2 9F): these must go
+                // through the state tables, not the fast path
+                7 => {
+                    out.push(0xc2);
+                    out.push(0x80 + rng.below(0x20) as u8);
+                }
+                // UTF-8-encoded U+00A0..=U+00FF: conservatively excluded
+                // from the fast path
+                8 => {
+                    out.push(0xc2 + rng.below(2) as u8);
+                    out.push(0xa0 + rng.below(0x20) as u8);
+                }
+                // Stray continuation bytes and invalid lead bytes
+                9 => match rng.below(6) {
+                    0..=1 => out.push(0x80 + rng.below(0x40) as u8),
+                    2 | 3 => out.push(0xc0 + rng.below(2) as u8),
+                    _ => out.push(0xf5 + rng.below(0xb) as u8),
+                },
+                // Overlong encoding of "/" (C0 AF) and an encoded surrogate
+                // (ED A0 80)
+                10 => {
+                    if rng.below(2) == 0 {
+                        out.extend_from_slice(b"\xc0\xaf");
+                    } else {
+                        out.extend_from_slice(b"\xed\xa0\x80");
+                    }
+                }
+                // A truncated sequence: lead byte only, or lead + partial
+                // continuation, followed by ASCII or by ESC
+                11 => {
+                    let len = 2 + rng.below(3);
+                    let lead: u8 = match len {
+                        2 => 0xc2 + rng.below(0x1e) as u8,
+                        3 => 0xe0 + rng.below(0x10) as u8,
+                        _ => 0xf0 + rng.below(5) as u8,
+                    };
+                    out.push(lead);
+                    let keep = rng.below(len - 1);
+                    for _ in 0..keep {
+                        out.push(0x80 + rng.below(0x40) as u8);
+                    }
+                    if rng.below(2) == 0 {
+                        out.push(0x1b);
+                    } else {
+                        out.push(b'x');
+                    }
+                }
+                // CSI sequence
+                12 => {
+                    out.extend_from_slice(b"\x1b[32m");
+                }
+                // OSC with a multi-byte payload (must not use the fast path)
+                13 => {
+                    out.extend_from_slice("\x1b]2;\u{0437}\u{0430}\u{043b}\x07".as_bytes());
+                }
+                // A 2, 3 or 4 byte utf-8 sequence, sometimes truncated so
+                // that a chunk boundary has to finish it
+                14 => {
+                    let len = 2 + rng.below(3);
+                    let lead: u8 = match len {
+                        2 => 0xc2 + rng.below(0x1e) as u8,
+                        3 => 0xe0 + rng.below(0x10) as u8,
+                        _ => 0xf0 + rng.below(5) as u8,
+                    };
+                    out.push(lead);
+                    for _ in 0..(len - 1) {
+                        out.push(0x80 + rng.below(0x40) as u8);
+                    }
+                    if rng.below(4) == 0 {
+                        out.truncate(out.len() - (len - 1));
+                    }
+                }
+                _ => {
+                    // A full mixed text+control blob
+                    out.extend_from_slice(
+                        "\u{0442}\u{0435}\u{043a}\u{0441}\u{0442} 42 \u{2713}\r\n".as_bytes(),
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    /// The multi-byte text fast path must produce exactly the same actor
+    /// event sequence as the byte-by-byte reference, for the whole stream
+    /// and for every chunking of it.
+    #[test]
+    fn text_run_matches_reference_for_random_streams() {
+        for seed in 0..256u64 {
+            let mut rng = Rng::new(seed.wrapping_mul(0x517C_C1B7_2722_0A95 | 1));
+            let events = 1 + rng.below(400);
+            let stream = gen_text_bytes(&mut rng, events);
+
+            let mut reference_parser = VTParser::new();
+            let mut reference_actor = CollectingVTActor::default();
+            reference_parser.parse_reference(&stream, &mut reference_actor);
+            let reference = reference_actor.into_vec();
+
+            assert_eq!(
+                parse_fast(&stream),
+                reference,
+                "seed {}: whole-stream parse diverged",
+                seed
+            );
+
+            // Every possible single split point, for short streams.
+            if stream.len() <= 96 {
+                for split in 1..stream.len() {
+                    let mut parser = VTParser::new();
+                    let mut actor = CollectingVTActor::default();
+                    parser.parse(&stream[..split], &mut actor);
+                    parser.parse(&stream[split..], &mut actor);
+                    assert_eq!(
+                        actor.into_vec(),
+                        reference,
+                        "seed {}: single split at {} diverged",
+                        seed,
+                        split
+                    );
+                }
+            }
+
+            for &chunk in &[1usize, 2, 3, 5, 7, 13, 64, 4096] {
+                assert_eq!(
+                    parse_chunked(&stream, chunk),
+                    reference,
+                    "seed {}: chunk size {} diverged",
+                    seed,
+                    chunk
+                );
+            }
+
+            let mut plan = Vec::new();
+            let mut remaining = stream.len();
+            while remaining > 0 {
+                let len = 1 + rng.below(128);
+                plan.push(len);
+                remaining = remaining.saturating_sub(len);
+            }
+            assert_eq!(
+                parse_random_chunks(&stream, &plan),
+                reference,
+                "seed {}: random chunking diverged",
+                seed
+            );
+        }
+    }
+
+    /// The existing generic random-stream generator (which also contains
+    /// multi-byte sequences among many other things) must keep matching the
+    /// reference with the text fast path in place, including every single
+    /// split point of short streams.
+    #[test]
+    fn text_run_matches_reference_for_generic_random_streams() {
+        for seed in 0..128u64 {
+            let mut rng = Rng::new(seed.wrapping_mul(0x2545_F491_4F6C_DD1D) | 1);
+            let events = 1 + rng.below(120);
+            let stream = gen_bytes(&mut rng, events);
+
+            let mut reference_parser = VTParser::new();
+            let mut reference_actor = CollectingVTActor::default();
+            reference_parser.parse_reference(&stream, &mut reference_actor);
+            let reference = reference_actor.into_vec();
+
+            assert_eq!(
+                parse_fast(&stream),
+                reference,
+                "seed {}: whole-stream parse diverged",
+                seed
+            );
+            if stream.len() <= 64 {
+                for split in 1..stream.len() {
+                    let mut parser = VTParser::new();
+                    let mut actor = CollectingVTActor::default();
+                    parser.parse(&stream[..split], &mut actor);
+                    parser.parse(&stream[split..], &mut actor);
+                    assert_eq!(
+                        actor.into_vec(),
+                        reference,
+                        "seed {}: single split at {} diverged",
+                        seed,
+                        split
+                    );
+                }
+            }
+            for &chunk in &[1usize, 2, 3, 7, 64] {
+                assert_eq!(
+                    parse_chunked(&stream, chunk),
+                    reference,
+                    "seed {}: chunk size {} diverged",
+                    seed,
+                    chunk
+                );
+            }
+        }
+    }
+
+    /// A text run followed immediately by an escape sequence.
+    #[test]
+    fn text_run_followed_by_escape() {
+        let stream = "\u{043c}\u{0438}\u{0440}\x1b[0m".as_bytes(); // мир
+        let reference = {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse_reference(stream, &mut actor);
+            actor.into_vec()
+        };
+        assert!(matches!(reference[0], VTAction::Print('\u{043c}')));
+        for len in 1..=stream.len() {
+            assert_eq!(
+                parse_chunked(stream, len),
+                reference,
+                "chunk size {} diverged",
+                len
+            );
+        }
+    }
+
+    /// A 4-byte emoji split in every possible way across two chunks.
+    #[test]
+    fn text_run_emoji_split_every_way() {
+        let stream = "a\u{1f915}b".as_bytes();
+        let reference = {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse_reference(stream, &mut actor);
+            actor.into_vec()
+        };
+        assert_eq!(
+            reference,
+            vec![
+                VTAction::Print('a'),
+                VTAction::Print('\u{1f915}'),
+                VTAction::Print('b'),
+            ]
+        );
+        for len in 1..stream.len() {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse(&stream[..len], &mut actor);
+            parser.parse(&stream[len..], &mut actor);
+            assert_eq!(
+                actor.into_vec(),
+                reference,
+                "split after byte {} diverged",
+                len
+            );
+        }
+    }
+
+    /// A 3-byte character split 1+2 and 2+1 across chunks.
+    #[test]
+    fn text_run_three_byte_char_splits() {
+        // U+0431 is D0 B1 (2 bytes); U+0444 is D1 84 (2 bytes); use a
+        // genuine 3-byte char: U+4F60 (你) is E4 BD A0.
+        let stream = b"\xe4\xbd\xa0\xe4\xbd\xa0";
+        let reference = {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse_reference(stream, &mut actor);
+            actor.into_vec()
+        };
+        assert_eq!(
+            reference,
+            vec![VTAction::Print('\u{4f60}'), VTAction::Print('\u{4f60}'),]
+        );
+        for plan in &[
+            vec![1usize, stream.len() - 1],
+            vec![2usize, stream.len() - 2],
+            vec![4usize, stream.len() - 4],
+            vec![5usize, stream.len() - 5],
+        ] {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            let mut pos = 0;
+            for &len in plan {
+                parser.parse(&stream[pos..pos + len], &mut actor);
+                pos += len;
+            }
+            assert_eq!(
+                actor.into_vec(),
+                reference,
+                "chunk plan {:?} diverged",
+                plan
+            );
+        }
+    }
+
+    /// U+009B encoded as C2 9B must act exactly like a raw CSI introducer,
+    /// U+0085 (NEL) as a C1 execute, and U+00A0 must be printed: none of
+    /// them may go through the text fast path.
+    #[test]
+    fn text_run_encoded_c1_and_00a0() {
+        // C2 9B acts as CSI: the following bytes are CSI params/final.
+        assert_eq!(
+            parse_fast(b"\xc2\x9b32m"),
+            vec![VTAction::CsiDispatch {
+                params: vec![CsiParam::Integer(32)],
+                parameters_truncated: false,
+                byte: b'm',
+            }]
+        );
+
+        // C2 85 (NEL) is executed as a C1 control.
+        assert_eq!(parse_fast(b"\xc2\x85"), vec![VTAction::ExecuteC0orC1(0x85)]);
+
+        // U+00A0 and U+00FF are printed.
+        assert_eq!(
+            parse_fast(b"\xc2\xa0\xc3\xbf"),
+            vec![VTAction::Print('\u{a0}'), VTAction::Print('\u{ff}')]
+        );
+
+        // Mixed: encoded C1 between valid text, all chunkings equal.
+        let stream = b"\xd0\xb0\xc2\x9b0m\xd0\xb1";
+        let reference = {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse_reference(stream, &mut actor);
+            actor.into_vec()
+        };
+        for len in 1..=stream.len() {
+            assert_eq!(
+                parse_chunked(stream, len),
+                reference,
+                "chunk size {} diverged",
+                len
+            );
+        }
+    }
+
+    /// A truncated sequence followed by ASCII: the invalid sequence must
+    /// become U+FFFD and the interrupting byte must still be processed by
+    /// the state machine, exactly like the byte-by-byte path.
+    #[test]
+    fn text_run_truncated_then_ascii() {
+        for tail in &[b"x".to_vec(), b"\x1b[0m".to_vec(), b"\xd0\xb0".to_vec()] {
+            for lead in &[0xe0u8, 0xf0] {
+                let mut stream = vec![*lead, 0x80];
+                stream.extend_from_slice(tail);
+                let reference = {
+                    let mut parser = VTParser::new();
+                    let mut actor = CollectingVTActor::default();
+                    parser.parse_reference(&stream, &mut actor);
+                    actor.into_vec()
+                };
+                assert_eq!(
+                    parse_fast(&stream),
+                    reference,
+                    "lead {:x} tail {:?} diverged",
+                    lead,
+                    tail
+                );
+                for len in 1..=stream.len() {
+                    assert_eq!(
+                        parse_chunked(&stream, len),
+                        reference,
+                        "lead {:x} tail {:?} chunk {} diverged",
+                        lead,
+                        tail,
+                        len
+                    );
+                }
+            }
+        }
+    }
+
+    /// Invalid bytes in Ground (stray continuations, invalid leads,
+    /// overlong forms) are never consumed by the fast path.
+    #[test]
+    fn text_run_invalid_bytes_left_to_state_machine() {
+        let invalid: &[&[u8]] = &[
+            b"\x80",             // stray continuation
+            b"\xbf",             // stray continuation
+            b"\xc0",             // invalid lead
+            b"\xc1\xbf",         // overlong 2-byte
+            b"\xf5\x80\x80\x80", // invalid lead
+            b"\xc0\xaf",         // overlong /
+            b"\xed\xa0\x80",     // encoded surrogate
+            b"\xe0\x80\x80",     // overlong 3-byte
+        ];
+        for seq in invalid {
+            let stream = b"hi"
+                .to_vec()
+                .iter()
+                .copied()
+                .chain(seq.iter().copied())
+                .chain(b"bye".iter().copied())
+                .collect::<Vec<u8>>();
+            let reference = {
+                let mut parser = VTParser::new();
+                let mut actor = CollectingVTActor::default();
+                parser.parse_reference(&stream, &mut actor);
+                actor.into_vec()
+            };
+            assert_eq!(
+                parse_fast(&stream),
+                reference,
+                "invalid sequence {:?} diverged",
+                seq
+            );
+            for len in 1..=stream.len() {
+                assert_eq!(
+                    parse_chunked(&stream, len),
+                    reference,
+                    "invalid sequence {:?} chunk {} diverged",
+                    seq,
+                    len
+                );
+            }
+        }
+    }
+
+    /// Multi-byte characters inside an OSC title must be accumulated into
+    /// the OSC payload, never printed via the text fast path.
+    #[test]
+    fn text_run_not_used_inside_osc_payload() {
+        let stream =
+            "\x1b]2;\u{0437}\u{0430}\u{0433}\u{043e}\u{043b}\u{043e}\u{0432}\u{043e}\u{043a}\x07"
+                .as_bytes();
+        let reference = {
+            let mut parser = VTParser::new();
+            let mut actor = CollectingVTActor::default();
+            parser.parse_reference(stream, &mut actor);
+            actor.into_vec()
+        };
+        assert_eq!(reference.len(), 1);
+        assert!(matches!(reference[0], VTAction::OscDispatch(_)));
+        assert_eq!(parse_fast(stream), reference);
+        for len in 1..=stream.len() {
+            assert_eq!(
+                parse_chunked(stream, len),
+                reference,
+                "chunk size {} diverged",
+                len
+            );
+        }
+    }
+
+    /// The test counter proves the fast path fires for ordinary Cyrillic
+    /// text and does not fire for OSC payloads, invalid sequences or the
+    /// C1 lookalikes.
+    #[test]
+    fn text_run_fast_path_counter() {
+        let mut parser = VTParser::new();
+        let mut actor = CollectingVTActor::default();
+
+        parser.parse(
+            "\u{043f}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442}".as_bytes(),
+            &mut actor,
+        );
+        assert_eq!(parser.fast_text_run_count(), 1);
+
+        parser.parse("\u{1f600}".as_bytes(), &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 2);
+
+        // OSC payload: no fast path.
+        parser.parse("\x1b]2;\u{0437}\u{0430}\x07".as_bytes(), &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 2);
+
+        // Encoded C1 lookalike: no fast path.
+        parser.parse(b"\xc2\x9b", &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 2);
+
+        // Invalid sequences: no fast path.
+        parser.parse(b"\xc0\xaf", &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 2);
+        parser.parse(b"\xed\xa0\x80", &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 2);
+        parser.parse(b"\x80", &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 2);
+
+        // Back in business afterwards.
+        parser.parse("\u{043c}\u{0438}\u{0440}".as_bytes(), &mut actor);
+        assert_eq!(parser.fast_text_run_count(), 3);
+
+        // A run that ends in a truncated tail: exactly one run, the tail
+        // goes to the state machine.
+        let before = parser.fast_text_run_count();
+        parser.parse("\u{0434}\u{0430}".as_bytes(), &mut actor);
+        parser.parse(b"\xd0", &mut actor);
+        assert_eq!(parser.fast_text_run_count(), before + 1);
     }
 }

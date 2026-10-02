@@ -1320,3 +1320,247 @@ fn bulk_print_run_reports_runs_as_print_string() {
     // ...and single characters are still reported as `Print`.
     assert_eq!(Parser::new().parse_as_vec(b"x"), vec![Action::Print('x')]);
 }
+
+/// Build a random byte stream dominated by valid multi-byte UTF-8 text
+/// (Cyrillic, Greek, CJK, emoji), mixed with printable ASCII, CRLF, C0
+/// controls, raw and UTF-8-encoded C1 controls, escape sequences (including
+/// OSC payloads containing multi-byte characters), invalid UTF-8 and
+/// truncated sequences.
+fn gen_text_bytes(rng: &mut Rng, events: usize) -> Vec<u8> {
+    const TEXT: &[&str] = &[
+        "\u{043f}\u{0440}\u{0438}\u{0432}\u{0435}\u{0442} ", // привет
+        "\u{0416}\u{0443}\u{0440}\u{043d}\u{0430}\u{043b}\r\n", // Журнал
+        "\u{03b1}\u{03b2}\u{03b3}\u{03b4}\u{03b5} ",         // alpha..
+        "\u{4f60}\u{597d}\u{4e16}\u{754c}",                  // CJK
+        "\u{1f600}\u{1f915}\u{1f389} ",                      // emoji
+        "log: ",
+        "done\r\n",
+    ];
+    let mut out = Vec::new();
+    for _ in 0..events {
+        match rng.below(16) {
+            0..=4 => out.extend_from_slice(TEXT[rng.below(TEXT.len())].as_bytes()),
+            5 => out.push(rng.below(0x20) as u8),
+            6 => out.push(0x80 + rng.below(0x20) as u8),
+            // UTF-8-encoded C1 controls: must go through the state tables
+            7 => {
+                out.push(0xc2);
+                out.push(0x80 + rng.below(0x20) as u8);
+            }
+            // UTF-8-encoded U+00A0..=U+00FF
+            8 => {
+                out.push(0xc2 + rng.below(2) as u8);
+                out.push(0xa0 + rng.below(0x20) as u8);
+            }
+            // Stray continuations / invalid leads
+            9 => match rng.below(6) {
+                0..=1 => out.push(0x80 + rng.below(0x40) as u8),
+                2 | 3 => out.push(0xc0 + rng.below(2) as u8),
+                _ => out.push(0xf5 + rng.below(0xb) as u8),
+            },
+            10 => {
+                if rng.below(2) == 0 {
+                    out.extend_from_slice(b"\xc0\xaf");
+                } else {
+                    out.extend_from_slice(b"\xed\xa0\x80");
+                }
+            }
+            // Truncated sequence then ASCII or ESC
+            11 => {
+                let len = 2 + rng.below(3);
+                let lead: u8 = match len {
+                    2 => 0xc2 + rng.below(0x1e) as u8,
+                    3 => 0xe0 + rng.below(0x10) as u8,
+                    _ => 0xf0 + rng.below(5) as u8,
+                };
+                out.push(lead);
+                let keep = rng.below(len - 1);
+                for _ in 0..keep {
+                    out.push(0x80 + rng.below(0x40) as u8);
+                }
+                if rng.below(2) == 0 {
+                    out.push(0x1b);
+                } else {
+                    out.push(b'x');
+                }
+            }
+            12 => out.extend_from_slice(b"\x1b[32m"),
+            // OSC with a multi-byte payload
+            13 => out.extend_from_slice("\x1b]2;\u{0437}\u{0430}\u{043b}\x07".as_bytes()),
+            14 => {
+                let len = 2 + rng.below(3);
+                let lead: u8 = match len {
+                    2 => 0xc2 + rng.below(0x1e) as u8,
+                    3 => 0xe0 + rng.below(0x10) as u8,
+                    _ => 0xf0 + rng.below(5) as u8,
+                };
+                out.push(lead);
+                for _ in 0..(len - 1) {
+                    out.push(0x80 + rng.below(0x40) as u8);
+                }
+                if rng.below(4) == 0 {
+                    out.truncate(out.len() - (len - 1));
+                }
+            }
+            _ => out.extend_from_slice(
+                "\u{0442}\u{0435}\u{043a}\u{0441}\u{0442} 42 \u{2713}\r\n".as_bytes(),
+            ),
+        }
+    }
+    out
+}
+
+/// The multi-byte text fast path must produce exactly the same coalesced
+/// action stream as the per-byte reference, for the whole stream and for
+/// every chunking of it.
+#[test]
+fn text_run_matches_reference_for_random_streams() {
+    for seed in 0..256u64 {
+        let mut rng = Rng::new(seed.wrapping_mul(0x517C_C1B7_2722_0A95 | 1));
+        let events = 1 + rng.below(400);
+        let stream = gen_text_bytes(&mut rng, events);
+
+        let reference = parse_reference_as_vec(&stream);
+        assert_eq!(
+            parse_merged_as_vec(&stream),
+            reference,
+            "seed {}: whole-stream parse diverged",
+            seed
+        );
+
+        if stream.len() <= 96 {
+            for split in 1..stream.len() {
+                let mut parser = Parser::new();
+                let mut actions: Vec<Action> = Vec::new();
+                let mut cb = |action: Action| action.append_to(&mut actions);
+                parser.parse(&stream[..split], &mut cb);
+                parser.parse(&stream[split..], &mut cb);
+                assert_eq!(
+                    actions, reference,
+                    "seed {}: single split at {} diverged",
+                    seed, split
+                );
+            }
+        }
+
+        for &chunk in &[1usize, 2, 3, 5, 7, 13, 64, 4096] {
+            assert_eq!(
+                parse_merged_fixed_chunks_as_vec(&stream, chunk),
+                reference,
+                "seed {}: chunk size {} diverged",
+                seed,
+                chunk
+            );
+        }
+
+        let mut plan = Vec::new();
+        let mut remaining = stream.len();
+        while remaining > 0 {
+            let len = 1 + rng.below(128);
+            plan.push(len);
+            remaining = remaining.saturating_sub(len);
+        }
+        assert_eq!(
+            parse_merged_random_chunks_as_vec(&stream, &plan),
+            reference,
+            "seed {}: random chunking diverged",
+            seed
+        );
+    }
+}
+
+/// Multi-byte characters inside an OSC title must be accumulated into the
+/// OSC payload, never printed via the text fast path.
+#[test]
+fn text_run_not_used_inside_osc_payload() {
+    let stream =
+        "\x1b]2;\u{0437}\u{0430}\u{0433}\u{043e}\u{043b}\u{043e}\u{0432}\u{043e}\u{043a}\x07"
+            .as_bytes();
+    let actions = parse_merged_as_vec(stream);
+    assert_eq!(actions, parse_reference_as_vec(stream));
+    match &actions[0] {
+        Action::OperatingSystemCommand(osc) => match osc.as_ref() {
+            OperatingSystemCommand::SetWindowTitle(title) => {
+                assert_eq!(
+                    title,
+                    "\u{0437}\u{0430}\u{0433}\u{043e}\u{043b}\u{043e}\u{0432}\u{043e}\u{043a}"
+                );
+            }
+            other => panic!("unexpected osc command: {:?}", other),
+        },
+        other => panic!("unexpected first action: {:?}", other),
+    }
+    for len in 1..=stream.len() {
+        assert_eq!(
+            parse_merged_fixed_chunks_as_vec(stream, len),
+            actions,
+            "chunk size {} diverged",
+            len
+        );
+    }
+}
+
+/// U+009B encoded as C2 9B must act exactly like a raw CSI introducer,
+/// U+0085 (NEL) as a C1 execute, and U+00A0 must be printed: none of them
+/// may go through the text fast path.
+#[test]
+fn text_run_encoded_c1_and_00a0() {
+    // C2 9B acts as CSI.
+    let actions = parse_merged_as_vec(b"\xc2\x9b32m");
+    assert!(
+        matches!(
+            &actions[0],
+            Action::CSI(CSI::Cursor { .. }) | Action::CSI(_)
+        ),
+        "C2 9B must be dispatched as CSI: {:?}",
+        actions
+    );
+
+    // C2 85 (NEL) is executed as a C1 control.
+    let actions = parse_merged_as_vec(b"\xc2\x85");
+    assert!(
+        matches!(&actions[0], Action::Control(_)),
+        "C2 85 must be executed as NEL: {:?}",
+        actions
+    );
+
+    // U+00A0 and U+00FF are printed.
+    let actions = parse_merged_as_vec(b"\xc2\xa0\xc3\xbf");
+    let printed: String = actions
+        .iter()
+        .map(|a| match a {
+            Action::Print(c) => c.to_string(),
+            Action::PrintString(s) => s.clone(),
+            _ => String::new(),
+        })
+        .collect();
+    assert_eq!(printed, "\u{a0}\u{ff}");
+}
+
+/// A text run ending exactly at a chunk boundary, and an emoji split in
+/// every possible way, must coalesce back to the reference actions.
+#[test]
+fn text_run_split_across_chunks() {
+    let stream = "a\u{1f915}b\u{0431}\u{4f60}".as_bytes();
+    let reference = parse_reference_as_vec(stream);
+    assert_eq!(parse_merged_as_vec(stream), reference);
+    for len in 1..stream.len() {
+        let mut parser = Parser::new();
+        let mut actions: Vec<Action> = Vec::new();
+        let mut cb = |action: Action| action.append_to(&mut actions);
+        parser.parse(&stream[..len], &mut cb);
+        parser.parse(&stream[len..], &mut cb);
+        assert_eq!(actions, reference, "split after byte {} diverged", len);
+    }
+    // Truncated tail then ASCII.
+    let stream = b"\xd0\xbf\xd0x";
+    let reference = parse_reference_as_vec(stream);
+    for len in 1..stream.len() {
+        let mut parser = Parser::new();
+        let mut actions: Vec<Action> = Vec::new();
+        let mut cb = |action: Action| action.append_to(&mut actions);
+        parser.parse(&stream[..len], &mut cb);
+        parser.parse(&stream[len..], &mut cb);
+        assert_eq!(actions, reference, "split after byte {} diverged", len);
+    }
+}
