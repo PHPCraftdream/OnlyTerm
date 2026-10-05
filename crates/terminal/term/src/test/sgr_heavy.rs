@@ -14,6 +14,7 @@
 //! failure.
 use super::*;
 use k9::assert_equal as assert_eq;
+use onlyterm_cell::{color::AnsiColor, Intensity};
 use std::sync::Arc;
 
 struct Lcg(u64);
@@ -418,6 +419,123 @@ fn colored_scroll_blank_rows_carry_pen_attrs() {
             top_visible.len(),
             COLS,
             "conpty={} top visible row len",
+            conpty
+        );
+    }
+}
+
+const MARGIN_LEFT: usize = 2;
+const MARGIN_RIGHT: usize = 10;
+
+fn margin_scroll_case(force_slow: bool, conpty: bool) -> (Terminal, Vec<Line>) {
+    let mut term = make_term(force_slow, conpty);
+    for row in 0..ROWS {
+        let letter = char::from(b"ABCDEFGH"[row]);
+        term.advance_bytes(
+            format!("\x1b[{};1H{}", row + 1, letter.to_string().repeat(COLS)).as_bytes(),
+        );
+    }
+    term.advance_bytes(
+        b"\x1b[3;4H\x1b[1;31;44m\xe7\x95\x8c \x1b]8;;https://example.invalid/margin\x1b\\L\x1b]8;;\x1b\\",
+    );
+    let before = term.screen().all_lines();
+    term.advance_bytes(b"\x1b[?69h\x1b[2;5r\x1b[3;10s\x1b[32m\x1b[S");
+    (term, before)
+}
+
+fn outside_margin_cells(lines: &[Line]) -> Vec<Vec<(usize, String, usize, CellAttributes)>> {
+    lines
+        .iter()
+        .map(|line| {
+            line.visible_cells()
+                .filter(|cell| cell.cell_index() < MARGIN_LEFT || cell.cell_index() >= MARGIN_RIGHT)
+                .map(|cell| {
+                    (
+                        cell.cell_index(),
+                        cell.str().to_string(),
+                        cell.width(),
+                        cell.attrs().clone(),
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn assert_margin_scroll_semantics(term: &Terminal, before: &[Line], conpty: bool) {
+    let after = term.screen().all_lines();
+    assert_eq!(before.len(), ROWS, "conpty={}: initial rows", conpty);
+    assert_eq!(
+        after.len(),
+        before.len(),
+        "conpty={}: partial rows must not enter scrollback",
+        conpty
+    );
+    assert_eq!(
+        outside_margin_cells(&after),
+        outside_margin_cells(before),
+        "conpty={}: cells outside horizontal margins changed",
+        conpty
+    );
+
+    let source = &before[2];
+    let source_wide = source
+        .visible_cells()
+        .find(|cell| cell.cell_index() == 3)
+        .expect("wide source cell");
+    assert_eq!(source_wide.str(), "界");
+    assert_eq!(source_wide.width(), 2);
+    let wide_attrs = source_wide.attrs().clone();
+    let source_link = source
+        .visible_cells()
+        .find(|cell| cell.cell_index() == 6)
+        .expect("hyperlinked source cell");
+    assert_eq!(source_link.str(), "L");
+    assert!(source_link.attrs().hyperlink().is_some());
+    let link_attrs = source_link.attrs().clone();
+
+    let moved = &after[1];
+    let moved_wide = moved
+        .visible_cells()
+        .find(|cell| cell.cell_index() == 3)
+        .expect("wide cell after scroll");
+    assert_eq!(moved_wide.str(), "界");
+    assert_eq!(moved_wide.width(), 2);
+    assert_eq!(moved_wide.attrs(), &wide_attrs);
+    let moved_link = moved
+        .visible_cells()
+        .find(|cell| cell.cell_index() == 6)
+        .expect("hyperlinked cell after scroll");
+    assert_eq!(moved_link.str(), "L");
+    assert_eq!(moved_link.attrs(), &link_attrs);
+
+    let blank_attrs = CellAttributes::default()
+        .set_intensity(Intensity::Bold)
+        .set_foreground(AnsiColor::Green)
+        .set_background(onlyterm_cell::color::ColorAttribute::PaletteIndex(4))
+        .clone();
+    let blank_cells: Vec<_> = after[4]
+        .visible_cells()
+        .filter(|cell| (MARGIN_LEFT..MARGIN_RIGHT).contains(&cell.cell_index()))
+        .collect();
+    assert_eq!(blank_cells.len(), MARGIN_RIGHT - MARGIN_LEFT);
+    for cell in blank_cells {
+        assert_eq!(cell.str(), " ");
+        assert_eq!(cell.width(), 1);
+        assert_eq!(cell.attrs(), &blank_attrs);
+    }
+}
+
+#[test]
+fn partial_margin_scroll_preserves_cells_and_matches_sgr_conpty_paths() {
+    for conpty in [false, true] {
+        let (fast, before) = margin_scroll_case(false, conpty);
+        assert_margin_scroll_semantics(&fast, &before, conpty);
+        let (slow, _) = margin_scroll_case(true, conpty);
+        assert_eq!(
+            observe(&fast),
+            observe(&slow),
+            "fast/slow mismatch, conpty={}",
             conpty
         );
     }
