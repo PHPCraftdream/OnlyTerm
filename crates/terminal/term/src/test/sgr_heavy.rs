@@ -14,7 +14,8 @@
 //! failure.
 use super::*;
 use k9::assert_equal as assert_eq;
-use onlyterm_cell::{color::AnsiColor, Intensity};
+use onlyterm_cell::color::AnsiColor;
+use onlyterm_cell::Intensity;
 use std::sync::Arc;
 
 struct Lcg(u64);

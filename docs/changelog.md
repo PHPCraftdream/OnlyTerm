@@ -48,6 +48,8 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
 
+* Async mux trait methods retain explicit future-use diagnostics with Rust 1.99
+  Clippy; CI formatting follows nightly rustfmt's module import grouping.
 * Text glyphs are clipped to their pane viewport instead of leaking into the
   scrollbar gutter. Cached row quads track pane width when split geometry changes.
 * Reflow falls back safely for widths near `usize::MAX` without arithmetic overflow.

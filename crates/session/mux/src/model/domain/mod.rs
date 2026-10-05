@@ -65,6 +65,7 @@ fn split_size_fits(total: usize, size: SplitSize) -> bool {
 #[async_trait(?Send)]
 pub trait Domain: Downcast + Send + Sync {
     /// Spawn a new command within this domain
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn spawn(
         &self,
         size: TerminalSize,
@@ -87,6 +88,7 @@ pub trait Domain: Downcast + Send + Sync {
         Ok(tab)
     }
 
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn split_pane(
         &self,
         source: SplitSource,
@@ -203,6 +205,7 @@ pub trait Domain: Downcast + Send + Sync {
         Ok(pane)
     }
 
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn spawn_pane(
         &self,
         size: TerminalSize,
@@ -214,6 +217,7 @@ pub trait Domain: Downcast + Send + Sync {
     /// is being moved to give the domain a chance to handle the movement.
     /// If this method returns Ok(None), then the mux will handle the
     /// movement itself by mutating its local Tabs and Windows.
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn remote_move_pane_to_new_tab(
         &self,
         _pane_id: PaneId,
@@ -227,6 +231,7 @@ pub trait Domain: Downcast + Send + Sync {
     /// rotated to give the domain a chance to handle the movement. If this
     /// method returns Ok(false), then the mux will handle the movement itself
     /// by mutating its local Tabs and Windows.
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn remote_rotate_panes(
         &self,
         _pane_id: PaneId,
@@ -239,6 +244,7 @@ pub trait Domain: Downcast + Send + Sync {
     /// swapped to give the domain a chance to handle the movement. If this
     /// method returns Ok(false), then the mux will handle the movement itself
     /// by mutating its local Tabs and Windows.
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn remote_swap_active_pane_with_index(
         &self,
         _active_pane_id: PaneId,
@@ -269,11 +275,13 @@ pub trait Domain: Downcast + Send + Sync {
     fn domain_name(&self) -> &str;
 
     /// Returns a label describing the domain.
+    #[must_use = "The returned future must be awaited to obtain the domain label"]
     async fn domain_label(&self) -> String {
         self.domain_name().to_string()
     }
 
     /// Re-attach to any tabs that might be pre-existing in this domain
+    #[must_use = "The returned future must be awaited to execute this operation"]
     async fn attach(&self, window_id: Option<WindowId>) -> anyhow::Result<()>;
 
     /// Detach all tabs

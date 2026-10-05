@@ -151,6 +151,7 @@ pub fn unix_connect_with_retry(
 
 #[async_trait(?Send)]
 pub trait AsyncReadAndWrite: Unpin + AsyncRead + AsyncWrite + std::fmt::Debug + Send {
+    #[must_use = "The returned future must be awaited to wait for readable data"]
     async fn wait_for_readable(&self) -> anyhow::Result<()>;
 }
 

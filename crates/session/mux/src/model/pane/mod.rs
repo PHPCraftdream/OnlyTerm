@@ -409,6 +409,7 @@ pub trait Pane: Downcast + Send + Sync {
     /// in the result can be used as the start of the next region to search.
     /// You can tell that you have reached the end of the results if the number
     /// of results is smaller than the limit you set.
+    #[must_use = "The returned future must be awaited to obtain the search results"]
     async fn search(
         &self,
         _pattern: Pattern,
