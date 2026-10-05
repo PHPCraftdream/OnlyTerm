@@ -35,7 +35,7 @@ use onlyterm_term::input::LastMouseClick;
 use onlyterm_term::{Progress, StableRowIndex, TerminalSize};
 use smol::channel::Sender;
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, LinkedList};
+use std::collections::{HashMap, LinkedList, VecDeque};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -507,6 +507,7 @@ pub struct TermWindow {
     placeholder_cleared: bool,
 
     pub last_frame_duration: Duration,
+    pending_input_to_next_paint: VecDeque<Instant>,
     last_fps_check_time: Instant,
     num_frames: usize,
     pub fps: f32,
@@ -518,6 +519,9 @@ pub struct TermWindow {
     // that trait's doc comment for why every call site here goes through it
     // instead of the concrete type.
     render_thread: Option<Box<dyn onlyterm_gpu_render::RenderBackend>>,
+    /// Start time of the last HostProcess frame; the GUI observes the
+    /// completion/ack transition on its next paint.
+    host_frame_queued_at: Option<Instant>,
     /// One-shot guard for the render-thread hang supervisor (see
     /// `schedule_render_thread_hang_check`): set to `true` the moment this
     /// window has been torn down for an observed render-thread hang, so a

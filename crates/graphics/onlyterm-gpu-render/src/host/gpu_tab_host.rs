@@ -42,6 +42,7 @@ use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
 use onlyterm_config::ConfigHandle;
 use std::convert::TryFrom;
 use std::io::{self, Write};
+use std::time::Instant;
 use window::bitmaps::{BitmapImage, Texture2d};
 use window::{Dimensions, Point, Rect, Size};
 
@@ -244,6 +245,7 @@ fn attach_surface(
 
 pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
     onlyterm_client::client::parent_watcher::spawn_parent_watcher(args.supervise_pid);
+    let profile_enabled = onlyterm_metrics::profile_pipeline_enabled();
 
     let stdin = io::stdin();
     let mut reader = stdin.lock();
@@ -331,6 +333,11 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                     log::warn!("gpu-tab-host: ignoring Frame before any AttachSurface");
                     continue;
                 };
+                let worker_build_started = if profile_enabled {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 let gpu_frame =
                     match build_gpu_frame(state, &mut atlas, &mut instance_buffers, &frame) {
                         Ok(gpu_frame) => gpu_frame,
@@ -348,6 +355,10 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                             break;
                         }
                     };
+                if let Some(worker_build_started) = worker_build_started {
+                    onlyterm_metrics::cached_histogram!("gui.host_process.worker_frame_build")
+                        .record(worker_build_started.elapsed());
+                }
 
                 // A Rust panic inside GPU submission should not kill a
                 // process that could keep serving the next frame; a raw SEH
@@ -355,12 +366,26 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                 // exactly the point of this process boundary -- it dies,
                 // the parent respawns a replacement, the on-screen content
                 // stays frozen on the last good frame in the meantime.
+                let worker_submit_started = if profile_enabled {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     state.submit_frame(gpu_frame)
                 }));
+                if let Some(worker_submit_started) = worker_submit_started {
+                    onlyterm_metrics::cached_histogram!("gui.host_process.worker_submit")
+                        .record(worker_submit_started.elapsed());
+                }
                 match result {
                     Ok(Ok(())) => {
                         presented_seq += 1;
+                        let ack_started = if profile_enabled {
+                            Some(Instant::now())
+                        } else {
+                            None
+                        };
                         if let Err(err) = wire::write_presented(&mut writer, presented_seq) {
                             log::error!(
                                 "gpu-tab-host: failed to write Presented ack: {err}; exiting"
@@ -372,6 +397,12 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                                 "gpu-tab-host: failed to flush ack channel: {err}; exiting"
                             );
                             break;
+                        }
+                        if let Some(ack_started) = ack_started {
+                            onlyterm_metrics::cached_histogram!(
+                                "gui.host_process.worker_ack_write_flush"
+                            )
+                            .record(ack_started.elapsed());
                         }
                     }
                     Ok(Err(err)) => match &err {

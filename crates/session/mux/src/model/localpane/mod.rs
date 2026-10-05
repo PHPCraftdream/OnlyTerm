@@ -174,9 +174,9 @@ impl ForEachPaneLogicalLine for ApplyHyperlinksInLock<'_> {
 /// around 100ms and "avoid perceptible lag" around 16ms/one frame at
 /// 60Hz) while still being generous compared to how long the parser
 /// thread normally holds the lock for a single chunk of actions -- chunks
-/// are capped (see `perform_actions_chunked`) specifically so that a
-/// single critical section is short, on the order of microseconds to a
-/// couple of milliseconds, not tens of milliseconds. A few polled
+/// are bounded by action count and print bytes, except for indivisible Unicode
+/// graphemes. A soft byte budget cannot guarantee elapsed time against process
+/// descheduling or a single pathological grapheme. A few polled
 /// background tabs each spending up to 8ms here in the worst case still
 /// keeps total added latency for one GUI event to a low single-digit
 /// number of milliseconds, while genuinely wedged/stuck panes (the

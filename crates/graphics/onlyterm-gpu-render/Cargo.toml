@@ -16,6 +16,7 @@ filedescriptor.workspace = true
 futures.workspace = true
 log.workspace = true
 metrics.workspace = true
+onlyterm-metrics.workspace = true
 parking_lot.workspace = true
 onlyterm-promise.workspace = true
 smol.workspace = true

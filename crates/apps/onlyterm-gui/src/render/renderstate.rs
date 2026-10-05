@@ -407,6 +407,12 @@ impl RenderLayer {
         // error, just an empty frame.
         if let TripleLayerQuadAllocator::Gpu(borrowed) = layers {
             let [view0, view1, view2] = borrowed.layers;
+            if onlyterm_metrics::profile_pipeline_enabled() {
+                let quad_count =
+                    view0.instances.len() + view1.instances.len() + view2.instances.len();
+                onlyterm_metrics::cached_histogram!("gui.paint.collect.quads.size")
+                    .record(quad_count as f64);
+            }
             vbs[0].accumulate_instances(view0.instances);
             vbs[1].accumulate_instances(view1.instances);
             vbs[2].accumulate_instances(view2.instances);

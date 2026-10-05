@@ -215,4 +215,14 @@ impl Terminal {
         }
         self.trigger_unseen_output_notif();
     }
+
+    /// Apply borrowed text from a batch split at Unicode grapheme boundaries.
+    pub fn perform_print_fragment(&mut self, text: &str) {
+        self.state.increment_seqno();
+        {
+            let mut performer = Performer::new(&mut self.state);
+            performer.print_borrowed(text);
+        }
+        self.trigger_unseen_output_notif();
+    }
 }

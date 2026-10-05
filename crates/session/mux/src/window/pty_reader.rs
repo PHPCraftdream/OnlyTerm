@@ -151,6 +151,11 @@ fn process_chunk(
     parser: &mut termwiz::escape::parser::Parser,
     bytes: &[u8],
 ) {
+    let parse_started = if onlyterm_metrics::profile_pipeline_enabled() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     parser.parse(bytes, |action| {
         if state.hold && is_passthrough_query(&action) {
             send_actions_to_mux(pane, dead, vec![action]);
@@ -196,6 +201,13 @@ fn process_chunk(
             state.action_size = 0;
         }
     });
+    // This includes action buffering and the rare DEC 2026/query flush that
+    // the parser callback performs; it is the parser-thread wall-time stage.
+    if let Some(parse_started) = parse_started {
+        onlyterm_metrics::cached_histogram!("mux.pty.parse_and_buffer")
+            .record(parse_started.elapsed());
+        onlyterm_metrics::cached_histogram!("mux.pty.parse_bytes.size").record(bytes.len() as f64);
+    }
     state.action_size += bytes.len();
 }
 

@@ -191,24 +191,33 @@ impl<'a> Performer<'a> {
         if self.print.is_empty() {
             return;
         }
+        let mut print = std::mem::take(&mut self.print);
+        self.flush_print_text(&print);
+        std::mem::swap(&mut self.print, &mut print);
+        self.print.clear();
+    }
 
+    pub(crate) fn print_borrowed(&mut self, text: &str) {
+        if let Some(title) = self.accumulating_title.as_mut() {
+            title.push_str(text);
+        } else {
+            self.flush_print_text(text);
+        }
+    }
+
+    fn flush_print_text(&mut self, input: &str) {
         let seqno = self.seqno;
-        let mut p = std::mem::take(&mut self.print);
         let normalized: String;
         let text = if self.config.normalize_output_to_unicode_nfc()
-            && is_nfc_quick(p.chars()) != IsNormalized::Yes
+            && is_nfc_quick(input.chars()) != IsNormalized::Yes
         {
-            normalized = p.as_str().nfc().collect();
+            normalized = input.nfc().collect();
             normalized.as_str()
         } else {
-            p.as_str()
+            input
         };
 
-        // Whether the bulk ASCII path is even a candidate for this flush.
-        // Any escape/control sequence that would change these flips
-        // (insert mode, G0/G1 charset designation, SO/SI) flushes the
-        // print buffer first (see `control`/`csi_dispatch`/`esc_dispatch`),
-        // so they can't change mid-buffer; safe to compute once.
+        // Controls flush the buffer before changing these modes.
         #[cfg(test)]
         let bulk_eligible =
             !self.force_slow_print_path && !self.insert && self.active_charset_is_ascii();
@@ -225,11 +234,6 @@ impl<'a> Performer<'a> {
                     continue;
                 }
             }
-
-            // Slow path: `pos` is always at a grapheme boundary here (the
-            // bulk path only ever stops short of a run when what follows
-            // could combine with the last ASCII char, so that char is left
-            // for this loop to pick up together with what follows it).
             let g = match Graphemes::new(&text[pos..]).next() {
                 Some(g) => g,
                 None => break,
@@ -237,9 +241,6 @@ impl<'a> Performer<'a> {
             pos += g.len();
             self.print_one_grapheme(g, seqno);
         }
-
-        std::mem::swap(&mut self.print, &mut p);
-        self.print.clear();
     }
 
     /// Returns true if the currently designated character set (chosen by

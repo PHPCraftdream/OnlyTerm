@@ -30,6 +30,13 @@ use std::sync::OnceLock;
 pub mod named;
 
 static RECORDER_INSTALLED: AtomicBool = AtomicBool::new(false);
+static PROFILE_PIPELINE_ENABLED: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| {
+    std::env::var("ONLYTERM_PROFILE_INTERVAL_SECONDS")
+        .ok()
+        .and_then(|seconds| seconds.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .is_some()
+});
 
 /// Marks the global `metrics` recorder as installed. Call once, after
 /// `metrics::set_global_recorder` succeeds. Idempotent; safe to call more
@@ -41,6 +48,12 @@ pub fn mark_recorder_installed() {
 /// Whether [`mark_recorder_installed`] has been called yet in this process.
 pub fn recorder_installed() -> bool {
     RECORDER_INSTALLED.load(Ordering::Acquire)
+}
+
+/// Whether the opt-in profiling harness requested the more detailed GUI/mux
+/// stage histograms. This environment setting is read once per process.
+pub fn profile_pipeline_enabled() -> bool {
+    *PROFILE_PIPELINE_ENABLED
 }
 
 /// A single call site's cached `metrics` handle (typically a

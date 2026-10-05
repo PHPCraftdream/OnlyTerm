@@ -32,6 +32,12 @@ impl Pane for LocalPane {
     fn get_keyboard_encoding(&self) -> KeyboardEncoding {
         if self.tmux_domain.lock().is_some() {
             KeyboardEncoding::Xterm
+        } else if onlyterm_metrics::profile_pipeline_enabled() {
+            lock_terminal_timed(
+                &self.terminal,
+                "localpane.terminal_lock.wait.keyboard_encoding",
+                |term| term.get_keyboard_encoding(),
+            )
         } else {
             self.terminal.lock().get_keyboard_encoding()
         }
@@ -78,7 +84,15 @@ impl Pane for LocalPane {
     }
 
     fn get_dimensions(&self) -> RenderableDimensions {
-        terminal_get_dimensions(&mut self.terminal.lock())
+        if onlyterm_metrics::profile_pipeline_enabled() {
+            lock_terminal_timed(
+                &self.terminal,
+                "localpane.terminal_lock.wait.dimensions",
+                terminal_get_dimensions,
+            )
+        } else {
+            terminal_get_dimensions(&mut self.terminal.lock())
+        }
     }
 
     /// Single-lock snapshot for rendering (ghost-cursor-fix-plan Phase C;
@@ -98,10 +112,16 @@ impl Pane for LocalPane {
         hyperlink_rules: &[Rule],
         changed_since_seqno: SequenceNo,
     ) -> PaneRenderSnapshot {
+        let profile_enabled = onlyterm_metrics::profile_pipeline_enabled();
         let mut snapshot = lock_terminal_timed(
             &self.terminal,
             "localpane.terminal_lock.wait.render_snapshot",
             |term| {
+                let snapshot_started = if profile_enabled {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 let dims = terminal_get_dimensions(term);
                 let top = viewport.unwrap_or(dims.physical_top);
                 let lines = top..top + dims.viewport_rows as StableRowIndex;
@@ -133,14 +153,21 @@ impl Pane for LocalPane {
                 let cursor = terminal_get_cursor_position(term);
                 let palette = term.palette();
                 let (stable_top, lines) = terminal_get_lines(term, lines);
-                PaneRenderSnapshot {
+                let snapshot = PaneRenderSnapshot {
                     cursor,
                     dims,
                     stable_top,
                     lines,
                     palette,
                     changed_since,
+                };
+                if let Some(snapshot_started) = snapshot_started {
+                    onlyterm_metrics::cached_histogram!(
+                        "localpane.terminal_lock.hold.render_snapshot"
+                    )
+                    .record(snapshot_started.elapsed());
                 }
+                snapshot
             },
         );
         // Same tmux special case as `get_cursor_position` above.

@@ -359,14 +359,34 @@ impl crate::TermWindow {
                 }
             }
             FrameForm::Wire { full_resync } => {
+                let profile_enabled = onlyterm_metrics::profile_pipeline_enabled();
+                let wire_build_started = if profile_enabled {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
                 let frame = self.build_wire_frame(full_resync, uniform)?;
+                if let Some(wire_build_started) = wire_build_started {
+                    onlyterm_metrics::cached_histogram!("gui.host_process.wire_frame_build")
+                        .record(wire_build_started.elapsed());
+                }
                 // A `Wire` frame form only ever comes from a real
                 // `render_thread` (there is no synchronous host-process
                 // fallback), so `render_thread` is always `Some` here.
+                let enqueue_started = if profile_enabled {
+                    Some(Instant::now())
+                } else {
+                    None
+                };
+                self.host_frame_queued_at = enqueue_started;
                 self.render_thread
                     .as_ref()
                     .expect("FrameForm::Wire only comes from a render_thread-backed RenderBackend")
                     .send_frame(SubmittableFrame::Wire(frame));
+                if let Some(enqueue_started) = enqueue_started {
+                    onlyterm_metrics::cached_histogram!("gui.host_process.ipc_enqueue")
+                        .record(enqueue_started.elapsed());
+                }
             }
         }
         Ok(())

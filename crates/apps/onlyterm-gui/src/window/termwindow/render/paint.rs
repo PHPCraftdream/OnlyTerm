@@ -27,6 +27,21 @@ fn atlas_retry_size(pass: usize, current: usize, requested: usize) -> usize {
 
 impl crate::TermWindow {
     pub fn paint_impl(&mut self, frame: &mut RenderFrame) {
+        // On HostProcess success, in-flight -> idle means Presented ack;
+        // failure/teardown also release it. Sampling here includes the
+        // event-loop delay to this paint, so it is a completion upper bound.
+        if self.host_frame_queued_at.is_some() {
+            let frame_finished = self
+                .render_thread
+                .as_ref()
+                .is_some_and(|backend| !backend.is_in_flight());
+            if frame_finished {
+                if let Some(queued_at) = self.host_frame_queued_at.take() {
+                    onlyterm_metrics::cached_histogram!("gui.host_process.inflight_duration")
+                        .record(queued_at.elapsed());
+                }
+            }
+        }
         // The universal safety net for lazy background-tab resizing (see
         // `ActiveTabSizeTracker` in window/resize.rs): every activation
         // path funnels through painting the tab eventually -- including
@@ -262,6 +277,12 @@ impl crate::TermWindow {
         // `gui.render_thread.submit`.)
         metrics::histogram!("gui.paint.impl").record(self.last_frame_duration);
         metrics::histogram!("gui.paint.impl.rate").record(1.);
+        // This is deliberately a next-paint reaction proxy: it does not
+        // require changed cells, an accepted frame enqueue, or terminal echo.
+        while let Some(input_started) = self.pending_input_to_next_paint.pop_front() {
+            onlyterm_metrics::cached_histogram!("gui.input_to_next_paint")
+                .record(input_started.elapsed());
+        }
 
         // If self.has_animation is some, then the last render detected
         // image attachments with multiple frames, so we also need to

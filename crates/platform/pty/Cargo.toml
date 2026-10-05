@@ -25,6 +25,8 @@ serde_support = ["serde"]
 bitflags.workspace = true
 lazy_static.workspace = true
 shared_library.workspace = true
+metrics.workspace = true
+onlyterm-metrics.workspace = true
 winapi = { workspace=true, features = [
     "winuser",
     "consoleapi",

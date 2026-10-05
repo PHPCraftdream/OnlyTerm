@@ -11,6 +11,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::Path;
 use std::sync::Mutex;
+use std::time::Instant;
 use std::{mem, ptr};
 use winapi::shared::minwindef::DWORD;
 use winapi::shared::winerror::{HRESULT, S_OK};
@@ -220,9 +221,18 @@ impl PseudoCon {
     }
 
     pub fn resize(&self, size: COORD) -> Result<(), Error> {
+        let resize_started = if onlyterm_metrics::profile_pipeline_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
         // SAFETY: FFI call into conpty.dll. `self.con` is a valid HPCON
         // obtained from CreatePseudoConsole.
         let result = unsafe { (CONPTY.ResizePseudoConsole)(self.con, size) };
+        if let Some(resize_started) = resize_started {
+            onlyterm_metrics::cached_histogram!("conpty.resize_pseudoconsole")
+                .record(resize_started.elapsed());
+        }
         ensure!(
             result == S_OK,
             "failed to resize console to {}x{}: HRESULT: {}",

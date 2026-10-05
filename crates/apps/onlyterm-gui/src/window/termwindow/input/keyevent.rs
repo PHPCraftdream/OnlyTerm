@@ -18,6 +18,8 @@ use smol::Timer;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+const MAX_PENDING_INPUT_TO_FRAME_SAMPLES: usize = 256;
+
 #[derive(Debug)]
 pub enum Key {
     Code(::termwiz::input::KeyCode),
@@ -78,6 +80,18 @@ fn is_ctrl_chord_of_interest(keycode: &KeyCode, mods: Modifiers) -> bool {
 }
 
 impl super::TermWindow {
+    fn queue_input_to_next_paint(&mut self, event_started: Instant) {
+        if self.pending_input_to_next_paint.capacity() == 0 {
+            self.pending_input_to_next_paint
+                .reserve(MAX_PENDING_INPUT_TO_FRAME_SAMPLES);
+        }
+        if self.pending_input_to_next_paint.len() == MAX_PENDING_INPUT_TO_FRAME_SAMPLES {
+            let _ = self.pending_input_to_next_paint.pop_front();
+            metrics::counter!("gui.input_to_next_paint.samples_dropped").increment(1);
+        }
+        self.pending_input_to_next_paint.push_back(event_started);
+    }
+
     #[allow(clippy::too_many_arguments)] // key dispatch: params carry the full input context the handler needs
     fn process_key(
         &mut self,
@@ -92,6 +106,11 @@ impl super::TermWindow {
         is_down: bool,
         key_event: Option<&KeyEvent>,
     ) -> bool {
+        let event_started = if onlyterm_metrics::profile_pipeline_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
         if is_down && !leader_active && !bypass_lookup {
             // Check to see if this key-press is the leader activating
             if let Some(duration) = self.input_map.is_leader(keycode, raw_modifiers) {
@@ -299,6 +318,11 @@ impl super::TermWindow {
                             context.set_cursor(None);
                         }
                         if !keycode.is_modifier() {
+                            if is_down {
+                                if let Some(event_started) = event_started {
+                                    self.queue_input_to_next_paint(event_started);
+                                }
+                            }
                             context.invalidate();
                         }
 
@@ -534,6 +558,11 @@ impl super::TermWindow {
     }
 
     pub fn key_event_impl(&mut self, window_key: KeyEvent, context: &dyn WindowOps) {
+        let event_started = if onlyterm_metrics::profile_pipeline_enabled() {
+            Some(Instant::now())
+        } else {
+            None
+        };
         let pane = match self.get_active_pane_or_overlay() {
             Some(pane) => pane,
             None => {
@@ -763,6 +792,11 @@ impl super::TermWindow {
                         context.set_cursor(None);
                     }
                     if !key.is_modifier() {
+                        if window_key.key_is_down {
+                            if let Some(event_started) = event_started {
+                                self.queue_input_to_next_paint(event_started);
+                            }
+                        }
                         context.invalidate();
                     }
                 }

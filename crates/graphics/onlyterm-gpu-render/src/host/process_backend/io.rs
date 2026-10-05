@@ -2,6 +2,7 @@ use super::*;
 use std::io::Write;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
+use std::time::Instant;
 use windows::core::IUnknown;
 
 pub(super) fn spawn_writer_thread(
@@ -20,7 +21,9 @@ pub(super) fn spawn_writer_thread(
             // custom allocator from retaining a fresh large arena for every
             // slightly-different terminal frame.
             let mut frame_body = Vec::new();
+            let profile_enabled = onlyterm_metrics::profile_pipeline_enabled();
             for msg in rx {
+                let is_frame = matches!(&msg, HostToChildMsg::Frame(_));
                 let result = match msg {
                     HostToChildMsg::AttachSurface {
                         surface_handle,
@@ -28,8 +31,19 @@ pub(super) fn spawn_writer_thread(
                         height,
                     } => wire::write_attach_surface(&mut stdin, surface_handle, width, height),
                     HostToChildMsg::Frame(mut frame) => {
+                        let write_started = if profile_enabled {
+                            Some(Instant::now())
+                        } else {
+                            None
+                        };
                         let res =
                             wire::write_frame_with_buffer(&mut stdin, &frame, &mut frame_body);
+                        if let Some(write_started) = write_started {
+                            onlyterm_metrics::cached_histogram!(
+                                "gui.host_process.frame_encode_write"
+                            )
+                            .record(write_started.elapsed());
+                        }
                         // Return draw buffers to the pool now that their
                         // contents have been serialized onto the wire.
                         // This is the return half of the pool contract:
@@ -46,7 +60,25 @@ pub(super) fn spawn_writer_thread(
                         res
                     }
                 };
-                if let Err(err) = result.and_then(|()| stdin.flush()) {
+                let result = match result {
+                    Ok(()) => {
+                        let flush_started = if profile_enabled && is_frame {
+                            Some(Instant::now())
+                        } else {
+                            None
+                        };
+                        let result = stdin.flush();
+                        if let Some(flush_started) = flush_started {
+                            onlyterm_metrics::cached_histogram!(
+                                "gui.host_process.frame_pipe_flush"
+                            )
+                            .record(flush_started.elapsed());
+                        }
+                        result
+                    }
+                    Err(err) => Err(err),
+                };
+                if let Err(err) = result {
                     log::warn!(
                         "gpu-host-writer-{generation}: write failed (child likely dead): {err}"
                     );

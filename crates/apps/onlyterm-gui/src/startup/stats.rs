@@ -227,6 +227,11 @@ impl Inner {
             },
         ];
 
+        let profile_interval = std::env::var("ONLYTERM_PROFILE_INTERVAL_SECONDS")
+            .ok()
+            .and_then(|seconds| seconds.parse::<u64>().ok())
+            .filter(|seconds| *seconds > 0);
+
         loop {
             std::thread::sleep(Duration::from_secs(1));
 
@@ -234,7 +239,7 @@ impl Inner {
                 break;
             }
 
-            let seconds = configuration().periodic_stat_logging;
+            let seconds = profile_interval.unwrap_or_else(|| configuration().periodic_stat_logging);
             if seconds == 0 {
                 continue;
             }
@@ -257,28 +262,73 @@ impl Inner {
                 tabulate_output(&rate_cols, &data, &mut std::io::stderr().lock()).ok();
 
                 data.clear();
-                for (key, histogram) in inner.histograms.read().iter() {
-                    if key.name().ends_with(".size") {
-                        let (p50, p75, p95) = histogram.percentiles();
-                        data.push(vec![
-                            key.to_string(),
-                            format!("{:.2?}", p50),
-                            format!("{:.2?}", p75),
-                            format!("{:.2?}", p95),
-                        ]);
-                    } else {
-                        let (p50, p75, p95) = histogram.latency_percentiles();
-                        data.push(vec![
-                            key.to_string(),
-                            format!("{:.2?}", p50),
-                            format!("{:.2?}", p75),
-                            format!("{:.2?}", p95),
-                        ]);
+                if profile_interval.is_some() {
+                    // Snapshot the map before logging so a slow file sink doesn't
+                    // hold the metrics registry's read lock.
+                    let histograms: Vec<_> = inner
+                        .histograms
+                        .read()
+                        .iter()
+                        .map(|(key, histogram)| (key.clone(), Arc::clone(histogram)))
+                        .collect();
+                    let summaries: Vec<_> = histograms
+                        .into_iter()
+                        .map(|(key, histogram)| {
+                            let hist = histogram.hist.lock();
+                            let unit = if key.name().ends_with(".size") {
+                                "raw"
+                            } else {
+                                "ns"
+                            };
+                            (
+                                key.name().to_string(),
+                                unit,
+                                hist.len(),
+                                if hist.is_empty() { 0. } else { hist.mean() },
+                                hist.value_at_percentile(50.),
+                                hist.value_at_percentile(95.),
+                                hist.value_at_percentile(99.),
+                                hist.max(),
+                            )
+                        })
+                        .collect();
+                    for (metric, unit, samples, mean, p50, p95, p99, max) in summaries {
+                        log::info!(
+                            "PROFILE_METRIC metric={} unit={} samples={} mean={} p50={} p95={} p99={} max={}",
+                            metric,
+                            unit,
+                            samples,
+                            mean,
+                            p50,
+                            p95,
+                            p99,
+                            max,
+                        );
                     }
+                } else {
+                    for (key, histogram) in inner.histograms.read().iter() {
+                        if key.name().ends_with(".size") {
+                            let (p50, p75, p95) = histogram.percentiles();
+                            data.push(vec![
+                                key.to_string(),
+                                format!("{:.2?}", p50),
+                                format!("{:.2?}", p75),
+                                format!("{:.2?}", p95),
+                            ]);
+                        } else {
+                            let (p50, p75, p95) = histogram.latency_percentiles();
+                            data.push(vec![
+                                key.to_string(),
+                                format!("{:.2?}", p50),
+                                format!("{:.2?}", p75),
+                                format!("{:.2?}", p95),
+                            ]);
+                        }
+                    }
+                    data.sort_by(|a, b| a[0].cmp(&b[0]));
+                    eprintln!();
+                    tabulate_output(&cols, &data, &mut std::io::stderr().lock()).ok();
                 }
-                data.sort_by(|a, b| a[0].cmp(&b[0]));
-                eprintln!();
-                tabulate_output(&cols, &data, &mut std::io::stderr().lock()).ok();
 
                 data.clear();
                 for (key, count) in inner.counters.read().iter() {
