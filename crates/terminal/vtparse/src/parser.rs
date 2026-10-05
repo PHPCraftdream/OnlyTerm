@@ -630,11 +630,12 @@ impl VTParser {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "std", feature = "alloc")))]
 mod test {
     use super::*;
     use crate::{CollectingVTActor, VTAction};
     use k9::assert_equal as assert_eq;
+    use std::string::ToString;
 
     /// A `VTActor` that records the size of every `print_run` call while
     /// forwarding everything to a `CollectingVTActor`, so that tests can
@@ -2143,5 +2144,139 @@ mod test {
         parser.parse("\u{0434}\u{0430}".as_bytes(), &mut actor);
         parser.parse(b"\xd0", &mut actor);
         assert_eq!(parser.fast_text_run_count(), before + 1);
+    }
+}
+
+#[cfg(all(test, not(any(feature = "std", feature = "alloc"))))]
+mod no_alloc_test {
+    use super::{VTParser, MAX_OSC};
+    use crate::{CsiParam, VTActor};
+    use std::vec::Vec;
+
+    #[derive(Debug, PartialEq)]
+    enum Event {
+        Print(char),
+        Execute(u8),
+        Csi(Vec<CsiParam>, bool, u8),
+        Osc(Vec<Vec<u8>>),
+    }
+
+    #[derive(Default)]
+    struct Recorder {
+        events: Vec<Event>,
+    }
+
+    impl VTActor for Recorder {
+        fn print(&mut self, ch: char) {
+            self.events.push(Event::Print(ch));
+        }
+
+        fn execute_c0_or_c1(&mut self, control: u8) {
+            self.events.push(Event::Execute(control));
+        }
+
+        fn dcs_hook(
+            &mut self,
+            _byte: u8,
+            _params: &[i64],
+            _intermediates: &[u8],
+            _ignored_excess_intermediates: bool,
+        ) {
+        }
+
+        fn dcs_put(&mut self, _byte: u8) {}
+
+        fn dcs_unhook(&mut self) {}
+
+        fn esc_dispatch(
+            &mut self,
+            _params: &[i64],
+            _intermediates: &[u8],
+            _ignored_excess_intermediates: bool,
+            _byte: u8,
+        ) {
+        }
+
+        fn csi_dispatch(&mut self, params: &[CsiParam], truncated: bool, byte: u8) {
+            self.events
+                .push(Event::Csi(params.to_vec(), truncated, byte));
+        }
+
+        fn osc_dispatch(&mut self, params: &[&[u8]]) {
+            self.events.push(Event::Osc(
+                params.iter().map(|param| param.to_vec()).collect(),
+            ));
+        }
+    }
+
+    #[test]
+    fn no_alloc_text_and_utf8_c1_produce_expected_events() {
+        let mut parser = VTParser::new();
+        let mut actor = Recorder::default();
+
+        parser.parse(b"hi \xd0", &mut actor);
+        assert_eq!(
+            actor.events,
+            vec![Event::Print('h'), Event::Print('i'), Event::Print(' ')]
+        );
+
+        parser.parse(b"\x96\xc2\x9b31m\xe2\x82\xac\xc2\x85", &mut actor);
+        assert_eq!(
+            actor.events,
+            vec![
+                Event::Print('h'),
+                Event::Print('i'),
+                Event::Print(' '),
+                Event::Print('Ж'),
+                Event::Csi(vec![CsiParam::Integer(31)], false, b'm'),
+                Event::Print('€'),
+                Event::Execute(0x85),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_alloc_invalid_and_fragmented_text_matches_bytewise_parser() {
+        let input = [
+            b't', b'e', b'x', b't', b' ', 0xd0, 0x96, 0xe0, 0x80, b'x', 0xf4, 0x90, 0x80, 0x80,
+            0xc2, 0x85, 0xd1, 0x8f,
+        ];
+
+        let mut expected_parser = VTParser::new();
+        let mut expected_actor = Recorder::default();
+        expected_parser.parse_reference(&input, &mut expected_actor);
+
+        for chunk_size in 1..=input.len() {
+            let mut parser = VTParser::new();
+            let mut actor = Recorder::default();
+            for chunk in input.chunks(chunk_size) {
+                parser.parse(chunk, &mut actor);
+            }
+            assert_eq!(
+                actor.events, expected_actor.events,
+                "chunk size {} changed invalid/fragmented input events",
+                chunk_size
+            );
+        }
+    }
+
+    #[test]
+    fn no_alloc_osc_payload_uses_fixed_buffer_capacity() {
+        const OSC_BUFFER_CAPACITY: usize = MAX_OSC * 16;
+        let mut input = b"\x1b]0;".to_vec();
+        input.extend(std::iter::repeat_n(b'x', OSC_BUFFER_CAPACITY + 1));
+        input.push(b'\x07');
+
+        let mut parser = VTParser::new();
+        let mut actor = Recorder::default();
+        parser.parse(&input, &mut actor);
+
+        assert_eq!(
+            actor.events,
+            vec![Event::Osc(vec![
+                b"0".to_vec(),
+                vec![b'x'; OSC_BUFFER_CAPACITY - 1],
+            ])]
+        );
     }
 }

@@ -16,6 +16,9 @@
 
 #[cfg(any(feature = "std", feature = "alloc"))]
 extern crate alloc;
+#[cfg(test)]
+#[macro_use]
+extern crate std;
 
 mod actor;
 mod collecting;

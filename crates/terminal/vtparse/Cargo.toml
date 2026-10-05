@@ -14,10 +14,11 @@ readme = "README.md"
 default = ["std"]
 alloc = []
 std = []
-no_std = ["dep:heapless"]
+# Marker for downstream feature forwarding; no_std mode otherwise follows !std.
+no_std = []
 
 [dependencies]
-heapless = {workspace = true, optional = true }
+heapless = { workspace = true }
 utf8parse.workspace = true
 
 [dev-dependencies]
