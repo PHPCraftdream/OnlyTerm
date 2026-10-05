@@ -318,8 +318,11 @@ fn perf_bench_resize() {
         bench_narrow_widen("ascii", conpty, &ascii);
         let cyrillic = cyrillic_lines(SCROLLBACK + 500, 110);
         bench_narrow_widen("cyrillic", conpty, &cyrillic);
-        bench_drag("ascii", conpty, &ascii);
         let mixed = mixed_text_lines(SCROLLBACK + 500);
-        bench_drag("mixed 24bit", conpty, &mixed);
+        bench_narrow_widen("mixed 24bit SGR", conpty, &mixed);
+
+        bench_drag("ascii", conpty, &ascii);
+        bench_drag("cyrillic", conpty, &cyrillic);
+        bench_drag("mixed 24bit SGR", conpty, &mixed);
     }
 }

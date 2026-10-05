@@ -48,6 +48,20 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
 
+* Reflow falls back safely for widths near `usize::MAX` without arithmetic overflow.
+* Clearing recycled rows refreshes their wrapped state even when multiple
+  mutations share the same sequence number.
+* vtparse supports parsing without default features; the `no_std` feature remains
+  a compatibility marker rather than a prerequisite for fixed-buffer parsing.
+* Partial scrolling inside horizontal margins moves owned scratch cells into
+  destination rows instead of cloning them a second time.
+* Bulk output releases the terminal lock at a soft 64-KiB print-work budget,
+  preserving grapheme boundaries and the batch's resize guard. Text fragments
+  borrow the original string instead of copying each chunk.
+* Opt-in GUI pipeline profiling records parse/apply, lock, render, IPC, GPU-worker
+  submission and ConPTY resize stages. The isolated Windows harness measures
+  application input delivery without sending global keyboard events.
+
 * Process-provided tab/window titles are opt-in via `allow_process_title_updates`.
   Explicit UI and configured titles retain priority.
 * CJK fallback faces and shaping plans stay cached; mirrored atlas uploads no
