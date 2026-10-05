@@ -130,3 +130,25 @@ fn recycle_as_blank_falls_back_and_leaves_shared_clone_untouched() {
     assert_eq!(recycled.as_str(), "");
     assert_eq!(recycled.len(), 0);
 }
+
+#[test]
+fn resize_and_clear_refreshes_wrapped_state_at_same_seqno() {
+    for clustered in [false, true] {
+        for width in [0, 3, 5] {
+            let mut line = build_line(SEQ_ZERO, "abc");
+            if !clustered {
+                line.cells_mut();
+            }
+            line.set_last_cell_was_wrapped(true, SEQ_ZERO);
+            assert!(line.last_cell_was_wrapped());
+            let snapshot = line.clone();
+
+            line.resize_and_clear(width, SEQ_ZERO, CellAttributes::default());
+
+            assert_eq!(line.len(), width);
+            assert!(line.visible_cells().all(|cell| !cell.attrs().wrapped()));
+            assert!(!line.last_cell_was_wrapped());
+            assert!(snapshot.last_cell_was_wrapped());
+        }
+    }
+}

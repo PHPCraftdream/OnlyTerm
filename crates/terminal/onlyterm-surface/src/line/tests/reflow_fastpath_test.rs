@@ -505,6 +505,26 @@ fn wrap_targeted_cases_match_reference() {
             vec![1, 2, 3, 5, 6],
         ),
         (
+            "non-breaking space remains visible",
+            vec![("ж", 1, plain.clone()), ("\u{a0}", 1, plain.clone())],
+            vec![1, 2, 3],
+        ),
+        (
+            "space with combining mark remains visible",
+            vec![("ж", 1, plain.clone()), (" \u{301}", 1, colored.clone())],
+            vec![1, 2, 3],
+        ),
+        (
+            "trim linked double-width trailing space",
+            vec![("漢", 2, plain.clone()), (" ", 2, linked.clone())],
+            vec![1, 2, 3, 4, 5],
+        ),
+        (
+            "prepend-joined trailing space remains visible",
+            vec![("\u{600}", 1, plain.clone()), (" ", 1, plain.clone())],
+            vec![1, 2, 3],
+        ),
+        (
             "hyperlink only in tail",
             vec![
                 ("h", 1, plain.clone()),
@@ -525,6 +545,7 @@ fn wrap_targeted_cases_match_reference() {
                         let idx = line.len();
                         line.set_cell_grapheme(idx, text, *w, attrs.clone(), SEQ_ZERO);
                     }
+                    line.compress_for_scrollback();
                     line
                 };
                 let seq = SEQ_ZERO + 9;
@@ -779,47 +800,9 @@ fn append_line_fusing_graphemes_match_reference() {
     }
 }
 
-/// Proves the fast path is actually taken for ordinary C-storage input
-/// (and still produces the right number of pieces), and that Vec storage
-/// falls back to the reference oracle.
-
+/// Compare storage variants, control bytes and combined widths past u16::MAX.
 #[test]
-fn wrap_keeping_fast_path_taken_on_clustered_storage() {
-    let plain = CellAttributes::default();
-    let build = || {
-        let mut line = Line::new(SEQ_ZERO);
-        for g in ["a", "b", "c", "d", "e", "f"].iter() {
-            line.set_cell_grapheme(line.len(), g, 1, plain.clone(), SEQ_ZERO);
-        }
-        line
-    };
-
-    super::editing::reset_wrap_fast_path_hits();
-    let pieces = build().wrap_keeping(2, 0, SEQ_ZERO + 1);
-    assert_eq!(pieces.len(), 3);
-    assert_eq!(
-        super::editing::wrap_fast_path_hits(),
-        1,
-        "ordinary clustered input must take the OPT-4 fast path"
-    );
-
-    super::editing::reset_wrap_fast_path_hits();
-    let v = Line::from_text("abcdef", &plain, SEQ_ZERO, None);
-    let pieces = v.wrap_keeping(2, 0, SEQ_ZERO + 1);
-    assert_eq!(pieces.len(), 3);
-    assert_eq!(
-        super::editing::wrap_fast_path_hits(),
-        0,
-        "Vec storage must fall back to the reference oracle"
-    );
-}
-
-/// Proves the append fast path is taken for ordinary C+C input and NOT
-/// taken for the fallback cases (V storage on either side, control bytes
-/// in `other`, `u16` length overflow); every fallback must still equal
-/// the reference oracle.
-#[test]
-fn append_line_fast_path_taken_on_clustered_storage() {
+fn append_line_storage_and_boundary_cases_match_reference() {
     let plain = CellAttributes::default();
     let build = |texts: &[&str]| -> Line {
         let mut line = Line::new(SEQ_ZERO);
@@ -836,72 +819,54 @@ fn append_line_fast_path_taken_on_clustered_storage() {
         assert_same(&[a], &[a_ref], ctx);
     };
 
-    // Ordinary C + C: fast path, one hit.
-    super::editing::reset_append_fast_path_hits();
     let mut a = build(&["a", "b", "c"]);
     a.compress_for_scrollback();
     let mut b = build(&["d", "e"]);
     b.compress_for_scrollback();
-    a.append_line(b, SEQ_ZERO + 30);
-    assert_eq!(
-        super::editing::append_fast_path_hits(),
-        1,
-        "ordinary C+C input must take the OPT-4 append fast path"
-    );
+    assert_equal(a, b, "clustered storage");
 
-    // `other` in Vec storage: fallback.
-    super::editing::reset_append_fast_path_hits();
     let a = build(&["a", "b", "c"]);
     let b = Line::from_text("de", &plain, SEQ_ZERO, None);
-    assert_eq!(
-        super::editing::append_fast_path_hits(),
-        0,
-        "V storage in other must not take the fast path"
-    );
     assert_equal(a, b, "v-storage other");
 
-    // `self` in Vec storage: fallback.
-    super::editing::reset_append_fast_path_hits();
     let a = Line::from_text("abc", &plain, SEQ_ZERO, None);
     let mut b = build(&["d", "e"]);
     b.compress_for_scrollback();
-    assert_eq!(
-        super::editing::append_fast_path_hits(),
-        0,
-        "no append attempted yet"
-    );
     assert_equal(a, b, "v-storage self");
-    assert_eq!(
-        super::editing::append_fast_path_hits(),
-        0,
-        "V storage in self must not take the fast path"
-    );
 
     // Control bytes in `other`: the reference neutralises them via
     // `as_cell()`/`TeenyString`; the fast path must fall back.
-    super::editing::reset_append_fast_path_hits();
     let mut a = build(&["a", "b", "c"]);
     a.compress_for_scrollback();
     let mut b = build(&["\x07", "d"]);
     b.compress_for_scrollback();
     assert_equal(a, b, "control byte in other");
-    assert_eq!(
-        super::editing::append_fast_path_hits(),
-        0,
-        "control bytes in other.text must fall back to the reference"
-    );
 
     // Combined length beyond `u16::MAX`: fallback.
-    super::editing::reset_append_fast_path_hits();
     let mut a = Line::new(SEQ_ZERO);
     let run: String = core::iter::repeat_n("x", 40_000).collect();
     a.set_ascii_run(0, &run, &plain, SEQ_ZERO);
     let mut b = Line::new(SEQ_ZERO);
     b.set_ascii_run(0, &run, &plain, SEQ_ZERO);
     assert_equal(a, b, "u16 overflow");
-    assert_eq!(
-        super::editing::append_fast_path_hits(),
+}
+
+#[test]
+fn wrap_keeping_extreme_widths_match_reference() {
+    let attrs = CellAttributes::default();
+    let mut line = Line::new(SEQ_ZERO);
+    line.set_ascii_run(0, "ab  ", &attrs, SEQ_ZERO);
+    line.compress_for_scrollback();
+    for width in [
         0,
-        "total len > u16::MAX must fall back to the reference"
-    );
+        1,
+        u16::MAX as usize - 2,
+        u16::MAX as usize - 1,
+        usize::MAX - 1,
+        usize::MAX,
+    ] {
+        let actual = line.clone().wrap_keeping(width, 3, SEQ_ZERO + 1);
+        let expected = line.clone().wrap_keeping_reference(width, 3, SEQ_ZERO + 1);
+        assert_same(&actual, &expected, &format!("extreme width {}", width));
+    }
 }

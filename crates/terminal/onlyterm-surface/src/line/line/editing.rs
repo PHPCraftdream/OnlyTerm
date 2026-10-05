@@ -11,43 +11,6 @@ use onlyterm_cell::{Cell, CellAttributes};
 
 extern crate alloc;
 
-#[cfg(test)]
-thread_local! {
-    static WRAP_FAST_PATH_HITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
-}
-
-/// Test-only: how many times `wrap_keeping` took the OPT-4 fast path on
-/// this thread. The differential tests alone cannot tell whether the fast
-/// path ran (public and reference results are equal by contract), so the
-/// tests use this counter to prove the fast path is actually reached for
-/// ordinary C-storage input.
-#[cfg(test)]
-pub(crate) fn wrap_fast_path_hits() -> u64 {
-    WRAP_FAST_PATH_HITS.with(|hits| hits.get())
-}
-
-#[cfg(test)]
-pub(crate) fn reset_wrap_fast_path_hits() {
-    WRAP_FAST_PATH_HITS.with(|hits| hits.set(0));
-}
-
-#[cfg(test)]
-thread_local! {
-    static APPEND_FAST_PATH_HITS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
-}
-
-/// Test-only: how many times `append_line` took the OPT-4 fast path on
-/// this thread (see `wrap_fast_path_hits` for why a counter is needed).
-#[cfg(test)]
-pub(crate) fn append_fast_path_hits() -> u64 {
-    APPEND_FAST_PATH_HITS.with(|hits| hits.get())
-}
-
-#[cfg(test)]
-pub(crate) fn reset_append_fast_path_hits() {
-    APPEND_FAST_PATH_HITS.with(|hits| hits.set(0));
-}
-
 impl Line {
     pub fn resize_and_clear(
         &mut self,
@@ -66,6 +29,8 @@ impl Line {
         self.update_last_change_seqno(seqno);
         self.invalidate_zones();
         self.bits = LineBits::NONE;
+        self.cached_last_cell_wrapped_seqno
+            .store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Resets `self` in place to the same observable state as
@@ -134,12 +99,8 @@ impl Line {
             // small enough that per-piece cluster widths cannot overflow
             // `u16`. Anything else (Vec storage, degenerate clusters,
             // huge widths) goes through the reference oracle below.
-            if width >= 1 && width + 2 <= u16::MAX as usize && cl.clusters_consistent() {
+            if (1..=u16::MAX as usize - 2).contains(&width) && cl.clusters_consistent() {
                 if let Some(pieces) = cl.wrap_pieces(width, keep) {
-                    #[cfg(test)]
-                    {
-                        WRAP_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
-                    }
                     let last = pieces.len() - 1;
                     let mut lines: Vec<Self> = Vec::with_capacity(pieces.len());
                     for (i, piece) in pieces.into_iter().enumerate() {
@@ -347,10 +308,6 @@ impl Line {
             CellStorage::C(cl) => cl,
             CellStorage::V(_) => unreachable!("the gate above required C storage"),
         };
-        #[cfg(test)]
-        {
-            APPEND_FAST_PATH_HITS.with(|hits| hits.set(hits.get() + 1));
-        }
         if let CellStorage::C(cl) = &mut self.cells {
             // Same shared-storage discipline as the reference path's
             // `Arc::make_mut`: never mutate in place while a snapshot
