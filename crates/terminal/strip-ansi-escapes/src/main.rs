@@ -68,4 +68,22 @@ mod test {
         }
         assert_eq!(out, "abcdefg");
     }
+
+    #[test]
+    fn keeps_unicode_text_when_escapes_and_utf8_are_split_across_reads() {
+        let bytes = "λsame same\x1b[31m界repeat repeat\x1b[0m🧪\x1b]2;title-Ж\x07lastδ".as_bytes();
+
+        for chunk_size in [1, 3, bytes.len()] {
+            let mut parser = TWParser::new();
+            let mut out = String::new();
+            for chunk in bytes.chunks(chunk_size) {
+                out.push_str(&strip(&mut parser, chunk));
+            }
+            assert_eq!(
+                out, "λsame same界repeat repeat🧪lastδ",
+                "chunk size {}",
+                chunk_size
+            );
+        }
+    }
 }

@@ -1190,11 +1190,11 @@ fn bulk_print_run_ending_at_chunk_boundary() {
     let stream = b"abc\x1b[0mxyz";
     let reference = parse_reference_as_vec(stream);
     assert_eq!(
-        reference,
+        observable_actions(&reference),
         vec![
-            Action::PrintString("abc".to_string()),
-            Action::CSI(CSI::Sgr(crate::csi::Sgr::Reset)),
-            Action::PrintString("xyz".to_string()),
+            ObservableAction::Text("abc".to_string()),
+            ObservableAction::NonPrint(Action::CSI(CSI::Sgr(Sgr::Reset))),
+            ObservableAction::Text("xyz".to_string()),
         ]
     );
 
@@ -1220,7 +1220,10 @@ fn bulk_print_run_ending_at_chunk_boundary() {
 /// fast path just like any other byte in 0x20..=0x7f.
 #[test]
 fn bulk_print_run_prints_del_in_ground() {
-    assert_eq!(parse_merged_as_vec(b"\x7f"), vec![Action::Print('\x7f')]);
+    assert_eq!(
+        observable_actions(&parse_merged_as_vec(b"\x7f")),
+        vec![ObservableAction::Text("\x7f".to_string())]
+    );
     let stream = b"abc\x7fdef";
     assert_eq!(parse_merged_as_vec(stream), parse_reference_as_vec(stream));
 }
@@ -1296,29 +1299,29 @@ fn bulk_print_run_after_utf8_split_across_chunks() {
     assert_eq!(actions, reference);
 }
 
-/// `Performer::print_run` reports a whole run of printable ASCII as a single
-/// `PrintString`, which is what `Action::append_to` produces from the
-/// equivalent run of `Print` actions.
+/// Printable output is observable regardless of whether it arrives as `Print`
+/// or `PrintString`, including when a run spans multiple parse calls.
 #[test]
-fn bulk_print_run_reports_runs_as_print_string() {
+fn bulk_print_run_preserves_text_across_calls() {
+    let actions = Parser::new().parse_as_vec(b"hello world");
     assert_eq!(
-        Parser::new().parse_as_vec(b"hello world"),
-        vec![Action::PrintString("hello world".to_string())]
+        observable_actions(&actions),
+        vec![ObservableAction::Text("hello world".to_string())]
     );
 
-    // A run split across two `parse` calls coalesces back into a single
-    // PrintString via `Action::append_to`.
     let mut parser = Parser::new();
-    let mut actions: Vec<Action> = Vec::new();
-    parser.parse(b"hel", |action| action.append_to(&mut actions));
-    parser.parse(b"lo world", |action| action.append_to(&mut actions));
+    let mut actions = Vec::new();
+    parser.parse(b"hel", |action| actions.push(action));
+    parser.parse(b"lo world", |action| actions.push(action));
     assert_eq!(
-        actions,
-        vec![Action::PrintString("hello world".to_string())]
+        observable_actions(&actions),
+        vec![ObservableAction::Text("hello world".to_string())]
     );
 
-    // ...and single characters are still reported as `Print`.
-    assert_eq!(Parser::new().parse_as_vec(b"x"), vec![Action::Print('x')]);
+    assert_eq!(
+        observable_actions(&Parser::new().parse_as_vec(b"x")),
+        vec![ObservableAction::Text("x".to_string())]
+    );
 }
 
 /// Build a random byte stream dominated by valid multi-byte UTF-8 text
@@ -1563,4 +1566,102 @@ fn text_run_split_across_chunks() {
         parser.parse(&stream[len..], &mut cb);
         assert_eq!(actions, reference, "split after byte {} diverged", len);
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum ObservableAction {
+    Text(String),
+    NonPrint(Action),
+}
+
+/// Merge adjacent printable actions so tests assert visible output, not the
+/// parser's allocation-oriented `Print`/`PrintString` grouping. Keep complete
+/// non-print actions so their command parameters and payloads remain checked.
+fn observable_actions(actions: &[Action]) -> Vec<ObservableAction> {
+    let mut observed = Vec::new();
+    for action in actions {
+        match action {
+            Action::Print(ch) => match observed.last_mut() {
+                Some(ObservableAction::Text(text)) => text.push(*ch),
+                _ => observed.push(ObservableAction::Text(ch.to_string())),
+            },
+            Action::PrintString(text) => match observed.last_mut() {
+                Some(ObservableAction::Text(printed)) => printed.push_str(text),
+                _ => observed.push(ObservableAction::Text(text.clone())),
+            },
+            action => observed.push(ObservableAction::NonPrint(action.clone())),
+        }
+    }
+    observed
+}
+
+#[test]
+fn text_run_preserves_first_last_and_repeated_unicode_characters() {
+    let text = "λrepeat repeat 界";
+    let actions = parse_merged_as_vec(text.as_bytes());
+    assert_eq!(
+        observable_actions(&actions),
+        vec![ObservableAction::Text(text.to_string())]
+    );
+}
+
+/// Randomly selected byte boundaries include UTF-8 continuation bytes, while
+/// fixed input and seed keep the exercise deterministic and full-suite-safe.
+#[test]
+fn text_run_preserves_content_for_random_utf8_chunk_boundaries() {
+    let text = "λsame same 界🧪repeat repeat ".repeat(8);
+    let bytes = text.as_bytes();
+    let interior_utf8_boundaries: Vec<usize> = bytes
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, byte)| {
+            if *byte & 0xc0 == 0x80 {
+                Some(offset)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    for seed in 0..32u64 {
+        let mut rng = Rng::new(seed.wrapping_mul(0x517C_C1B7_2722_0A95 | 1));
+        let required_split = interior_utf8_boundaries[rng.below(interior_utf8_boundaries.len())];
+        let mut cuts = vec![0, required_split, bytes.len()];
+        for offset in 1..bytes.len() {
+            if rng.below(11) == 0 {
+                cuts.push(offset);
+            }
+        }
+        cuts.sort_unstable();
+        cuts.dedup();
+        let plan: Vec<usize> = cuts.windows(2).map(|pair| pair[1] - pair[0]).collect();
+
+        let actions = parse_merged_random_chunks_as_vec(bytes, &plan);
+        assert_eq!(
+            observable_actions(&actions),
+            vec![ObservableAction::Text(text.clone())],
+            "seed {}: printable text changed across byte chunks",
+            seed
+        );
+    }
+}
+
+#[test]
+fn text_run_keeps_printed_content_in_order_around_csi_osc_and_c1() {
+    let stream = "λsame same\x1b[0m界same same\x1b]2;title\x07🧪same same\u{85}δsame sameζ";
+    let actions = parse_merged_as_vec(stream.as_bytes());
+    assert_eq!(
+        observable_actions(&actions),
+        vec![
+            ObservableAction::Text("λsame same".to_string()),
+            ObservableAction::NonPrint(Action::CSI(CSI::Sgr(Sgr::Reset))),
+            ObservableAction::Text("界same same".to_string()),
+            ObservableAction::NonPrint(Action::OperatingSystemCommand(Box::new(
+                OperatingSystemCommand::SetWindowTitle("title".to_string()),
+            ))),
+            ObservableAction::Text("🧪same same".to_string()),
+            ObservableAction::NonPrint(Action::Control(crate::ControlCode::NEL)),
+            ObservableAction::Text("δsame sameζ".to_string()),
+        ]
+    );
 }
