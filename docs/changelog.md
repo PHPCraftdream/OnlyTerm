@@ -12,6 +12,27 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.35-alpha — 2026-10-05
+
+#### Fixed
+
+* Text glyphs stay within their pane viewport instead of leaking into the scrollbar
+  gutter; cached row quads track pane width when split geometry changes.
+* Reflow handles zero-width trailing cells and widths near `usize::MAX` safely.
+  Clearing recycled rows refreshes wrapped state within the same sequence number.
+* vtparse builds without default features. CI passes nightly formatting and
+  Rust 1.99 Clippy without disabling checks.
+
+#### Changed
+
+* Printable ASCII and single-cell Unicode runs are processed in bulk; UTF-8 text
+  reaches parser actors in contiguous runs, and reflow joins and wraps rows in bulk.
+* Partial-margin scrolling moves owned scratch cells instead of cloning them.
+* Bulk output releases the terminal lock at a soft 64-KiB print-work budget while
+  preserving grapheme boundaries and the batch's resize guard.
+* Opt-in GUI pipeline profiling and an isolated native Windows harness measure
+  input delivery, rendering, lock time and resize stages.
+
 ### v0.0.34-alpha — 2026-10-01
 
 #### Fixed
