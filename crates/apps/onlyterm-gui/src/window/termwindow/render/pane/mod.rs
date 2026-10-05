@@ -602,6 +602,7 @@ impl crate::TermWindow {
                         config_generation: self.term_window.config.generation(),
                         shape_generation: self.term_window.shape_generation,
                         quad_generation: self.term_window.quad_generation,
+                        num_cols: self.dims.cols,
                         composing: composing.clone(),
                         selection: selrange.clone(),
                         cursor,

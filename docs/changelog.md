@@ -48,6 +48,8 @@ As features stabilize some brief notes about them will accumulate here.
 
 #### Changed
 
+* Text glyphs are clipped to their pane viewport instead of leaking into the
+  scrollbar gutter. Cached row quads track pane width when split geometry changes.
 * Reflow falls back safely for widths near `usize::MAX` without arithmetic overflow.
 * Clearing recycled rows refreshes their wrapped state even when multiple
   mutations share the same sequence number.

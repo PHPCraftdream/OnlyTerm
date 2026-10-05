@@ -18,6 +18,12 @@ use termwiz::cell::{unicode_column_width, Blink};
 use termwiz::color::LinearRgba;
 use termwiz::surface::CursorShape;
 
+fn clip_glyph_strip(range: Range<f32>, left: f32, width: f32) -> Option<Range<f32>> {
+    let start = range.start.max(left);
+    let end = range.end.min(left + width);
+    (start < end).then_some(start..end)
+}
+
 impl crate::TermWindow {
     /// "Render" a line of the terminal screen into the vertex buffer.
     /// This is nominally a matter of setting the fg/bg color and the
@@ -525,8 +531,6 @@ impl crate::TermWindow {
                     }
 
                     if let Some(texture) = texture {
-                        // TODO: clipping, but we can do that based on pixels
-
                         let pos_x = cluster_x_pos
                             + if params.use_pixel_positioning {
                                 (glyph.x_offset + glyph.bearing_x).get() as f32
@@ -538,6 +542,7 @@ impl crate::TermWindow {
                             log::trace!("breaking on overflow {} > {}", pos_x, params.pixel_width);
                             break;
                         }
+
                         let pos_x = pos_x + params.left_pixel_x;
 
                         // We need to conceptually slice this texture into
@@ -599,6 +604,14 @@ impl crate::TermWindow {
                         let adjust = (glyph.x_offset + glyph.bearing_x).get() as f32;
                         let texture_range = pos_x + adjust
                             ..pos_x + adjust + (texture.coords.size.width as f32 * width_scale);
+                        let texture_range = match clip_glyph_strip(
+                            texture_range,
+                            params.left_pixel_x,
+                            params.pixel_width,
+                        ) {
+                            Some(range) => range,
+                            None => continue,
+                        };
 
                         // First bucket the ranges according to cursor position
                         let (left, mid, right) = range3(&texture_range, &cursor_range_pixels);
@@ -926,5 +939,26 @@ impl crate::TermWindow {
         }
 
         Ok((shaped, invalidate_on_hover_change))
+    }
+}
+
+#[cfg(test)]
+mod glyph_clip_tests {
+    use super::clip_glyph_strip;
+
+    #[test]
+    fn clips_glyph_overhang_to_viewport_without_repositioning_it() {
+        assert_eq!(clip_glyph_strip(76.0..89.0, 0.0, 80.0), Some(76.0..80.0));
+        assert_eq!(clip_glyph_strip(-3.0..9.0, 0.0, 80.0), Some(0.0..9.0));
+        assert_eq!(clip_glyph_strip(12.5..33.5, 16.0, 12.0), Some(16.0..28.0));
+        assert_eq!(clip_glyph_strip(21.0..25.0, 16.0, 12.0), Some(21.0..25.0));
+    }
+
+    #[test]
+    fn excludes_hidden_columns_and_empty_viewports() {
+        assert_eq!(clip_glyph_strip(80.0..89.0, 0.0, 80.0), None);
+        assert_eq!(clip_glyph_strip(85.0..94.0, 0.0, 80.0), None);
+        assert_eq!(clip_glyph_strip(-9.0..0.0, 0.0, 80.0), None);
+        assert_eq!(clip_glyph_strip(12.0..19.0, 12.0, 0.0), None);
     }
 }
