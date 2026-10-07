@@ -12,6 +12,15 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.36-alpha — 2026-10-07
+
+#### Changed
+
+* Fancy tabs have a 100-pixel minimum outer width, larger vertical padding and
+  an 11-point default font on Windows. Explicit window-frame font sizes still apply.
+* Right-clicking a tab no longer opens a tab list. The dedicated `ShowTabNavigator`
+  action and menu entry have been removed; the new-tab button menu is unchanged.
+
 ### v0.0.35-alpha — 2026-10-05
 
 #### Fixed

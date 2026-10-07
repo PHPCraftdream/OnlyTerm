@@ -174,23 +174,6 @@ impl TermWindow {
         onlyterm_promise::spawn::spawn(future).detach();
     }
 
-    pub(in crate::termwindow) fn show_tab_navigator(&mut self) {
-        let mux = Mux::get();
-        let active_tab_idx = match mux.get_window(self.mux_window_id) {
-            Some(mux_window) => mux_window.get_active_idx(),
-            None => return,
-        };
-        let title = "Tab Navigator".to_string();
-        let args = LauncherActionArgs {
-            title: Some(title),
-            flags: LauncherFlags::TABS,
-            help_text: None,
-            fuzzy_help_text: None,
-            alphabet: None,
-        };
-        self.show_launcher_impl(args, active_tab_idx);
-    }
-
     pub(super) fn show_launcher_impl(
         &mut self,
         args: LauncherActionArgs,

@@ -4,8 +4,7 @@ use crate::frontend::front_end;
 use crate::gui_api::guiwin::GuiWin;
 use crate::inputmap::InputMap;
 use crate::overlay::{
-    launcher, start_overlay, CopyModeParams, CopyOverlay, LauncherArgs, LauncherFlags,
-    QuickSelectOverlay,
+    launcher, start_overlay, CopyModeParams, CopyOverlay, LauncherArgs, QuickSelectOverlay,
 };
 use crate::spawn::SpawnWhere;
 use crate::tabbar::TabBarState;

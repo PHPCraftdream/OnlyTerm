@@ -344,7 +344,6 @@ pub enum KeyAssignment {
     ScrollToPrompt(isize),
     ScrollToTop,
     ScrollToBottom,
-    ShowTabNavigator,
     ShowDebugOverlay,
     /// Shows a centered overlay with the running OnlyTerm version and
     /// commit hash, and copies that same text to the clipboard. See

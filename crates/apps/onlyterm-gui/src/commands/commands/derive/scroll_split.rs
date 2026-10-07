@@ -306,14 +306,6 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             menubar: &["Shell"],
             icon: None,
         },
-        ShowTabNavigator => CommandDef {
-            brief: "Navigate tabs".into(),
-            doc: "Shows the tab navigator".into(),
-            keys: vec![],
-            args: &[ArgType::ActiveWindow],
-            menubar: &["Window", "Select Tab"],
-            icon: Some("cod_list_flat"),
-        },
         DetachDomain(SpawnTabDomain::CurrentPaneDomain) => CommandDef {
             brief: "Detach the domain of the active pane".into(),
             doc: "Detaches (disconnects from) the domain of the active pane".into(),

@@ -60,7 +60,8 @@ impl super::super::TermWindow {
             }
             None => context.bounds.width() - border_and_padding_width,
         }
-        .min((context.width.pixel_max - context.bounds.min_x()) - border_and_padding_width);
+        .min((context.width.pixel_max - context.bounds.min_x()) - border_and_padding_width)
+        .max(min_width);
 
         match &element.content {
             ElementContent::Text(s) => {

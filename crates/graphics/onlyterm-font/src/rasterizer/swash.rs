@@ -370,7 +370,13 @@ mod test {
         assert_ne!(gid, 0);
 
         let glyph = raster.rasterize_glyph(gid as u32, 8.0, 96).unwrap();
-        let nonzero_alpha_pixels = glyph.data.chunks_exact(4).filter(|p| p[3] > 0).count();
+        let nonzero_alpha_pixels = glyph
+            .data
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .filter(|p| p[3] > 0)
+            .count();
         let total_pixels = glyph.width * glyph.height;
         // The buggy version produced at most 1-2 nonzero pixels (whatever
         // was written last into the aliased row slot) out of ~56 total;

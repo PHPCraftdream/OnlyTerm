@@ -137,7 +137,7 @@ impl crate::TermWindow {
             match item.item {
                 TabBarItem::RightStatus | TabBarItem::LeftStatus | TabBarItem::None => element
                     .item_type(UIItemType::TabBar(TabBarItem::None))
-                    .line_height(Some(1.75))
+                    .line_height(Some(2.0))
                     .margin(BoxDimension {
                         left: Dimension::Cells(0.),
                         right: Dimension::Cells(0.),
@@ -174,8 +174,8 @@ impl crate::TermWindow {
                 .padding(BoxDimension {
                     left: Dimension::Cells(0.5),
                     right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.2),
-                    bottom: Dimension::Cells(0.25),
+                    top: Dimension::Cells(0.25),
+                    bottom: Dimension::Cells(0.3),
                 })
                 .border(BoxDimension::new(Dimension::Pixels(1.)))
                 .colors(ElementColors {
@@ -227,8 +227,8 @@ impl crate::TermWindow {
                         .padding(BoxDimension {
                             left: Dimension::Cells(0.5),
                             right: Dimension::Cells(0.5),
-                            top: Dimension::Cells(0.2),
-                            bottom: Dimension::Cells(0.25),
+                            top: Dimension::Cells(0.25),
+                            bottom: Dimension::Cells(0.3),
                         })
                         .border(BoxDimension::new(Dimension::Pixels(1.)))
                         .border_corners(Some(Corners {
@@ -284,8 +284,8 @@ impl crate::TermWindow {
                         .padding(BoxDimension {
                             left: Dimension::Cells(0.5),
                             right: Dimension::Cells(0.5),
-                            top: Dimension::Cells(0.2),
-                            bottom: Dimension::Cells(0.25),
+                            top: Dimension::Cells(0.25),
+                            bottom: Dimension::Cells(0.3),
                         })
                         .border(BoxDimension::new(Dimension::Pixels(1.)))
                         .border_corners(Some(Corners {
@@ -380,7 +380,7 @@ impl crate::TermWindow {
             .sum();
         let max_tab_width = ((self.dimensions.pixel_width as f32 / num_tabs)
             - (1.5 * metrics.cell_size.width as f32))
-            .max(0.);
+            .max(100.);
 
         // Reserve space for the native titlebar buttons
         if self
@@ -409,6 +409,18 @@ impl crate::TermWindow {
             );
         }
 
+        // Dimensions round each padding and margin independently.
+        let half_cell_width = (metrics.cell_size.width as f32 / 2.).floor();
+        let close_width = if self.config.show_close_tab_button_in_tabs {
+            (metrics.cell_size.height as f32 / 2.).floor()
+                + 2. * (metrics.cell_size.width as f32 / 4.).floor()
+                + half_cell_width
+        } else {
+            0.
+        };
+        // Right floats add their width after min_width (see make_x_button).
+        let min_tab_content_width = (100. - 2. * half_cell_width - 2. - close_width).max(0.);
+
         for item in items {
             match item.item {
                 TabBarItem::LeftStatus => left_status.push(item_to_elem(item)),
@@ -427,6 +439,7 @@ impl crate::TermWindow {
                 } => {
                     let mut elem = item_to_elem(item);
                     elem.max_width = Some(Dimension::Pixels(max_tab_width));
+                    elem.min_width = Some(Dimension::Pixels(min_tab_content_width));
                     elem.content = match elem.content {
                         ElementContent::Text(_) => unreachable!(),
                         ElementContent::Poly { .. } => unreachable!(),

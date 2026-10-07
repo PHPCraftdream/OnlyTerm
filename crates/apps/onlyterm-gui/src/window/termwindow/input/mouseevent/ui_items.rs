@@ -314,13 +314,11 @@ impl super::super::TermWindow {
                 | TabBarItem::WindowButton(_) => {}
             },
             WMEK::Press(MousePress::Right) => match item {
-                TabBarItem::Tab { .. } => {
-                    self.show_tab_navigator();
-                }
                 TabBarItem::NewTabButton => {
                     self.do_new_tab_button_click(MousePress::Right);
                 }
-                TabBarItem::None
+                TabBarItem::Tab { .. }
+                | TabBarItem::None
                 | TabBarItem::LeftStatus
                 | TabBarItem::RightStatus
                 | TabBarItem::WindowButton(_) => {}

@@ -448,7 +448,7 @@ impl FontConfigInner {
             fonts.push(font);
         }
 
-        let font_size = if cfg!(windows) { 10. } else { 12. };
+        let font_size = if cfg!(windows) { 11. } else { 12. };
 
         (
             TextStyle {

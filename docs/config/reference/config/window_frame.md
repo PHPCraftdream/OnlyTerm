@@ -53,4 +53,4 @@ window_frame: {
 }
 ```
 
-The default font is `Roboto`. The default font_size is `10pt` on Windows and `12pt` on other systems.
+The default font is `Roboto`. The default font_size is `11pt` on Windows and `12pt` on other systems.
