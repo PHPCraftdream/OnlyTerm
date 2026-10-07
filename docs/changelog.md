@@ -12,6 +12,15 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.37-alpha — 2026-10-07
+
+#### Changed
+
+* Copying terminal selections trims leading and trailing Unicode whitespace,
+  including tabs and line breaks, without changing internal indentation or blank
+  lines. Keyboard, mouse, copy-mode and Quick Select copying share this behavior;
+  literal `CopyTextTo` values remain unchanged.
+
 ### v0.0.36-alpha — 2026-10-07
 
 #### Changed

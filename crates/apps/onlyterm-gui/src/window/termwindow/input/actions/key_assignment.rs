@@ -240,12 +240,12 @@ impl TermWindow {
             }
             CopyTo(dest) => {
                 let text = self.selection_text(pane);
-                self.copy_to_clipboard(*dest, text);
+                self.copy_terminal_text_to_clipboard(*dest, text);
             }
             CopySelectionOrInterrupt => {
                 let text = self.selection_text(pane);
                 if !text.is_empty() {
-                    self.copy_to_clipboard(ClipboardCopyDestination::Clipboard, text);
+                    self.copy_terminal_text_to_clipboard(ClipboardCopyDestination::Clipboard, text);
                     self.clear_selection(pane);
                 } else {
                     // Route through whatever keyboard protocol the app in
@@ -525,7 +525,7 @@ impl TermWindow {
                         } else {
                             link_text.to_owned()
                         };
-                        self.copy_to_clipboard(*destination, text);
+                        self.copy_terminal_text_to_clipboard(*destination, text);
                         self.clear_selection(pane);
                         if let Some(window) = self.window.as_ref() {
                             window.invalidate();
@@ -546,7 +546,7 @@ impl TermWindow {
                 // this handler must not clear the selection itself.
                 let text = self.selection_text(pane);
                 if !text.is_empty() {
-                    self.copy_to_clipboard(*dest, text);
+                    self.copy_terminal_text_to_clipboard(*dest, text);
                     let window = self.window.as_ref().unwrap();
                     window.invalidate();
                 } else {
@@ -556,7 +556,7 @@ impl TermWindow {
             CompleteSelection(dest) => {
                 let text = self.selection_text(pane);
                 if !text.is_empty() {
-                    self.copy_to_clipboard(*dest, text);
+                    self.copy_terminal_text_to_clipboard(*dest, text);
                     let window = self.window.as_ref().unwrap();
                     window.invalidate();
                 }

@@ -770,7 +770,7 @@ impl QuickSelectRenderable {
                                 let _ = term_window.perform_key_assignment(&pane, &action);
                             }
                         } else {
-                            term_window.copy_to_clipboard(
+                            term_window.copy_terminal_text_to_clipboard(
                                 ClipboardCopyDestination::ClipboardAndPrimarySelection,
                                 text,
                             );

@@ -2,6 +2,12 @@
 
 Copy the selection to the specified clipboard buffer.
 
+Copied terminal text is trimmed of Unicode whitespace at the beginning and end
+of the whole selection, including tabs and line breaks. Internal whitespace and
+blank lines are preserved. A whitespace-only selection copies an empty string.
+The same trimming applies to mouse selection copying, copy mode and Quick Select.
+The visible selection and literal text supplied by `CopyTextTo` are unchanged.
+
 Possible values for destination are:
 
 * `Clipboard` - copy the text to the system clipboard.
