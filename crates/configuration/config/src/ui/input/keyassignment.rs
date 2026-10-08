@@ -455,6 +455,7 @@ pub enum KeyAssignment {
     Confirmation(Confirmation),
     ActivateNewTabOptions,
     ActivatePaneLayoutMenu,
+    ActivateTabProcessMenu,
 }
 
 #[derive(Debug, Clone, PartialEq, FromDynamic, ToDynamic)]

@@ -35,6 +35,8 @@ winapi = { workspace=true, features = [
     "namedpipeapi",
     "synchapi",
     "jobapi2",
+    "jobapi",
+    "tlhelp32",
     "wincon",
     "winbase",
 ]}

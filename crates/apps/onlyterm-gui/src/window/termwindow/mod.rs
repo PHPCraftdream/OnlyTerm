@@ -81,6 +81,9 @@ pub mod resize;
 mod selection;
 #[path = "window/spawn.rs"]
 pub mod spawn;
+#[cfg(windows)]
+#[path = "ui/tab_process_menu.rs"]
+pub mod tab_process_menu;
 #[path = "window/window_handler.rs"]
 mod window_handler;
 use prevcursor::PrevCursorPos;
@@ -209,6 +212,8 @@ pub enum UIItemType {
     /// The dialog's close cross. Dismisses the modal, exactly as Esc does.
     NewTabOptionClose,
     PaneLayoutMenuItem(u8),
+    #[cfg(windows)]
+    TabProcessMenuItem(tab_process_menu::ProcessMenuAction),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

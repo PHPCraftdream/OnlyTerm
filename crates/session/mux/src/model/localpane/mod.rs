@@ -542,6 +542,39 @@ fn split_child(
 }
 
 impl LocalPane {
+    #[cfg(windows)]
+    fn with_conpty<T>(
+        &self,
+        operation: impl FnOnce(&portable_pty::win::conpty::ConPtyMasterPty) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let conpty = {
+            let pty = self.pty.lock();
+            let pty = pty
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Панель уже закрыта"))?;
+            pty.downcast_ref::<portable_pty::win::conpty::ConPtyMasterPty>()
+                .ok_or_else(|| anyhow::anyhow!("Отвязка требует локальную сессию ConPTY"))?
+                .clone()
+        };
+        operation(&conpty)
+    }
+
+    #[cfg(windows)]
+    pub fn child_processes(
+        &self,
+    ) -> anyhow::Result<Vec<portable_pty::win::detach::PtyProcessInfo>> {
+        self.with_conpty(|conpty| conpty.child_processes())
+    }
+
+    #[cfg(windows)]
+    pub fn detach_processes(
+        &self,
+        processes: &[portable_pty::win::detach::ProcessIdentity],
+        helper: &std::path::Path,
+    ) -> anyhow::Result<()> {
+        self.with_conpty(|conpty| conpty.detach_processes(processes, helper))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         pane_id: PaneId,

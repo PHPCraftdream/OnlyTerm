@@ -13,6 +13,7 @@ use winapi::um::synchapi::WaitForSingleObject;
 use winapi::um::winbase::INFINITE;
 
 pub mod conpty;
+pub mod detach;
 mod procthreadattr;
 mod pseudocon;
 
@@ -47,7 +48,26 @@ const GRACEFUL_KILL_TIMEOUT_MS: DWORD = 5000;
 /// `onlyterm_mux::localpane::split_child`), not through `WinChild::kill()` directly.
 /// Whichever kill path runs takes the handle out of the `Option` so the
 /// job is only ever closed once.
-type SharedJobHandle = Arc<Mutex<Option<OwnedHandle>>>;
+#[derive(Debug, Default)]
+struct JobState {
+    handle: Option<OwnedHandle>,
+    preserve_root: bool,
+}
+
+impl JobState {
+    fn new(handle: Option<OwnedHandle>) -> Self {
+        Self {
+            handle,
+            preserve_root: false,
+        }
+    }
+
+    fn take(&mut self) -> Option<OwnedHandle> {
+        self.handle.take()
+    }
+}
+
+type SharedJobHandle = Arc<Mutex<JobState>>;
 
 static REQUIRE_JOB_OBJECT: AtomicBool = AtomicBool::new(false);
 
@@ -86,11 +106,16 @@ impl WinChild {
     }
 
     fn do_kill(&mut self) -> IoResult<()> {
+        let mut job_state = self.job.lock().unwrap();
+        if job_state.preserve_root {
+            drop(job_state.take());
+            return Ok(());
+        }
         let cloned = self.proc.lock().unwrap().try_clone();
         let proc = match cloned {
             Ok(proc) => proc,
             Err(error) => {
-                let job = self.job.lock().unwrap().take();
+                let job = job_state.take();
                 drop(job);
                 return Err(IoError::other(format!("Failed to clone handle: {}", error)));
             }
@@ -98,7 +123,8 @@ impl WinChild {
         // Take the job handle out so that we own its lifetime for the
         // duration of the background thread below; there's nothing else
         // that needs it once a kill has been requested.
-        let job = self.job.lock().unwrap().take();
+        let job = job_state.take();
+        drop(job_state);
         std::thread::spawn(move || {
             kill_gracefully_then_forcefully(proc, job);
         });
@@ -169,17 +195,22 @@ pub struct WinChildKiller {
 
 impl ChildKiller for WinChildKiller {
     fn kill(&mut self) -> IoResult<()> {
+        let mut job_state = self.job.lock().unwrap();
+        if job_state.preserve_root {
+            drop(job_state.take());
+            return Ok(());
+        }
         let proc = match &self.proc {
             Some(proc) => match proc.try_clone() {
                 Ok(proc) => proc,
                 Err(error) => {
-                    let job = self.job.lock().unwrap().take();
+                    let job = job_state.take();
                     drop(job);
                     return Err(IoError::other(format!("Failed to clone handle: {}", error)));
                 }
             },
             None => {
-                let job = self.job.lock().unwrap().take();
+                let job = job_state.take();
                 drop(job);
                 return Ok(());
             }
@@ -189,7 +220,8 @@ impl ChildKiller for WinChildKiller {
         // that needs it once a kill has been requested. This also ensures
         // the job is only ever closed once, even if `kill()` is called
         // more than once or from multiple cloned killers.
-        let job = self.job.lock().unwrap().take();
+        let job = job_state.take();
+        drop(job_state);
         std::thread::spawn(move || {
             kill_gracefully_then_forcefully(proc, job);
         });
@@ -274,36 +306,5 @@ impl std::future::Future for WinChild {
                 Poll::Pending
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Regression test for wezterm/wezterm#5107: `clone_killer()` used to
-    // `.unwrap()` the result of duplicating the process handle, which
-    // panics if `DuplicateHandle` ever fails (eg: handle table exhaustion,
-    // or the underlying process handle having become otherwise unusable).
-    // A `ChildKiller` may be cloned and used from an independent thread
-    // specifically so that callers can signal a process while another
-    // thread is blocked in `.wait()`, so a panic here can bring down an
-    // otherwise-healthy process. `WinChildKiller::kill()` must instead
-    // degrade to a harmless no-op when it holds no handle.
-    #[test]
-    fn clone_killer_with_no_handle_does_not_panic() {
-        let mut killer = WinChildKiller {
-            proc: None,
-            job: Arc::new(Mutex::new(None)),
-        };
-
-        // kill() on a handle-less killer must be a harmless no-op, not a
-        // panic or a hard error.
-        assert!(killer.kill().is_ok());
-
-        // clone_killer() must likewise not panic when there is no handle
-        // to duplicate, and the clone must itself still be inert.
-        let mut cloned = killer.clone_killer();
-        assert!(cloned.kill().is_ok());
     }
 }

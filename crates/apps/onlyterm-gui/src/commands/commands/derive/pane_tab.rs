@@ -462,6 +462,14 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             menubar: &["Shell"],
             icon: None,
         },
+        ActivateTabProcessMenu => CommandDef {
+            brief: "Tab Processes".into(),
+            doc: "Shows process detachment actions for the active tab".into(),
+            keys: vec![(Modifiers::NONE, "F4".into())],
+            args: &[ArgType::ActiveTab],
+            menubar: &["Shell"],
+            icon: None,
+        },
         _ => return None,
     }))
 }

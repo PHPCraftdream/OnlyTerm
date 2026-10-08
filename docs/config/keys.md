@@ -190,6 +190,48 @@ keys: [
 ]
 ```
 
+### F4: tab processes (Windows)
+
+`F4` opens the tab-process menu in the same style as the `F3` pane-layout
+menu. Choose **Отвязать дочерние процессы** to list the processes of all local
+ConPTY panes in the active tab. Rows show their PID and executable name.
+
+Check a process to detach it and its child-process tree. **Отвязать** applies
+the selection and closes the menus on success. **Назад** returns to the first
+menu; **Отмена**, `Esc`, or `F4` closes both levels. The first checkbox,
+**Все процессы**, selects all available processes; activating it again clears
+the pending selection. Already-detached processes remain checked and cannot
+be reattached by this control.
+
+Up/Down moves through **Все процессы**, individual processes and the action
+buttons. Left/Right moves between the buttons. The focused button is highlighted;
+Enter or Space activates the focused checkbox or button. Disabled **Отвязать**
+is skipped while navigating the buttons. The mouse wheel scrolls the process
+list. The background operation does not block the GUI.
+
+Detached processes keep their original PID and remain alive when their pane
+or terminal window closes. Their subsequently spawned children are protected
+as well. Other processes in that pane are still terminated on close. An
+invisible OnlyTerm keeper retains the Windows job and ConPTY channels; after
+the pane closes it drains and discards output. It exits once the detached
+process group has finished. Already-detached processes are marked in the list.
+
+Detachment applies only to local Windows ConPTY sessions. Windows can reject
+access to a process or an incompatible nested-job assignment; the menu reports
+the error and refreshes the actual detachment state. Detachment does not undo
+an application's own child-process shutdown logic or restrictions imposed by
+other job owners. The lifetime mechanism follows Windows
+[nested job semantics](https://learn.microsoft.com/en-us/windows/win32/procthread/nested-jobs)
+and the [shared ConPTY handle ABI](https://github.com/microsoft/terminal/blob/main/src/winconpty/winconpty.h).
+
+The configurable action name is `ActivateTabProcessMenu`:
+
+```
+keys: [
+  { key: F4, mods: NONE, action: ActivateTabProcessMenu }
+]
+```
+
 # Available Actions
 
 See the [`KeyAssignment` reference](reference/keyassignment/index.md) for information

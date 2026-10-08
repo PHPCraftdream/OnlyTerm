@@ -260,6 +260,18 @@ pub(crate) fn terminate_with_error(err: anyhow::Error) -> ! {
 }
 
 fn main() {
+    #[cfg(windows)]
+    if std::env::args_os().nth(1).as_deref()
+        == Some(OsStr::new(portable_pty::win::detach::PROCESS_KEEPER_ARG))
+    {
+        let _log_guard = onlyterm_env_bootstrap::bootstrap();
+        if let Err(error) = portable_pty::win::detach::run_process_keeper() {
+            log::error!("Process keeper failed: {error:#}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::new_heap();
 

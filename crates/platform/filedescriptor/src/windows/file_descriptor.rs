@@ -144,7 +144,7 @@ impl io::Read for FileDescriptor {
     }
 }
 
-impl io::Write for FileDescriptor {
+impl io::Write for &FileDescriptor {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         if self.handle.is_socket_handle() {
             // SAFETY: `self.as_socket_descriptor()` is a valid socket;
@@ -184,5 +184,15 @@ impl io::Write for FileDescriptor {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+impl io::Write for FileDescriptor {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        (&*self).write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        (&*self).flush()
     }
 }

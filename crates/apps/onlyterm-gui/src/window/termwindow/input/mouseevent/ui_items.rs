@@ -50,6 +50,19 @@ impl super::super::TermWindow {
             UIItemType::PaneLayoutMenuItem(number) => {
                 self.mouse_event_pane_layout_menu_item(number, event, context);
             }
+            #[cfg(windows)]
+            UIItemType::TabProcessMenuItem(action) => {
+                if let WMEK::Press(MousePress::Left) = event.kind {
+                    if let Some(modal) = self.get_modal() {
+                        if let Some(menu) = modal
+                            .downcast_ref::<crate::termwindow::tab_process_menu::TabProcessMenu>()
+                        {
+                            menu.perform_action(action, self);
+                        }
+                    }
+                }
+                context.set_cursor(Some(MouseCursor::Hand));
+            }
         }
     }
 

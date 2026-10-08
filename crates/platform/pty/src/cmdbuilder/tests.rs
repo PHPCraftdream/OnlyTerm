@@ -55,50 +55,71 @@ fn test_env_case_insensitive_override() {
 
 #[cfg(windows)]
 #[test]
-fn test_environment_block_skips_empty_name() {
-    // Regression test for wezterm/wezterm#4364: a stray environment
-    // variable with an empty name (which can end up in the user
-    // environment if e.g. the `(Default)` value under
-    // `HKEY_CURRENT_USER\Environment` is explicitly set to an empty
-    // string) used to be encoded verbatim as a bare `=value\0` entry
-    // in the block passed to `CreateProcessW`. That malformed block
-    // caused `CreateProcessW` to fail wholesale with
-    // ERROR_INVALID_PARAMETER (os error 87), so no program at all
-    // could be spawned in the pty. Such entries must be dropped when
-    // building the environment block.
-    let mut cmd = CommandBuilder::new("dummy");
-    cmd.env("", "should be dropped");
-    cmd.env("REGULAR_VAR", "regular value");
-
-    let block = cmd.environment_block();
-    let block_str = String::from_utf16_lossy(&block[..block.len().saturating_sub(1)]);
-
-    // Windows itself injects legitimate `=X:=<cwd on drive X>\0` entries
-    // (one per drive letter that has ever had a current directory set in
-    // this session) into the base process environment; those are
-    // inherited via `self.envs` and are *not* the empty-name bug this
-    // test guards against. Distinguish them by their well-known
-    // `=<letter>:=` shape rather than rejecting every `=`-prefixed entry.
-    let is_windows_drive_cwd_entry = |entry: &str| {
-        let bytes = entry.as_bytes();
-        bytes.len() > 3
-            && bytes[0] == b'='
-            && bytes[1].is_ascii_alphabetic()
-            && bytes[2] == b':'
-            && bytes[3] == b'='
+fn environment_with_empty_name_still_spawns_with_regular_variables() {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use winapi::shared::minwindef::FALSE;
+    use winapi::um::processthreadsapi::{
+        CreateProcessW, GetExitCodeProcess, TerminateProcess, PROCESS_INFORMATION, STARTUPINFOW,
     };
+    use winapi::um::synchapi::WaitForSingleObject;
+    use winapi::um::winbase::{CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT};
 
-    for entry in block_str.split('\0').filter(|s| !s.is_empty()) {
-        assert!(
-            !entry.starts_with('=') || is_windows_drive_cwd_entry(entry),
-            "environment block must not contain an entry with an empty \
-             name (found {:?}); this produces ERROR_INVALID_PARAMETER \
-             from CreateProcessW",
-            entry
+    let mut command = CommandBuilder::new("cmd.exe");
+    command.args(["/d", "/c", "exit", "%ONLYTERM_ENV_BLOCK_EXIT%"]);
+    command.env("", "should be dropped");
+    command.env("ONLYTERM_ENV_BLOCK_EXIT", "23");
+    let (mut exe, mut command_line) = command.cmdline().unwrap();
+    let mut environment = command.environment_block();
+    // SAFETY: These WinAPI structs contain only zero-valid fields.
+    let mut startup: STARTUPINFOW = unsafe { std::mem::zeroed() };
+    // SAFETY: PROCESS_INFORMATION is a zero-valid, exclusively owned output.
+    let mut info: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
+    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+    // SAFETY: Command/environment buffers are mutable, NUL-terminated and live
+    // for the synchronous call; CreateProcessW initializes `info` on success.
+    let created = unsafe {
+        CreateProcessW(
+            exe.as_mut_ptr(),
+            command_line.as_mut_ptr(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            FALSE,
+            CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            environment.as_mut_ptr().cast(),
+            std::ptr::null(),
+            &mut startup,
+            &mut info,
+        )
+    };
+    assert_ne!(
+        created,
+        0,
+        "CreateProcessW failed: {}",
+        std::io::Error::last_os_error()
+    );
+    eprintln!("Owned environment test PID {}", info.dwProcessId);
+    // SAFETY: Successful CreateProcessW transferred both returned handles to us.
+    let process = unsafe { OwnedHandle::from_raw_handle(info.hProcess as _) };
+    // SAFETY: The separately owned thread handle is no longer needed.
+    drop(unsafe { OwnedHandle::from_raw_handle(info.hThread as _) });
+    // SAFETY: This is the original handle for the exact PID we launched above.
+    let waited = unsafe { WaitForSingleObject(process.as_raw_handle() as _, 5000) };
+    if waited != 0 {
+        // SAFETY: Only this test's captured child is terminated, through its handle.
+        unsafe { TerminateProcess(process.as_raw_handle() as _, 1) };
+        panic!(
+            "Owned environment test PID {} did not exit",
+            info.dwProcessId
         );
     }
-
-    assert!(block_str.contains("REGULAR_VAR=regular value"));
+    let mut status = 0;
+    // SAFETY: The process handle and writable DWORD output remain valid.
+    let queried = unsafe { GetExitCodeProcess(process.as_raw_handle() as _, &mut status) };
+    assert_ne!(queried, 0);
+    assert_eq!(
+        status, 23,
+        "The child must receive its configured environment value"
+    );
 }
 
 #[cfg(windows)]

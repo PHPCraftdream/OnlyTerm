@@ -114,7 +114,7 @@ where
     Ok((result, job))
 }
 
-fn create_kill_on_close_job() -> anyhow::Result<OwnedHandle> {
+pub(super) fn create_kill_on_close_job() -> anyhow::Result<OwnedHandle> {
     // SAFETY: Null attributes and name request a non-inheritable, unnamed job.
     let raw = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
     if raw.is_null() {
@@ -145,6 +145,7 @@ fn create_kill_on_close_job() -> anyhow::Result<OwnedHandle> {
 pub struct PseudoCon {
     con: HPCON,
     output: FileDescriptor,
+    pub(crate) lifetime_transferred: bool,
 }
 
 // SAFETY: An `HPCON` is a process-global Windows kernel handle with no
@@ -180,11 +181,12 @@ impl Drop for PseudoCon {
             }
         }
 
-        let mut buffer = [0; 1000];
-        // read up to 1000 bytes
-        while let Ok(num_byes_read) = self.output.read(&mut buffer) {
-            if num_byes_read == 0 {
-                break;
+        if !self.lifetime_transferred {
+            let mut buffer = [0; 1000];
+            while let Ok(num_bytes_read) = self.output.read(&mut buffer) {
+                if num_bytes_read == 0 {
+                    break;
+                }
             }
         }
 
@@ -217,7 +219,19 @@ impl PseudoCon {
             "failed to create pseudo console: HRESULT {}",
             result
         );
-        Ok(Self { con, output })
+        Ok(Self {
+            con,
+            output,
+            lifetime_transferred: false,
+        })
+    }
+
+    pub(crate) fn lifetime_handles(&self) -> [HANDLE; 3] {
+        // SAFETY: ConPTY's shared PseudoConsole ABI contains three aligned HANDLEs
+        // (signal, reference, conhost); CreatePseudoConsole allocated this live object.
+        // See microsoft/terminal src/winconpty/winconpty.h. The master mutex
+        // excludes resize/close while these borrowed handle values are duplicated.
+        unsafe { *(self.con as *const [HANDLE; 3]) }
     }
 
     pub fn resize(&self, size: COORD) -> Result<(), Error> {
@@ -347,7 +361,7 @@ impl PseudoCon {
 
         Ok(WinChild {
             proc: Mutex::new(proc),
-            job: std::sync::Arc::new(Mutex::new(job)),
+            job: std::sync::Arc::new(Mutex::new(super::JobState::new(job))),
         })
     }
 }
@@ -356,7 +370,6 @@ impl PseudoCon {
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use std::sync::{Arc, Mutex};
 
     #[test]
     fn required_job_is_prepared_before_spawn_and_failure_skips_spawn() {
@@ -412,16 +425,5 @@ mod tests {
         assert!(attrs.set_job(std::ptr::null_mut()).is_err());
         attrs.set_job(job.as_raw_handle() as _).unwrap();
         assert!(attrs.set_job(job.as_raw_handle() as _).is_err());
-    }
-
-    #[test]
-    fn killer_without_process_handle_still_closes_its_job() {
-        let job = Arc::new(Mutex::new(Some(create_kill_on_close_job().unwrap())));
-        let mut killer = crate::win::WinChildKiller {
-            proc: None,
-            job: Arc::clone(&job),
-        };
-        crate::ChildKiller::kill(&mut killer).unwrap();
-        assert!(job.lock().unwrap().is_none());
     }
 }

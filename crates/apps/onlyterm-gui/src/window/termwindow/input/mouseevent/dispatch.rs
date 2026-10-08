@@ -1,7 +1,16 @@
 use super::*;
 
+fn is_menu_item(item: Option<&UIItemType>) -> bool {
+    match item {
+        Some(UIItemType::PaneLayoutMenuItem(_)) => true,
+        #[cfg(windows)]
+        Some(UIItemType::TabProcessMenuItem(_)) => true,
+        _ => false,
+    }
+}
+
 fn menu_mouse_target_allowed(menu_open: bool, item: Option<&UIItemType>) -> bool {
-    !menu_open || matches!(item, Some(UIItemType::PaneLayoutMenuItem(_)))
+    !menu_open || is_menu_item(item)
 }
 
 fn release_after_menu_selection(
@@ -9,9 +18,7 @@ fn release_after_menu_selection(
     last_item: Option<&UIItemType>,
     ui_capture: bool,
 ) -> bool {
-    ui_capture
-        && matches!(kind, WMEK::Release(MousePress::Left))
-        && matches!(last_item, Some(UIItemType::PaneLayoutMenuItem(_)))
+    ui_capture && matches!(kind, WMEK::Release(MousePress::Left)) && is_menu_item(last_item)
 }
 
 impl super::super::TermWindow {
@@ -36,6 +43,8 @@ impl super::super::TermWindow {
             | UIItemType::NewTabOptionRun
             | UIItemType::NewTabOptionClose
             | UIItemType::PaneLayoutMenuItem(_) => {}
+            #[cfg(windows)]
+            UIItemType::TabProcessMenuItem(_) => {}
         }
     }
 
@@ -51,6 +60,8 @@ impl super::super::TermWindow {
             | UIItemType::NewTabOptionRun
             | UIItemType::NewTabOptionClose
             | UIItemType::PaneLayoutMenuItem(_) => {}
+            #[cfg(windows)]
+            UIItemType::TabProcessMenuItem(_) => {}
         }
     }
 
@@ -91,11 +102,20 @@ impl super::super::TermWindow {
             return;
         }
 
-        let menu_open = self.get_modal().is_some_and(|modal| {
-            modal
-                .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
-                .is_some()
-        });
+        let menu_open = self
+            .get_modal()
+            .is_some_and(|modal| modal.blocks_terminal_input());
+        #[cfg(windows)]
+        if let WMEK::VertWheel(amount) = &event.kind {
+            if let Some(modal) = self.get_modal() {
+                if let Some(menu) =
+                    modal.downcast_ref::<crate::termwindow::tab_process_menu::TabProcessMenu>()
+                {
+                    menu.scroll(*amount as i64, self);
+                    return;
+                }
+            }
+        }
         let menu_target = if menu_open {
             self.resolve_ui_item(&event)
         } else {

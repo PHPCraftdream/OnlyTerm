@@ -12,6 +12,18 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.38-alpha — 2026-10-08
+
+#### Changed
+
+* F4 opens a tab-process menu styled like F3, with process checkboxes and
+  Cancel/Back/Detach controls. Selected local Windows processes and their child
+  trees survive pane/window closure; an invisible ConPTY/job keeper drains
+  background output and exits when the detached group finishes.
+* The process list starts with an All Processes checkbox. Arrow-key focus
+  reaches Cancel/Back/Detach, with highlighted buttons and Enter/Space
+  activation; already-detached processes remain checked when selection is cleared.
+
 ### v0.0.37-alpha — 2026-10-07
 
 #### Changed

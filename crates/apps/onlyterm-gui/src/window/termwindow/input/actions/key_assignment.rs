@@ -890,6 +890,18 @@ impl TermWindow {
                     self.set_modal(Rc::new(menu));
                 }
             }
+            ActivateTabProcessMenu => {
+                #[cfg(windows)]
+                if self.get_modal().is_none() {
+                    if let Some(menu) =
+                        crate::termwindow::tab_process_menu::TabProcessMenu::new(self)
+                    {
+                        self.set_modal(Rc::new(menu));
+                    }
+                }
+                #[cfg(not(windows))]
+                anyhow::bail!("Process detachment requires a local Windows terminal");
+            }
             PromptInputLine(args) => self.show_prompt_input_line(args),
             InputSelector(args) => self.show_input_selector(args),
             Confirmation(args) => self.show_confirmation(args),

@@ -133,11 +133,9 @@ impl super::TermWindow {
 
         if is_down {
             if bypass_lookup
-                && self.get_modal().is_some_and(|modal| {
-                    modal
-                        .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
-                        .is_some()
-                })
+                && self
+                    .get_modal()
+                    .is_some_and(|modal| modal.blocks_terminal_input())
             {
                 self.cancel_modal();
             }
@@ -365,11 +363,9 @@ impl super::TermWindow {
 
         if let Some(armed) = pass_through_outcome.armed_edge {
             if armed
-                && self.get_modal().is_some_and(|modal| {
-                    modal
-                        .downcast_ref::<crate::termwindow::pane_layout_menu::PaneLayoutMenu>()
-                        .is_some()
-                })
+                && self
+                    .get_modal()
+                    .is_some_and(|modal| modal.blocks_terminal_input())
             {
                 self.cancel_modal();
             }

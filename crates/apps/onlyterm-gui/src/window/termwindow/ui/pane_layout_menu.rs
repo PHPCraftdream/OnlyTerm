@@ -156,6 +156,10 @@ impl PaneLayoutMenu {
 }
 
 impl Modal for PaneLayoutMenu {
+    fn blocks_terminal_input(&self) -> bool {
+        true
+    }
+
     fn mouse_event(&self, _event: MouseEvent, _term_window: &mut TermWindow) -> anyhow::Result<()> {
         Ok(())
     }

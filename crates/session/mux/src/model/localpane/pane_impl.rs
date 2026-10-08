@@ -279,6 +279,15 @@ impl Pane for LocalPane {
                     // the last `Arc<LocalPane>` goes away) finds `None`
                     // here and has nothing left to tear down.
                     let taken_pty = self.pty.lock().take();
+                    #[cfg(windows)]
+                    let detached_session = taken_pty
+                        .as_ref()
+                        .and_then(|pty| {
+                            pty.downcast_ref::<portable_pty::win::conpty::ConPtyMasterPty>()
+                        })
+                        .is_some_and(|conpty| conpty.close_detached_session());
+                    #[cfg(not(windows))]
+                    let detached_session = false;
 
                     // Swap the real writer out for a no-op sink, so any
                     // late write (e.g. from a caller still holding a
@@ -329,25 +338,31 @@ impl Pane for LocalPane {
                     // this code did) would silently skip the soft signal
                     // on that path even though writing to `taken_writer`
                     // is still meaningful.
-                    let builder = std::thread::Builder::new().name("pty-drop-grace".into());
-                    match builder.spawn(move || {
-                        // Best-effort soft signal; the pty may already be
-                        // broken or gone, and that's fine -- this must
-                        // never panic or propagate an error.
-                        let _ = taken_writer.write_all(b"\x03");
-                        let _ = taken_writer.flush();
-                        std::thread::sleep(Duration::from_millis(PTY_DROP_GRACE_MS));
+                    if detached_session {
+                        // A console Ctrl+C would also interrupt protected processes.
                         drop(taken_pty);
                         drop(taken_writer);
-                    }) {
-                        Ok(join_handle) => drop(join_handle),
-                        Err(err) => {
-                            log::error!(
-                                "Failed to spawn pty-drop-grace thread, \
+                    } else {
+                        let builder = std::thread::Builder::new().name("pty-drop-grace".into());
+                        match builder.spawn(move || {
+                            // Best-effort soft signal; the pty may already be
+                            // broken or gone, and that's fine -- this must
+                            // never panic or propagate an error.
+                            let _ = taken_writer.write_all(b"\x03");
+                            let _ = taken_writer.flush();
+                            std::thread::sleep(Duration::from_millis(PTY_DROP_GRACE_MS));
+                            drop(taken_pty);
+                            drop(taken_writer);
+                        }) {
+                            Ok(join_handle) => drop(join_handle),
+                            Err(err) => {
+                                log::error!(
+                                    "Failed to spawn pty-drop-grace thread, \
                                  dropping pty/writer immediately without \
                                  sending the soft signal: {:#}",
-                                err
-                            );
+                                    err
+                                );
+                            }
                         }
                     }
                 }

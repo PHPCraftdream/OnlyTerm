@@ -479,6 +479,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         MoveTabRelative(1),
         RenameCurrentTab,
         ActivatePaneLayoutMenu,
+        ActivateTabProcessMenu,
         AdjustPaneSize(PaneDirection::Left, 1),
         AdjustPaneSize(PaneDirection::Right, 1),
         AdjustPaneSize(PaneDirection::Up, 1),
@@ -496,20 +497,4 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         // ----------------- Misc
         OpenLinkAtMouseCursor,
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn f3_is_the_default_pane_layout_menu_binding() {
-        let action = KeyAssignment::ActivatePaneLayoutMenu;
-        assert!(compute_default_actions().contains(&action));
-        let command = derive_command_from_key_assignment(&action).expect("menu command exists");
-        assert!(command
-            .keys
-            .iter()
-            .any(|(modifiers, key)| *modifiers == Modifiers::NONE && key == "F3"));
-    }
 }

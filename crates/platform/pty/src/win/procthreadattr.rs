@@ -8,10 +8,12 @@ use winapi::um::winnt::HANDLE;
 
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x00020016;
 const PROC_THREAD_ATTRIBUTE_JOB_LIST: usize = 0x0002000D;
+const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x00020002;
 
 pub struct ProcThreadAttributeList {
     data: Vec<usize>,
     job_handle: Option<Box<HANDLE>>,
+    inherited_handles: Option<Vec<HANDLE>>,
 }
 
 impl ProcThreadAttributeList {
@@ -49,6 +51,7 @@ impl ProcThreadAttributeList {
         Ok(Self {
             data,
             job_handle: None,
+            inherited_handles: None,
         })
     }
 
@@ -102,6 +105,30 @@ impl ProcThreadAttributeList {
         self.job_handle = Some(handle);
         if let Some(error) = error {
             bail!("UpdateProcThreadAttribute(JOB_LIST) failed: {error}");
+        }
+        Ok(())
+    }
+
+    pub fn set_inherited_handles(&mut self, mut handles: Vec<HANDLE>) -> Result<(), Error> {
+        ensure!(!handles.is_empty(), "empty inherited handle list");
+        ensure!(self.inherited_handles.is_none(), "handle list already set");
+        // SAFETY: HANDLE_LIST storage remains in this object until the attribute
+        // list is deleted. The caller supplies live, inheritable owned handles.
+        let res = unsafe {
+            UpdateProcThreadAttribute(
+                self.as_mut_ptr(),
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                handles.as_mut_ptr().cast(),
+                handles.len() * mem::size_of::<HANDLE>(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        let error = (res == 0).then(IoError::last_os_error);
+        self.inherited_handles = Some(handles);
+        if let Some(error) = error {
+            bail!("UpdateProcThreadAttribute(HANDLE_LIST) failed: {error}");
         }
         Ok(())
     }

@@ -6,6 +6,10 @@ use onlyterm_term::{KeyCode, KeyModifiers, MouseEvent};
 use std::cell::Ref;
 
 pub trait Modal: Downcast {
+    fn blocks_terminal_input(&self) -> bool {
+        false
+    }
+
     fn perform_assignment(
         &self,
         _assignment: &KeyAssignment,
