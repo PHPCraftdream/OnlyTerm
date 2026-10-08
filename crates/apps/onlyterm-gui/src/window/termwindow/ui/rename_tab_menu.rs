@@ -1,4 +1,5 @@
 use crate::termwindow::box_model::*;
+use crate::termwindow::menu_style::MenuStyle;
 use crate::termwindow::modal::Modal;
 use crate::termwindow::{DimensionContext, TermWindow, TermWindowNotif, UIItemType};
 use crate::utilsprites::RenderMetrics;
@@ -114,6 +115,10 @@ pub(crate) struct RenameTabMenu {
     focused: RefCell<RenameTabAction>,
     elements: RefCell<Option<Vec<ComputedElement>>>,
     identity: Arc<()>,
+    title: &'static str,
+    description: String,
+    input_label: String,
+    apply_title: bool,
 }
 
 impl RenameTabMenu {
@@ -125,7 +130,38 @@ impl RenameTabMenu {
             focused: RefCell::new(RenameTabAction::Input),
             elements: RefCell::new(None),
             identity: Arc::new(()),
+            title: "Rename Tab",
+            description: "Choose a custom title; leave it empty for an automatic title".into(),
+            input_label: "TAB TITLE".into(),
+            apply_title: true,
         })
+    }
+
+    pub(crate) fn from_prompt(
+        window: &TermWindow,
+        args: &onlyterm_config::keyassignment::PromptInputLine,
+    ) -> anyhow::Result<Option<Self>> {
+        let apply_title = match &*args.action {
+            KeyAssignment::RenameCurrentTab => true,
+            KeyAssignment::EmitEvent(_) => false,
+            _ => anyhow::bail!(
+                "PromptInputLine requires action to be defined by onlyterm.action_callback"
+            ),
+        };
+        let Some(tab) = Mux::get().get_active_tab_for_window(window.mux_window_id) else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            tab_id: tab.tab_id(),
+            editor: RefCell::new(NameEditor::new(args.initial_value.as_deref().unwrap_or(""))),
+            focused: RefCell::new(RenameTabAction::Input),
+            elements: RefCell::new(None),
+            identity: Arc::new(()),
+            title: "Input",
+            description: args.description.clone(),
+            input_label: args.prompt.clone(),
+            apply_title,
+        }))
     }
 
     fn invalidate(&self, term_window: &TermWindow) {
@@ -142,8 +178,10 @@ impl RenameTabMenu {
             }
             RenameTabAction::Cancel => term_window.cancel_modal(),
             RenameTabAction::Apply => {
-                if let Some(tab) = Mux::get().get_tab(self.tab_id) {
-                    tab.set_title(self.editor.borrow().buffer.get_line());
+                if self.apply_title {
+                    if let Some(tab) = Mux::get().get_tab(self.tab_id) {
+                        tab.set_title(self.editor.borrow().buffer.get_line());
+                    }
                 }
                 term_window.cancel_modal();
             }
@@ -209,14 +247,15 @@ impl RenameTabMenu {
     fn compute(&self, term_window: &mut TermWindow) -> anyhow::Result<Vec<ComputedElement>> {
         let font = term_window.fonts.command_palette_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
-        let dimensions = &term_window.dimensions;
+        let dimensions = term_window.dimensions;
+        let style = MenuStyle::new(
+            term_window.config.command_palette_bg_color,
+            term_window.config.command_palette_fg_color,
+        );
+        let heading = term_window.fonts.title_font()?;
         let bg = term_window.config.command_palette_bg_color.to_linear();
         let fg = term_window.config.command_palette_fg_color.to_linear();
-        let colors = ElementColors {
-            border: BorderColor::new(bg),
-            bg: bg.into(),
-            text: fg.into(),
-        };
+        let colors = style.base.clone();
         let selected_colors = ElementColors {
             border: BorderColor::new(fg),
             bg: fg.into(),
@@ -226,17 +265,11 @@ impl RenameTabMenu {
         let width_limit = dimensions.pixel_width as f32;
         let height_limit = dimensions.pixel_height as f32;
         let width = (54. * term_window.render_metrics.cell_size.width as f32)
-            .min(width_limit)
+            .min(width_limit - 32.)
             .max(1.);
-        let row = |text: String| {
-            Element::new(&font, ElementContent::Text(text))
-                .colors(colors.clone())
-                .display(DisplayType::Block)
-                .padding(BoxDimension::new(Dimension::Cells(0.5)))
-        };
+        let inner_width = (width - 34.).max(1.);
         let editor = self.editor.borrow();
-        let columns = ((width - 2. * metrics.cell_size.width as f32)
-            / metrics.cell_size.width as f32)
+        let columns = ((inner_width - 44.) / metrics.cell_size.width as f32)
             .floor()
             .max(1.) as usize;
         let start = editor.visible_start(columns);
@@ -264,47 +297,76 @@ impl RenameTabMenu {
             })])
         };
         let input = Element::new(&font, input_content)
-            .colors(colors.clone())
+            .colors(if focus == RenameTabAction::Input {
+                style.focus.clone()
+            } else {
+                style.card.clone()
+            })
             .display(DisplayType::Block)
             .item_type(UIItemType::RenameTabMenuItem(RenameTabAction::Input))
-            .padding(BoxDimension::new(Dimension::Cells(0.5)))
+            .padding(BoxDimension::new(Dimension::Pixels(8.)))
             .border(BoxDimension::new(Dimension::Pixels(1.)))
-            .min_width(Some(Dimension::Pixels(
-                (width - metrics.cell_size.width as f32 - 2.).max(0.),
-            )));
+            .border_corners(Some(crate::termwindow::menu_style::corners()))
+            .min_width(Some(Dimension::Pixels((inner_width - 40.).max(1.))))
+            .max_width(Some(Dimension::Pixels((inner_width - 22.).max(1.))));
         let button = |text: &str, action: RenameTabAction| {
-            Element::new(&font, ElementContent::Text(text.into()))
-                .colors(if focus == action {
-                    selected_colors.clone()
-                } else {
-                    colors.clone()
-                })
-                .hover_colors(Some(selected_colors.clone()))
+            style
+                .button(&font, text, focus == action, true)
                 .item_type(UIItemType::RenameTabMenuItem(action))
-                .padding(BoxDimension::new(Dimension::Cells(0.5)))
         };
         let buttons = Element::new(
             &font,
             ElementContent::Children(vec![
                 button("Cancel", RenameTabAction::Cancel),
-                button("Rename", RenameTabAction::Apply),
+                button(
+                    if self.apply_title { "Rename" } else { "Accept" },
+                    RenameTabAction::Apply,
+                ),
             ]),
         )
         .display(DisplayType::Block)
         .colors(colors.clone());
-        let root = Element::new(
+        let root = style.panel(
             &font,
-            ElementContent::Children(vec![
-                row("Rename Tab".into()),
-                input,
+            vec![
+                style.text(&font, self.title.into(), false),
+                Element::new(
+                    &font,
+                    ElementContent::Children(
+                        self.description
+                            .lines()
+                            .map(|line| {
+                                let mut attributes = termwiz::cell::CellAttributes::default();
+                                attributes.set_foreground(
+                                    termwiz::color::ColorAttribute::TrueColorWithDefaultFallback(
+                                        style.muted.to_srgb(),
+                                    ),
+                                );
+                                Element::with_line(
+                                    &font,
+                                    &crate::tabbar::parse_status_text(line, attributes),
+                                    term_window.palette(),
+                                )
+                                .display(DisplayType::Block)
+                            })
+                            .collect(),
+                    ),
+                )
+                .display(DisplayType::Block),
+                style.card(
+                    &font,
+                    vec![style.text(&heading, self.input_label.clone(), false), input],
+                    inner_width,
+                ),
                 buttons,
-                row("Enter to rename; Esc/F2 to cancel; Ctrl+A to select all".into()),
-            ]),
-        )
-        .colors(colors)
-        .padding(BoxDimension::new(Dimension::Cells(0.25)))
-        .border(BoxDimension::new(Dimension::Pixels(1.)))
-        .min_width(Some(Dimension::Pixels(width)));
+                style.text(
+                    &font,
+                    "Enter: accept · Esc: cancel · Ctrl+A: select all".into(),
+                    true,
+                ),
+            ],
+            width,
+        );
         let mut computed = term_window.compute_element(
             &LayoutContext {
                 height: DimensionContext {

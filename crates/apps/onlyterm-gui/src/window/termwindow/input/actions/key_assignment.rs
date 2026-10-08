@@ -876,6 +876,10 @@ impl TermWindow {
                 let modal = crate::termwindow::palette::CommandPalette::new(self);
                 self.set_modal(Rc::new(modal));
             }
+            ActivateHelpMenu => {
+                let modal = crate::termwindow::help_menu::HelpMenu::new(self);
+                self.set_modal(Rc::new(modal));
+            }
             ActivateNewTabOptions => {
                 let modal = crate::termwindow::newtab_options::NewTabOptions::new();
                 self.set_modal(Rc::new(modal));

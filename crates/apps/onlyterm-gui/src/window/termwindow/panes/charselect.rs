@@ -1,11 +1,8 @@
 use super::frecency::Frecency;
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::termwindow::box_model::*;
+use crate::termwindow::menu_style::MenuStyle;
 use crate::termwindow::modal::Modal;
-use crate::termwindow::render::corners::{
-    BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
-    TOP_RIGHT_ROUNDED_CORNER,
-};
 use crate::termwindow::DimensionContext;
 use crate::utilsprites::RenderMetrics;
 use crate::TermWindow;
@@ -22,7 +19,7 @@ use std::cell::{Ref, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use termwiz::input::Modifiers;
-use window::color::LinearRgba;
+use window::WindowOps;
 
 struct MatchResults {
     selection: String,
@@ -373,21 +370,18 @@ impl CharSelector {
         selected_row: usize,
         top_row: usize,
     ) -> anyhow::Result<Vec<ComputedElement>> {
-        let font = term_window
-            .fonts
-            .char_select_font()
-            .expect("to resolve char selection font");
+        let font = term_window.fonts.char_select_font()?;
+        let heading = term_window.fonts.title_font()?;
+        let ui_font = term_window.fonts.command_palette_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
-
-        let top_bar_height = if term_window.show_tab_bar && !term_window.config.tab_bar_at_bottom {
-            term_window.tab_bar_pixel_height().unwrap()
-        } else {
-            0.
-        };
-        let (padding_left, padding_top) = term_window.padding_left_top();
-        let border = term_window.get_os_border();
-        let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
-
+        let style = MenuStyle::new(
+            term_window.config.char_select_bg_color,
+            term_window.config.char_select_fg_color,
+        );
+        let dimensions = term_window.dimensions;
+        let width_limit = dimensions.pixel_width as f32;
+        let height_limit = dimensions.pixel_height as f32;
+        let width = (width_limit - 32.).clamp(1., 1000.);
         let label = match group {
             CharSelectGroup::RecentlyUsed => "Recent",
             CharSelectGroup::SmileysAndEmotion => "Emotion",
@@ -399,135 +393,112 @@ impl CharSelector {
             CharSelectGroup::Objects => "Objects",
             CharSelectGroup::Symbols => "Symbols",
             CharSelectGroup::Flags => "Flags",
-            CharSelectGroup::NerdFonts => "NerdFonts",
+            CharSelectGroup::NerdFonts => "Nerd Fonts",
             CharSelectGroup::ShortCodes => "Short Codes",
         };
-
-        let mut elements = vec![Element::new(
-            &font,
-            ElementContent::Text(format!("{label}: {selection}_")),
-        )
-        .colors(ElementColors {
-            border: BorderColor::default(),
-            bg: LinearRgba::TRANSPARENT.into(),
-            text: term_window.config.char_select_fg_color.to_linear().into(),
-        })
-        .display(DisplayType::Block)];
-
-        for (display_idx, alias) in matches
+        let mut choices = vec![];
+        for (display_idx, &index) in matches
             .matches
             .iter()
-            .map(|&idx| &aliases[idx])
             .enumerate()
             .skip(top_row)
             .take(max_rows_on_screen)
         {
-            let (bg, text) = if display_idx == selected_row {
-                (
-                    term_window.config.char_select_fg_color.to_linear().into(),
-                    term_window.config.char_select_bg_color.to_linear().into(),
-                )
-            } else {
-                (
-                    LinearRgba::TRANSPARENT.into(),
-                    term_window.config.char_select_fg_color.to_linear().into(),
-                )
-            };
-            elements.push(
+            let alias = &aliases[index];
+            let description = Element::new(
+                &font,
+                ElementContent::Children(vec![
+                    style.text(&heading, alias.name().to_string(), false),
+                    style.text(&heading, alias.codepoints(), true),
+                ]),
+            )
+            .display(DisplayType::Inline)
+            .margin(BoxDimension {
+                left: Dimension::Pixels(12.),
+                ..BoxDimension::default()
+            });
+            choices.push(
                 Element::new(
                     &font,
-                    ElementContent::Text(format!(
-                        "{} {} ({})",
-                        alias.glyph(),
-                        alias.name(),
-                        alias.codepoints()
-                    )),
+                    ElementContent::Children(vec![style.keycap(&font, alias.glyph()), description]),
                 )
-                .colors(ElementColors {
-                    border: BorderColor::default(),
-                    bg,
-                    text,
+                .display(DisplayType::Block)
+                .colors(if display_idx == selected_row {
+                    style.focus.clone()
+                } else {
+                    style.card.clone()
                 })
-                .padding(BoxDimension {
-                    left: Dimension::Cells(0.25),
-                    right: Dimension::Cells(0.25),
-                    top: Dimension::Cells(0.),
-                    bottom: Dimension::Cells(0.),
+                .padding(BoxDimension::new(Dimension::Pixels(6.)))
+                .border(BoxDimension::new(Dimension::Pixels(1.)))
+                .border_corners(Some(crate::termwindow::menu_style::corners()))
+                .min_width(Some(Dimension::Pixels((width - 68.).max(1.))))
+                .max_width(Some(Dimension::Pixels((width - 54.).max(1.))))
+                .margin(BoxDimension {
+                    bottom: Dimension::Pixels(4.),
+                    ..BoxDimension::default()
                 })
-                .display(DisplayType::Block),
+                .min_height(Some(Dimension::Pixels(
+                    metrics.cell_size.height as f32 * 2. + 8.,
+                ))),
             );
         }
-
-        let element = Element::new(&font, ElementContent::Children(elements))
-            .colors(ElementColors {
-                border: BorderColor::new(term_window.config.char_select_bg_color.to_linear()),
-                bg: term_window.config.char_select_bg_color.to_linear().into(),
-                text: term_window.config.char_select_fg_color.to_linear().into(),
-            })
-            .margin(BoxDimension {
-                left: Dimension::Cells(1.25),
-                right: Dimension::Cells(1.25),
-                top: Dimension::Cells(1.25),
-                bottom: Dimension::Cells(1.25),
-            })
-            .padding(BoxDimension {
-                left: Dimension::Cells(0.25),
-                right: Dimension::Cells(0.25),
-                top: Dimension::Cells(0.25),
-                bottom: Dimension::Cells(0.25),
-            })
-            .border(BoxDimension::new(Dimension::Pixels(1.)))
-            .border_corners(Some(Corners {
-                top_left: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: TOP_LEFT_ROUNDED_CORNER,
-                },
-                top_right: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: TOP_RIGHT_ROUNDED_CORNER,
-                },
-                bottom_left: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: BOTTOM_LEFT_ROUNDED_CORNER,
-                },
-                bottom_right: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: BOTTOM_RIGHT_ROUNDED_CORNER,
-                },
-            }));
-
-        let dimensions = term_window.dimensions;
-        let size = term_window.terminal_size;
-
-        let computed = term_window.compute_element(
+        if choices.is_empty() {
+            choices.push(style.text(&ui_font, "No matching characters".into(), true));
+        }
+        let root = style.panel(
+            &ui_font,
+            vec![
+                style.text(&ui_font, "Character Picker".into(), false),
+                style.card(
+                    &ui_font,
+                    vec![
+                        style.text(&heading, format!("GROUP · {label}"), false),
+                        style.text(&ui_font, format!("{selection}│"), false),
+                    ],
+                    (width - 34.).max(1.),
+                ),
+                style.viewport(
+                    &font,
+                    choices,
+                    (width - 34.).max(1.),
+                    max_rows_on_screen as f32 * (metrics.cell_size.height as f32 * 2. + 26.),
+                    crate::termwindow::menu_style::ScrollPosition {
+                        offset: top_row,
+                        visible: max_rows_on_screen,
+                        total: matches.matches.len(),
+                    },
+                ),
+                style.text(
+                    &ui_font,
+                    "Type to filter · Ctrl+R: group · Arrows / Enter · Esc".into(),
+                    true,
+                ),
+            ],
+            width,
+        );
+        let mut computed = term_window.compute_element(
             &LayoutContext {
                 height: DimensionContext {
                     dpi: dimensions.dpi as f32,
-                    pixel_max: dimensions.pixel_height as f32,
+                    pixel_max: height_limit,
                     pixel_cell: metrics.cell_size.height as f32,
                 },
                 width: DimensionContext {
                     dpi: dimensions.dpi as f32,
-                    pixel_max: dimensions.pixel_width as f32,
+                    pixel_max: width_limit,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
-                bounds: euclid::rect(
-                    padding_left,
-                    top_pixel_y,
-                    size.cols as f32 * term_window.render_metrics.cell_size.width as f32,
-                    size.rows as f32 * term_window.render_metrics.cell_size.height as f32,
-                ),
+                bounds: euclid::rect((width_limit - width) / 2., 0., width, height_limit),
                 metrics: &metrics,
                 gl_state: term_window.render_state.as_ref().unwrap(),
                 zindex: 100,
             },
-            &element,
+            &root,
         )?;
-
+        computed.translate(euclid::vec2(
+            0.,
+            ((height_limit - computed.bounds.height()) / 2.).max(0.),
+        ));
         Ok(vec![computed])
     }
 
@@ -573,6 +544,37 @@ impl CharSelector {
 }
 
 impl Modal for CharSelector {
+    fn blocks_terminal_input(&self) -> bool {
+        true
+    }
+
+    fn scroll_position(&self) -> Option<crate::termwindow::menu_style::ScrollPosition> {
+        Some(crate::termwindow::menu_style::ScrollPosition {
+            offset: *self.top_row.borrow(),
+            visible: *self.max_rows_on_screen.borrow(),
+            total: self
+                .matches
+                .borrow()
+                .as_ref()
+                .map_or(0, |m| m.matches.len()),
+        })
+    }
+
+    fn set_scroll_offset(&self, offset: usize, window: &mut TermWindow) {
+        let position = self.scroll_position().unwrap();
+        let offset = offset.min(position.limit());
+        *self.top_row.borrow_mut() = offset;
+        let selected = (*self.selected_row.borrow()).clamp(
+            offset,
+            offset.saturating_add(position.visible.saturating_sub(1)),
+        );
+        *self.selected_row.borrow_mut() = selected;
+        self.element.borrow_mut().take();
+        if let Some(window) = window.window.as_ref() {
+            window.invalidate();
+        }
+    }
+
     fn perform_assignment(
         &self,
         _assignment: &KeyAssignment,
@@ -694,9 +696,9 @@ impl Modal for CharSelector {
             .expect("to resolve char selection font");
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
 
-        let max_rows_on_screen = ((term_window.dimensions.pixel_height * 8 / 10)
-            / metrics.cell_size.height as usize)
-            - 2;
+        let max_rows_on_screen = (term_window.dimensions.pixel_height.saturating_sub(200)
+            / (metrics.cell_size.height as usize * 2 + 26))
+            .max(1);
         *self.max_rows_on_screen.borrow_mut() = max_rows_on_screen;
 
         let rebuild_matches = results

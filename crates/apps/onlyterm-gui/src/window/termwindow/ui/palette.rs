@@ -2,11 +2,8 @@ use super::frecency::Frecency;
 use crate::commands::{CommandDef, ExpandedCommand};
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::termwindow::box_model::*;
+use crate::termwindow::menu_style::MenuStyle;
 use crate::termwindow::modal::Modal;
-use crate::termwindow::render::corners::{
-    BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
-    TOP_RIGHT_ROUNDED_CORNER,
-};
 use crate::termwindow::{DimensionContext, GuiWin, TermWindow};
 use crate::utilsprites::RenderMetrics;
 use onlyterm_config::keyassignment::KeyAssignment;
@@ -20,8 +17,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use termwiz::nerdfonts::NERD_FONTS;
-use window::color::LinearRgba;
-use window::Modifiers;
+use window::{Modifiers, WindowOps};
 
 struct MatchResults {
     selection: String,
@@ -212,280 +208,184 @@ impl CommandPalette {
         selected_row: usize,
         top_row: usize,
     ) -> anyhow::Result<Vec<ComputedElement>> {
-        let font = term_window
-            .fonts
-            .command_palette_font()
-            .expect("to resolve command palette font");
+        let font = term_window.fonts.command_palette_font()?;
+        let heading = term_window.fonts.title_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
-
-        let top_bar_height = if term_window.show_tab_bar && !term_window.config.tab_bar_at_bottom {
-            term_window.tab_bar_pixel_height().unwrap()
-        } else {
-            0.
-        };
-        let (padding_left, padding_top) = term_window.padding_left_top();
-        let border = term_window.get_os_border();
-        let top_pixel_y = top_bar_height + padding_top + border.top.get() as f32;
-
-        let mut elements =
-            vec![
-                Element::new(&font, ElementContent::Text(format!("> {selection}_")))
-                    .colors(ElementColors {
-                        border: BorderColor::default(),
-                        bg: LinearRgba::TRANSPARENT.into(),
-                        text: term_window
-                            .config
-                            .command_palette_fg_color
-                            .to_linear()
-                            .into(),
-                    })
-                    .display(DisplayType::Block),
-            ];
-
-        for (display_idx, command) in matches
+        let style = MenuStyle::new(
+            term_window.config.command_palette_bg_color,
+            term_window.config.command_palette_fg_color,
+        );
+        let dimensions = term_window.dimensions;
+        let width_limit = dimensions.pixel_width as f32;
+        let height_limit = dimensions.pixel_height as f32;
+        let width = (width_limit - 32.).clamp(1., 1200.);
+        let inner_width = (width - 54.).max(1.);
+        let mut results = vec![];
+        for (display_idx, &index) in matches
             .matches
             .iter()
-            .map(|&idx| &commands[idx])
             .enumerate()
             .skip(top_row)
             .take(max_rows_on_screen)
         {
-            let group = if command.menubar.is_empty() {
-                String::new()
+            let command = &commands[index];
+            let icon = command
+                .icon
+                .as_ref()
+                .and_then(|name| NERD_FONTS.get(name.as_ref()))
+                .copied()
+                .unwrap_or(' ');
+            let label = if command.menubar.is_empty() {
+                command.brief.to_string()
             } else {
-                format!("{}: ", command.menubar.join(" | "))
+                format!("{} · {}", command.menubar.join(" / "), command.brief)
             };
-
-            let icon = match &command.icon {
-                Some(nf) => NERD_FONTS.get(nf.as_ref()).unwrap_or_else(|| {
-                    log::error!("nerdfont {nf} not found in NERD_FONTS");
-                    &'?'
-                }),
-                None => &' ',
-            };
-
-            let solid_bg_color: InheritableColor = term_window
-                .config
-                .command_palette_bg_color
-                .to_linear()
-                .into();
-            let solid_fg_color: InheritableColor = term_window
-                .config
-                .command_palette_fg_color
-                .to_linear()
-                .into();
-
-            let (bg, text) = if display_idx == selected_row {
-                (solid_fg_color.clone(), solid_bg_color.clone())
-            } else {
-                (LinearRgba::TRANSPARENT.into(), solid_fg_color.clone())
-            };
-
-            let (label_bg, label_text) = if display_idx == selected_row {
-                (solid_fg_color.clone(), solid_bg_color.clone())
-            } else {
-                (solid_bg_color.clone(), solid_fg_color.clone())
-            };
-
-            // DRY if the brief and doc are the same
-            let label = if command.doc.is_empty()
-                || command.brief.to_ascii_lowercase() == command.doc.to_ascii_lowercase()
-            {
-                format!("{group}{}", command.brief)
-            } else {
-                format!("{group}{}. {}", command.brief, command.doc)
-            };
-
-            let mut row = vec![
-                Element::new(&font, ElementContent::Text(icon.to_string()))
-                    .min_width(Some(Dimension::Cells(2.))),
-                Element::new(&font, ElementContent::Text(label)),
-            ];
-
-            if !command.keys.is_empty() {
-                let mut keys = command.keys.clone();
-
-                keys.sort_by(|(a_mods, a_key), (b_mods, b_key)| {
-                    fn score_mods(mods: &Modifiers) -> usize {
-                        let mut score: usize = mods.bits() as usize;
-                        // Prefer keys without SUPER: on Windows SUPER tends
-                        // to be reserved by the desktop environment.
-                        if !mods.contains(Modifiers::SUPER) {
-                            score += 1000;
-                        }
-                        score
-                    }
-
-                    let a_mods = score_mods(a_mods);
-                    let b_mods = score_mods(b_mods);
-
-                    match b_mods.cmp(&a_mods) {
-                        Ordering::Equal => {}
-                        ordering => return ordering,
-                    }
-
-                    a_key.cmp(b_key)
-                });
-
-                let separator = if term_window.config.ui_key_cap_rendering
-                    == ::window::UIKeyCapRendering::AppleSymbols
-                {
-                    " "
+            let mut content = vec![style.text(&heading, format!("{icon} {label}"), false)];
+            if !command.doc.is_empty() {
+                let chars = ((inner_width - 40.) / (metrics.cell_size.height as f32 * 0.6))
+                    .floor()
+                    .max(1.) as usize;
+                let lines = textwrap::wrap(&command.doc, chars);
+                let description = if lines.len() > 1 {
+                    format!("{}…", lines[0])
                 } else {
-                    "-"
+                    command.doc.to_string()
                 };
-
-                let mut keys = keys
-                    .into_iter()
-                    .map(|(mods, keycode)| {
-                        let mut mod_string =
-                            mods.to_string_with_separator(::window::ModifierToStringArgs {
-                                separator,
-                                want_none: false,
-                                ui_key_cap_rendering: Some(term_window.config.ui_key_cap_rendering),
-                            });
-                        if !mod_string.is_empty() {
-                            mod_string.push_str(separator);
-                        }
-                        let keycode = crate::inputmap::ui_key(
-                            &keycode,
-                            term_window.config.ui_key_cap_rendering,
-                        );
-                        format!("{mod_string}{keycode}")
-                    })
-                    .collect::<Vec<_>>();
-
-                keys.dedup();
-                keys.truncate(term_window.config.palette_max_key_assigments_for_action);
-
-                let key_label = keys.join(", ");
-
-                row.push(
-                    Element::new(&font, ElementContent::Text(key_label))
-                        .float(Float::Right)
-                        .padding(BoxDimension {
-                            left: Dimension::Cells(1.25),
-                            right: Dimension::Cells(0.5),
-                            top: Dimension::Cells(0.),
-                            bottom: Dimension::Cells(0.),
-                        })
-                        .zindex(10)
-                        .colors(ElementColors {
-                            border: BorderColor::default(),
-                            bg: label_bg.clone(),
-                            text: label_text.clone(),
-                        }),
-                );
+                content.push(style.text(&font, description, true));
+            } else {
+                content.push(style.text(&font, " ".into(), true));
             }
-
-            elements.push(
-                Element::new(&font, ElementContent::Children(row))
-                    .colors(ElementColors {
-                        border: BorderColor::default(),
-                        bg,
-                        text,
+            let mut bindings: Vec<_> = command.keys.iter().collect();
+            bindings.sort_by(|(a_mods, a_key), (b_mods, b_key)| {
+                let score = |mods: &Modifiers| {
+                    mods.bits() as usize
+                        + if mods.contains(Modifiers::SUPER) {
+                            0
+                        } else {
+                            1000
+                        }
+                };
+                score(b_mods)
+                    .cmp(&score(a_mods))
+                    .then_with(|| a_key.cmp(b_key))
+            });
+            let mut keys: Vec<_> = bindings
+                .into_iter()
+                .take(term_window.config.palette_max_key_assigments_for_action)
+                .map(|(mods, key)| {
+                    let prefix = mods.to_string_with_separator(::window::ModifierToStringArgs {
+                        separator: "+",
+                        want_none: false,
+                        ui_key_cap_rendering: Some(term_window.config.ui_key_cap_rendering),
+                    });
+                    let key = crate::inputmap::ui_key(key, term_window.config.ui_key_cap_rendering);
+                    if prefix.is_empty() {
+                        key
+                    } else {
+                        format!("{prefix}+{key}")
+                    }
+                })
+                .collect();
+            keys.sort();
+            keys.dedup();
+            if !keys.is_empty() {
+                let key_label = keys.join(", ");
+                let key_width = termwiz::cell::unicode_column_width(&key_label, None) as f32
+                    * heading.metrics().cell_width.get() as f32
+                    + 18.;
+                content[0] = Element::new(
+                    &font,
+                    ElementContent::Children(vec![
+                        style
+                            .text(&heading, format!("{icon} {label}"), false)
+                            .display(DisplayType::Inline),
+                        style.keycap(&heading, key_label).float(Float::Right),
+                    ]),
+                )
+                .display(DisplayType::Block)
+                .min_width(Some(Dimension::Pixels(
+                    (inner_width - 14. - key_width).max(1.),
+                )));
+            }
+            results.push(
+                Element::new(&font, ElementContent::Children(content))
+                    .colors(if display_idx == selected_row {
+                        style.focus.clone()
+                    } else {
+                        style.card.clone()
                     })
-                    .padding(BoxDimension {
-                        left: Dimension::Cells(0.25),
-                        right: Dimension::Cells(0.25),
-                        top: Dimension::Cells(0.),
-                        bottom: Dimension::Cells(0.),
+                    .display(DisplayType::Block)
+                    .padding(BoxDimension::new(Dimension::Pixels(6.)))
+                    .border(BoxDimension::new(Dimension::Pixels(1.)))
+                    .border_corners(Some(crate::termwindow::menu_style::corners()))
+                    .min_width(Some(Dimension::Pixels((inner_width - 14.).max(1.))))
+                    .max_width(Some(Dimension::Pixels(inner_width)))
+                    .margin(BoxDimension {
+                        bottom: Dimension::Pixels(4.),
+                        ..BoxDimension::default()
                     })
-                    .min_width(Some(Dimension::Percent(1.)))
-                    .display(DisplayType::Block),
+                    .min_height(Some(Dimension::Pixels(
+                        metrics.cell_size.height as f32 * 2. + 18.,
+                    ))),
             );
         }
-
-        let dimensions = term_window.dimensions;
-        let size = term_window.terminal_size;
-
-        // Avoid covering the entire width
-        let desired_width = (size.cols / 3).max(120).min(size.cols);
-
-        // Center it
-        let avail_pixel_width =
-            size.cols as f32 * term_window.render_metrics.cell_size.width as f32;
-        let desired_pixel_width =
-            desired_width as f32 * term_window.render_metrics.cell_size.width as f32;
-
-        let element = Element::new(&font, ElementContent::Children(elements))
-            .colors(ElementColors {
-                border: BorderColor::new(term_window.config.command_palette_bg_color.to_linear()),
-                bg: term_window
-                    .config
-                    .command_palette_bg_color
-                    .to_linear()
-                    .into(),
-                text: term_window
-                    .config
-                    .command_palette_fg_color
-                    .to_linear()
-                    .into(),
-            })
-            .margin(BoxDimension {
-                left: Dimension::Cells(0.25),
-                right: Dimension::Cells(0.25),
-                top: Dimension::Cells(0.25),
-                bottom: Dimension::Cells(0.25),
-            })
-            .padding(BoxDimension {
-                left: Dimension::Cells(0.25),
-                right: Dimension::Cells(0.25),
-                top: Dimension::Cells(0.25),
-                bottom: Dimension::Cells(0.25),
-            })
-            .border(BoxDimension::new(Dimension::Pixels(1.)))
-            .border_corners(Some(Corners {
-                top_left: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: TOP_LEFT_ROUNDED_CORNER,
-                },
-                top_right: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: TOP_RIGHT_ROUNDED_CORNER,
-                },
-                bottom_left: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: BOTTOM_LEFT_ROUNDED_CORNER,
-                },
-                bottom_right: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: BOTTOM_RIGHT_ROUNDED_CORNER,
-                },
-            }))
-            .min_width(Some(Dimension::Pixels(desired_pixel_width)));
-
-        let x_adjust = ((avail_pixel_width - padding_left) - desired_pixel_width) / 2.;
-
-        let computed = term_window.compute_element(
+        if results.is_empty() {
+            results.push(style.text(&font, "No matching commands".into(), true));
+        }
+        let root = style.panel(
+            &font,
+            vec![
+                style.text(&font, "Command Palette".into(), false),
+                style.card(
+                    &font,
+                    vec![
+                        style.text(&heading, "SEARCH COMMANDS".into(), false),
+                        style.text(&font, format!("{selection}│"), false),
+                    ],
+                    inner_width + 20.,
+                ),
+                style.viewport(
+                    &font,
+                    results,
+                    inner_width + 20.,
+                    max_rows_on_screen as f32 * (metrics.cell_size.height as f32 * 2. + 36.),
+                    crate::termwindow::menu_style::ScrollPosition {
+                        offset: top_row,
+                        visible: max_rows_on_screen,
+                        total: matches.matches.len(),
+                    },
+                ),
+                style.text(
+                    &font,
+                    "Type to filter · Up / Down · Enter: run · Esc: close".into(),
+                    true,
+                ),
+            ],
+            width,
+        );
+        let mut computed = term_window.compute_element(
             &LayoutContext {
                 height: DimensionContext {
                     dpi: dimensions.dpi as f32,
-                    pixel_max: dimensions.pixel_height as f32,
+                    pixel_max: height_limit,
                     pixel_cell: metrics.cell_size.height as f32,
                 },
                 width: DimensionContext {
                     dpi: dimensions.dpi as f32,
-                    pixel_max: dimensions.pixel_width as f32,
+                    pixel_max: width_limit,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
-                bounds: euclid::rect(
-                    padding_left + x_adjust,
-                    top_pixel_y,
-                    desired_pixel_width,
-                    size.rows as f32 * term_window.render_metrics.cell_size.height as f32,
-                ),
+                bounds: euclid::rect((width_limit - width) / 2., 0., width, height_limit),
                 metrics: &metrics,
                 gl_state: term_window.render_state.as_ref().unwrap(),
                 zindex: 100,
             },
-            &element,
+            &root,
         )?;
-
+        computed.translate(euclid::vec2(
+            0.,
+            ((height_limit - computed.bounds.height()) / 2.).max(0.),
+        ));
         Ok(vec![computed])
     }
 
@@ -523,6 +423,37 @@ impl CommandPalette {
 }
 
 impl Modal for CommandPalette {
+    fn blocks_terminal_input(&self) -> bool {
+        true
+    }
+
+    fn scroll_position(&self) -> Option<crate::termwindow::menu_style::ScrollPosition> {
+        Some(crate::termwindow::menu_style::ScrollPosition {
+            offset: *self.top_row.borrow(),
+            visible: *self.max_rows_on_screen.borrow(),
+            total: self
+                .matches
+                .borrow()
+                .as_ref()
+                .map_or(0, |m| m.matches.len()),
+        })
+    }
+
+    fn set_scroll_offset(&self, offset: usize, window: &mut TermWindow) {
+        let position = self.scroll_position().unwrap();
+        let offset = offset.min(position.limit());
+        *self.top_row.borrow_mut() = offset;
+        let selected = (*self.selected_row.borrow()).clamp(
+            offset,
+            offset.saturating_add(position.visible.saturating_sub(1)),
+        );
+        *self.selected_row.borrow_mut() = selected;
+        self.element.borrow_mut().take();
+        if let Some(window) = window.window.as_ref() {
+            window.invalidate();
+        }
+    }
+
     fn perform_assignment(
         &self,
         _assignment: &KeyAssignment,
@@ -613,9 +544,9 @@ impl Modal for CommandPalette {
             .expect("to resolve char selection font");
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
 
-        let mut max_rows_on_screen = ((term_window.dimensions.pixel_height * 8 / 10)
-            / metrics.cell_size.height as usize)
-            - 2;
+        let mut max_rows_on_screen = term_window.dimensions.pixel_height.saturating_sub(200)
+            / (metrics.cell_size.height as usize * 2 + 36);
+        max_rows_on_screen = max_rows_on_screen.max(1);
         if let Some(size) = term_window.config.command_palette_rows {
             max_rows_on_screen = max_rows_on_screen.min(size);
         }

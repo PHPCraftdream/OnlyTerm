@@ -6,9 +6,8 @@ disable a default assignment like this:
 
 ```
 keys: [
-    ## Turn off the default CMD-m Hide action, allowing CMD-m to
-    ## be potentially recognized and handled by the tab
-    { key: m, mods: CMD, action: DisableDefaultAssignment }
+    ## Let Alt+M reach the terminal instead of minimizing the window
+    { key: m, mods: ALT, action: DisableDefaultAssignment }
 ]
 ```
 
@@ -22,6 +21,34 @@ keys: [
     quotes around `/tmp` since ktav does not strip them). See
     the [migration guide](../migration-to-ktav.md#key-bindings-and-actions)
     for the full translation.
+
+### Default shortcut policy
+
+Normal-mode defaults use one shortcut per action. Simpler combinations win,
+with Ctrl preferred over Alt at the same complexity; there are no built-in
+Win/Super shortcuts. Physical and mapped representations of the same chord
+remain available so Ctrl shortcuts still work on non-Latin layouts.
+Explicit user bindings are not deduplicated or rewritten.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+T | New tab |
+| Ctrl+N | New window |
+| Ctrl+F | Search terminal output |
+| Ctrl+K | Clear scrollback |
+| Ctrl+PageUp / Ctrl+PageDown | Previous / next tab |
+| Ctrl+- / Ctrl+= / Ctrl+0 | Smaller / larger / reset font |
+| Ctrl+Enter | Send the protocol-aware newline chord |
+| Alt+M | Minimize the window |
+
+Tab activation has no built-in Alt shortcuts; Ctrl+PageUp/PageDown switches
+tabs. Explicit configured bindings remain supported.
+
+Ctrl+C still copies an existing selection or interrupts when nothing is
+selected; Ctrl+V pastes. Removed alternative bindings no longer intercept
+those keys. Use double-Ctrl pass-through when a terminal application needs
+one of the remaining OnlyTerm shortcuts.
+
 
 The `action` value can be one of the [available key
 assignments](reference/keyassignment/index.md).  Every action has an example that shows
@@ -187,6 +214,47 @@ keys: [
     mods: LEADER
     action: { SplitVertical: { domain: CurrentPaneDomain } }
   }
+]
+```
+
+### F1: built-in help
+
+`F1` opens **OnlyTerm Help**. Normal-mode shortcuts are read
+from the current input map, including custom bindings and disabled defaults.
+The list uses multiple columns when space permits and has a visible scrollbar.
+
+Below the shortcut grid, **More Guides** contains separate cards for
+**Keyboard Details**, **Settings**, **Launch Options**, and
+**Config-based Launches**. A separate **Double Ctrl / Pass-through** card
+shows whether the gesture is enabled. Click a card or select it with arrows/
+Tab and press Enter/Space. Detailed pages include named key tables and
+configuration/launch examples. **Back** or Backspace returns to the main
+page; **Close**, Escape, or F1 closes the entire help menu.
+
+Headings use a distinct bold style; shortcut combinations appear as keycaps.
+Descriptions use a quieter color, while parameter names, values and code
+examples have separate styling. Navigation buttons stay in a dedicated footer.
+
+The mouse wheel and scrollbar scroll the current list or section; drag the
+thumb or click its track. PageUp/PageDown moves by a viewport and Home/End
+moves to its beginning/end. Up/Down scrolls detail text one line at a time;
+Tab or Left/Right selects its Back/Close buttons. Previous/Next buttons
+are no longer used. The viewport and modal height remain fixed while scrolling.
+
+`Ctrl+Alt+T` opens **New Tab Options**, exactly like right-clicking the
+tab bar's plus button. `Ctrl+T` opens a regular tab;
+`Ctrl+N` opens a new window.
+
+Double Ctrl is a separate gesture, not a normal key binding. Two quick,
+released Ctrl taps arm next-key pass-through: the next physical key press
+and its repeats bypass OnlyTerm shortcuts. Another double tap or loss of
+window focus cancels it. The F1 detail page displays the current
+`pass_through_next_key_on_double_ctrl` setting and actual timing limits.
+
+```
+keys: [
+  { key: F1, mods: NONE, action: ActivateHelpMenu }
+  { key: t, mods: CTRL|ALT, action: ActivateNewTabOptions }
 ]
 ```
 

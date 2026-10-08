@@ -4,6 +4,8 @@ fn is_menu_item(item: Option<&UIItemType>) -> bool {
     match item {
         Some(UIItemType::PaneLayoutMenuItem(_)) => true,
         Some(UIItemType::RenameTabMenuItem(_)) => true,
+        Some(UIItemType::HelpMenuItem(_)) => true,
+        Some(UIItemType::ModalScrollBar) => true,
         #[cfg(windows)]
         Some(UIItemType::TabProcessMenuItem(_)) => true,
         _ => false,
@@ -44,7 +46,9 @@ impl super::super::TermWindow {
             | UIItemType::NewTabOptionRun
             | UIItemType::NewTabOptionClose
             | UIItemType::PaneLayoutMenuItem(_)
-            | UIItemType::RenameTabMenuItem(_) => {}
+            | UIItemType::RenameTabMenuItem(_)
+            | UIItemType::HelpMenuItem(_)
+            | UIItemType::ModalScrollBar => {}
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(_) => {}
         }
@@ -62,10 +66,66 @@ impl super::super::TermWindow {
             | UIItemType::NewTabOptionRun
             | UIItemType::NewTabOptionClose
             | UIItemType::PaneLayoutMenuItem(_)
-            | UIItemType::RenameTabMenuItem(_) => {}
+            | UIItemType::RenameTabMenuItem(_)
+            | UIItemType::HelpMenuItem(_)
+            | UIItemType::ModalScrollBar => {}
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(_) => {}
         }
+    }
+
+    fn mouse_event_modal_scroll(&mut self, event: &MouseEvent) -> bool {
+        let Some(modal) = self.get_modal() else {
+            self.modal_scroll_drag.borrow_mut().take();
+            return false;
+        };
+        let Some(position) = modal.scroll_position() else {
+            self.modal_scroll_drag.borrow_mut().take();
+            return false;
+        };
+        if let WMEK::VertWheel(amount) = event.kind {
+            let offset = if amount > 0 {
+                position.offset.saturating_sub(amount as usize * 3)
+            } else {
+                position
+                    .offset
+                    .saturating_add(amount.unsigned_abs() as usize * 3)
+            };
+            modal.set_scroll_offset(offset.min(position.limit()), self);
+            return true;
+        }
+        if matches!(event.kind, WMEK::Release(MousePress::Left))
+            && self.modal_scroll_drag.borrow_mut().take().is_some()
+        {
+            return true;
+        }
+        if matches!(event.kind, WMEK::Press(MousePress::Left)) {
+            if let Some(item) = self
+                .resolve_ui_item(event)
+                .filter(|item| item.item_type == UIItemType::ModalScrollBar)
+            {
+                let (top, size) = position.thumb(item.height as f32);
+                let y = event.coords.y as f32 - item.y as f32;
+                let grab = if y >= top && y <= top + size {
+                    y - top
+                } else {
+                    size / 2.
+                };
+                self.modal_scroll_drag.replace(Some((item, grab)));
+            }
+        }
+        if matches!(event.kind, WMEK::Press(MousePress::Left) | WMEK::Move) {
+            let drag = self.modal_scroll_drag.borrow().clone();
+            if let Some((item, grab)) = drag {
+                let offset = position.offset_at(
+                    event.coords.y as f32 - item.y as f32 - grab,
+                    item.height as f32,
+                );
+                modal.set_scroll_offset(offset, self);
+                return true;
+            }
+        }
+        false
     }
 
     pub fn mouse_event_impl(&mut self, event: MouseEvent, context: &dyn WindowOps) {
@@ -78,6 +138,10 @@ impl super::super::TermWindow {
             WMEK::Press(_) | WMEK::VertWheel(_) | WMEK::HorzWheel(_)
         ) {
             self.pass_through.mouse_input();
+        }
+        if self.mouse_event_modal_scroll(&event) {
+            context.set_cursor(Some(MouseCursor::Arrow));
+            return;
         }
         if release_after_menu_selection(
             &event.kind,
@@ -108,17 +172,6 @@ impl super::super::TermWindow {
         let menu_open = self
             .get_modal()
             .is_some_and(|modal| modal.blocks_terminal_input());
-        #[cfg(windows)]
-        if let WMEK::VertWheel(amount) = &event.kind {
-            if let Some(modal) = self.get_modal() {
-                if let Some(menu) =
-                    modal.downcast_ref::<crate::termwindow::tab_process_menu::TabProcessMenu>()
-                {
-                    menu.scroll(*amount as i64, self);
-                    return;
-                }
-            }
-        }
         let menu_target = if menu_open {
             self.resolve_ui_item(&event)
         } else {

@@ -104,10 +104,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
                      insert a newline, which is what a user pressing either of them \
                      is asking for."
                         .into(),
-                    vec![
-                        (Modifiers::CTRL, "j".into()),
-                        (Modifiers::CTRL, "Enter".into()),
-                    ],
+                    vec![(Modifiers::CTRL, "Enter".into())],
                 )
             } else {
                 (

@@ -58,7 +58,7 @@ impl CommandDef {
     ///
     /// In addition to the SHIFT-related permutations above, this also
     /// synthesizes a `KeyCode::Physical` variant alongside any binding
-    /// that combines a `KeyCode::Char` with CTRL and/or SUPER.
+    /// that combines a `KeyCode::Char` with CTRL.
     /// Those modifier chords are the ones typically used for application-level
     /// shortcuts (Copy, Paste, tab/pane navigation, etc.) and their intent
     /// is defined by the *position* of the key on the keyboard (eg: the "C"
@@ -73,22 +73,19 @@ impl CommandDef {
     /// Registering the physical variant alongside the mapped one allows the
     /// physical-key-first lookup pass (see `raw_key_event_impl` in
     /// `keyevent.rs`) to resolve these regardless of the active layout,
-    /// while leaving plain, unmodified text entry (no CTRL/SUPER) completely
+    /// while leaving plain, unmodified text entry (no CTRL) completely
     /// untouched so CJK/Cyrillic/etc. typing keeps working exactly as before.
     fn permute_keys(&self, config: &ConfigHandle) -> Vec<(Modifiers, KeyCode)> {
         let mut keys = vec![];
 
-        // Only Char keys combined with CTRL and/or SUPER are eligible for a
-        // layout-independent physical fallback; bare typing (no modifiers)
-        // and pure-SHIFT combinations must resolve exactly as before so that
-        // non-Latin scripts are never affected.
+        // Physical aliases represent the same Ctrl chord on other layouts.
         fn push_with_phys_fallback(
             keys: &mut Vec<(Modifiers, KeyCode)>,
             mods: Modifiers,
             key: KeyCode,
         ) {
-            let wants_phys_fallback = matches!(key, KeyCode::Char(_))
-                && (mods.contains(Modifiers::CTRL) || mods.contains(Modifiers::SUPER));
+            let wants_phys_fallback =
+                matches!(key, KeyCode::Char(_)) && mods.contains(Modifiers::CTRL);
 
             if wants_phys_fallback {
                 if let Some(phys) = key.to_phys() {
@@ -102,7 +99,23 @@ impl CommandDef {
             keys.push((mods, key));
         }
 
-        for (mods, label) in &self.keys {
+        if let Some((mods, label)) = self
+            .keys
+            .iter()
+            .filter(|(mods, _)| !mods.contains(Modifiers::SUPER))
+            .min_by_key(|(mods, _)| {
+                (
+                    mods.bits().count_ones(),
+                    if mods.contains(Modifiers::CTRL) {
+                        0
+                    } else if mods.contains(Modifiers::ALT) {
+                        1
+                    } else {
+                        2
+                    },
+                )
+            })
+        {
             let mods = *mods;
             let key = DeferredKeyCode::try_from(label.as_str())
                 .unwrap()
@@ -116,36 +129,7 @@ impl CommandDef {
 
             push_with_phys_fallback(&mut keys, mods, key.clone());
 
-            if mods == Modifiers::SUPER {
-                // We want each SUPER/CMD version of the keys to also have
-                // CTRL+SHIFT version(s) for environments where SUPER/CMD
-                // is reserved for the window manager.
-                // This bit synthesizes those.
-                push_with_phys_fallback(&mut keys, Modifiers::CTRL | Modifiers::SHIFT, key.clone());
-                if ukey != key {
-                    push_with_phys_fallback(
-                        &mut keys,
-                        Modifiers::CTRL | Modifiers::SHIFT,
-                        ukey.clone(),
-                    );
-                    // `InputMap::lookup_key` always strips SHIFT from the
-                    // *query* before searching (`key.normalize_shift(...)`),
-                    // so a stored entry that still has SHIFT set (like the
-                    // CTRL|SHIFT ones just above) can never actually be
-                    // found - the only way CTRL+SHIFT+<letter> is ever
-                    // reachable is by storing it as bare CTRL + the
-                    // *shifted/uppercase* character, matching what a
-                    // normalized query collapses down to. Register that
-                    // directly (not via push_with_phys_fallback): its
-                    // automatic physical-key fallback would push
-                    // `(CTRL, Physical(<key>))`, which is ambiguous with -
-                    // and collides with - a plain physical CTRL+<letter>
-                    // press with no shift at all (physical keycodes carry
-                    // no case/shift information), which is exactly what
-                    // broke Ctrl+C previously.
-                    keys.push((Modifiers::CTRL, ukey.clone()));
-                }
-            } else if mods.contains(Modifiers::SHIFT) && ukey != key {
+            if mods.contains(Modifiers::SHIFT) && ukey != key {
                 keys.push((mods, ukey.clone()));
                 keys.push((mods - Modifiers::SHIFT, ukey.clone()));
             }
@@ -491,6 +475,7 @@ fn compute_default_actions() -> Vec<KeyAssignment> {
         TogglePaneZoomState,
         ActivateLastTab,
         // ----------------- Help
+        ActivateHelpMenu,
         ShowDebugOverlay,
         ShowVersionOverlay,
         OpenConfigFile,

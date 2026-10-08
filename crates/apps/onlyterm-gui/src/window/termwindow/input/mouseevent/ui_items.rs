@@ -14,6 +14,7 @@ impl super::super::TermWindow {
     ) {
         self.last_ui_item.replace(item.clone());
         match item.item_type {
+            UIItemType::ModalScrollBar => {}
             UIItemType::TabBar(tab_bar_item) => {
                 self.mouse_event_tab_bar(item, tab_bar_item, event, context);
             }
@@ -55,6 +56,18 @@ impl super::super::TermWindow {
                     if let Some(modal) = self.get_modal() {
                         if let Some(menu) = modal
                             .downcast_ref::<crate::termwindow::rename_tab_menu::RenameTabMenu>()
+                        {
+                            menu.perform_action(action, self);
+                        }
+                    }
+                }
+                context.set_cursor(Some(MouseCursor::Hand));
+            }
+            UIItemType::HelpMenuItem(action) => {
+                if let WMEK::Press(MousePress::Left) = event.kind {
+                    if let Some(modal) = self.get_modal() {
+                        if let Some(menu) =
+                            modal.downcast_ref::<crate::termwindow::help_menu::HelpMenu>()
                         {
                             menu.perform_action(action, self);
                         }

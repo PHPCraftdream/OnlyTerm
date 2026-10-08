@@ -44,33 +44,11 @@ impl TermWindow {
     }
 
     pub(super) fn show_prompt_input_line(&mut self, args: &PromptInputLine) {
-        let mux = Mux::get();
-        let tab = match mux.get_active_tab_for_window(self.mux_window_id) {
-            Some(tab) => tab,
-            None => return,
-        };
-
-        let pane = match self.get_active_pane_or_overlay() {
-            Some(pane) => pane,
-            None => return,
-        };
-
-        let args = args.clone();
-
-        let gui_win = GuiWin::new(self);
-        let pane = MuxPane(pane.pane_id());
-
-        let (overlay, future) = match start_overlay(self, &tab, move |_tab_id, term| {
-            crate::overlay::prompt::show_line_prompt_overlay(term, args, gui_win, pane)
-        }) {
-            Ok(res) => res,
-            Err(err) => {
-                log::error!("Failed to show prompt input line overlay: {err:#}");
-                return;
-            }
-        };
-        self.assign_overlay(tab.tab_id(), overlay);
-        onlyterm_promise::spawn::spawn(future).detach();
+        match crate::termwindow::rename_tab_menu::RenameTabMenu::from_prompt(self, args) {
+            Ok(Some(menu)) => self.set_modal(Rc::new(menu)),
+            Ok(None) => {}
+            Err(error) => log::error!("Failed to show input prompt: {error:#}"),
+        }
     }
 
     pub(super) fn show_confirmation(&mut self, args: &Confirmation) {

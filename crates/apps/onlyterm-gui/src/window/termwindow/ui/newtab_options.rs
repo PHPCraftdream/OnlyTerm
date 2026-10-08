@@ -1,10 +1,7 @@
 use crate::spawn::SpawnWhere;
 use crate::termwindow::box_model::*;
+use crate::termwindow::menu_style::MenuStyle;
 use crate::termwindow::modal::Modal;
-use crate::termwindow::render::corners::{
-    BOTTOM_LEFT_ROUNDED_CORNER, BOTTOM_RIGHT_ROUNDED_CORNER, TOP_LEFT_ROUNDED_CORNER,
-    TOP_RIGHT_ROUNDED_CORNER,
-};
 use crate::termwindow::{DimensionContext, NewTabOptionGroup, TermWindow, UIItemType};
 use crate::utilsprites::RenderMetrics;
 use ::window::{Connection, ConnectionOps};
@@ -276,502 +273,159 @@ impl NewTabOptions {
         selected_priority: Priority,
         focus: FocusItem,
     ) -> anyhow::Result<Vec<ComputedElement>> {
-        let font = term_window
-            .fonts
-            .command_palette_font()
-            .expect("to resolve new tab options font");
+        let font = term_window.fonts.command_palette_font()?;
+        let heading = term_window.fonts.title_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
-
         let dimensions = &term_window.dimensions;
-        let pixel_width = dimensions.pixel_width;
-        let pixel_height = dimensions.pixel_height;
-        let cols = pixel_width / term_window.render_metrics.cell_size.width as usize;
-        let rows = pixel_height / term_window.render_metrics.cell_size.height as usize;
-
-        let padding_top = 40.;
-        let padding_bottom = 40.;
-
-        // Size the box to the widest row's actual content instead of a
-        // fixed `cols / 4` guess: with 6 priority options ("Below Normal"
-        // and "Above Normal" are the longest names), the Priority row is
-        // reliably wider than that guess allowed for, which clipped it
-        // off the right edge of the box. Each radio item contributes its
-        // left/right margin (1.0 + 0.5 cells, matching the radio_element
-        // margins built below) plus "<radio glyph> <name>".
-        let row_width_cells = |label: &str, names: &[&str]| -> usize {
-            let mut width = label.chars().count();
-            for name in names {
-                width += 1 /* left margin, rounded */ + 2 /* radio glyph + space */ + name.chars().count();
-            }
-            width
-        };
-        let shell_names: Vec<&str> = shells.iter().map(|s| s.shell.name()).collect();
-        let elevation_names: Vec<&str> = Elevation::ALL.iter().map(|s| s.name()).collect();
-        let priority_names: Vec<&str> = Priority::ALL.iter().map(|s| s.name()).collect();
-        let content_width_cells = [
-            "New Tab Options".chars().count(),
-            row_width_cells("Shell:", &shell_names),
-            row_width_cells("Elevation:", &elevation_names),
-            row_width_cells("Priority:", &priority_names),
-        ]
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(60);
-        // +6 cells covers the root box's own margin/padding/border plus
-        // the row wrapper's own margin, so content isn't flush against
-        // (or clipped by) the box edge.
-        let desired_width = (content_width_cells + 6).min(cols);
-
-        let avail_pixel_width = cols as f32 * term_window.render_metrics.cell_size.width as f32;
-        let desired_pixel_width =
-            desired_width as f32 * term_window.render_metrics.cell_size.width as f32;
-
-        let bg_color = term_window.config.command_palette_bg_color.to_linear();
-        let fg_color = term_window.config.command_palette_fg_color.to_linear();
-        let normal_colors = ElementColors {
-            border: BorderColor::new(bg_color),
-            bg: bg_color.into(),
-            text: fg_color.into(),
-        };
-        // Selection state (the radio glyph's ●) always renders the same
-        // way -- inverted bg/text -- regardless of keyboard focus, so it
-        // stays visible even after focus moves elsewhere. Keyboard focus
-        // is a *separate* signal, shown as a thin border instead (see
-        // `style_item` below), so the two states don't compete for the
-        // same visual treatment.
-        let selected_colors = ElementColors {
-            border: BorderColor::new(fg_color),
-            bg: fg_color.into(),
-            text: bg_color.into(),
-        };
-        let pick_colors = |is_selected: bool| {
-            if is_selected {
-                selected_colors.clone()
-            } else {
-                normal_colors.clone()
-            }
-        };
-        // Applies the selection colors, then overlays a thin 1px border
-        // that's either visible (focused) or drawn in the item's own
-        // background color (not focused, so it's invisible). The border
-        // box is reserved unconditionally either way -- if it were only
-        // added on focus, that item (and the row containing it) would be
-        // 1px taller/wider than its unfocused siblings, visibly
-        // reflowing the whole dialog every time focus moved. The border
-        // color is whichever of bg/fg contrasts with that item's own
-        // (possibly inverted) background, so the outline stays visible
-        // in both the selected and unselected case once focused.
-        let style_item = |element: Element, is_selected: bool, is_focused: bool| -> Element {
-            let colors = pick_colors(is_selected);
-            let own_bg = if is_selected { fg_color } else { bg_color };
-            let border_color = if !is_focused {
-                own_bg
-            } else if is_selected {
-                bg_color
-            } else {
-                fg_color
-            };
-            element
-                .border(BoxDimension::new(Dimension::Pixels(1.)))
-                .colors(ElementColors {
-                    border: BorderColor::new(border_color),
-                    ..colors
+        let style = MenuStyle::new(
+            term_window.config.command_palette_bg_color,
+            term_window.config.command_palette_fg_color,
+        );
+        let width_limit = dimensions.pixel_width as f32;
+        let height_limit = dimensions.pixel_height as f32;
+        let width = (width_limit - 32.).clamp(1., 1000.);
+        let inner_width = (width - 34.).max(1.);
+        let choice = |label: &str, selected: bool, focused: bool, group, index| {
+            let mut element = style
+                .button(
+                    &font,
+                    &format!("{} {label}", if selected { "●" } else { "○" }),
+                    focused,
+                    true,
+                )
+                .item_type(UIItemType::NewTabOptionRadio {
+                    group,
+                    choice: index,
                 })
-        };
-
-        let mut elements = Vec::new();
-
-        // Title: its own block-level row so it starts on its own line, with
-        // the close cross floated to the right edge of that row -- the same
-        // arrangement `fancy_tab_bar` uses for a tab's own close button.
-        // `×` (U+00D7) rather than a dedicated cross glyph: it is present in
-        // essentially every font, so it cannot fall back to a tofu box.
-        //
-        // A `Children` row shrink-wraps to its own content by default (see
-        // `box_model::compute_element`'s `Children` branch), so without help
-        // this row would only be as wide as "New Tab Options ×" -- which is
-        // why the cross used to sit right after the text instead of in the
-        // panel's corner. An explicit `min_width` on the row fixes that.
-        //
-        // The subtle part is what that width must be. A `Float::Right` child
-        // is laid out at `max_x + float_width` (where `max_x` has already
-        // been raised to `min_width`), so the float's own width is added ON
-        // TOP of `min_width` rather than fitting inside it. Asking for the
-        // full panel width here therefore produces a row one cross wider
-        // than the panel, and the cross hangs off the right edge -- which is
-        // exactly what happened. Reserving space by *guessing* the cross's
-        // rendered width failed too: an estimate of "padding + about one
-        // cell" undershot, because text shaping makes no promise that a
-        // glyph advance is a whole number of grid cells.
-        //
-        // So the cross's width is not estimated, it is anchored: `min_width`
-        // holds its content box at one cell, making its outer width
-        // padding + 1 cell. (`max_width` must NOT be used for this. On a
-        // text element that is a clipping bound, not a shrink bound -- the
-        // glyph loop breaks as soon as the next advance would cross it, so
-        // pinning max_width to one cell deleted the "×" entirely and left
-        // only its hover rectangle behind.)
-        //
-        // The other half is measuring against the right thing. The panel is
-        // handed a layout rect of `desired_pixel_width`, but its own border
-        // and padding are subtracted from *inside* that, so the content area
-        // every row actually gets is narrower -- by 0.25 cell of padding and
-        // 1px of border on each side. Computing this row from the outer
-        // figure, as an earlier attempt did, therefore overshot by exactly
-        // that much and pushed the cross past the panel edge.
-        let cell_w = term_window.render_metrics.cell_size.width as f32;
-        let title_row_margin_cells = 1.0; // this row's own 0.5 + 0.5 left/right margin, below
-                                          // Equal left/right padding, so the glyph sits centred in the
-                                          // highlight box that appears under the pointer -- unequal padding
-                                          // put it visibly off to one side.
-        let close_pad_cells = 0.5;
-        let close_content_cells = 1.0; // anchored by min_width below
-                                       // A margin, not a narrower row: the float is positioned by its OUTER
-                                       // width, so a right margin pushes the visible box inward while the
-                                       // row -- and therefore the rule drawn under it -- still spans the
-                                       // full width. Shrinking the row instead would have pulled that rule
-                                       // short on one side only. It doubles as slack for the last couple of
-                                       // pixels of overshoot that the arithmetic above still leaves.
-        let close_margin_right_cells = 0.75;
-        let close_outer_width =
-            (close_pad_cells * 2. + close_content_cells + close_margin_right_cells) * cell_w;
-
-        // The panel's usable content width: its layout rect less its own
-        // 0.25-cell padding and 1px border on each side.
-        let panel_content_width = (desired_pixel_width - 0.5 * cell_w - 2.0).max(0.);
-        // The width this row occupies inside that, less its own margins.
-        let title_row_total_width = (panel_content_width - title_row_margin_cells * cell_w).max(0.);
-        // What to ask for, given a Float::Right child is placed at
-        // `min_width + float_width` and so adds its own width on top.
-        let title_row_min_width = (title_row_total_width - close_outer_width).max(0.);
-
-        let title_str = "New Tab Options";
-        let title_text_width = title_str.chars().count() as f32 * cell_w;
-        // Centers the title across the row's full width -- there is no
-        // text-align primitive in this box model, only padding. Clamped so a
-        // long title can never be pushed underneath the cross.
-        let title_left_pad = ((title_row_total_width - title_text_width) / 2.)
-            .min((title_row_min_width - title_text_width).max(0.))
-            .max(0.);
-        let title_text = Element::new(&font, ElementContent::Text(title_str.to_string()))
-            .colors(normal_colors.clone())
-            .padding(BoxDimension {
-                left: Dimension::Pixels(title_left_pad),
-                right: Dimension::Pixels(0.),
-                top: Dimension::Pixels(0.),
-                bottom: Dimension::Pixels(0.),
-            });
-
-        let close_element = Element::new(&font, ElementContent::Text("×".to_string()))
-            .colors(normal_colors.clone())
-            .hover_colors(Some(selected_colors.clone()))
-            // No min_width: it would hold the content box at a full cell
-            // while the "×" glyph advance is narrower, so the glyph rendered
-            // hard against the left of its own highlight box. Letting the box
-            // shrink-wrap the glyph lets the equal padding centre it. The
-            // reserve computed above stays valid because it now OVER-states
-            // the cross's width, and over-stating is the safe direction:
-            // the float is placed at `row min_width + its actual width`, so
-            // a too-large reserve only tucks it further inside.
-            .padding(BoxDimension {
-                left: Dimension::Cells(close_pad_cells),
-                right: Dimension::Cells(close_pad_cells),
-                top: Dimension::Cells(0.),
-                bottom: Dimension::Cells(0.),
-            })
-            .margin(BoxDimension {
-                left: Dimension::Cells(0.),
-                right: Dimension::Cells(close_margin_right_cells),
-                top: Dimension::Cells(0.),
-                bottom: Dimension::Cells(0.),
-            })
-            .float(Float::Right)
-            .item_type(UIItemType::NewTabOptionClose);
-
-        // The rule under the title is a bottom-only border: `BoxDimension`
-        // fields are independent, so left/top/right stay zero and nothing
-        // renders there, while a nonzero bottom width and an opaque border
-        // color (unlike `normal_colors.border`, which matches the
-        // background and is therefore invisible by design elsewhere in this
-        // dialog) draw a single visible line spanning this row's width.
-        let title_rule_colors = ElementColors {
-            border: BorderColor::new(fg_color),
-            ..normal_colors.clone()
-        };
-        let title_element = Element::new(
-            &font,
-            ElementContent::Children(vec![title_text, close_element]),
-        )
-        .colors(title_rule_colors)
-        .min_width(Some(Dimension::Pixels(title_row_min_width)))
-        .margin(BoxDimension {
-            left: Dimension::Cells(0.5),
-            right: Dimension::Cells(0.5),
-            top: Dimension::Cells(0.5),
-            bottom: Dimension::Cells(0.25),
-        })
-        .padding(BoxDimension {
-            left: Dimension::Pixels(0.),
-            top: Dimension::Pixels(0.),
-            right: Dimension::Pixels(0.),
-            bottom: Dimension::Cells(0.25),
-        })
-        .border(BoxDimension {
-            left: Dimension::Pixels(0.),
-            top: Dimension::Pixels(0.),
-            right: Dimension::Pixels(0.),
-            bottom: Dimension::Pixels(1.),
-        })
-        .display(DisplayType::Block);
-        elements.push(title_element);
-
-        // Each option group is one block-level row (so groups stack
-        // vertically) containing the label followed by its radio options
-        // as inline children (so options within a group sit side by side).
-        // `box_model::Element`'s default display is `Inline` -- without
-        // `.display(DisplayType::Block)` on the row wrapper, every label
-        // and radio across all three groups flows into one continuous
-        // horizontal line instead of one row per group (this is what
-        // CommandPalette does for each of its own rows, see palette.rs).
-        fn build_row(
-            font: &std::rc::Rc<onlyterm_font::LoadedFont>,
-            label: &str,
-            normal_colors: &ElementColors,
-            row_items: Vec<Element>,
-        ) -> Element {
-            let label_element = Element::new(font, ElementContent::Text(label.to_string()))
-                .colors(normal_colors.clone());
-            let mut row = vec![label_element];
-            row.extend(row_items);
-            Element::new(font, ElementContent::Children(row))
-                .colors(normal_colors.clone())
                 .margin(BoxDimension {
-                    left: Dimension::Cells(0.5),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.25),
-                    bottom: Dimension::Cells(0.25),
-                })
-                .display(DisplayType::Block)
-        }
-
+                    right: Dimension::Pixels(8.),
+                    bottom: Dimension::Pixels(6.),
+                    ..BoxDimension::default()
+                });
+            if selected && !focused {
+                element.colors.bg = style.chip.into();
+            }
+            element
+        };
+        let group = |label: &str, choices: Vec<Element>, per_row: usize| {
+            let mut rows = vec![style.text(&heading, label.into(), false)];
+            let mut choices = choices.into_iter();
+            loop {
+                let row: Vec<_> = choices.by_ref().take(per_row).collect();
+                if row.is_empty() {
+                    break;
+                }
+                rows.push(
+                    Element::new(&font, ElementContent::Children(row)).display(DisplayType::Block),
+                );
+            }
+            style.card(&font, rows, inner_width)
+        };
         let shell_items = shells
             .iter()
             .enumerate()
-            .map(|(idx, available)| {
-                let is_selected = selected_shell == idx;
-                let is_focused = matches!(focus, FocusItem::Shell(i) if i == idx);
-                let radio_char = if is_selected { "●" } else { "○" };
-                let text = format!("{} {}", radio_char, available.shell.name());
-                let mut radio_element = style_item(
-                    Element::new(&font, ElementContent::Text(text)),
-                    is_selected,
-                    is_focused,
-                );
-                radio_element = radio_element.margin(BoxDimension {
-                    left: Dimension::Cells(1.0),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.),
-                    bottom: Dimension::Cells(0.),
-                });
-                radio_element.item_type = Some(UIItemType::NewTabOptionRadio {
-                    group: NewTabOptionGroup::Shell,
-                    choice: idx,
-                });
-                radio_element
+            .map(|(index, shell)| {
+                choice(
+                    shell.shell.name(),
+                    selected_shell == index,
+                    focus == FocusItem::Shell(index),
+                    NewTabOptionGroup::Shell,
+                    index,
+                )
             })
             .collect();
-        elements.push(build_row(&font, "Shell:", &normal_colors, shell_items));
-
         let elevation_items = Elevation::ALL
             .iter()
             .enumerate()
-            .map(|(idx, elevation)| {
-                let is_selected = selected_elevation == *elevation;
-                let is_focused = matches!(focus, FocusItem::Elevation(i) if i == idx);
-                let radio_char = if is_selected { "●" } else { "○" };
-                let text = format!("{} {}", radio_char, elevation.name());
-                let mut radio_element = style_item(
-                    Element::new(&font, ElementContent::Text(text)),
-                    is_selected,
-                    is_focused,
-                );
-                radio_element = radio_element.margin(BoxDimension {
-                    left: Dimension::Cells(1.0),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.),
-                    bottom: Dimension::Cells(0.),
-                });
-                radio_element.item_type = Some(UIItemType::NewTabOptionRadio {
-                    group: NewTabOptionGroup::Elevation,
-                    choice: idx,
-                });
-                radio_element
+            .map(|(index, elevation)| {
+                choice(
+                    elevation.name(),
+                    selected_elevation == *elevation,
+                    focus == FocusItem::Elevation(index),
+                    NewTabOptionGroup::Elevation,
+                    index,
+                )
             })
             .collect();
-        elements.push(build_row(
-            &font,
-            "Elevation:",
-            &normal_colors,
-            elevation_items,
-        ));
-
         let priority_items = Priority::ALL
             .iter()
             .enumerate()
-            .map(|(idx, priority)| {
-                let is_selected = selected_priority == *priority;
-                let is_focused = matches!(focus, FocusItem::Priority(i) if i == idx);
-                let radio_char = if is_selected { "●" } else { "○" };
-                let text = format!("{} {}", radio_char, priority.name());
-                let mut radio_element = style_item(
-                    Element::new(&font, ElementContent::Text(text)),
-                    is_selected,
-                    is_focused,
-                );
-                radio_element = radio_element.margin(BoxDimension {
-                    left: Dimension::Cells(1.0),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.),
-                    bottom: Dimension::Cells(0.),
-                });
-                radio_element.item_type = Some(UIItemType::NewTabOptionRadio {
-                    group: NewTabOptionGroup::Priority,
-                    choice: idx,
-                });
-                radio_element
+            .map(|(index, priority)| {
+                choice(
+                    priority.name(),
+                    selected_priority == *priority,
+                    focus == FocusItem::Priority(index),
+                    NewTabOptionGroup::Priority,
+                    index,
+                )
             })
             .collect();
-        elements.push(build_row(
+        let mut close = style
+            .button(&font, "×", false, true)
+            .float(Float::Right)
+            .min_width(Some(Dimension::Pixels(metrics.cell_size.width as f32)))
+            .item_type(UIItemType::NewTabOptionClose);
+        close.margin = BoxDimension::default();
+        let close_width = metrics.cell_size.width as f32 + 26.;
+        let header = Element::new(
             &font,
-            "Priority:",
-            &normal_colors,
-            priority_items,
-        ));
-
-        // Run button: its own block-level row. Not a "selection" in the
-        // radio sense, so it only ever gets the focus border, never the
-        // inverted selected-colors treatment.
-        let is_run_focused = matches!(focus, FocusItem::Run);
-        let mut run_element = style_item(
-            Element::new(&font, ElementContent::Text("[ Run ]".to_string())),
-            false,
-            is_run_focused,
+            ElementContent::Children(vec![
+                style
+                    .text(&font, "New Tab Options".into(), false)
+                    .display(DisplayType::Inline),
+                close,
+            ]),
         )
-        .margin(BoxDimension {
-            left: Dimension::Cells(0.5),
-            right: Dimension::Cells(0.5),
-            top: Dimension::Cells(0.5),
-            bottom: Dimension::Cells(0.5),
-        })
-        .display(DisplayType::Block);
-        run_element.item_type = Some(UIItemType::NewTabOptionRun);
-        elements.push(run_element);
-
-        // Esc has always dismissed this dialog, but nothing on screen said
-        // so. Carries no `item_type`, so it is inert: not clickable, and not
-        // part of the Tab focus order (`FocusItem` drives that, and this line
-        // deliberately has no entry there).
-        let hint_str = "Esc or × to close";
-        let hint_left_pad =
-            ((title_row_total_width - hint_str.chars().count() as f32 * cell_w) / 2.).max(0.);
-        let hint_element = Element::new(&font, ElementContent::Text(hint_str.to_string()))
-            .colors(normal_colors.clone())
-            .padding(BoxDimension {
-                left: Dimension::Pixels(hint_left_pad),
-                right: Dimension::Pixels(0.),
-                top: Dimension::Pixels(0.),
-                bottom: Dimension::Pixels(0.),
-            })
-            .margin(BoxDimension {
-                left: Dimension::Cells(0.5),
-                right: Dimension::Cells(0.5),
-                top: Dimension::Cells(0.),
-                bottom: Dimension::Cells(0.5),
-            })
-            .display(DisplayType::Block);
-        elements.push(hint_element);
-
-        let element = Element::new(&font, ElementContent::Children(elements))
-            .colors(ElementColors {
-                border: BorderColor::new(term_window.config.command_palette_bg_color.to_linear()),
-                bg: term_window
-                    .config
-                    .command_palette_bg_color
-                    .to_linear()
-                    .into(),
-                text: term_window
-                    .config
-                    .command_palette_fg_color
-                    .to_linear()
-                    .into(),
-            })
-            .margin(BoxDimension {
-                left: Dimension::Cells(0.25),
-                right: Dimension::Cells(0.25),
-                top: Dimension::Cells(0.25),
-                bottom: Dimension::Cells(0.25),
-            })
-            .padding(BoxDimension {
-                left: Dimension::Cells(0.25),
-                right: Dimension::Cells(0.25),
-                top: Dimension::Cells(0.25),
-                bottom: Dimension::Cells(0.25),
-            })
-            .border(BoxDimension::new(Dimension::Pixels(1.)))
-            .border_corners(Some(Corners {
-                top_left: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: TOP_LEFT_ROUNDED_CORNER,
-                },
-                top_right: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: TOP_RIGHT_ROUNDED_CORNER,
-                },
-                bottom_left: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: BOTTOM_LEFT_ROUNDED_CORNER,
-                },
-                bottom_right: SizedPoly {
-                    width: Dimension::Cells(0.25),
-                    height: Dimension::Cells(0.25),
-                    poly: BOTTOM_RIGHT_ROUNDED_CORNER,
-                },
-            }))
-            .min_width(Some(Dimension::Pixels(desired_pixel_width)));
-
-        let x_adjust = ((avail_pixel_width) - desired_pixel_width) / 2.;
-
-        let computed = term_window.compute_element(
+        .display(DisplayType::Block)
+        .min_width(Some(Dimension::Pixels((inner_width - close_width).max(1.))));
+        let run = style
+            .button(&font, "Run", focus == FocusItem::Run, true)
+            .item_type(UIItemType::NewTabOptionRun);
+        let root = style.panel(
+            &font,
+            vec![
+                header,
+                style.text(&font, "Choose how the new tab starts".into(), true),
+                group("SHELL", shell_items, if inner_width > 650. { 4 } else { 2 }),
+                group("ELEVATION", elevation_items, 2),
+                group(
+                    "PROCESS PRIORITY",
+                    priority_items,
+                    if inner_width > 650. { 3 } else { 2 },
+                ),
+                Element::new(&font, ElementContent::Children(vec![run]))
+                    .display(DisplayType::Block),
+                style.text(
+                    &font,
+                    "Arrows / Tab: select · Enter: activate · Esc / ×: cancel".into(),
+                    true,
+                ),
+            ],
+            width,
+        );
+        let mut computed = term_window.compute_element(
             &LayoutContext {
                 height: DimensionContext {
                     dpi: dimensions.dpi as f32,
-                    pixel_max: dimensions.pixel_height as f32,
+                    pixel_max: height_limit,
                     pixel_cell: metrics.cell_size.height as f32,
                 },
                 width: DimensionContext {
                     dpi: dimensions.dpi as f32,
-                    pixel_max: dimensions.pixel_width as f32,
+                    pixel_max: width_limit,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
-                bounds: euclid::rect(
-                    x_adjust,
-                    padding_top,
-                    desired_pixel_width,
-                    rows as f32 * term_window.render_metrics.cell_size.height as f32
-                        - padding_top
-                        - padding_bottom,
-                ),
+                bounds: euclid::rect((width_limit - width) / 2., 0., width, height_limit),
                 metrics: &metrics,
                 gl_state: term_window.render_state.as_ref().unwrap(),
                 zindex: 100,
             },
-            &element,
+            &root,
         )?;
-
+        computed.translate(euclid::vec2(
+            0.,
+            ((height_limit - computed.bounds.height()) / 2.).max(0.),
+        ));
         Ok(vec![computed])
     }
 

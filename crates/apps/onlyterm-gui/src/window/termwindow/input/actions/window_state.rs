@@ -152,6 +152,7 @@ impl TermWindow {
 
     pub fn cancel_modal(&self) {
         self.modal.borrow_mut().take();
+        self.modal_scroll_drag.borrow_mut().take();
         if let Some(window) = self.window.as_ref() {
             window.invalidate();
         }
@@ -159,6 +160,7 @@ impl TermWindow {
 
     pub fn set_modal(&self, modal: Rc<dyn Modal>) {
         self.modal.borrow_mut().replace(modal);
+        self.modal_scroll_drag.borrow_mut().take();
         if let Some(window) = self.window.as_ref() {
             window.invalidate();
         }

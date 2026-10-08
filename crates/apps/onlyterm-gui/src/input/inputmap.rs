@@ -339,18 +339,6 @@ impl InputMap {
                 ],
                 [
                     MouseEventTriggerMods {
-                        mods: Modifiers::SUPER,
-                        mouse_reporting: false,
-                        alt_screen: MouseEventAltScreen::Any,
-                    },
-                    MouseEventTrigger::Drag {
-                        streak: 1,
-                        button: MouseButton::Left,
-                    },
-                    StartWindowDrag
-                ],
-                [
-                    MouseEventTriggerMods {
                         mods: ctrl_shift,
                         mouse_reporting: false,
                         alt_screen: MouseEventAltScreen::Any,

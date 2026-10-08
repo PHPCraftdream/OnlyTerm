@@ -242,6 +242,7 @@ impl TermWindow {
             ui_items_scratch: vec![],
             ui_items: arc_swap::ArcSwap::new(std::sync::Arc::new(Vec::new())),
             dragging: None,
+            modal_scroll_drag: RefCell::new(None),
             last_ui_item: None,
             is_click_to_focus_window: false,
             key_table_state: KeyTableState::default(),

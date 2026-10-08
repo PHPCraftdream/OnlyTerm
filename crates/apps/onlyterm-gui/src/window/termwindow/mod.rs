@@ -54,8 +54,12 @@ pub mod charselect;
 #[path = "input/clipboard.rs"]
 pub mod clipboard;
 mod frecency;
+#[path = "ui/help_menu.rs"]
+pub mod help_menu;
 #[path = "input/keyevent.rs"]
 pub mod keyevent;
+#[path = "ui/menu_style.rs"]
+pub(crate) mod menu_style;
 #[path = "ui/modal.rs"]
 pub mod modal;
 #[path = "input/mouseevent.rs"]
@@ -215,6 +219,8 @@ pub enum UIItemType {
     NewTabOptionClose,
     PaneLayoutMenuItem(u8),
     RenameTabMenuItem(rename_tab_menu::RenameTabAction),
+    HelpMenuItem(help_menu::HelpAction),
+    ModalScrollBar,
     #[cfg(windows)]
     TabProcessMenuItem(tab_process_menu::ProcessMenuAction),
 }
@@ -442,6 +448,7 @@ pub struct TermWindow {
     ui_items_scratch: Vec<UIItem>,
     ui_items: arc_swap::ArcSwap<Vec<UIItem>>,
     dragging: Option<(UIItem, MouseEvent)>,
+    modal_scroll_drag: RefCell<Option<(UIItem, f32)>>,
 
     modal: RefCell<Option<Rc<dyn Modal>>>,
 

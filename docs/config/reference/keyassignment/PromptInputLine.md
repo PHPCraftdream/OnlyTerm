@@ -7,31 +7,22 @@ tags:
 
 {{since('20230408-112425-69ae8472')}}
 
-!!! danger "Non-functional: required a scripting callback"
+!!! warning "Legacy scripting callbacks remain unavailable"
 
-    `PromptInputLine`'s `action` field was designed to hold an event
-    callback registered via `onlyterm.action_callback(...)`, resolved through
-    rhai's (and, before that, Lua's) event-handler registry. That registry no
-    longer exists — see the [changelog](../../../changelog.md#continuousnightly)
-    and the [migration guide](../../../migration-to-ktav.md). The overlay
-    below still displays and accepts a line of input, but the entered text
-    now goes nowhere: there is no handler left to receive it, so using this
-    action currently has no observable effect beyond showing and closing a
-    prompt. `action` still only accepts the internal `EmitEvent` shape (for
-    backwards-compatible config loading); any config still written against
-    the examples below will keep loading, but nothing runs with the entered
-    text.
+    The native `RenameCurrentTab` action applies the accepted text as the
+    captured tab's custom title. Legacy `EmitEvent` callback shapes still
+    load, but the Lua/rhai handler registry has been removed, so no script
+    receives the result. Other action shapes remain unsupported.
 
-Activates an overlay to display a prompt and request a line of input
-from the user.
+Opens a graphical value-entry dialog in the same style as F2, with a
+description, editable input, and Cancel/Accept controls.
 
 `PromptInputLine` accepts four fields:
 
 * `description` - the text to show at the top of the display area. You may
   embed escape sequences.
-* `action` - previously an event callback registered via
-  `onlyterm.action_callback`, called with the entered line. No longer
-  connected to anything (see above).
+* `action` - `RenameCurrentTab` for native tab renaming, or a legacy
+  `EmitEvent` callback shape whose result is discarded.
 * `prompt` - the text to show as the prompt. You may embed escape sequences.
   Defaults to: `"> "`. {{since('nightly', inline=True)}}
 * `initial_value` - optional.  If provided, the initial content of the input

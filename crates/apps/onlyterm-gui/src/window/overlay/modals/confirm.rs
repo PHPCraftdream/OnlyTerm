@@ -1,111 +1,101 @@
 use crate::gui_api::guiwin::GuiWin;
+use crate::overlay::menu_style::TextMenuStyle;
 use onlyterm_config::keyassignment::{Confirmation, KeyAssignment};
 use onlyterm_mux::termwiztermtab::TermWizTerminal;
 use onlyterm_mux_funcs::MuxPane;
-use termwiz::cell::AttributeChange;
-use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, MouseButtons, MouseEvent};
 use termwiz::surface::{Change, CursorVisibility, Position};
 use termwiz::terminal::Terminal;
 
 fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::Result<bool> {
     term.set_raw_mode()?;
-
     let size = term.get_screen_size()?;
-
-    // Render 80% wide, centered
-    let text_width = size.cols * 80 / 100;
-    let x_pos = size.cols * 10 / 100;
-
-    // Fit text to the width
+    let style = TextMenuStyle::new();
+    let text_width = size.cols.saturating_sub(8).max(1);
+    let x_pos = 3;
     let wrapped = textwrap::fill(message, text_width);
-
-    let message_rows = wrapped.split("\n").count();
-    // Now we want to vertically center the prompt in the view.
-    // After the prompt there will be a blank line and then the "buttons",
-    // so we add two to the number of rows.
-    let top_row = (size.rows - (message_rows + 2)) / 2;
-
-    let button_row = top_row + message_rows + 1;
-    let mut active = ActiveButton::None;
-
-    let yes_x = x_pos;
-    let yes_w = 7;
-
-    let no_x =  yes_x + yes_w + 8 /* spacer */;
-    let no_w = 6;
-
+    let message_rows = wrapped.lines().count();
+    let top_row = size.rows.saturating_sub(message_rows + 4) / 2;
+    let button_row = (top_row + message_rows + 1).min(size.rows.saturating_sub(3));
     #[derive(Copy, Clone, PartialEq, Eq)]
     enum ActiveButton {
-        None,
         Yes,
         No,
     }
-
-    // Closure returns termwiz::Result; Err (termwiz::Error) is an external
-    // 136-byte type, and boxing it would change the closure's type.
+    let mut active = ActiveButton::No;
+    let yes_x = x_pos;
+    let yes_w = 7;
+    let no_x = yes_x + yes_w + 3;
+    let no_w = 6;
     #[allow(clippy::result_large_err)]
     let render = |term: &mut TermWizTerminal, active: ActiveButton| -> termwiz::Result<()> {
-        let mut changes = vec![
-            Change::ClearScreen(ColorAttribute::Default),
-            Change::CursorVisibility(CursorVisibility::Hidden),
-        ];
-
-        for (y, row) in wrapped.split("\n").enumerate() {
-            let row = row.trim_end();
-            changes.push(Change::CursorPosition {
-                x: Position::Absolute(x_pos),
-                y: Position::Absolute(top_row + y),
-            });
-            changes.push(Change::Text(row.to_string()));
+        let mut changes = style.frame(
+            size.cols,
+            size.rows,
+            "Confirmation",
+            "",
+            "Arrows / Tab: select  Enter: accept  Y / N  Esc: cancel",
+        );
+        changes.push(Change::CursorVisibility(CursorVisibility::Hidden));
+        for (y, row) in wrapped.lines().enumerate() {
+            changes.extend([
+                Change::CursorPosition {
+                    x: Position::Absolute(x_pos),
+                    y: Position::Absolute(top_row + y),
+                },
+                Change::AllAttributes(style.normal.clone()),
+                Change::Text(row.trim_end().to_string()),
+            ]);
         }
-
-        changes.push(Change::CursorPosition {
-            x: Position::Absolute(x_pos),
-            y: Position::Absolute(button_row),
-        });
-
-        if active == ActiveButton::Yes {
-            changes.push(AttributeChange::Reverse(true).into());
+        for (x, label, selected) in [
+            (yes_x, " [Y]es ", active == ActiveButton::Yes),
+            (no_x, " [N]o ", active == ActiveButton::No),
+        ] {
+            changes.extend([
+                Change::CursorPosition {
+                    x: Position::Absolute(x),
+                    y: Position::Absolute(button_row),
+                },
+                Change::AllAttributes(if selected {
+                    style.selected.clone()
+                } else {
+                    style.label.clone()
+                }),
+                Change::Text(label.into()),
+            ]);
         }
-        changes.push(" [Y]es ".into());
-        if active == ActiveButton::Yes {
-            changes.push(AttributeChange::Reverse(false).into());
-        }
-
-        changes.push("        ".into());
-
-        if active == ActiveButton::No {
-            changes.push(AttributeChange::Reverse(true).into());
-        }
-        changes.push(" [N]o ".into());
-        if active == ActiveButton::No {
-            changes.push(AttributeChange::Reverse(false).into());
-        }
-
         term.render(&changes)?;
         term.flush()
     };
-
     render(term, active)?;
-
     while let Ok(Some(event)) = term.poll_input(None) {
         match event {
             InputEvent::Key(KeyEvent {
                 key: KeyCode::Char('y' | 'Y'),
                 ..
-            }) => {
-                return Ok(true);
-            }
+            }) => return Ok(true),
             InputEvent::Key(KeyEvent {
-                key: KeyCode::Char('n' | 'N'),
+                key: KeyCode::Char('n' | 'N') | KeyCode::Escape,
                 ..
-            })
-            | InputEvent::Key(KeyEvent {
-                key: KeyCode::Escape,
+            }) => return Ok(false),
+            InputEvent::Key(KeyEvent {
+                key: KeyCode::Enter | KeyCode::Char('\r'),
+                ..
+            }) => return Ok(active == ActiveButton::Yes),
+            InputEvent::Key(KeyEvent {
+                key:
+                    KeyCode::UpArrow
+                    | KeyCode::DownArrow
+                    | KeyCode::LeftArrow
+                    | KeyCode::RightArrow
+                    | KeyCode::Tab,
                 ..
             }) => {
-                return Ok(false);
+                active = if active == ActiveButton::Yes {
+                    ActiveButton::No
+                } else {
+                    ActiveButton::Yes
+                };
             }
             InputEvent::Mouse(MouseEvent {
                 x,
@@ -113,8 +103,7 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
                 mouse_buttons,
                 ..
             }) => {
-                let x = x as usize;
-                let y = y as usize;
+                let (x, y) = (x as usize, y as usize);
                 if y == button_row && x >= yes_x && x < yes_x + yes_w {
                     active = ActiveButton::Yes;
                     if mouse_buttons == MouseButtons::LEFT {
@@ -125,21 +114,14 @@ fn run_confirmation_impl(message: &str, term: &mut TermWizTerminal) -> anyhow::R
                     if mouse_buttons == MouseButtons::LEFT {
                         return Ok(false);
                     }
-                } else {
-                    active = ActiveButton::None;
-                }
-
-                if mouse_buttons != MouseButtons::NONE {
-                    // Treat any other mouse button as cancel
+                } else if mouse_buttons != MouseButtons::NONE {
                     return Ok(false);
                 }
             }
             _ => {}
         }
-
         render(term, active)?;
     }
-
     Ok(false)
 }
 

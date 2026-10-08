@@ -3,23 +3,7 @@ use onlyterm_config::keyassignment::ClipboardCopyDestination;
 use onlyterm_dynamic::Value;
 use window::PhysKeyCode;
 
-/// Builds an `InputMap` from a config whose `keys:` list mirrors the
-/// shape of a real user config: a mix of `phys:`-prefixed and plain
-/// bindings, most of them CTRL chords, and *none* of them touching
-/// CTRL+C. Note: after the Ctrl+J protocol-aware fix, CTRL+J now
-/// has a default binding, so this config no longer tests that it stays
-/// free - we keep this config structure for testing that unrelated
-/// user bindings don't clobber the defaults they don't explicitly
-/// touch.
-///
-/// The classic way for a config engine to break "everything except the
-/// keys I explicitly bound" is for a non-empty user `keys:` list to
-/// *replace* the built-in default table rather than extend it (or for
-/// a `(key, mods)` normalization collision to silently evict a default
-/// entry). This constructs the map through exactly the same path the
-/// real GUI uses -- `Config::from_dynamic` -> `Config::key_bindings()`
-/// -> `InputMap::new`'s merge of `CommandDef::default_key_assignments`
-/// -- so that such a regression would show up here.
+/// Unrelated overrides must not replace the default input map.
 fn input_map_with_user_style_keys() -> InputMap {
     use onlyterm_config::Config;
     use onlyterm_dynamic::{FromDynamic, FromDynamicOptions, Object};
@@ -105,14 +89,9 @@ fn input_map_with_user_style_keys() -> InputMap {
     InputMap::new(&ConfigHandle::from_config(config))
 }
 
-/// Regression test: a user config that binds *some* CTRL chords must not
-/// disturb the built-in defaults for the chords it does not mention.
-/// CTRL+C must still be `CopySelectionOrInterrupt` (so it interrupts when
-/// nothing is selected). After the Ctrl+J protocol-aware fix, CTRL+J now
-/// has a default binding (SendChar(Modifiers::CTRL, 'j')), so this test
-/// verifies that it is NOT clobbered by unrelated user bindings.
+/// Ctrl+C must still copy a selection or interrupt without one.
 #[test]
-fn user_key_overrides_do_not_clobber_ctrl_c_and_ctrl_j_defaults() {
+fn user_key_overrides_do_not_clobber_ctrl_c_default() {
     let input_map = input_map_with_user_style_keys();
 
     for key in [KeyCode::Physical(PhysKeyCode::C), KeyCode::Char('c')] {
@@ -126,21 +105,6 @@ fn user_key_overrides_do_not_clobber_ctrl_c_and_ctrl_j_defaults() {
                 )
             });
         assert_eq!(entry.action, KeyAssignment::CopySelectionOrInterrupt);
-    }
-
-    // After the fix, Ctrl+J has a default binding that should NOT be
-    // clobbered by unrelated user bindings
-    for key in [KeyCode::Char('j'), KeyCode::Physical(PhysKeyCode::J)] {
-        let entry = input_map
-            .lookup_key(&key, Modifiers::CTRL, None)
-            .unwrap_or_else(|| {
-                panic!(
-                    "CTRL+J ({:?}) must keep its default protocol-aware binding \
-                         when the user config defines unrelated `keys:` overrides",
-                    key
-                )
-            });
-        assert_eq!(entry.action, KeyAssignment::SendChar(Modifiers::CTRL, 'j'));
     }
 
     // Sanity check the other direction: the user's own overrides really
@@ -197,93 +161,6 @@ fn right_click_copies_left_click_opens_hyperlink() {
             ClipboardCopyDestination::ClipboardAndPrimarySelection
         )
     );
-}
-
-/// Regression test for layout-independent modifier chords (see task
-/// tracked as "Сделать сопоставление стандартных Ctrl-сочетаний
-/// независимым от раскладки/языка по умолчанию").
-///
-/// The default binding for "copy to clipboard" is CTRL+SHIFT+C
-/// (registered via the SUPER permutation in `CommandDef::permute_keys`).
-/// On a non-Latin keyboard layout (eg: Russian ЙЦУКЕН) the physical "C"
-/// key does not produce the Unicode character 'c'/'C', so a real
-/// WM_KEYDOWN on Windows would resolve `ToUnicode` to a Cyrillic
-/// character instead. The physical-key-first lookup pass performed by
-/// `raw_key_event_impl` (see `keyevent.rs`) relies on the default table
-/// containing a `KeyCode::Physical(PhysKeyCode::C)` entry alongside the
-/// mapped `KeyCode::Char('C')` one; this test asserts that entry exists
-/// and resolves to the same action, without having to drive a real
-/// WM_KEYDOWN/ToUnicode round trip on an actual Russian keyboard layout.
-#[test]
-fn ctrl_shift_c_resolves_via_physical_key_regardless_of_layout() {
-    let input_map = InputMap::default_input_map();
-    let mods = Modifiers::CTRL | Modifiers::SHIFT;
-
-    let mapped = input_map
-        .lookup_key(&KeyCode::Char('C'), mods, None)
-        .expect("mapped CTRL+SHIFT+C has a default Copy binding");
-    assert_eq!(
-        mapped.action,
-        KeyAssignment::CopyTo(ClipboardCopyDestination::Clipboard)
-    );
-
-    // Simulates the physical-key-first lookup pass: even though the
-    // active keyboard layout may have produced a completely different
-    // Unicode character for this physical position, the position
-    // itself (physical "C") must still resolve to the same Copy action.
-    let physical = input_map
-        .lookup_key(&KeyCode::Physical(PhysKeyCode::C), mods, None)
-        .expect("physical CTRL+SHIFT+C must resolve to Copy independent of keyboard layout");
-    assert_eq!(physical.action, mapped.action);
-}
-
-#[test]
-fn ctrl_shift_v_resolves_via_physical_key_regardless_of_layout() {
-    let input_map = InputMap::default_input_map();
-    let mods = Modifiers::CTRL | Modifiers::SHIFT;
-
-    let mapped = input_map
-        .lookup_key(&KeyCode::Char('V'), mods, None)
-        .expect("mapped CTRL+SHIFT+V has a default Paste binding");
-    assert_eq!(
-        mapped.action,
-        KeyAssignment::PasteFrom(ClipboardPasteSource::Clipboard)
-    );
-
-    let physical = input_map
-        .lookup_key(&KeyCode::Physical(PhysKeyCode::V), mods, None)
-        .expect("physical CTRL+SHIFT+V must resolve to Paste independent of keyboard layout");
-    assert_eq!(physical.action, mapped.action);
-}
-
-#[test]
-fn ctrl_shift_t_spawns_a_tab_and_bare_ctrl_t_does_not() {
-    let input_map = InputMap::default_input_map();
-    let spawn_tab =
-        KeyAssignment::SpawnTab(onlyterm_config::keyassignment::SpawnTabDomain::CurrentPaneDomain);
-    let mods = Modifiers::CTRL | Modifiers::SHIFT;
-
-    let mapped = input_map
-        .lookup_key(&KeyCode::Char('T'), mods, None)
-        .expect("mapped CTRL+SHIFT+T has a default New Tab binding");
-    assert_eq!(mapped.action, spawn_tab);
-
-    let physical = input_map
-        .lookup_key(&KeyCode::Physical(PhysKeyCode::T), mods, None)
-        .expect("physical CTRL+SHIFT+T must resolve to New Tab independent of keyboard layout");
-    assert_eq!(physical.action, spawn_tab);
-
-    // Bare CTRL+T (no SHIFT) must NOT spawn a tab by default -- it's
-    // commonly used by the shell/readline running inside the terminal.
-    for key in [KeyCode::Char('t'), KeyCode::Physical(PhysKeyCode::T)] {
-        if let Some(entry) = input_map.lookup_key(&key, Modifiers::CTRL, None) {
-            assert_ne!(
-                entry.action, spawn_tab,
-                "bare CTRL+T ({:?}) must not be a default New Tab binding",
-                key
-            );
-        }
-    }
 }
 
 /// Control test: plain, unmodified text entry (no CTRL/SUPER) must be
@@ -436,42 +313,6 @@ fn ctrl_enter_resolves_via_physical_key_too() {
         )
         .expect("physical CTRL+Enter must resolve to the same newline binding");
     assert_eq!(physical.action, mapped.action);
-}
-
-/// Regression test: CTRL+J now has a protocol-aware default binding
-/// that sends Ctrl+j through whatever keyboard protocol the app has
-/// negotiated (win32-input-mode or kitty), falling back to a raw 0x0A
-/// byte if no protocol was negotiated. This fixes the issue where
-/// apps like Codex CLI (which negotiates win32-input-mode) expect all
-/// keystrokes to arrive via the negotiated protocol and may not
-/// correctly process a stray raw 0x0A byte appearing mid-stream.
-///
-/// Before this fix, Ctrl+J fell through to the terminal's standard
-/// ASCII control-code encoding (ctrl_mapping('j') -> 0x0A) unconditionally,
-/// which worked for legacy apps but broke protocol-aware apps.
-#[test]
-fn ctrl_j_has_protocol_aware_default_binding() {
-    let input_map = InputMap::default_input_map();
-
-    let entry = input_map
-        .lookup_key(&KeyCode::Char('j'), Modifiers::CTRL, None)
-        .expect("CTRL+J must have a default protocol-aware binding");
-    assert_eq!(
-        entry.action,
-        KeyAssignment::SendChar(Modifiers::CTRL, 'j'),
-        "CTRL+J must be bound to SendChar(Modifiers::CTRL, 'j')"
-    );
-
-    // The physical J key should also resolve to the same action
-    // (layout-independent physical-key fallback, synthesized in CommandDef::permute_keys)
-    let physical = input_map
-        .lookup_key(&KeyCode::Physical(PhysKeyCode::J), Modifiers::CTRL, None)
-        .expect("physical CTRL+J must resolve to the same protocol-aware binding");
-    assert_eq!(
-        physical.action,
-        KeyAssignment::SendChar(Modifiers::CTRL, 'j'),
-        "physical CTRL+J must resolve to the same SendChar(Modifiers::CTRL, 'j') binding"
-    );
 }
 
 /// Regression test for the bug that made CTRL+J do *nothing at all* in
@@ -655,4 +496,58 @@ fn ctrl_alt_altgr_like_binding_does_not_get_a_bare_alt_physical_twin() {
         .lookup_key(&KeyCode::Char('q'), Modifiers::CTRL | Modifiers::ALT, None)
         .expect("the CTRL|ALT binding itself must still resolve via its mapped character");
     assert_eq!(mapped.action, KeyAssignment::ActivateCopyMode);
+}
+
+#[test]
+fn simple_shortcuts_work_without_win_or_shift_duplicates() {
+    let map = InputMap::default_input_map();
+    assert_eq!(
+        map.lookup_key(&KeyCode::Physical(PhysKeyCode::T), Modifiers::CTRL, None)
+            .unwrap()
+            .action,
+        KeyAssignment::SpawnTab(onlyterm_config::keyassignment::SpawnTabDomain::CurrentPaneDomain)
+    );
+    assert_eq!(
+        map.lookup_key(&KeyCode::Physical(PhysKeyCode::V), Modifiers::CTRL, None)
+            .unwrap()
+            .action,
+        KeyAssignment::PasteFrom(ClipboardPasteSource::Clipboard)
+    );
+    for key in [
+        KeyCode::Char('T'),
+        KeyCode::Physical(PhysKeyCode::T),
+        KeyCode::Char('V'),
+        KeyCode::Physical(PhysKeyCode::V),
+    ] {
+        assert!(map
+            .lookup_key(&key, Modifiers::CTRL | Modifiers::SHIFT, None)
+            .is_none());
+    }
+    assert!(map
+        .keys
+        .default
+        .keys()
+        .all(|(_, mods)| !mods.contains(Modifiers::SUPER)));
+}
+
+#[test]
+fn alt_tab_activation_chords_fall_through_without_physical_aliases() {
+    let map = InputMap::default_input_map();
+    for key in ('0'..='9')
+        .map(KeyCode::Char)
+        .chain(std::iter::once(KeyCode::End))
+    {
+        assert!(map.lookup_key(&key, Modifiers::ALT, None).is_none());
+        if let Some(physical) = key.to_phys() {
+            assert!(map
+                .lookup_key(&KeyCode::Physical(physical), Modifiers::ALT, None)
+                .is_none());
+        }
+    }
+    for (key, direction) in [(KeyCode::PageUp, -1), (KeyCode::PageDown, 1)] {
+        assert_eq!(
+            map.lookup_key(&key, Modifiers::CTRL, None).unwrap().action,
+            KeyAssignment::ActivateTabRelative(direction)
+        );
+    }
 }

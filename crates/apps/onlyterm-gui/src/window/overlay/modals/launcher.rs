@@ -7,6 +7,7 @@
 //! menus.
 use crate::commands::derive_command_from_key_assignment;
 use crate::inputmap::InputMap;
+use crate::overlay::menu_style::{TextMenuStyle, LIST_TOP, ROW_OVERHEAD};
 use crate::overlay::quickselect;
 use crate::overlay::selector::{matcher_pattern, matcher_score};
 use crate::termwindow::TermWindowNotif;
@@ -17,11 +18,8 @@ use onlyterm_mux::pane::PaneId;
 use onlyterm_mux::termwiztermtab::TermWizTerminal;
 use onlyterm_mux::window::WindowId;
 use onlyterm_mux::Mux;
-use onlyterm_termwiz_funcs::truncate_right;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
-use termwiz::cell::{AttributeChange, CellAttributes};
-use termwiz::color::ColorAttribute;
 use termwiz::input::{InputEvent, KeyCode, KeyEvent, Modifiers, MouseButtons, MouseEvent};
 use termwiz::surface::{Change, Position};
 use termwiz::terminal::Terminal;
@@ -170,8 +168,6 @@ impl LauncherArgs {
     }
 }
 
-const ROW_OVERHEAD: usize = 3;
-
 struct LauncherState {
     active_idx: usize,
     max_items: usize,
@@ -183,6 +179,7 @@ struct LauncherState {
     window: ::window::Window,
     filtering: bool,
     help_text: String,
+    title: String,
     fuzzy_help_text: String,
     labels: Vec<String>,
     alphabet: String,
@@ -368,7 +365,7 @@ impl LauncherState {
     #[allow(clippy::result_large_err)] // returns termwiz::Result; Err (termwiz::Error) is an external 136-byte type, boxing ripples through callers
     fn render(&mut self, term: &mut TermWizTerminal) -> termwiz::Result<()> {
         let size = term.get_screen_size()?;
-        let max_width = size.cols.saturating_sub(6);
+        let max_width = size.cols.saturating_sub(8);
         let max_items = size.rows.saturating_sub(ROW_OVERHEAD);
         if max_items != self.max_items {
             self.labels = quickselect::compute_labels_for_alphabet_with_preserved_case(
@@ -377,102 +374,77 @@ impl LauncherState {
             );
             self.max_items = max_items;
         }
-
-        let mut changes = vec![
-            Change::ClearScreen(ColorAttribute::Default),
-            Change::CursorPosition {
-                x: Position::Absolute(0),
-                y: Position::Absolute(0),
-            },
-            Change::Text(format!(
-                "{}\r\n",
-                truncate_right(&self.help_text, max_width)
-            )),
-            Change::AllAttributes(CellAttributes::default()),
-        ];
-
-        let labels = &self.labels;
-        let max_label_len = labels.iter().map(|s| s.len()).max().unwrap_or(0);
-        let mut labels_iter = labels.iter();
-
+        let style = TextMenuStyle::new();
+        let description = if self.filtering || !self.filter_term.is_empty() {
+            format!("{}{}", self.fuzzy_help_text, self.filter_term)
+        } else {
+            self.help_text.clone()
+        };
+        let mut changes = style.frame(
+            size.cols,
+            size.rows,
+            &self.title,
+            &description,
+            "Arrows: select  Enter: launch  /: filter  Esc: cancel",
+        );
+        let max_label_len = self.labels.iter().map(|s| s.len()).max().unwrap_or(0);
         let config = configuration();
-        let colors = &config.resolved_palette;
-        let launcher_label_fg = colors.launcher_label_fg;
-        let launcher_label_bg = colors.launcher_label_bg;
-
         for (row_num, (entry_idx, entry)) in self
             .filtered_entries
             .iter()
             .enumerate()
             .skip(self.top_row)
+            .take(max_items + 1)
             .enumerate()
         {
-            if row_num > max_items {
-                break;
-            }
-
-            let mut attr = CellAttributes::blank();
-
-            if entry_idx == self.active_idx {
-                changes.push(AttributeChange::Reverse(true).into());
-                attr.set_reverse(true);
-            }
-
-            // from above we know that row_num <= max_items
-            // show labels as long as we have more labels left
-            // and we are not filtering
-            if !self.filtering {
-                if let Some(label) = labels_iter.next() {
-                    if let Some(launcher_label_bg) = launcher_label_bg {
-                        changes.push(AttributeChange::Background(launcher_label_bg.into()).into());
-                    }
-                    if let Some(launcher_label_fg) = launcher_label_fg {
-                        changes.push(AttributeChange::Foreground(launcher_label_fg.into()).into());
-                    }
-                    changes.push(Change::Text(format!(" {label:>max_label_len$}. ")));
-                    if launcher_label_bg.is_some() {
-                        changes.push(AttributeChange::Background(ColorAttribute::Default).into());
-                    }
-                    if launcher_label_fg.is_some() {
-                        changes.push(AttributeChange::Foreground(ColorAttribute::Default).into());
-                    }
-                } else {
-                    changes.push(Change::Text(" ".repeat(max_label_len + 3)));
-                }
-            } else if !self.always_fuzzy {
-                changes.push(Change::Text(" ".repeat(max_label_len + 3)));
+            let attr = if entry_idx == self.active_idx {
+                style.selected.clone()
             } else {
-                changes.push(Change::Text("    ".to_string()));
+                style.normal.clone()
+            };
+            changes.push(Change::CursorPosition {
+                x: Position::Absolute(3),
+                y: Position::Absolute(LIST_TOP + row_num),
+            });
+            changes.push(Change::AllAttributes(attr.clone()));
+            if !self.filtering {
+                if let Some(label) = self.labels.get(row_num) {
+                    let mut key_attr = if entry_idx == self.active_idx {
+                        style.selected.clone()
+                    } else {
+                        style.label.clone()
+                    };
+                    if let Some(bg) = config.resolved_palette.launcher_label_bg {
+                        key_attr.set_background(bg);
+                    }
+                    if let Some(fg) = config.resolved_palette.launcher_label_fg {
+                        key_attr.set_foreground(fg);
+                    }
+                    changes.push(Change::AllAttributes(key_attr));
+                    changes.push(Change::Text(format!(" {label:>max_label_len$} ")));
+                    changes.push(Change::AllAttributes(attr.clone()));
+                    changes.push(Change::Text("  ".into()));
+                } else {
+                    changes.push(Change::Text(" ".repeat(max_label_len + 4)));
+                }
             }
-
             let mut line = crate::tabbar::parse_status_text(&entry.label, attr.clone());
-            if line.len() > max_width {
-                line.resize(max_width, termwiz::surface::SEQ_ZERO);
+            if line.len() > max_width.saturating_sub(max_label_len + 4) {
+                line.resize(
+                    max_width.saturating_sub(max_label_len + 4),
+                    termwiz::surface::SEQ_ZERO,
+                );
             }
             changes.append(&mut line.changes(&attr));
-            changes.push(Change::Text(" ".to_string()));
-
-            if entry_idx == self.active_idx {
-                changes.push(AttributeChange::Reverse(false).into());
-            }
-            changes.push(Change::AllAttributes(CellAttributes::default()));
-            changes.push(Change::Text("\r\n".to_string()));
+            changes.push(Change::AllAttributes(style.normal.clone()));
         }
-
-        if self.filtering || !self.filter_term.is_empty() {
-            changes.append(&mut vec![
-                Change::CursorPosition {
-                    x: Position::Absolute(0),
-                    y: Position::Absolute(0),
-                },
-                Change::ClearToEndOfLine(ColorAttribute::Default),
-                Change::Text(truncate_right(
-                    &format!("{}{}", self.fuzzy_help_text, self.filter_term),
-                    max_width,
-                )),
-            ]);
-        }
-
+        changes.extend(style.scrollbar(
+            size.cols,
+            size.rows,
+            self.top_row,
+            max_items + 1,
+            self.filtered_entries.len(),
+        ));
         term.render(&changes)
     }
 
@@ -608,15 +580,50 @@ impl LauncherState {
                                 .saturating_sub(1),
                         );
                     }
-                    if y > 0 && y as usize <= self.filtered_entries.len() {
-                        self.active_idx = self.top_row + y as usize - 1;
+                    if y as usize >= LIST_TOP
+                        && y as usize - LIST_TOP <= self.max_items
+                        && self.top_row + y as usize - LIST_TOP < self.filtered_entries.len()
+                    {
+                        self.active_idx = self.top_row + y as usize - LIST_TOP;
                     }
                 }
                 InputEvent::Mouse(MouseEvent {
-                    y, mouse_buttons, ..
+                    x,
+                    y,
+                    mouse_buttons,
+                    ..
                 }) => {
-                    if y > 0 && y as usize <= self.filtered_entries.len() {
-                        self.active_idx = self.top_row + y as usize - 1;
+                    let size = term.get_screen_size()?;
+                    if x as usize == size.cols.saturating_sub(3)
+                        && y as usize >= LIST_TOP
+                        && y as usize <= LIST_TOP + self.max_items
+                    {
+                        if mouse_buttons.contains(MouseButtons::LEFT) {
+                            let position = crate::termwindow::menu_style::ScrollPosition {
+                                offset: self.top_row,
+                                visible: self.max_items + 1,
+                                total: self.filtered_entries.len(),
+                            };
+                            let height = position.visible as f32 * 24.;
+                            let (_, thumb) = position.thumb(height);
+                            let offset = position.offset_at(
+                                (y as usize - LIST_TOP) as f32 * 24. - thumb / 2.,
+                                height,
+                            );
+                            if self.top_row != offset {
+                                self.top_row = offset;
+                                self.active_idx =
+                                    self.active_idx.clamp(offset, offset + self.max_items);
+                                self.render(term)?;
+                            }
+                        }
+                        continue;
+                    }
+                    if y as usize >= LIST_TOP
+                        && y as usize - LIST_TOP <= self.max_items
+                        && self.top_row + y as usize - LIST_TOP < self.filtered_entries.len()
+                    {
+                        self.active_idx = self.top_row + y as usize - LIST_TOP;
 
                         if mouse_buttons == MouseButtons::LEFT && self.launch(self.active_idx) {
                             break;
@@ -660,6 +667,7 @@ pub fn launcher(
         window,
         filtering,
         help_text: args.help_text.clone(),
+        title: args.title.clone(),
         fuzzy_help_text: args.fuzzy_help_text.clone(),
         labels: vec![],
         selection: String::new(),

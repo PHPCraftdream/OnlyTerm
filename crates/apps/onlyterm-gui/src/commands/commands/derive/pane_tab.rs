@@ -5,10 +5,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         DecreaseFontSize => CommandDef {
             brief: "Decrease font size".into(),
             doc: "Scales the font size smaller by 10%".into(),
-            keys: vec![
-                (Modifiers::SUPER, "-".into()),
-                (Modifiers::CTRL, "-".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "-".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["View", "Font Size"],
             icon: Some("md_format_size"),
@@ -16,10 +13,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         IncreaseFontSize => CommandDef {
             brief: "Increase font size".into(),
             doc: "Scales the font size larger by 10%".into(),
-            keys: vec![
-                (Modifiers::SUPER, "=".into()),
-                (Modifiers::CTRL, "=".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "=".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["View", "Font Size"],
             icon: Some("md_format_size"),
@@ -27,10 +21,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         ResetFontSize => CommandDef {
             brief: "Reset font size".into(),
             doc: "Restores the font size to match your configuration file".into(),
-            keys: vec![
-                (Modifiers::SUPER, "0".into()),
-                (Modifiers::CTRL, "0".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "0".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["View", "Font Size"],
             icon: Some("md_format_size"),
@@ -46,7 +37,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         SpawnTab(SpawnTabDomain::CurrentPaneDomain) => CommandDef {
             brief: "New Tab".into(),
             doc: "Create a new tab in the same domain as the current pane".into(),
-            keys: vec![(Modifiers::SUPER, "t".into())],
+            keys: vec![(Modifiers::CTRL, "t".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Shell"],
             icon: Some("md_tab_plus"),
@@ -98,7 +89,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         ActivateTab(-1) => CommandDef {
             brief: "Activate right-most tab".into(),
             doc: "Activates the tab on the far right".into(),
-            keys: vec![(Modifiers::SUPER, "9".into())],
+            keys: vec![],
             args: &[ArgType::ActiveWindow],
             menubar: &["Window", "Select Tab"],
             icon: None,
@@ -106,22 +97,10 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         ActivateTab(n) => {
             let n = *n;
             let ordinal = english_ordinal(n + 1);
-            let mut keys = if (0..=7).contains(&n) {
-                vec![(Modifiers::SUPER, (n + 1).to_string())]
-            } else {
-                vec![]
-            };
-            // Windows/Linux: Alt+1..Alt+9 activate tabs 1-9 (indices 0-8),
-            // and Alt+0 activates the 10th tab (index 9).
-            if (0..=8).contains(&n) {
-                keys.push((Modifiers::ALT, (n + 1).to_string()));
-            } else if n == 9 {
-                keys.push((Modifiers::ALT, "0".into()));
-            }
             CommandDef {
                 brief: format!("Activate {ordinal} Tab").into(),
                 doc: format!("Activates the {ordinal} tab").into(),
-                keys,
+                keys: vec![],
                 args: &[ArgType::ActiveWindow],
                 menubar: &["Window", "Select Tab"],
                 icon: None,
@@ -176,7 +155,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             doc: "Closes the current tab, terminating all the \
             processes that are running in its panes."
                 .into(),
-            keys: vec![(Modifiers::SUPER, "w".into())],
+            keys: vec![],
             args: &[ArgType::ActiveTab],
             menubar: &["Shell"],
             icon: Some("md_close_box_outline"),
@@ -304,11 +283,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             doc: "Activates the tab to the left. If this is the left-most \
             tab then cycles around and activates the right-most tab"
                 .into(),
-            keys: vec![
-                (Modifiers::SUPER.union(Modifiers::SHIFT), "[".into()),
-                (Modifiers::CTRL.union(Modifiers::SHIFT), "Tab".into()),
-                (Modifiers::CTRL, "PageUp".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "PageUp".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Window", "Select Tab"],
             icon: None,
@@ -318,11 +293,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             doc: "Activates the tab to the right. If this is the right-most \
             tab then cycles around and activates the left-most tab"
                 .into(),
-            keys: vec![
-                (Modifiers::SUPER.union(Modifiers::SHIFT), "]".into()),
-                (Modifiers::CTRL, "Tab".into()),
-                (Modifiers::CTRL, "PageDown".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "PageDown".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Window", "Select Tab"],
             icon: None,
@@ -374,7 +345,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         ReloadConfiguration => CommandDef {
             brief: "Reload configuration".into(),
             doc: "Reloads the configuration file".into(),
-            keys: vec![(Modifiers::SUPER, "r".into())],
+            keys: vec![(Modifiers::CTRL.union(Modifiers::SHIFT), "r".into())],
             args: &[],
             menubar: &["OnlyTerm"],
             icon: Some("md_reload"),
@@ -382,7 +353,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         QuitApplication => CommandDef {
             brief: "Quit OnlyTerm".into(),
             doc: "Quits OnlyTerm".into(),
-            keys: vec![(Modifiers::SUPER, "q".into())],
+            keys: vec![(Modifiers::CTRL.union(Modifiers::SHIFT), "q".into())],
             args: &[],
             menubar: &["OnlyTerm"],
             icon: Some("oct_stop"),
@@ -444,10 +415,9 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         }
         RenameCurrentTab => CommandDef {
             brief: "Rename Tab".into(),
-            doc: "Prompts for a new title for the current tab, pre-filled \
-            with its current title (same convention as F2 in Windows \
-            Explorer). The tab bar can also be double-clicked to trigger \
-            this."
+            doc: "Opens the graphical title editor with the current custom title selected. \
+            Enter renames the tab; Escape cancels. An empty title restores the automatic \
+            title. Clicking or double-clicking the tab does not open this dialog."
                 .into(),
             keys: vec![(Modifiers::NONE, "F2".into())],
             args: &[ArgType::ActiveTab],

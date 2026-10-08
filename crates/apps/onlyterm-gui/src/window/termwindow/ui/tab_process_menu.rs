@@ -1,4 +1,5 @@
 use crate::termwindow::box_model::*;
+use crate::termwindow::menu_style::MenuStyle;
 use crate::termwindow::modal::Modal;
 use crate::termwindow::{DimensionContext, TermWindow, TermWindowNotif, UIItemType};
 use crate::utilsprites::RenderMetrics;
@@ -356,28 +357,6 @@ impl TabProcessMenu {
         self.invalidate(term_window);
     }
 
-    pub(crate) fn scroll(&self, amount: i64, term_window: &TermWindow) {
-        if amount == 0 {
-            return;
-        }
-        if let MenuPage::Processes(list) = &mut *self.page.borrow_mut() {
-            let next = list
-                .focused
-                .vertical(-amount.signum(), list.rows.len(), false);
-            list.focused = match next {
-                ProcessFocus::All | ProcessFocus::Process(_) => next,
-                _ => list
-                    .rows
-                    .len()
-                    .checked_sub(1)
-                    .map(ProcessFocus::Process)
-                    .unwrap_or(ProcessFocus::All),
-            };
-            list.ensure_focus_visible();
-        }
-        self.invalidate(term_window);
-    }
-
     fn navigate(&self, direction: i64, horizontal: bool, term_window: &TermWindow) {
         if let MenuPage::Processes(list) = &mut *self.page.borrow_mut() {
             let can_detach =
@@ -391,27 +370,34 @@ impl TabProcessMenu {
         let font = term_window.fonts.command_palette_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
         let dimensions = &term_window.dimensions;
-        let bg = term_window.config.command_palette_bg_color.to_linear();
-        let fg = term_window.config.command_palette_fg_color.to_linear();
-        let colors = ElementColors {
-            border: BorderColor::new(bg),
-            bg: bg.into(),
-            text: fg.into(),
-        };
-        let hover = ElementColors {
-            border: BorderColor::new(fg),
-            bg: fg.into(),
-            text: bg.into(),
-        };
+        let style = MenuStyle::new(
+            term_window.config.command_palette_bg_color,
+            term_window.config.command_palette_fg_color,
+        );
+        let heading = term_window.fonts.title_font()?;
+        let colors = style.card.clone();
+        let hover = style.focus.clone();
+        let width_limit = dimensions.pixel_width as f32;
+        let height_limit = dimensions.pixel_height as f32;
+        let width = (68. * term_window.render_metrics.cell_size.width as f32)
+            .min(width_limit - 32.)
+            .max(1.);
+        let inner_width = (width - 34.).max(1.);
         let row = |text: String, action: Option<ProcessMenuAction>| {
+            if action.is_none() {
+                return style.text(&font, text, true);
+            }
             let mut element = Element::new(&font, ElementContent::Text(text))
                 .colors(colors.clone())
                 .display(DisplayType::Block)
-                .padding(BoxDimension {
-                    left: Dimension::Cells(0.5),
-                    right: Dimension::Cells(0.5),
-                    top: Dimension::Cells(0.2),
-                    bottom: Dimension::Cells(0.2),
+                .padding(BoxDimension::new(Dimension::Pixels(5.)))
+                .border(BoxDimension::new(Dimension::Pixels(1.)))
+                .border_corners(Some(crate::termwindow::menu_style::corners()))
+                .min_width(Some(Dimension::Pixels((inner_width - 34.).max(1.))))
+                .max_width(Some(Dimension::Pixels((inner_width - 22.).max(1.))))
+                .margin(BoxDimension {
+                    bottom: Dimension::Pixels(4.),
+                    ..BoxDimension::default()
                 });
             if let Some(action) = action {
                 element.item_type = Some(UIItemType::TabProcessMenuItem(action));
@@ -419,7 +405,10 @@ impl TabProcessMenu {
             }
             element
         };
-        let mut rows = vec![row("Tab Processes".into(), None)];
+        let mut rows = vec![
+            style.text(&font, "Tab Processes".into(), false),
+            style.text(&font, "Manage processes started by this tab".into(), true),
+        ];
         match &mut *self.page.borrow_mut() {
             MenuPage::Actions => {
                 let mut action = row(
@@ -432,14 +421,23 @@ impl TabProcessMenu {
                 if self.pending.borrow().is_none() {
                     action.colors = hover.clone();
                 }
-                rows.push(action);
-                rows.push(row("Esc or F4 to close the menu".into(), None));
+                rows.push(style.card(
+                    &font,
+                    vec![
+                        style.text(&heading, "PROCESS ACTIONS".into(), false),
+                        action,
+                    ],
+                    inner_width,
+                ));
+                rows.push(style.text(&font, "Enter / 1: open · Esc / F4: close".into(), true));
             }
             MenuPage::Processes(list) => {
                 rows.push(row(
                     "Select processes and their child-process trees".into(),
                     None,
                 ));
+                let mut process_rows =
+                    vec![style.text(&heading, "PROCESS SELECTION".into(), false)];
                 let all_focused = if list.focused == ProcessFocus::All {
                     ">"
                 } else {
@@ -448,22 +446,28 @@ impl TabProcessMenu {
                 let all_marker = if list.all_selected() { "☑" } else { "☐" };
                 let can_select = self.pending.borrow().is_none()
                     && list.rows.iter().any(|row| !row.process.detached);
-                rows.push(row(
+                let mut all = row(
                     format!("{all_focused} {all_marker} All Processes"),
                     can_select.then_some(ProcessMenuAction::ToggleAll),
-                ));
-                let row_height = metrics.cell_size.height as f32 * 1.4;
-                list.visible_rows = ((dimensions.pixel_height as f32 - row_height * 8.)
+                );
+                if list.focused == ProcessFocus::All && can_select {
+                    all.colors = hover.clone();
+                }
+                process_rows.push(all);
+                let row_height = metrics.cell_size.height as f32 + 26.;
+                list.visible_rows = ((dimensions.pixel_height as f32 - row_height * 10.)
                     / row_height)
                     .floor()
                     .max(1.) as usize;
+                list.visible_rows = list.visible_rows.min(list.rows.len().max(1));
                 list.first_visible = list
                     .first_visible
                     .min(list.rows.len().saturating_sub(list.visible_rows));
                 let end = (list.first_visible + list.visible_rows).min(list.rows.len());
                 if list.rows.is_empty() && list.error.is_none() {
-                    rows.push(row("No available processes".into(), None));
+                    process_rows.push(style.text(&font, "No available processes".into(), true));
                 }
+                let mut entries = vec![];
                 for index in list.first_visible..end {
                     let entry = &list.rows[index];
                     let covered = list.covered_by_parent(index);
@@ -479,36 +483,62 @@ impl TabProcessMenu {
                     } else {
                         " "
                     };
-                    rows.push(row(
-                        format!(
-                            "{focused} {marker} {}  {}{status}",
-                            entry.process.identity.pid, entry.process.name
-                        ),
+                    let mut process = row(
+                        String::new(),
                         (!entry.process.detached && !covered)
                             .then_some(ProcessMenuAction::Toggle(index)),
-                    ));
+                    );
+                    process.content = ElementContent::Children(vec![
+                        style
+                            .text(&font, format!("{focused} {marker}"), false)
+                            .display(DisplayType::Inline),
+                        style
+                            .keycap(&heading, entry.process.identity.pid.to_string())
+                            .margin(BoxDimension {
+                                left: Dimension::Pixels(8.),
+                                right: Dimension::Pixels(8.),
+                                ..BoxDimension::default()
+                            }),
+                        style
+                            .text(
+                                &font,
+                                format!("{}{status}", entry.process.name),
+                                entry.process.detached,
+                            )
+                            .display(DisplayType::Inline),
+                    ]);
+                    process.min_width = Some(Dimension::Pixels((inner_width - 54.).max(1.)));
+                    process.max_width = Some(Dimension::Pixels((inner_width - 42.).max(1.)));
+                    if list.focused == ProcessFocus::Process(index) {
+                        process.colors = hover.clone();
+                    }
+                    entries.push(
+                        Element::new(&font, ElementContent::Children(vec![process]))
+                            .display(DisplayType::Block)
+                            .min_height(Some(Dimension::Pixels(row_height))),
+                    );
                 }
-                if end < list.rows.len() || list.first_visible != 0 {
-                    rows.push(row(
-                        format!(
-                            "Up/Down, wheel: {}–{} of {}",
-                            list.first_visible + 1,
-                            end,
-                            list.rows.len()
-                        ),
-                        None,
-                    ));
-                }
+                process_rows.push(style.viewport(
+                    &font,
+                    entries,
+                    inner_width - 22.,
+                    list.visible_rows as f32 * row_height,
+                    crate::termwindow::menu_style::ScrollPosition {
+                        offset: list.first_visible,
+                        visible: list.visible_rows,
+                        total: list.rows.len(),
+                    },
+                ));
                 if let Some(error) = list.error.as_ref() {
-                    rows.push(row(error.clone(), None));
+                    process_rows.push(style.text(&font, error.clone(), true));
                 }
                 let can_detach = self.pending.borrow().is_none()
                     && list.selected.iter().any(|selected| *selected);
+                rows.push(style.card(&font, process_rows, inner_width));
                 let button = |label: &str, focus: ProcessFocus, enabled: bool| {
-                    let mut button = row(label.into(), enabled.then_some(focus.action()))
-                        .display(DisplayType::Inline);
-                    if list.focused == focus {
-                        button.colors = hover.clone();
+                    let mut button = style.button(&font, label, list.focused == focus, enabled);
+                    if enabled {
+                        button.item_type = Some(UIItemType::TabProcessMenuItem(focus.action()));
                     }
                     button
                 };
@@ -533,16 +563,7 @@ impl TabProcessMenu {
                 ));
             }
         }
-        let width_limit = dimensions.pixel_width as f32;
-        let height_limit = dimensions.pixel_height as f32;
-        let width = (64. * term_window.render_metrics.cell_size.width as f32)
-            .min(width_limit)
-            .max(1.);
-        let root = Element::new(&font, ElementContent::Children(rows))
-            .colors(colors)
-            .padding(BoxDimension::new(Dimension::Cells(0.25)))
-            .border(BoxDimension::new(Dimension::Pixels(1.)))
-            .min_width(Some(Dimension::Pixels(width)));
+        let root = style.panel(&font, rows, width);
         let mut computed = term_window.compute_element(
             &LayoutContext {
                 height: DimensionContext {
@@ -571,6 +592,30 @@ impl TabProcessMenu {
 }
 
 impl Modal for TabProcessMenu {
+    fn scroll_position(&self) -> Option<crate::termwindow::menu_style::ScrollPosition> {
+        match &*self.page.borrow() {
+            MenuPage::Processes(list) => Some(crate::termwindow::menu_style::ScrollPosition {
+                offset: list.first_visible,
+                visible: list.visible_rows,
+                total: list.rows.len(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn set_scroll_offset(&self, offset: usize, window: &mut TermWindow) {
+        if let MenuPage::Processes(list) = &mut *self.page.borrow_mut() {
+            list.first_visible = offset.min(list.rows.len().saturating_sub(list.visible_rows));
+            if let ProcessFocus::Process(index) = list.focused {
+                list.focused = ProcessFocus::Process(index.clamp(
+                    list.first_visible,
+                    list.first_visible + list.visible_rows.saturating_sub(1),
+                ));
+            }
+        }
+        self.invalidate(window);
+    }
+
     fn blocks_terminal_input(&self) -> bool {
         true
     }

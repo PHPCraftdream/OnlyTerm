@@ -29,10 +29,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         | CopyTo(ClipboardCopyDestination::Clipboard) => CommandDef {
             brief: "Copy to clipboard".into(),
             doc: "Copies text to the clipboard".into(),
-            keys: vec![
-                (Modifiers::SUPER, "c".into()),
-                (Modifiers::NONE, "Copy".into()),
-            ],
+            keys: vec![],
             args: &[ArgType::ActivePane],
             menubar: &["Edit"],
             icon: Some("md_content_copy"),
@@ -66,11 +63,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         PasteFrom(ClipboardPasteSource::Clipboard) => CommandDef {
             brief: "Paste from clipboard".into(),
             doc: "Pastes text from the clipboard".into(),
-            keys: vec![
-                (Modifiers::CTRL, "v".into()),
-                (Modifiers::SUPER, "v".into()),
-                (Modifiers::NONE, "Paste".into()),
-            ],
+            keys: vec![(Modifiers::CTRL, "v".into())],
             args: &[ArgType::ActivePane],
             menubar: &["Edit"],
             icon: Some("md_content_paste"),
@@ -127,7 +120,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         Hide => CommandDef {
             brief: "Hide/Minimize Window".into(),
             doc: "Hides/Mimimizes the current window".into(),
-            keys: vec![(Modifiers::SUPER, "m".into())],
+            keys: vec![(Modifiers::ALT, "m".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["Window"],
             icon: Some("md_window_minimize"),
@@ -145,7 +138,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             doc: "Hides all of the windows of the application. \
               This is macOS specific."
                 .into(),
-            keys: vec![(Modifiers::SUPER, "h".into())],
+            keys: vec![],
             args: &[],
             menubar: &["OnlyTerm"],
             icon: None,
@@ -153,7 +146,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         SpawnWindow => CommandDef {
             brief: "New Window".into(),
             doc: "Launches the default program into a new window".into(),
-            keys: vec![(Modifiers::SUPER, "n".into())],
+            keys: vec![(Modifiers::CTRL, "n".into())],
             args: &[],
             menubar: &["Shell"],
             icon: Some("cod_empty_window"),
@@ -163,7 +156,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             doc: "Clears any text that has scrolled out of the \
               viewport of the current pane"
                 .into(),
-            keys: vec![(Modifiers::SUPER, "k".into())],
+            keys: vec![(Modifiers::CTRL, "k".into())],
             args: &[ArgType::ActivePane],
             menubar: &["Edit"],
             icon: Some("cod_clear_all"),
@@ -179,7 +172,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         Search(Pattern::CurrentSelectionOrEmptyString) => CommandDef {
             brief: "Search pane output".into(),
             doc: "Enters the search mode UI for the current pane".into(),
-            keys: vec![(Modifiers::SUPER, "f".into())],
+            keys: vec![(Modifiers::CTRL, "f".into())],
             args: &[ArgType::ActivePane],
             menubar: &["Edit"],
             icon: Some("oct_search"),
@@ -191,6 +184,14 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
             args: &[ArgType::ActivePane],
             menubar: &[],
             icon: Some("oct_search"),
+        },
+        ActivateHelpMenu => CommandDef {
+            brief: "Help".into(),
+            doc: "Shows current keyboard shortcuts and built-in configuration and launch help".into(),
+            keys: vec![(Modifiers::NONE, "F1".into())],
+            args: &[ArgType::ActiveWindow],
+            menubar: &["Help"],
+            icon: Some("md_help"),
         },
         ShowDebugOverlay => CommandDef {
             brief: "Show debug overlay".into(),
@@ -223,7 +224,7 @@ pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
         ActivateNewTabOptions => CommandDef {
             brief: "Show New Tab Options dialog".into(),
             doc: "Shows a modal dialog to select shell, elevation, and priority options for a new tab".into(),
-            keys: vec![(Modifiers::CTRL.union(Modifiers::SHIFT), "n".into())],
+            keys: vec![(Modifiers::CTRL.union(Modifiers::ALT), "t".into())],
             args: &[ArgType::ActiveWindow],
             menubar: &["File"],
             icon: Some("md_plus_circle_outline"),

@@ -1,4 +1,5 @@
 use crate::termwindow::box_model::*;
+use crate::termwindow::menu_style::MenuStyle;
 use crate::termwindow::modal::Modal;
 use crate::termwindow::{DimensionContext, TermWindow, UIItemType};
 use crate::utilsprites::RenderMetrics;
@@ -87,94 +88,109 @@ impl PaneLayoutMenu {
 
     fn compute(&self, term_window: &mut TermWindow) -> anyhow::Result<Vec<ComputedElement>> {
         let font = term_window.fonts.command_palette_font()?;
+        let heading = term_window.fonts.title_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
         let dimensions = &term_window.dimensions;
-        let bg = term_window.config.command_palette_bg_color.to_linear();
-        let fg = term_window.config.command_palette_fg_color.to_linear();
-        let colors = ElementColors {
-            border: BorderColor::new(bg),
-            bg: bg.into(),
-            text: fg.into(),
-        };
+        let style = MenuStyle::new(
+            term_window.config.command_palette_bg_color,
+            term_window.config.command_palette_fg_color,
+        );
         let can_close = Mux::get()
             .get_active_tab_for_window(term_window.mux_window_id)
             .is_some_and(|tab| can_close_pane(tab.iter_panes_ignoring_zoom().len()));
         if *self.selected.borrow() == PaneLayoutChoice::ClosePane && !can_close {
             self.selected.replace(PaneLayoutChoice::CloseMenu);
         }
-        let selected_colors = ElementColors {
-            border: BorderColor::new(fg),
-            bg: fg.into(),
-            text: bg.into(),
-        };
-
-        let mut rows = vec![
-            Element::new(&font, ElementContent::Text("Pane Layout".to_string()))
-                .colors(colors.clone())
-                .display(DisplayType::Block)
-                .padding(BoxDimension::new(Dimension::Cells(0.5))),
-        ];
+        let width_limit = dimensions.pixel_width as f32;
+        let height_limit = dimensions.pixel_height as f32;
+        let width = (60. * term_window.render_metrics.cell_size.width as f32)
+            .min(width_limit - 32.)
+            .max(1.);
+        let inner_width = (width - 34.).max(1.);
+        let mut choices = vec![];
         for (index, label) in [
             "Split left / right",
             "Split top / bottom",
             "Split into three columns",
             "Split into three rows",
             "Close active pane",
-            "Close menu",
         ]
         .iter()
         .enumerate()
         {
             let number = (index + 1) as u8;
             let enabled = number != 5 || can_close;
-            let suffix = if enabled { "" } else { " (only pane)" };
+            let label = if enabled {
+                (*label).to_string()
+            } else {
+                format!("{label} (only pane)")
+            };
+            let description = style
+                .text(&font, label, !enabled)
+                .display(DisplayType::Inline)
+                .margin(BoxDimension {
+                    left: Dimension::Pixels(10.),
+                    ..BoxDimension::default()
+                });
             let mut row = Element::new(
                 &font,
-                ElementContent::Text(format!("{number}. {label}{suffix}")),
+                ElementContent::Children(vec![
+                    style.keycap(&font, number.to_string()),
+                    description,
+                ]),
             )
-            .colors(colors.clone())
             .display(DisplayType::Block)
-            .padding(BoxDimension {
-                left: Dimension::Cells(0.5),
-                right: Dimension::Cells(0.5),
-                top: Dimension::Cells(0.2),
-                bottom: Dimension::Cells(0.2),
+            .padding(BoxDimension::new(Dimension::Pixels(6.)))
+            .border(BoxDimension::new(Dimension::Pixels(1.)))
+            .border_corners(Some(crate::termwindow::menu_style::corners()))
+            .min_width(Some(Dimension::Pixels((inner_width - 36.).max(1.))))
+            .max_width(Some(Dimension::Pixels((inner_width - 22.).max(1.))))
+            .colors(
+                if enabled && PaneLayoutChoice::ALL[index] == *self.selected.borrow() {
+                    style.focus.clone()
+                } else {
+                    style.card.clone()
+                },
+            )
+            .margin(BoxDimension {
+                bottom: Dimension::Pixels(6.),
+                ..BoxDimension::default()
             });
             if enabled {
-                row.hover_colors = Some(selected_colors.clone());
-                if PaneLayoutChoice::ALL[index] == *self.selected.borrow() {
-                    row.colors = selected_colors.clone();
-                }
-            }
-            if enabled {
                 row.item_type = Some(UIItemType::PaneLayoutMenuItem(number));
+                row.hover_colors = Some(style.focus.clone());
             }
-            rows.push(row);
+            choices.push(row);
         }
-        rows.push(
-            Element::new(
+        let close = style
+            .button(
                 &font,
-                ElementContent::Text(
-                    "Arrows to select; Enter to apply; Esc/F3 to close".to_string(),
-                ),
+                "6 · Close",
+                *self.selected.borrow() == PaneLayoutChoice::CloseMenu,
+                true,
             )
-            .colors(colors.clone())
-            .display(DisplayType::Block)
-            .padding(BoxDimension::new(Dimension::Cells(0.5))),
+            .item_type(UIItemType::PaneLayoutMenuItem(6));
+        let root = style.panel(
+            &font,
+            vec![
+                style.text(&font, "Pane Layout".into(), false),
+                style.text(&font, "Split the active pane or close a pane".into(), true),
+                style.card(
+                    &font,
+                    vec![
+                        style.text(&heading, "PANE ACTIONS".into(), false),
+                        Element::new(&font, ElementContent::Children(choices))
+                            .display(DisplayType::Block),
+                    ],
+                    inner_width,
+                ),
+                Element::new(&font, ElementContent::Children(vec![close]))
+                    .display(DisplayType::Block),
+                style.text(&font, "Arrows / 1–6 · Enter · Esc / F3".into(), true),
+            ],
+            width,
         );
-
-        let width_limit = dimensions.pixel_width as f32;
-        let height_limit = dimensions.pixel_height as f32;
-        let width = (54.0 * term_window.render_metrics.cell_size.width as f32)
-            .min(width_limit)
-            .max(1.0);
-        let top = ((height_limit - 10.0 * metrics.cell_size.height as f32) / 2.0).max(0.0);
-        let root = Element::new(&font, ElementContent::Children(rows))
-            .colors(colors)
-            .padding(BoxDimension::new(Dimension::Cells(0.25)))
-            .border(BoxDimension::new(Dimension::Pixels(1.0)))
-            .min_width(Some(Dimension::Pixels(width)));
-        let computed = term_window.compute_element(
+        let mut computed = term_window.compute_element(
             &LayoutContext {
                 height: DimensionContext {
                     dpi: dimensions.dpi as f32,
@@ -186,13 +202,17 @@ impl PaneLayoutMenu {
                     pixel_max: width_limit,
                     pixel_cell: metrics.cell_size.width as f32,
                 },
-                bounds: euclid::rect((width_limit - width) / 2.0, top, width, height_limit - top),
+                bounds: euclid::rect((width_limit - width) / 2., 0., width, height_limit),
                 metrics: &metrics,
                 gl_state: term_window.render_state.as_ref().unwrap(),
                 zindex: 100,
             },
             &root,
         )?;
+        computed.translate(euclid::vec2(
+            0.,
+            ((height_limit - computed.bounds.height()) / 2.).max(0.),
+        ));
         Ok(vec![computed])
     }
 }

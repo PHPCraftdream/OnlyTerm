@@ -10,6 +10,12 @@ pub trait Modal: Downcast {
         false
     }
 
+    fn scroll_position(&self) -> Option<super::menu_style::ScrollPosition> {
+        None
+    }
+
+    fn set_scroll_offset(&self, _offset: usize, _term_window: &mut TermWindow) {}
+
     fn composed_text(&self, _text: &str, _term_window: &mut TermWindow) -> bool {
         false
     }

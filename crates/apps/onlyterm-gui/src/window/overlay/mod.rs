@@ -13,8 +13,8 @@ pub mod copy;
 pub mod debug;
 #[path = "modals/launcher.rs"]
 pub mod launcher;
-#[path = "modals/prompt.rs"]
-pub mod prompt;
+#[path = "modals/menu_style.rs"]
+pub(crate) mod menu_style;
 pub mod quickselect;
 #[path = "modals/selector.rs"]
 pub mod selector;

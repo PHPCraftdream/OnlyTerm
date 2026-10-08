@@ -12,6 +12,40 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### Unreleased
+
+### v0.0.40-alpha — 2026-10-09
+
+#### Added
+
+* F1 opens graphical help with a responsive multi-column list of current
+  shortcuts, named-key-table details, configuration and CLI/startup-layout
+  guides, and an explanation of double-Ctrl next-key pass-through.
+* Ctrl+Alt+T opens New Tab Options, matching a right-click on the plus button
+  without colliding with Ctrl+N's new-window shortcut.
+
+#### Changed
+
+* F1 help uses bordered guide cards, keycap-style shortcuts, a separate
+  double-Ctrl status card and a dedicated navigation footer. Detail pages
+  distinguish bold headings, parameter labels, values and code examples.
+* The same panel, card, heading/value and focus styling is shared by tab
+  renaming, pane layout, tab processes, New Tab Options, the command palette
+  and character picker. Launcher/selector and confirmation text menus share
+  the palette and framed typography; PromptInputLine uses the graphical
+  input editor while retaining native renaming and legacy-callback behavior.
+* Normal-mode shortcuts keep one simple chord per action, preferring Ctrl
+  over Alt and removing Win/Super defaults and redundant alternatives.
+  New Tab/New Window/Search use Ctrl+T/Ctrl+N/Ctrl+F; Ctrl+C retains its
+  selection-or-interrupt behavior. Explicit user bindings are unchanged.
+* Alt+1…9, Alt+0 and Alt+End no longer activate tabs by default.
+  Ctrl tab-switching and explicit configured bindings are unchanged.
+* Scrollable help, command/character, process and launcher/selector lists
+  show interactive scrollbars. F1 detail text scrolls with Up/Down, the
+  wheel, PageUp/PageDown and Home/End instead of Previous/Next buttons.
+* Scrollable popup viewports and command rows reserve a stable height,
+  preventing the popup and footer from jumping between content fragments.
+
 ### v0.0.39-alpha — 2026-10-08
 
 #### Changed

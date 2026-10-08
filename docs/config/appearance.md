@@ -1,3 +1,27 @@
+### Menu and dialog appearance
+
+OnlyTerm's help, tab rename, pane layout, process menus, New Tab Options,
+command palette and character picker share bordered panels, bold section
+labels, keycap-style values, and clearly outlined keyboard focus.
+Instructional text is visually separate from clickable actions.
+
+The main popup colors come from `command_palette_bg_color` and
+`command_palette_fg_color`; the character picker retains its
+`char_select_bg_color` and `char_select_fg_color` settings. Cards and
+controls derive their shading from those colors rather than hard-coded
+light/dark themes. Text launcher/selector and confirmation overlays use
+the same color hierarchy, bold headings and framed content.
+
+`PromptInputLine` uses the graphical value editor also used by F2.
+Styling does not restore removed Lua/rhai event callbacks.
+
+Scrollable help blocks, command/character lists, process lists, and terminal
+launcher/selector lists show a scrollbar when their content overflows.
+The scrollbar supports track clicks and mouse dragging as well as the wheel.
+Scrollable viewports reserve a fixed height so the popup and footer do not
+move when headings, shortcut chips, or the final entries come into view.
+
+
 ### Color Scheme
 
 OnlyTerm ships with over 700 color schemes available from
