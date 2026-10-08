@@ -4,15 +4,19 @@ tags:
 ---
 # `RenameCurrentTab`
 
-Prompts for a new title for the active tab, pre-filled with its current
-title, and applies it once you press Enter (Escape cancels without
-changing anything). Clearing the field entirely and pressing Enter resets
-the tab back to its normal automatic title (the same as never having set a
-custom one).
+Opens a graphical **Rename Tab** dialog in the same style as the F3/F4 menus.
+The current custom title is pre-filled and selected, so typing replaces it.
+Enter or **Rename** applies the new title; Escape, F2, or **Cancel** closes the
+dialog without changing it. Clearing the field entirely and applying resets
+the tab to its normal automatic title.
+
+Up/Down and Tab/Shift+Tab move between the input and buttons. Left/Right moves
+the caret in the input or selects a neighboring button. Ctrl+A selects the
+whole title, and clipboard paste is supported. Buttons also work with the mouse.
 
 This is bound to `F2` by default (matching Windows Explorer's rename
-convention), and the tab bar can also be double-clicked to trigger the
-same prompt -- there is no context menu involved.
+convention). Clicking or double-clicking a tab only selects it; neither
+opens the rename dialog.
 
 ```
 keys: [

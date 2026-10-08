@@ -36,31 +36,11 @@ impl TermWindow {
         onlyterm_promise::spawn::spawn(future).detach();
     }
 
-    /// Entry point for `KeyAssignment::RenameCurrentTab` (task #430): shows
-    /// a `PromptInputLine` pre-filled with the active tab's current title.
-    /// A static config value can't express "whatever the tab is currently
-    /// called", so this builds the `PromptInputLine` here (dynamically)
-    /// rather than as a literal keybinding value, then reuses the same
-    /// `show_prompt_input_line` overlay path as any other prompt. The
-    /// entered text is applied back to the tab by
-    /// `show_line_prompt_overlay`'s own handling of this same
-    /// `RenameCurrentTab` action (see `overlay/prompt.rs`) once the prompt
-    /// completes -- this method only ever shows the prompt, it never
-    /// renames anything itself.
+    /// Opens the graphical title editor for the captured active tab.
     pub(in crate::termwindow) fn rename_current_tab(&mut self) {
-        let mux = Mux::get();
-        let current_title = match mux.get_active_tab_for_window(self.mux_window_id) {
-            Some(tab) => tab.get_title(),
-            None => return,
-        };
-        self.show_prompt_input_line(&PromptInputLine {
-            action: Box::new(KeyAssignment::RenameCurrentTab),
-            initial_value: Some(current_title),
-            // The prompt has always cancelled on Esc (see `PromptHost`'s
-            // resolve_action in overlay/prompt.rs), but nothing said so.
-            description: "Enter new name for tab.  Esc to cancel.".to_string(),
-            prompt: "New name: ".to_string(),
-        });
+        if let Some(menu) = crate::termwindow::rename_tab_menu::RenameTabMenu::new(self) {
+            self.set_modal(Rc::new(menu));
+        }
     }
 
     pub(super) fn show_prompt_input_line(&mut self, args: &PromptInputLine) {

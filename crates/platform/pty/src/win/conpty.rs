@@ -122,13 +122,13 @@ impl ConPtyMasterPty {
                 .child_job
                 .as_ref()
                 .and_then(Weak::upgrade)
-                .ok_or_else(|| anyhow::anyhow!("Процесс панели уже завершился"))?;
+                .ok_or_else(|| anyhow::anyhow!("The pane process has already exited"))?;
             let state = state.lock().unwrap();
             detach::duplicate_kernel_handle(
                 state
                     .handle
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Панель уже закрывается"))?
+                    .ok_or_else(|| anyhow::anyhow!("The pane is closing"))?
                     .as_raw_handle() as _,
             )?
         };
@@ -144,37 +144,37 @@ impl ConPtyMasterPty {
         selected: &[ProcessIdentity],
         helper: &Path,
     ) -> anyhow::Result<()> {
-        anyhow::ensure!(!selected.is_empty(), "Не выбраны процессы");
+        anyhow::ensure!(!selected.is_empty(), "No processes selected");
         let (job, child_state, session, input, output, lifetime) = {
             let mut inner = self.inner.lock().unwrap();
             anyhow::ensure!(
                 !inner.closing && !inner.detaching,
-                "Панель закрывается или уже отвязывает процессы"
+                "The pane is closing or already detaching processes"
             );
             let child_state = inner.child_job.as_ref().and_then(Weak::upgrade);
             let job = if let Some(session) = inner.detached.as_ref() {
                 anyhow::ensure!(
                     session.is_alive()?,
-                    "Держатель отвязанных процессов завершился"
+                    "The detached-process keeper has exited"
                 );
                 session.root_job.try_clone()?
             } else {
                 let state = child_state
                     .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("Процесс панели завершился"))?;
+                    .ok_or_else(|| anyhow::anyhow!("The pane process has exited"))?;
                 let state = state.lock().unwrap();
                 detach::duplicate_kernel_handle(
                     state
                         .handle
                         .as_ref()
-                        .ok_or_else(|| anyhow::anyhow!("Панель закрывается"))?
+                        .ok_or_else(|| anyhow::anyhow!("The pane is closing"))?
                         .as_raw_handle() as _,
                 )?
             };
             let input = inner
                 .input
                 .upgrade()
-                .ok_or_else(|| anyhow::anyhow!("Канал ввода панели закрыт"))?;
+                .ok_or_else(|| anyhow::anyhow!("The pane input channel is closed"))?;
             let output = detach::duplicate_kernel_handle(inner.readable.as_raw_handle() as _)?;
             let lifetime = inner.con.lifetime_handles();
             let owned_lifetime = [
@@ -220,7 +220,7 @@ impl ConPtyMasterPty {
                 if created {
                     session.close()?;
                 }
-                anyhow::bail!("Панель закрылась до завершения отвязки");
+                anyhow::bail!("The pane closed before detachment completed");
             }
             let mut assigned = 0;
             let mut failures = vec![];
@@ -249,7 +249,7 @@ impl ConPtyMasterPty {
             }
             if !failures.is_empty() {
                 anyhow::bail!(
-                    "Не удалось отвязать {}. Успешно отвязано: {}",
+                    "Failed to detach {}. Successfully detached: {}",
                     failures.join("; "),
                     assigned
                 );

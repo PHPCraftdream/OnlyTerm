@@ -3,6 +3,7 @@ use super::*;
 fn is_menu_item(item: Option<&UIItemType>) -> bool {
     match item {
         Some(UIItemType::PaneLayoutMenuItem(_)) => true,
+        Some(UIItemType::RenameTabMenuItem(_)) => true,
         #[cfg(windows)]
         Some(UIItemType::TabProcessMenuItem(_)) => true,
         _ => false,
@@ -42,7 +43,8 @@ impl super::super::TermWindow {
             | UIItemType::NewTabOptionRadio { .. }
             | UIItemType::NewTabOptionRun
             | UIItemType::NewTabOptionClose
-            | UIItemType::PaneLayoutMenuItem(_) => {}
+            | UIItemType::PaneLayoutMenuItem(_)
+            | UIItemType::RenameTabMenuItem(_) => {}
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(_) => {}
         }
@@ -59,7 +61,8 @@ impl super::super::TermWindow {
             | UIItemType::NewTabOptionRadio { .. }
             | UIItemType::NewTabOptionRun
             | UIItemType::NewTabOptionClose
-            | UIItemType::PaneLayoutMenuItem(_) => {}
+            | UIItemType::PaneLayoutMenuItem(_)
+            | UIItemType::RenameTabMenuItem(_) => {}
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(_) => {}
         }

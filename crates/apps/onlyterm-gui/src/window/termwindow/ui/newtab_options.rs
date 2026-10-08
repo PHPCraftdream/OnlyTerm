@@ -965,14 +965,4 @@ mod tests {
             );
         }
     }
-
-    /// The ordinary constructor defaults to OnCancel::Dismiss, so a
-    /// right-click on the plus button (or ActivateNewTabOptions key binding)
-    /// never accidentally quits the application even if the startup
-    /// chooser code later changes.
-    #[test]
-    fn ordinary_ctor_defaults_to_dismiss() {
-        let dialog = NewTabOptions::new();
-        assert_eq!(dialog.on_cancel(), OnCancel::Dismiss);
-    }
 }

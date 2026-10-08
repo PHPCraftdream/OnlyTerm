@@ -551,9 +551,9 @@ impl LocalPane {
             let pty = self.pty.lock();
             let pty = pty
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Панель уже закрыта"))?;
+                .ok_or_else(|| anyhow::anyhow!("The pane has already closed"))?;
             pty.downcast_ref::<portable_pty::win::conpty::ConPtyMasterPty>()
-                .ok_or_else(|| anyhow::anyhow!("Отвязка требует локальную сессию ConPTY"))?
+                .ok_or_else(|| anyhow::anyhow!("Detachment requires a local ConPTY session"))?
                 .clone()
         };
         operation(&conpty)

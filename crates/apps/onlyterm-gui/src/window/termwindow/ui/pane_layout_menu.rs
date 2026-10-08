@@ -18,6 +18,30 @@ pub(crate) enum PaneLayoutChoice {
 }
 
 impl PaneLayoutChoice {
+    const ALL: [Self; 6] = [
+        Self::SplitHorizontal,
+        Self::SplitVertical,
+        Self::SplitThreeHorizontal,
+        Self::SplitThreeVertical,
+        Self::ClosePane,
+        Self::CloseMenu,
+    ];
+
+    fn next(self, direction: i64, can_close: bool) -> Self {
+        let mut index = Self::ALL.iter().position(|choice| *choice == self).unwrap();
+        loop {
+            index = if direction < 0 {
+                index.checked_sub(1).unwrap_or(Self::ALL.len() - 1)
+            } else {
+                (index + 1) % Self::ALL.len()
+            };
+            let choice = Self::ALL[index];
+            if choice != Self::ClosePane || can_close {
+                return choice;
+            }
+        }
+    }
+
     pub(crate) fn from_number(number: u8) -> Option<Self> {
         match number {
             1 => Some(Self::SplitHorizontal),
@@ -50,16 +74,18 @@ pub(crate) fn can_close_pane(pane_count: usize) -> bool {
 
 pub(crate) struct PaneLayoutMenu {
     element: RefCell<Option<Vec<ComputedElement>>>,
+    selected: RefCell<PaneLayoutChoice>,
 }
 
 impl PaneLayoutMenu {
     pub(crate) fn new() -> Self {
         Self {
             element: RefCell::new(None),
+            selected: RefCell::new(PaneLayoutChoice::SplitHorizontal),
         }
     }
 
-    fn compute(term_window: &mut TermWindow) -> anyhow::Result<Vec<ComputedElement>> {
+    fn compute(&self, term_window: &mut TermWindow) -> anyhow::Result<Vec<ComputedElement>> {
         let font = term_window.fonts.command_palette_font()?;
         let metrics = RenderMetrics::with_font_metrics(&font.metrics());
         let dimensions = &term_window.dimensions;
@@ -73,6 +99,14 @@ impl PaneLayoutMenu {
         let can_close = Mux::get()
             .get_active_tab_for_window(term_window.mux_window_id)
             .is_some_and(|tab| can_close_pane(tab.iter_panes_ignoring_zoom().len()));
+        if *self.selected.borrow() == PaneLayoutChoice::ClosePane && !can_close {
+            self.selected.replace(PaneLayoutChoice::CloseMenu);
+        }
+        let selected_colors = ElementColors {
+            border: BorderColor::new(fg),
+            bg: fg.into(),
+            text: bg.into(),
+        };
 
         let mut rows = vec![
             Element::new(&font, ElementContent::Text("Pane Layout".to_string()))
@@ -107,6 +141,12 @@ impl PaneLayoutMenu {
                 bottom: Dimension::Cells(0.2),
             });
             if enabled {
+                row.hover_colors = Some(selected_colors.clone());
+                if PaneLayoutChoice::ALL[index] == *self.selected.borrow() {
+                    row.colors = selected_colors.clone();
+                }
+            }
+            if enabled {
                 row.item_type = Some(UIItemType::PaneLayoutMenuItem(number));
             }
             rows.push(row);
@@ -114,7 +154,9 @@ impl PaneLayoutMenu {
         rows.push(
             Element::new(
                 &font,
-                ElementContent::Text("Esc or F3 to close".to_string()),
+                ElementContent::Text(
+                    "Arrows to select; Enter to apply; Esc/F3 to close".to_string(),
+                ),
             )
             .colors(colors.clone())
             .display(DisplayType::Block)
@@ -174,6 +216,24 @@ impl Modal for PaneLayoutMenu {
             (KeyCode::Escape, _) | (KeyCode::Function(3), KeyModifiers::NONE) => {
                 term_window.cancel_modal();
             }
+            (KeyCode::UpArrow | KeyCode::LeftArrow, KeyModifiers::NONE)
+            | (KeyCode::DownArrow | KeyCode::RightArrow, KeyModifiers::NONE) => {
+                let can_close = Mux::get()
+                    .get_active_tab_for_window(term_window.mux_window_id)
+                    .is_some_and(|tab| can_close_pane(tab.iter_panes_ignoring_zoom().len()));
+                let direction = if matches!(key, KeyCode::UpArrow | KeyCode::LeftArrow) {
+                    -1
+                } else {
+                    1
+                };
+                let next = self.selected.borrow().next(direction, can_close);
+                self.selected.replace(next);
+                term_window.invalidate_modal();
+            }
+            (KeyCode::Enter | KeyCode::Char(' '), KeyModifiers::NONE) => {
+                let choice = *self.selected.borrow();
+                term_window.perform_pane_layout_choice(choice);
+            }
             (key, KeyModifiers::NONE) => {
                 if let Some(choice) = PaneLayoutChoice::from_key(key) {
                     term_window.perform_pane_layout_choice(choice);
@@ -189,7 +249,7 @@ impl Modal for PaneLayoutMenu {
         term_window: &mut TermWindow,
     ) -> anyhow::Result<Ref<'_, [ComputedElement]>> {
         if self.element.borrow().is_none() {
-            let element = Self::compute(term_window)?;
+            let element = self.compute(term_window)?;
             self.element.borrow_mut().replace(element);
         }
         Ok(Ref::map(self.element.borrow(), |element| {
@@ -224,6 +284,19 @@ mod tests {
         assert_eq!(Choice::from_number(7), None);
         assert_eq!(Choice::from_key(KeyCode::Char('7')), None);
         assert_eq!(Choice::from_key(KeyCode::Function(4)), None);
+    }
+
+    #[test]
+    fn navigation_wraps_and_skips_disabled_close() {
+        assert_eq!(Choice::SplitHorizontal.next(-1, false), Choice::CloseMenu);
+        assert_eq!(Choice::CloseMenu.next(1, false), Choice::SplitHorizontal);
+        assert_eq!(Choice::SplitThreeVertical.next(1, false), Choice::CloseMenu);
+        assert_eq!(
+            Choice::CloseMenu.next(-1, false),
+            Choice::SplitThreeVertical
+        );
+        assert_eq!(Choice::SplitThreeVertical.next(1, true), Choice::ClosePane);
+        assert_eq!(Choice::CloseMenu.next(-1, true), Choice::ClosePane);
     }
 
     #[test]

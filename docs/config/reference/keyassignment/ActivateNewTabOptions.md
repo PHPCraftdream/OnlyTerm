@@ -8,9 +8,11 @@ Shows a modal dialog with three option groups for configuring a new tab:
 
 The dialog is fully interactive via both mouse and keyboard:
 
-- **Mouse**: Click any radio option to select it; click the **Run** button to confirm your choices (currently logs the selected values for the upcoming spawn task).
+- **Mouse**: Click a radio option to select it; click **Run** to create a tab with the selected shell, elevation and process priority.
 - **Keyboard**:
   - `Tab` / `Shift+Tab`: Move focus through all radio options and the Run button.
+  - `UpArrow` / `LeftArrow`: Move focus to the previous item.
+  - `DownArrow` / `RightArrow`: Move focus to the next item.
   - `Space` / `Enter`: Select/activate the currently focused item.
   - `Escape`: Close the dialog without taking any action.
 

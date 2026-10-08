@@ -192,7 +192,7 @@ fn process_name(process: HANDLE) -> String {
     // SAFETY: The query writes at most `length` WCHARs to the live buffer.
     let ok = unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) };
     if ok == 0 {
-        return "(имя недоступно)".to_string();
+        return "(name unavailable)".to_string();
     }
     let path = std::ffi::OsString::from_wide(&buffer[..length as usize]);
     Path::new(&path)
@@ -246,7 +246,7 @@ pub(crate) fn selected_processes(
             by_pid
                 .get(&identity.pid)
                 .is_some_and(|row| row.identity == *identity),
-            "PID {} завершился или сменил владельца",
+            "PID {} exited or changed ownership",
             identity.pid
         );
     }
@@ -272,16 +272,16 @@ pub(crate) fn selected_processes(
             row.identity.pid,
             PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SET_QUOTA | PROCESS_TERMINATE | SYNCHRONIZE,
         )?
-        .with_context(|| format!("PID {} уже завершился", row.identity.pid))?;
+        .with_context(|| format!("PID {} has already exited", row.identity.pid))?;
         ensure!(
             process_created(process.as_raw_handle() as _)? == row.identity.created
                 && process_in_job(process.as_raw_handle() as _, job)?,
-            "PID {} больше не принадлежит вкладке",
+            "PID {} no longer belongs to this tab",
             row.identity.pid
         );
         result.push((row.identity, process));
     }
-    ensure!(!result.is_empty(), "Не выбраны работающие процессы");
+    ensure!(!result.is_empty(), "No running processes selected");
     Ok(result)
 }
 
@@ -424,7 +424,7 @@ impl DetachedSession {
             // SAFETY: This is the exact helper process handle returned by our CreateProcessW.
             unsafe { TerminateProcess(process.as_raw_handle() as _, 1) };
             bail!(
-                "Не удалось запустить держатель процессов (PID {})",
+                "Failed to start the process keeper (PID {})",
                 info.dwProcessId
             );
         }

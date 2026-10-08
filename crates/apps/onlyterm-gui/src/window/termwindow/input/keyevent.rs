@@ -141,16 +141,27 @@ impl super::TermWindow {
             }
             if only_key_bindings == OnlyKeyBindings::No {
                 if let Some(modal) = self.get_modal() {
-                    if let Key::Code(term_key) = self.win_key_code_to_termwiz_key_code(keycode) {
-                        match modal.key_down(term_key, raw_modifiers.remove_positional_mods(), self)
-                        {
-                            Ok(true) => return true,
-                            Ok(false) => {}
-                            Err(err) => {
-                                log::error!("Error dispatching key to modal: {err:#}");
+                    match self.win_key_code_to_termwiz_key_code(keycode) {
+                        Key::Code(term_key) => {
+                            match modal.key_down(
+                                term_key,
+                                raw_modifiers.remove_positional_mods(),
+                                self,
+                            ) {
+                                Ok(true) => return true,
+                                Ok(false) => {}
+                                Err(err) => {
+                                    log::error!("Error dispatching key to modal: {err:#}");
+                                    return true;
+                                }
+                            }
+                        }
+                        Key::Composed(text) => {
+                            if modal.composed_text(&text, self) || modal.blocks_terminal_input() {
                                 return true;
                             }
                         }
+                        Key::None => {}
                     }
                 }
             }

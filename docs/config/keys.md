@@ -190,22 +190,37 @@ keys: [
 ]
 ```
 
+### Graphical menu navigation
+
+`F2` opens **Rename Tab**, with the current custom title selected for editing.
+Up/Down or Tab/Shift+Tab selects the input and buttons; Left/Right edits the
+caret position in the input or selects a neighboring button. Enter applies
+the title unless **Cancel** is selected. Escape or F2 cancels.
+
+In the `F3` pane-layout menu, all four arrow keys select an action and
+Enter/Space activates it. Selection wraps and skips **Close active pane**
+when the tab has only one pane. Numeric shortcuts remain available.
+
+In **New Tab Options**, all four arrow keys and Tab/Shift+Tab move between
+shell, elevation, priority and **Run**. Enter/Space activates the focused
+option or button. Mouse selection remains available in every menu.
+
 ### F4: tab processes (Windows)
 
 `F4` opens the tab-process menu in the same style as the `F3` pane-layout
-menu. Choose **Отвязать дочерние процессы** to list the processes of all local
+menu. Choose **Detach child processes** to list the processes of all local
 ConPTY panes in the active tab. Rows show their PID and executable name.
 
-Check a process to detach it and its child-process tree. **Отвязать** applies
-the selection and closes the menus on success. **Назад** returns to the first
-menu; **Отмена**, `Esc`, or `F4` closes both levels. The first checkbox,
-**Все процессы**, selects all available processes; activating it again clears
+Check a process to detach it and its child-process tree. **Detach** applies
+the selection and closes the menus on success. **Back** returns to the first
+menu; **Cancel**, `Esc`, or `F4` closes both levels. The first checkbox,
+**All Processes**, selects all available processes; activating it again clears
 the pending selection. Already-detached processes remain checked and cannot
 be reattached by this control.
 
-Up/Down moves through **Все процессы**, individual processes and the action
+Up/Down moves through **All Processes**, individual processes and the action
 buttons. Left/Right moves between the buttons. The focused button is highlighted;
-Enter or Space activates the focused checkbox or button. Disabled **Отвязать**
+Enter or Space activates the focused checkbox or button. Disabled **Detach**
 is skipped while navigating the buttons. The mouse wheel scrolls the process
 list. The background operation does not block the GUI.
 

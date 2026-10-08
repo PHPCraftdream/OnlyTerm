@@ -12,6 +12,19 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.39-alpha — 2026-10-08
+
+#### Changed
+
+* Graphical action menus support arrow-key focus and Enter/Space activation,
+  including pane layout, new-tab options and tab-process actions.
+* F2 opens a graphical title editor with an editable
+  title, Rename/Cancel buttons, keyboard navigation and clipboard paste.
+* Interface labels and application-owned process-detachment errors consistently
+  use English.
+* Double-clicking a tab no longer opens the rename dialog; tab selection and
+  drag-to-reorder remain available.
+
 ### v0.0.38-alpha — 2026-10-08
 
 #### Changed

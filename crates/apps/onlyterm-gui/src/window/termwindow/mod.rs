@@ -72,6 +72,8 @@ pub mod paneselect;
 mod prevcursor;
 #[path = "window/process_stats.rs"]
 mod process_stats;
+#[path = "ui/rename_tab_menu.rs"]
+pub mod rename_tab_menu;
 pub mod render;
 #[path = "window/render_pipeline.rs"]
 mod render_pipeline;
@@ -212,6 +214,7 @@ pub enum UIItemType {
     /// The dialog's close cross. Dismisses the modal, exactly as Esc does.
     NewTabOptionClose,
     PaneLayoutMenuItem(u8),
+    RenameTabMenuItem(rename_tab_menu::RenameTabAction),
     #[cfg(windows)]
     TabProcessMenuItem(tab_process_menu::ProcessMenuAction),
 }

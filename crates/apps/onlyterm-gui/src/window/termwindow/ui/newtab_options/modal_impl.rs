@@ -31,6 +31,14 @@ impl Modal for NewTabOptions {
                 self.move_focus(-1);
                 term_window.invalidate_modal();
             }
+            (KeyCode::UpArrow | KeyCode::LeftArrow, KeyModifiers::NONE) => {
+                self.move_focus(-1);
+                term_window.invalidate_modal();
+            }
+            (KeyCode::DownArrow | KeyCode::RightArrow, KeyModifiers::NONE) => {
+                self.move_focus(1);
+                term_window.invalidate_modal();
+            }
             (KeyCode::Char(' '), KeyModifiers::NONE) | (KeyCode::Enter, KeyModifiers::NONE) => {
                 match self.select_focused_impl() {
                     Some(request) => {

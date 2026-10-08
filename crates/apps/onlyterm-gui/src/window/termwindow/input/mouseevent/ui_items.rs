@@ -50,6 +50,18 @@ impl super::super::TermWindow {
             UIItemType::PaneLayoutMenuItem(number) => {
                 self.mouse_event_pane_layout_menu_item(number, event, context);
             }
+            UIItemType::RenameTabMenuItem(action) => {
+                if let WMEK::Press(MousePress::Left) = event.kind {
+                    if let Some(modal) = self.get_modal() {
+                        if let Some(menu) = modal
+                            .downcast_ref::<crate::termwindow::rename_tab_menu::RenameTabMenu>()
+                        {
+                            menu.perform_action(action, self);
+                        }
+                    }
+                }
+                context.set_cursor(Some(MouseCursor::Hand));
+            }
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(action) => {
                 if let WMEK::Press(MousePress::Left) = event.kind {
@@ -250,24 +262,8 @@ impl super::super::TermWindow {
             WMEK::Press(MousePress::Left) => match item {
                 TabBarItem::Tab { tab_idx, .. } => {
                     self.activate_tab(tab_idx as isize).ok();
-                    if self.last_mouse_click.as_ref().map(|c| c.streak) == Some(2) {
-                        // Double-click: same rename prompt as the F2
-                        // keybinding (task #430), not a drag. Skip arming
-                        // `self.dragging` below so the second press of the
-                        // double-click doesn't also start (and immediately
-                        // no-op) a reorder drag.
-                        self.rename_current_tab();
-                    } else {
-                        // Arm a potential drag-to-reorder: if the next Move
-                        // event before mouse-up lands over a different tab,
-                        // drag_ui_item's UIItemType::TabBar branch moves this
-                        // (now active) tab there via the same move_tab used by
-                        // the MoveTab/MoveTabRelative key assignments. A plain
-                        // click (press immediately followed by release, no
-                        // intervening Move past this tab) never reaches
-                        // drag_tab, so it's a no-op beyond the activation above.
-                        self.dragging = Some((ui_item, event));
-                    }
+                    // Arm tab reordering; a click without movement only activates the tab.
+                    self.dragging = Some((ui_item, event));
                 }
                 TabBarItem::NewTabButton => {
                     self.do_new_tab_button_click(MousePress::Left);

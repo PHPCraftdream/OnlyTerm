@@ -10,6 +10,10 @@ pub trait Modal: Downcast {
         false
     }
 
+    fn composed_text(&self, _text: &str, _term_window: &mut TermWindow) -> bool {
+        false
+    }
+
     fn perform_assignment(
         &self,
         _assignment: &KeyAssignment,

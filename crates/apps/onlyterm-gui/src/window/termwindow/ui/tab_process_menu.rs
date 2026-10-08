@@ -209,12 +209,12 @@ impl TabProcessMenu {
     fn process_rows(&self) -> anyhow::Result<Vec<ProcessRow>> {
         let tab = Mux::get()
             .get_tab(self.tab_id)
-            .ok_or_else(|| anyhow::anyhow!("Вкладка уже закрыта"))?;
+            .ok_or_else(|| anyhow::anyhow!("The tab has already closed"))?;
         let mut rows = vec![];
         for positioned in tab.iter_panes_ignoring_zoom() {
             let pane = positioned.pane;
             let local = pane.downcast_ref::<LocalPane>().ok_or_else(|| {
-                anyhow::anyhow!("Отвязка доступна только для локальных процессов")
+                anyhow::anyhow!("Detachment is available only for local processes")
             })?;
             for process in local.child_processes()? {
                 rows.push(ProcessRow {
@@ -298,9 +298,9 @@ impl TabProcessMenu {
                         let result = (|| -> anyhow::Result<()> {
                             let helper = std::env::current_exe()?;
                             for (_, (pane, processes)) in groups {
-                                let local = pane
-                                    .downcast_ref::<LocalPane>()
-                                    .ok_or_else(|| anyhow::anyhow!("Панель уже недоступна"))?;
+                                let local = pane.downcast_ref::<LocalPane>().ok_or_else(|| {
+                                    anyhow::anyhow!("The pane is no longer available")
+                                })?;
                                 local.detach_processes(&processes, &helper)?;
                             }
                             Ok(())
@@ -340,10 +340,12 @@ impl TabProcessMenu {
                 Ok(()) => term_window.cancel_modal(),
                 Err(error) => {
                     let (rows, message) = match self.process_rows() {
-                        Ok(rows) => (rows, format!("Не удалось отвязать: {error}")),
+                        Ok(rows) => (rows, format!("Failed to detach: {error}")),
                         Err(refresh) => (
                             vec![],
-                            format!("Не удалось отвязать: {error}; список недоступен: {refresh:#}"),
+                            format!(
+                                "Failed to detach: {error}; process list unavailable: {refresh:#}"
+                            ),
                         ),
                     };
                     self.page
@@ -417,20 +419,27 @@ impl TabProcessMenu {
             }
             element
         };
-        let mut rows = vec![row("Процессы вкладки".into(), None)];
+        let mut rows = vec![row("Tab Processes".into(), None)];
         match &mut *self.page.borrow_mut() {
             MenuPage::Actions => {
-                rows.push(row(
-                    "1. Отвязать дочерние процессы".into(),
+                let mut action = row(
+                    "1. Detach child processes".into(),
                     self.pending
                         .borrow()
                         .is_none()
                         .then_some(ProcessMenuAction::OpenDetach),
-                ));
-                rows.push(row("Esc или F4 — закрыть меню".into(), None));
+                );
+                if self.pending.borrow().is_none() {
+                    action.colors = hover.clone();
+                }
+                rows.push(action);
+                rows.push(row("Esc or F4 to close the menu".into(), None));
             }
             MenuPage::Processes(list) => {
-                rows.push(row("Выберите процессы и их дочерние процессы".into(), None));
+                rows.push(row(
+                    "Select processes and their child-process trees".into(),
+                    None,
+                ));
                 let all_focused = if list.focused == ProcessFocus::All {
                     ">"
                 } else {
@@ -440,7 +449,7 @@ impl TabProcessMenu {
                 let can_select = self.pending.borrow().is_none()
                     && list.rows.iter().any(|row| !row.process.detached);
                 rows.push(row(
-                    format!("{all_focused} {all_marker} Все процессы"),
+                    format!("{all_focused} {all_marker} All Processes"),
                     can_select.then_some(ProcessMenuAction::ToggleAll),
                 ));
                 let row_height = metrics.cell_size.height as f32 * 1.4;
@@ -453,7 +462,7 @@ impl TabProcessMenu {
                     .min(list.rows.len().saturating_sub(list.visible_rows));
                 let end = (list.first_visible + list.visible_rows).min(list.rows.len());
                 if list.rows.is_empty() && list.error.is_none() {
-                    rows.push(row("Нет доступных процессов".into(), None));
+                    rows.push(row("No available processes".into(), None));
                 }
                 for index in list.first_visible..end {
                     let entry = &list.rows[index];
@@ -461,7 +470,7 @@ impl TabProcessMenu {
                     let checked = entry.process.detached || list.selected[index] || covered;
                     let marker = if checked { "☑" } else { "☐" };
                     let status = if entry.process.detached {
-                        " (отвязан)"
+                        " (detached)"
                     } else {
                         ""
                     };
@@ -482,7 +491,7 @@ impl TabProcessMenu {
                 if end < list.rows.len() || list.first_visible != 0 {
                     rows.push(row(
                         format!(
-                            "↑/↓, колёсико: {}–{} из {}",
+                            "Up/Down, wheel: {}–{} of {}",
                             list.first_visible + 1,
                             end,
                             list.rows.len()
@@ -506,9 +515,9 @@ impl TabProcessMenu {
                 let buttons = Element::new(
                     &font,
                     ElementContent::Children(vec![
-                        button("Отмена", ProcessFocus::Cancel, true),
-                        button("Назад", ProcessFocus::Back, true),
-                        button("Отвязать", ProcessFocus::Detach, can_detach),
+                        button("Cancel", ProcessFocus::Cancel, true),
+                        button("Back", ProcessFocus::Back, true),
+                        button("Detach", ProcessFocus::Detach, can_detach),
                     ]),
                 )
                 .display(DisplayType::Block)
@@ -516,9 +525,9 @@ impl TabProcessMenu {
                 rows.push(buttons);
                 rows.push(row(
                     if self.pending.borrow().is_some() {
-                        "Отвязка процессов…".into()
+                        "Detaching processes…".into()
                     } else {
-                        "Стрелки — выбор; Enter/пробел — действие; Esc — отмена".into()
+                        "Arrows to select; Enter/Space to activate; Esc to cancel".into()
                     },
                     None,
                 ));
@@ -583,7 +592,9 @@ impl Modal for TabProcessMenu {
             (key, KeyModifiers::NONE) => {
                 let root = matches!(*self.page.borrow(), MenuPage::Actions);
                 match key {
-                    KeyCode::Char('1') | KeyCode::Numpad1 | KeyCode::Enter if root => {
+                    KeyCode::Char('1') | KeyCode::Numpad1 | KeyCode::Enter | KeyCode::Char(' ')
+                        if root =>
+                    {
                         self.perform_action(ProcessMenuAction::OpenDetach, term_window);
                     }
                     KeyCode::Char(' ') | KeyCode::Enter if !root => {
