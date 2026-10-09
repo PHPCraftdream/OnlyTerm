@@ -77,6 +77,19 @@ impl super::super::TermWindow {
                     None,
                 )?;
                 let mut computed_cells = vec![];
+                let mut text_cells = matches!(element.item_type, Some(UIItemType::HelpText { start, end }) if start < end)
+                    .then(|| Vec::<TextCell>::with_capacity(infos.len()));
+                let mut cluster_ends: Vec<usize> = if text_cells.is_some() {
+                    infos
+                        .iter()
+                        .map(|info| info.cluster as usize)
+                        .chain(std::iter::once(s.len()))
+                        .collect()
+                } else {
+                    vec![]
+                };
+                cluster_ends.sort_unstable();
+                cluster_ends.dedup();
                 let mut glyph_cache = context.gl_state.glyph_cache.borrow_mut();
                 let mut pixel_width = 0.0;
                 let mut x_pos = context.bounds.min_x();
@@ -84,6 +97,7 @@ impl super::super::TermWindow {
                 let max_x = context.bounds.min_x() + max_width;
 
                 for info in infos {
+                    let cell_left = pixel_width;
                     let cell_start = &s[info.cluster as usize..];
                     let mut iter = Graphemes::new(cell_start).peekable();
                     let grapheme = iter
@@ -128,6 +142,22 @@ impl super::super::TermWindow {
 
                         computed_cells.push(ElementCell::Glyph(glyph));
                     }
+                    if let Some(cells) = text_cells.as_mut() {
+                        let start = info.cluster as usize;
+                        if let Some(previous) =
+                            cells.last_mut().filter(|cell| cell.source.start == start)
+                        {
+                            previous.right = pixel_width;
+                        } else {
+                            let end = cluster_ends
+                                [cluster_ends.partition_point(|offset| *offset <= start)];
+                            cells.push(TextCell {
+                                source: start..end,
+                                left: cell_left,
+                                right: pixel_width,
+                            });
+                        }
+                    }
                 }
 
                 let content_rect = euclid::rect(
@@ -152,6 +182,8 @@ impl super::super::TermWindow {
                     padding: rects.padding,
                     content_rect: rects.content_rect,
                     content: ComputedElementContent::Text(computed_cells),
+                    text_cells,
+                    text_selection: None,
                 })
             }
             ElementContent::Children(kids) => {
@@ -262,6 +294,8 @@ impl super::super::TermWindow {
                     padding: rects.padding,
                     content_rect: rects.content_rect,
                     content: ComputedElementContent::Children(computed_kids),
+                    text_cells: None,
+                    text_selection: None,
                 })
             }
             ElementContent::Poly { poly, line_width } => {
@@ -285,6 +319,8 @@ impl super::super::TermWindow {
                         poly,
                         line_width: *line_width,
                     },
+                    text_cells: None,
+                    text_selection: None,
                 })
             }
         }
@@ -332,6 +368,70 @@ impl super::super::TermWindow {
             let top = self.dimensions.pixel_height as f32 / -2.0;
             match &element.content {
                 ComputedElementContent::Text(cells) => {
+                    if let Some((ranges, selection_colors)) = &element.text_selection {
+                        for range in ranges {
+                            self.filled_rectangle(
+                                layers,
+                                0,
+                                euclid::rect(
+                                    element.content_rect.min_x() + range.start,
+                                    element.content_rect.min_y(),
+                                    range.end - range.start,
+                                    element.content_rect.height(),
+                                ),
+                                self.resolve_bg(selection_colors, inherited_colors).color,
+                            )?;
+                        }
+                    }
+                    let mut paint = |rect: RectF,
+                                     texture: window::bitmaps::TextureRect,
+                                     layer: usize,
+                                     has_color: bool|
+                     -> anyhow::Result<()> {
+                        if rect.width() <= 0. {
+                            return Ok(());
+                        }
+                        let mut emit =
+                            |start: f32, end: f32, ink: &ElementColors| -> anyhow::Result<()> {
+                                if end <= start {
+                                    return Ok(());
+                                }
+                                let mut quad = layers.allocate(layer)?;
+                                quad.set_position(
+                                    start + left,
+                                    rect.min_y() + top,
+                                    end + left,
+                                    rect.max_y() + top,
+                                );
+                                quad.set_texture(euclid::rect(
+                                    texture.min_x()
+                                        + (start - rect.min_x()) / rect.width() * texture.width(),
+                                    texture.min_y(),
+                                    (end - start) / rect.width() * texture.width(),
+                                    texture.height(),
+                                ));
+                                self.resolve_text(ink, inherited_colors).apply(&mut quad);
+                                quad.set_has_color(has_color);
+                                quad.set_hsv(None);
+                                Ok(())
+                            };
+                        let mut start = rect.min_x();
+                        if let Some((ranges, selection_colors)) = &element.text_selection {
+                            for range in ranges {
+                                let selected_start =
+                                    (element.content_rect.min_x() + range.start).max(start);
+                                let selected_end =
+                                    (element.content_rect.min_x() + range.end).min(rect.max_x());
+                                if selected_start >= selected_end {
+                                    continue;
+                                }
+                                emit(start, selected_start, colors)?;
+                                emit(selected_start, selected_end, selection_colors)?;
+                                start = selected_end;
+                            }
+                        }
+                        emit(start, rect.max_x(), colors)
+                    };
                     let mut pos_x = element.content_rect.min_x();
                     for cell in cells {
                         if pos_x >= element.content_rect.max_x() {
@@ -341,27 +441,23 @@ impl super::super::TermWindow {
                             ElementCell::Sprite(sprite) => {
                                 let width = sprite.coords.width();
                                 let height = sprite.coords.height();
-                                let pos_y = top + element.content_rect.min_y();
+                                let pos_y = element.content_rect.min_y();
 
                                 if pos_x + width as f32 > element.content_rect.max_x() {
                                     break;
                                 }
 
-                                let mut quad = layers.allocate(2)?;
-                                quad.set_position(
-                                    pos_x + left,
-                                    pos_y,
-                                    pos_x + left + width as f32,
-                                    pos_y + height as f32,
-                                );
-                                self.resolve_text(colors, inherited_colors).apply(&mut quad);
-                                quad.set_texture(sprite.texture_coords());
-                                quad.set_hsv(None);
+                                paint(
+                                    euclid::rect(pos_x, pos_y, width as f32, height as f32),
+                                    sprite.texture_coords(),
+                                    2,
+                                    false,
+                                )?;
                                 pos_x += width as f32;
                             }
                             ElementCell::Glyph(glyph) => {
                                 if let Some(texture) = glyph.texture.as_ref() {
-                                    let pos_y = element.content_rect.min_y() + top
+                                    let pos_y = element.content_rect.min_y()
                                         - (glyph.y_offset + glyph.bearing_y).get() as f32
                                         + element.baseline;
 
@@ -377,17 +473,12 @@ impl super::super::TermWindow {
                                     let height =
                                         texture.coords.size.height as f32 * glyph.scale as f32;
 
-                                    let mut quad = layers.allocate(1)?;
-                                    quad.set_position(
-                                        pos_x + left,
-                                        pos_y,
-                                        pos_x + left + width,
-                                        pos_y + height,
-                                    );
-                                    self.resolve_text(colors, inherited_colors).apply(&mut quad);
-                                    quad.set_texture(texture.texture_coords());
-                                    quad.set_has_color(glyph.has_color);
-                                    quad.set_hsv(None);
+                                    paint(
+                                        euclid::rect(pos_x, pos_y, width, height),
+                                        texture.texture_coords(),
+                                        1,
+                                        glyph.has_color,
+                                    )?;
                                 }
                                 pos_x += glyph.x_advance.get() as f32;
                             }

@@ -15,6 +15,7 @@ impl super::super::TermWindow {
         self.last_ui_item.replace(item.clone());
         match item.item_type {
             UIItemType::ModalScrollBar => {}
+            UIItemType::HelpText { .. } | UIItemType::HelpTextRegion => {}
             UIItemType::TabBar(tab_bar_item) => {
                 self.mouse_event_tab_bar(item, tab_bar_item, event, context);
             }

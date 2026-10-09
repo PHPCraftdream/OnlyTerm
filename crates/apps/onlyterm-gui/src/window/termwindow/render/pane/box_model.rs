@@ -111,6 +111,8 @@ impl crate::TermWindow {
             content_rect,
             baseline: 1.0,
             content: ComputedElementContent::Children(vec![]),
+            text_cells: None,
+            text_selection: None,
         })
     }
 }

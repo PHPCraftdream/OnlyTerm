@@ -238,8 +238,15 @@ examples have separate styling. Navigation buttons stay in a dedicated footer.
 The mouse wheel and scrollbar scroll the current list or section; drag the
 thumb or click its track. PageUp/PageDown moves by a viewport and Home/End
 moves to its beginning/end. Up/Down scrolls detail text one line at a time;
-Tab or Left/Right selects its Back/Close buttons. Previous/Next buttons
+Tab or Left/Right selects its Copy/Back/Close buttons. Previous/Next buttons
 are no longer used. The viewport and modal height remain fixed while scrolling.
+
+Detailed help text supports left-button drag selection and Shift-click to
+extend it. Ctrl+C or **Copy** copies the selection; Ctrl+A selects the entire
+section, including text outside the viewport. Selection survives scrolling
+and rewrapping on resize; opening another section clears it.
+Copied text retains its original spacing and hard line breaks, without
+adding the display's soft-wrap breaks.
 
 `Ctrl+Alt+T` opens **New Tab Options**, exactly like right-clicking the
 tab bar's plus button. `Ctrl+T` opens a regular tab;

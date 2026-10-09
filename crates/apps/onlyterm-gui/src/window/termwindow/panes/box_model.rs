@@ -16,6 +16,7 @@ use termwiz::cell::Presentation;
 use termwiz::surface::Line;
 use window::bitmaps::atlas::Sprite;
 
+use std::ops::Range;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum VerticalAlign {
     #[default]
@@ -387,6 +388,13 @@ pub struct LayoutContext<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct TextCell {
+    pub source: Range<usize>,
+    pub left: f32,
+    pub right: f32,
+}
+
+#[derive(Debug, Clone)]
 pub struct ComputedElement {
     pub item_type: Option<UIItemType>,
     pub zindex: i8,
@@ -405,6 +413,8 @@ pub struct ComputedElement {
     pub baseline: f32,
 
     pub content: ComputedElementContent,
+    pub text_cells: Option<Vec<TextCell>>,
+    pub text_selection: Option<(Vec<Range<f32>>, ElementColors)>,
 }
 
 impl ComputedElement {

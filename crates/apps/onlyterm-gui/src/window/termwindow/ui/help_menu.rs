@@ -14,6 +14,11 @@ use std::collections::BTreeMap;
 use window::color::LinearRgba;
 use window::{KeyCode as WindowKey, ModifierToStringArgs, Modifiers, WindowOps};
 
+#[path = "help_menu/selection.rs"]
+mod selection;
+use selection::{wrap_document, TextSelection};
+use std::ops::Range;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HelpTopic {
     Keyboard,
@@ -56,6 +61,7 @@ impl HelpTopic {
 pub enum HelpAction {
     Open(HelpTopic),
     Back,
+    Copy,
     Close,
 }
 
@@ -77,6 +83,7 @@ enum HelpLineStyle {
 struct HelpLine {
     text: String,
     style: HelpLineStyle,
+    source: Range<usize>,
 }
 
 fn line_style(line: &str) -> HelpLineStyle {
@@ -184,6 +191,7 @@ pub(crate) struct HelpMenu {
     document: RefCell<String>,
     wrapped: RefCell<(usize, Vec<HelpLine>)>,
     elements: RefCell<Option<Vec<ComputedElement>>>,
+    text_selection: RefCell<TextSelection>,
 }
 
 impl HelpMenu {
@@ -215,12 +223,13 @@ impl HelpMenu {
             document: RefCell::new(String::new()),
             wrapped: RefCell::new((0, vec![])),
             elements: RefCell::new(None),
+            text_selection: RefCell::new(TextSelection::default()),
         }
     }
 
     fn actions(&self) -> &'static [HelpAction] {
         if self.page.get().is_some() {
-            &[HelpAction::Back, HelpAction::Close]
+            &[HelpAction::Copy, HelpAction::Back, HelpAction::Close]
         } else {
             &[
                 HelpAction::Open(HelpTopic::Keyboard),
@@ -242,8 +251,16 @@ impl HelpMenu {
 
     fn move_focus(&self, direction: isize) {
         let count = self.actions().len();
-        self.selected
-            .set((self.selected.get() as isize + direction).rem_euclid(count as isize) as usize);
+        for _ in 0..count {
+            self.selected.set(
+                (self.selected.get() as isize + direction).rem_euclid(count as isize) as usize,
+            );
+            if self.actions()[self.selected.get()] != HelpAction::Copy
+                || self.text_selection.borrow().range().is_some()
+            {
+                break;
+            }
+        }
     }
 
     pub(crate) fn scroll(&self, direction: i64, window: &TermWindow) {
@@ -263,14 +280,16 @@ impl HelpMenu {
         match action {
             HelpAction::Open(topic) => {
                 self.main_offset.set(self.offset.get());
+                self.text_selection.replace(TextSelection::default());
                 self.page.set(Some(topic));
                 *self.document.borrow_mut() = self.topic_text(topic);
                 self.wrapped.borrow_mut().0 = 0;
                 self.offset.set(0);
-                self.selected.set(0);
+                self.selected.set(1);
             }
             HelpAction::Back => {
                 let topic = self.page.replace(None);
+                self.text_selection.replace(TextSelection::default());
                 self.selected.set(
                     HelpTopic::ALL
                         .iter()
@@ -281,6 +300,10 @@ impl HelpMenu {
                 self.total.set(self.shortcuts.len());
             }
             HelpAction::Close => window.cancel_modal(),
+            HelpAction::Copy => self.copy_selection(
+                window,
+                onlyterm_config::keyassignment::ClipboardCopyDestination::Clipboard,
+            ),
         }
         self.invalidate(window);
     }
@@ -306,6 +329,72 @@ impl HelpMenu {
                 crate::termwindow::keyevent::pass_through::DOUBLE_TAP_INTERVAL.as_millis(),
                 DOUBLE_CTRL_HELP,
             ),
+        }
+    }
+
+    fn copy_selection(
+        &self,
+        window: &TermWindow,
+        destination: onlyterm_config::keyassignment::ClipboardCopyDestination,
+    ) {
+        if let Some(range) = self.text_selection.borrow().range() {
+            window.copy_to_clipboard(destination, self.document.borrow()[range].to_owned());
+        }
+    }
+
+    pub(crate) fn text_mouse_event(
+        &self,
+        event: &window::MouseEvent,
+        window: &mut TermWindow,
+    ) -> bool {
+        use window::{MouseEventKind, MousePress};
+        if self.page.get().is_none() {
+            return false;
+        }
+        let (inside, position) = {
+            let elements = self.elements.borrow();
+            let Some(elements) = elements.as_ref() else {
+                return false;
+            };
+            let x = event.coords.x as f32;
+            let y = event.coords.y as f32;
+            (
+                selection::is_text_region(elements, x, y),
+                selection::text_at(elements, &self.document.borrow(), x, y),
+            )
+        };
+        match event.kind {
+            MouseEventKind::Press(MousePress::Left) if inside => {
+                if let Some(position) = position {
+                    let mut selection = self.text_selection.borrow_mut();
+                    if !event.modifiers.contains(Modifiers::SHIFT) || selection.anchor.is_none() {
+                        selection.anchor = Some(position);
+                    }
+                    selection.focus = position;
+                    selection.dragging = true;
+                }
+                self.invalidate(window);
+                true
+            }
+            MouseEventKind::Move if self.text_selection.borrow().dragging => {
+                if let Some(position) = position {
+                    self.text_selection.borrow_mut().focus = position;
+                }
+                self.invalidate(window);
+                true
+            }
+            MouseEventKind::Release(MousePress::Left) if self.text_selection.borrow().dragging => {
+                let mut selection = self.text_selection.borrow_mut();
+                if let Some(position) = position {
+                    selection.focus = position;
+                }
+                selection.dragging = false;
+                drop(selection);
+                self.invalidate(window);
+                true
+            }
+            MouseEventKind::Move if inside => true,
+            _ => false,
         }
     }
 
@@ -513,28 +602,7 @@ impl HelpMenu {
             let mut wrapped = self.wrapped.borrow_mut();
             if wrapped.0 != chars {
                 wrapped.0 = chars;
-                wrapped.1 = self
-                    .document
-                    .borrow()
-                    .lines()
-                    .flat_map(|line| {
-                        let style = line_style(line);
-                        if line.is_empty() {
-                            vec![HelpLine {
-                                text: String::new(),
-                                style,
-                            }]
-                        } else {
-                            textwrap::wrap(line, chars)
-                                .into_iter()
-                                .map(|value| HelpLine {
-                                    text: value.into_owned(),
-                                    style,
-                                })
-                                .collect()
-                        }
-                    })
-                    .collect();
+                wrapped.1 = wrap_document(&self.document.borrow(), chars);
             }
             self.visible.set(
                 ((height - 9. * cell_height - 60.) / (cell_height + 10.))
@@ -567,17 +635,24 @@ impl HelpMenu {
             })];
             let mut entries = vec![];
             for line in &wrapped.1[self.offset.get()..end] {
+                let source_start = line.source.start;
+                let source_end = line.source.end;
+                let mark = |element: Element, start: usize, end: usize| {
+                    element.item_type(UIItemType::HelpText { start, end })
+                };
                 let entry = match line.style {
-                    HelpLineStyle::Heading => heading(line.text.clone(), fg)
-                        .border(BoxDimension {
-                            bottom: Dimension::Pixels(1.),
-                            ..BoxDimension::default()
-                        })
-                        .colors(ElementColors {
-                            border: BorderColor::new(edge),
-                            text: fg.into(),
-                            ..ElementColors::default()
-                        }),
+                    HelpLineStyle::Heading => {
+                        mark(heading(line.text.clone(), fg), source_start, source_end)
+                            .border(BoxDimension {
+                                bottom: Dimension::Pixels(1.),
+                                ..BoxDimension::default()
+                            })
+                            .colors(ElementColors {
+                                border: BorderColor::new(edge),
+                                text: fg.into(),
+                                ..ElementColors::default()
+                            })
+                    }
                     HelpLineStyle::Value | HelpLineStyle::Binding => {
                         let separator = if matches!(line.style, HelpLineStyle::Binding) {
                             " - "
@@ -588,12 +663,20 @@ impl HelpMenu {
                             Element::new(
                                 &font,
                                 ElementContent::Children(vec![
-                                    heading(format!("{label}{separator}"), muted)
-                                        .display(DisplayType::Inline)
-                                        .vertical_align(VerticalAlign::Middle),
-                                    text(value.to_string(), fg)
-                                        .display(DisplayType::Inline)
-                                        .vertical_align(VerticalAlign::Middle),
+                                    mark(
+                                        heading(format!("{label}{separator}"), muted),
+                                        source_start,
+                                        source_start + label.len() + separator.len(),
+                                    )
+                                    .display(DisplayType::Inline)
+                                    .vertical_align(VerticalAlign::Middle),
+                                    mark(
+                                        text(value.to_string(), fg),
+                                        source_start + label.len() + separator.len(),
+                                        source_end,
+                                    )
+                                    .display(DisplayType::Inline)
+                                    .vertical_align(VerticalAlign::Middle),
                                 ]),
                             )
                             .display(DisplayType::Block)
@@ -602,21 +685,29 @@ impl HelpMenu {
                                 ..ElementColors::default()
                             })
                         } else {
-                            text(line.text.clone(), fg)
+                            mark(text(line.text.clone(), fg), source_start, source_end)
                         }
                     }
-                    HelpLineStyle::Code => text(line.text.clone(), fg).colors(ElementColors {
-                        bg: chip.into(),
-                        text: fg.into(),
-                        ..ElementColors::default()
-                    }),
-                    HelpLineStyle::Body => text(
-                        if line.text.is_empty() {
-                            " ".into()
-                        } else {
-                            line.text.clone()
-                        },
-                        muted,
+                    HelpLineStyle::Code => {
+                        mark(text(line.text.clone(), fg), source_start, source_end).colors(
+                            ElementColors {
+                                bg: chip.into(),
+                                text: fg.into(),
+                                ..ElementColors::default()
+                            },
+                        )
+                    }
+                    HelpLineStyle::Body => mark(
+                        text(
+                            if line.text.is_empty() {
+                                " ".into()
+                            } else {
+                                line.text.clone()
+                            },
+                            muted,
+                        ),
+                        source_start,
+                        source_end,
                     ),
                 };
                 entries.push(
@@ -625,9 +716,16 @@ impl HelpMenu {
                         .min_height(Some(Dimension::Pixels(cell_height + 10.))),
                 );
             }
+            let text_region = Element::new(&font, ElementContent::Children(entries))
+                .display(DisplayType::Block)
+                .min_width(Some(Dimension::Pixels((content_width - 46.).max(1.))))
+                .min_height(Some(Dimension::Pixels(
+                    self.visible.get() as f32 * (cell_height + 10.),
+                )))
+                .item_type(UIItemType::HelpTextRegion);
             body.push(style.viewport(
                 &font,
-                entries,
+                vec![text_region],
                 content_width - 26.,
                 self.visible.get() as f32 * (cell_height + 10.),
                 crate::termwindow::menu_style::ScrollPosition {
@@ -637,6 +735,11 @@ impl HelpMenu {
                 },
             ));
             rows.push(card(body));
+        }
+        if self.actions()[self.selected.get()] == HelpAction::Copy
+            && self.text_selection.borrow().range().is_none()
+        {
+            self.move_focus(1);
         }
         let actions = self.actions();
         let action_card = |index: usize, topic: HelpTopic, card_width: f32| {
@@ -719,6 +822,7 @@ impl HelpMenu {
             let label = match action {
                 HelpAction::Back => "Back",
                 HelpAction::Close => "Close",
+                HelpAction::Copy => "Copy",
                 HelpAction::Open(_) => continue,
             };
             let mut button = Element::new(&font, ElementContent::Text(label.into()))
@@ -741,6 +845,11 @@ impl HelpMenu {
                 });
             button.item_type = Some(UIItemType::HelpMenuItem(action));
             button.hover_colors = Some(focus_colors.clone());
+            if action == HelpAction::Copy && self.text_selection.borrow().range().is_none() {
+                button.item_type = None;
+                button.hover_colors = None;
+                button.colors.text = muted.into();
+            }
             footer.push(button);
         }
         rows.push(
@@ -753,7 +862,12 @@ impl HelpMenu {
                 }),
         );
         rows.push(text(
-            "Arrows / Tab · Enter · PgUp / PgDn · Esc / F1".into(),
+            if self.page.get().is_some() {
+                "Drag to select · Ctrl+A: all · Ctrl+C: copy"
+            } else {
+                "Arrows / Tab · Enter · PgUp / PgDn · Esc / F1"
+            }
+            .into(),
             muted,
         ));
         let root = style.panel(&font, rows, width);
@@ -780,11 +894,40 @@ impl HelpMenu {
             0.,
             ((height_limit - computed.bounds.height()) / 2.).max(0.),
         ));
+        if let Some(range) = self.text_selection.borrow().range() {
+            let palette = window.palette();
+            let colors = ElementColors {
+                bg: palette
+                    .selection_bg
+                    .to_linear()
+                    .when_fully_transparent(style.chip)
+                    .into(),
+                text: palette
+                    .selection_fg
+                    .to_linear()
+                    .when_fully_transparent(style.foreground)
+                    .into(),
+                ..ElementColors::default()
+            };
+            selection::apply_selection(&mut computed, &self.document.borrow(), &range, &colors);
+        }
         Ok(vec![computed])
     }
 }
 
 impl Modal for HelpMenu {
+    fn perform_assignment(&self, assignment: &KeyAssignment, window: &mut TermWindow) -> bool {
+        use onlyterm_config::keyassignment::ClipboardCopyDestination;
+        match assignment {
+            KeyAssignment::CopySelectionOrInterrupt => {
+                self.copy_selection(window, ClipboardCopyDestination::Clipboard)
+            }
+            KeyAssignment::CopyTo(destination) => self.copy_selection(window, *destination),
+            _ => return false,
+        }
+        true
+    }
+
     fn scroll_position(&self) -> Option<crate::termwindow::menu_style::ScrollPosition> {
         Some(crate::termwindow::menu_style::ScrollPosition {
             offset: self.offset.get(),
@@ -813,6 +956,20 @@ impl Modal for HelpMenu {
     ) -> anyhow::Result<bool> {
         match (key, mods) {
             (KeyCode::Escape | KeyCode::Function(1), _) => window.cancel_modal(),
+            (KeyCode::Char('c' | 'C'), KeyModifiers::CTRL) if self.page.get().is_some() => {
+                self.copy_selection(
+                    window,
+                    onlyterm_config::keyassignment::ClipboardCopyDestination::Clipboard,
+                );
+            }
+            (KeyCode::Char('a' | 'A'), KeyModifiers::CTRL) if self.page.get().is_some() => {
+                self.text_selection.replace(TextSelection {
+                    anchor: Some(0),
+                    focus: self.document.borrow().len(),
+                    dragging: false,
+                });
+                self.invalidate(window);
+            }
             (KeyCode::UpArrow | KeyCode::DownArrow, KeyModifiers::NONE)
                 if self.page.get().is_some() =>
             {
@@ -897,6 +1054,7 @@ mod tests {
             document: RefCell::new(String::new()),
             wrapped: RefCell::new((0, vec![])),
             elements: RefCell::new(None),
+            text_selection: RefCell::new(TextSelection::default()),
         }
     }
 
@@ -911,7 +1069,7 @@ mod tests {
             HelpAction::Open(HelpTopic::DoubleCtrl)
         );
         menu.page.set(Some(HelpTopic::Settings));
-        menu.selected.set(0);
+        menu.selected.set(1);
         menu.move_focus(1);
         assert_eq!(menu.actions()[menu.selected.get()], HelpAction::Close);
         menu.move_focus(1);

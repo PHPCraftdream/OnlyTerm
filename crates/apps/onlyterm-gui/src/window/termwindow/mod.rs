@@ -221,6 +221,11 @@ pub enum UIItemType {
     RenameTabMenuItem(rename_tab_menu::RenameTabAction),
     HelpMenuItem(help_menu::HelpAction),
     ModalScrollBar,
+    HelpText {
+        start: usize,
+        end: usize,
+    },
+    HelpTextRegion,
     #[cfg(windows)]
     TabProcessMenuItem(tab_process_menu::ProcessMenuAction),
 }

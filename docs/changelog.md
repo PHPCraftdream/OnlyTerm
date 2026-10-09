@@ -14,6 +14,15 @@ Releases are named using the date, time and git commit hash.
 
 ### Unreleased
 
+### v0.0.41-alpha — 2026-10-09
+
+#### Added
+
+* F1 detailed guides support mouse text selection, Shift-click extension,
+  Ctrl+A and Ctrl+C, and a Copy button. Copying preserves the original
+  text rather than visual wrap breaks; selection survives scrolling and resizing.
+
+
 ### v0.0.40-alpha — 2026-10-09
 
 #### Added

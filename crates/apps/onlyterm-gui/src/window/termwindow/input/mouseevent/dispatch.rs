@@ -48,6 +48,8 @@ impl super::super::TermWindow {
             | UIItemType::PaneLayoutMenuItem(_)
             | UIItemType::RenameTabMenuItem(_)
             | UIItemType::HelpMenuItem(_)
+            | UIItemType::HelpText { .. }
+            | UIItemType::HelpTextRegion
             | UIItemType::ModalScrollBar => {}
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(_) => {}
@@ -68,6 +70,8 @@ impl super::super::TermWindow {
             | UIItemType::PaneLayoutMenuItem(_)
             | UIItemType::RenameTabMenuItem(_)
             | UIItemType::HelpMenuItem(_)
+            | UIItemType::HelpText { .. }
+            | UIItemType::HelpTextRegion
             | UIItemType::ModalScrollBar => {}
             #[cfg(windows)]
             UIItemType::TabProcessMenuItem(_) => {}
@@ -142,6 +146,15 @@ impl super::super::TermWindow {
         if self.mouse_event_modal_scroll(&event) {
             context.set_cursor(Some(MouseCursor::Arrow));
             return;
+        }
+        if let Some(modal) = self.get_modal() {
+            if let Some(menu) = modal.downcast_ref::<crate::termwindow::help_menu::HelpMenu>() {
+                if menu.text_mouse_event(&event, self) {
+                    context.set_cursor(Some(MouseCursor::Text));
+                    self.current_mouse_event.replace(event.clone());
+                    return;
+                }
+            }
         }
         if release_after_menu_selection(
             &event.kind,
