@@ -42,7 +42,7 @@ tabs: [
   {
     title: server
     vars: {
-      PORT: 8080
+      NODE_ENV: development
     }
     commands: [
       npm run dev

@@ -288,7 +288,7 @@ mod tests {
 
         let first = &layout.tabs[0];
         assert_eq!(first.title.as_deref(), Some("main"));
-        assert_eq!(first.vars.get("PORT").map(String::as_str), Some("8080"));
+        assert_eq!(first.vars.get("RUST_LOG").map(String::as_str), Some("info"));
         assert_eq!(first.commands, vec!["git status".to_string()]);
         let options = layout.tab_options(first);
         assert_eq!(options.shell, Some(crate::Shell::Cmd));

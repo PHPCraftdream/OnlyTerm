@@ -19,7 +19,8 @@
 ## root_dir: ${LAUNCH_DIR}
 
 ## Environment variables for every tab. A key also set in a tab's own vars
-## takes the tab's value; the other keys still apply.
+## takes the tab's value; the other keys still apply. Values must be text:
+## a bare number such as 8080 is read as a number and rejected.
 ## vars: {
 ##     GIT_PAGER: cat
 ## }
@@ -56,7 +57,7 @@ tabs: [
 
         ## Environment variables of this tab, on top of the top-level vars.
         ## vars: {
-        ##     PORT: 8080
+        ##     RUST_LOG: info
         ## }
 
         ## Command lines typed into this tab, after the top-level commands.
