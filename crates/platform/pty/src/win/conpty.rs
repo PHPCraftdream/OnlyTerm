@@ -5,7 +5,7 @@ use crate::{Child, MasterPty, PtyPair, PtySize, PtySystem, SlavePty};
 use anyhow::Error;
 use filedescriptor::{FileDescriptor, Pipe};
 use std::io::Write;
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use std::path::Path;
 use std::sync::{Arc, Mutex, Weak};
 use winapi::um::wincon::COORD;
@@ -113,25 +113,39 @@ impl Write for ConPtyWriter {
 }
 
 impl ConPtyMasterPty {
+    /// Duplicated handle to the job holding every process of this pane.
+    fn pane_job(inner: &Inner) -> anyhow::Result<OwnedHandle> {
+        if let Some(session) = inner.detached.as_ref() {
+            return Ok(session.root_job.try_clone()?);
+        }
+        let state = inner
+            .child_job
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| anyhow::anyhow!("The pane process has already exited"))?;
+        let state = state.lock().unwrap();
+        detach::duplicate_kernel_handle(
+            state
+                .handle
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("The pane is closing"))?
+                .as_raw_handle() as _,
+        )
+    }
+
+    /// Ends the selected processes and their descendants; returns the count.
+    pub fn terminate_processes(&self, selected: &[ProcessIdentity]) -> anyhow::Result<usize> {
+        anyhow::ensure!(!selected.is_empty(), "No processes selected");
+        let job = {
+            let inner = self.inner.lock().unwrap();
+            Self::pane_job(&inner)?
+        };
+        detach::terminate_selected(job.as_raw_handle() as _, selected)
+    }
+
     pub fn child_processes(&self) -> anyhow::Result<Vec<PtyProcessInfo>> {
         let inner = self.inner.lock().unwrap();
-        let job = if let Some(session) = inner.detached.as_ref() {
-            session.root_job.try_clone()?
-        } else {
-            let state = inner
-                .child_job
-                .as_ref()
-                .and_then(Weak::upgrade)
-                .ok_or_else(|| anyhow::anyhow!("The pane process has already exited"))?;
-            let state = state.lock().unwrap();
-            detach::duplicate_kernel_handle(
-                state
-                    .handle
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("The pane is closing"))?
-                    .as_raw_handle() as _,
-            )?
-        };
+        let job = Self::pane_job(&inner)?;
         let protected = inner
             .detached
             .as_ref()

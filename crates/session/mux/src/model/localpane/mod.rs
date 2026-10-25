@@ -567,6 +567,14 @@ impl LocalPane {
     }
 
     #[cfg(windows)]
+    pub fn terminate_processes(
+        &self,
+        processes: &[portable_pty::win::detach::ProcessIdentity],
+    ) -> anyhow::Result<usize> {
+        self.with_conpty(|conpty| conpty.terminate_processes(processes))
+    }
+
+    #[cfg(windows)]
     pub fn detach_processes(
         &self,
         processes: &[portable_pty::win::detach::ProcessIdentity],

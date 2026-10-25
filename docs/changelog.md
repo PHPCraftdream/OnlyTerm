@@ -14,6 +14,16 @@ Releases are named using the date, time and git commit hash.
 
 ### Unreleased
 
+#### Added
+
+* F4 offers "End processes": the same process tree as "Detach child processes",
+  with the selected processes and their descendants terminated.
+
+#### Changed
+
+* The F4 process list is drawn as a tree (`├ └ │`, two columns per level) with
+  plain `[ ]`/`[x]` checkboxes that render in any font.
+
 ### v0.0.41-alpha — 2026-10-09
 
 #### Added

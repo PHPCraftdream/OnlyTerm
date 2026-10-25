@@ -285,6 +285,35 @@ pub(crate) fn selected_processes(
     Ok(result)
 }
 
+/// Ends the selected processes together with their descendants inside `job`.
+/// Ownership is re-verified like for detaching: PID, creation time and job
+/// membership must still match. Returns how many processes were ended.
+pub(crate) fn terminate_selected(
+    job: HANDLE,
+    selected: &[ProcessIdentity],
+) -> anyhow::Result<usize> {
+    let processes = selected_processes(job, selected)?;
+    let mut ended = 0;
+    let mut failures = vec![];
+    for (identity, process) in &processes {
+        // SAFETY: The owned handle was verified against this job and carries
+        // PROCESS_TERMINATE; PID reuse cannot redirect a held handle.
+        if unsafe { TerminateProcess(process.as_raw_handle() as _, 1) } != 0 {
+            ended += 1;
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        // SAFETY: The owned process handle permits synchronization.
+        let exited =
+            unsafe { WaitForSingleObject(process.as_raw_handle() as _, 0) } == WAIT_OBJECT_0;
+        if !exited {
+            failures.push(format!("PID {}: {error}", identity.pid));
+        }
+    }
+    ensure!(failures.is_empty(), "Cannot end {}", failures.join("; "));
+    Ok(ended)
+}
+
 fn create_event() -> anyhow::Result<OwnedHandle> {
     // SAFETY: Null attributes/name request an unnamed non-inheritable manual-reset event.
     let raw = unsafe { CreateEventW(ptr::null_mut(), TRUE, FALSE, ptr::null()) };

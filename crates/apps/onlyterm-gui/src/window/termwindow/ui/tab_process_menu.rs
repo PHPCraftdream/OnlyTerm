@@ -10,7 +10,7 @@ use onlyterm_mux::tab::TabId;
 use onlyterm_mux::Mux;
 use onlyterm_term::{KeyCode, KeyModifiers, MouseEvent};
 use portable_pty::win::detach::{ProcessIdentity, PtyProcessInfo};
-use std::cell::{Ref, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use window::WindowOps;
@@ -18,11 +18,60 @@ use window::WindowOps;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProcessMenuAction {
     OpenDetach,
+    OpenEnd,
     ToggleAll,
     Toggle(usize),
     Cancel,
     Back,
     Detach,
+    End,
+}
+
+/// What the process list is open for; both pages share the same tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProcessMode {
+    Detach,
+    End,
+}
+
+impl ProcessMode {
+    fn confirm_action(self) -> ProcessMenuAction {
+        match self {
+            Self::Detach => ProcessMenuAction::Detach,
+            Self::End => ProcessMenuAction::End,
+        }
+    }
+
+    fn button(self) -> &'static str {
+        match self {
+            Self::Detach => "Detach",
+            Self::End => "End",
+        }
+    }
+
+    fn progress(self) -> &'static str {
+        match self {
+            Self::Detach => "Detaching processes…",
+            Self::End => "Ending processes…",
+        }
+    }
+
+    fn failure(self) -> &'static str {
+        match self {
+            Self::Detach => "Failed to detach",
+            Self::End => "Failed to end",
+        }
+    }
+
+    fn subtitle(self) -> &'static str {
+        match self {
+            Self::Detach => "Select processes and their child-process trees",
+            Self::End => {
+                "Select processes to end with their child-process trees. \
+                 Ending the tab's shell closes the tab"
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,13 +84,14 @@ enum ProcessFocus {
 }
 
 impl ProcessFocus {
-    fn action(self) -> ProcessMenuAction {
+    /// The confirm button is shared: it detaches or ends depending on the page.
+    fn action(self, mode: ProcessMode) -> ProcessMenuAction {
         match self {
             Self::All => ProcessMenuAction::ToggleAll,
             Self::Process(index) => ProcessMenuAction::Toggle(index),
             Self::Cancel => ProcessMenuAction::Cancel,
             Self::Back => ProcessMenuAction::Back,
-            Self::Detach => ProcessMenuAction::Detach,
+            Self::Detach => mode.confirm_action(),
         }
     }
 
@@ -84,9 +134,120 @@ struct ProcessRow {
     process: PtyProcessInfo,
 }
 
+/// One process as the tree layout sees it; `scope` separates PID spaces of
+/// different panes of the tab.
+struct TreeNode {
+    scope: u64,
+    pid: u32,
+    parent_pid: u32,
+    created: u64,
+}
+
+/// Rows in display order: `order[i]` is the input index shown at position `i`,
+/// `depth[i]` its nesting level, `parent[i]` the position of its parent and
+/// `last[i]` whether it is the youngest among its siblings.
+struct TreeLayout {
+    order: Vec<usize>,
+    depth: Vec<usize>,
+    parent: Vec<Option<usize>>,
+    last: Vec<bool>,
+}
+
+/// Depth-first process forest: parents precede their children, siblings go by
+/// creation time. A parent must be older than its child, which also rules out
+/// cycles from PID reuse.
+fn tree_layout(nodes: &[TreeNode]) -> TreeLayout {
+    let by_pid: HashMap<(u64, u32), usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| ((node.scope, node.pid), index))
+        .collect();
+    let mut children: Vec<Vec<usize>> = vec![vec![]; nodes.len()];
+    let mut roots = vec![];
+    for (index, node) in nodes.iter().enumerate() {
+        let parent = by_pid
+            .get(&(node.scope, node.parent_pid))
+            .copied()
+            .filter(|&parent| nodes[parent].created < node.created);
+        match parent {
+            Some(parent) => children[parent].push(index),
+            None => roots.push(index),
+        }
+    }
+    roots.sort_by_key(|&index| (nodes[index].scope, nodes[index].created, nodes[index].pid));
+    for list in &mut children {
+        list.sort_by_key(|&index| (nodes[index].created, nodes[index].pid));
+    }
+
+    let mut layout = TreeLayout {
+        order: Vec::with_capacity(nodes.len()),
+        depth: Vec::with_capacity(nodes.len()),
+        parent: Vec::with_capacity(nodes.len()),
+        last: Vec::with_capacity(nodes.len()),
+    };
+    // (input index, depth, parent position, youngest sibling)
+    let mut stack: Vec<(usize, usize, Option<usize>, bool)> = roots
+        .iter()
+        .rev()
+        .map(|&index| (index, 0, None, false))
+        .collect();
+    while let Some((index, depth, parent, last)) = stack.pop() {
+        let position = layout.order.len();
+        layout.order.push(index);
+        layout.depth.push(depth);
+        layout.parent.push(parent);
+        layout.last.push(last);
+        let count = children[index].len();
+        for (nth, &child) in children[index].iter().enumerate().rev() {
+            stack.push((child, depth + 1, Some(position), nth + 1 == count));
+        }
+    }
+    layout
+}
+
+/// Per-row tree decoration, two columns per level: `├ `/`└ ` for the row
+/// itself and `│ ` or blanks for each ancestor level below the roots.
+/// Roots carry none.
+fn tree_branches(layout: &TreeLayout) -> Vec<String> {
+    (0..layout.order.len())
+        .map(|position| {
+            if layout.depth[position] == 0 {
+                return String::new();
+            }
+            let mut levels = vec![];
+            let mut ancestor = layout.parent[position];
+            while let Some(parent) = ancestor {
+                if layout.depth[parent] > 0 {
+                    levels.push(if layout.last[parent] { "  " } else { "│ " });
+                }
+                ancestor = layout.parent[parent];
+            }
+            levels.reverse();
+            let own = if layout.last[position] {
+                "└ "
+            } else {
+                "├ "
+            };
+            format!("{}{own}", levels.concat())
+        })
+        .collect()
+}
+
+/// Plain-ASCII checkbox: the ballot-box glyphs (U+2610/U+2611) are missing
+/// from many UI fonts and render as an empty square.
+fn checkbox(checked: bool) -> &'static str {
+    if checked {
+        "[x]"
+    } else {
+        "[ ]"
+    }
+}
+
 struct ProcessList {
+    mode: ProcessMode,
     rows: Vec<ProcessRow>,
     parents: Vec<Option<usize>>,
+    branches: Vec<String>,
     selected: Vec<bool>,
     focused: ProcessFocus,
     first_visible: usize,
@@ -95,27 +256,30 @@ struct ProcessList {
 }
 
 impl ProcessList {
-    fn new(rows: Vec<ProcessRow>, error: Option<String>) -> Self {
-        let by_pid: HashMap<_, _> = rows
+    fn new(rows: Vec<ProcessRow>, error: Option<String>, mode: ProcessMode) -> Self {
+        let nodes: Vec<TreeNode> = rows
             .iter()
-            .enumerate()
-            .map(|(index, row)| ((row.pane.pane_id(), row.process.identity.pid), index))
-            .collect();
-        let parents = rows
-            .iter()
-            .map(|row| {
-                by_pid
-                    .get(&(row.pane.pane_id(), row.process.parent_pid))
-                    .copied()
-                    .filter(|&parent| {
-                        rows[parent].process.identity.created < row.process.identity.created
-                    })
+            .map(|row| TreeNode {
+                scope: row.pane.pane_id() as u64,
+                pid: row.process.identity.pid,
+                parent_pid: row.process.parent_pid,
+                created: row.process.identity.created,
             })
             .collect();
+        let layout = tree_layout(&nodes);
+        let branches = tree_branches(&layout);
+        let mut slots: Vec<Option<ProcessRow>> = rows.into_iter().map(Some).collect();
+        let rows: Vec<ProcessRow> = layout
+            .order
+            .iter()
+            .filter_map(|&index| slots[index].take())
+            .collect();
         Self {
+            mode,
             selected: vec![false; rows.len()],
             rows,
-            parents,
+            parents: layout.parent,
+            branches,
             focused: ProcessFocus::All,
             first_visible: 0,
             visible_rows: 1,
@@ -123,10 +287,16 @@ impl ProcessList {
         }
     }
 
+    /// Detached processes are already out of the tab's reach for detaching;
+    /// they can still be ended.
+    fn blocked(&self, index: usize) -> bool {
+        self.mode == ProcessMode::Detach && self.rows[index].process.detached
+    }
+
     fn covered_by_parent(&self, index: usize) -> bool {
         let mut parent = self.parents[index];
         while let Some(index) = parent {
-            if self.selected[index] || self.rows[index].process.detached {
+            if self.selected[index] || self.blocked(index) {
                 return true;
             }
             parent = self.parents[index];
@@ -135,10 +305,7 @@ impl ProcessList {
     }
 
     fn toggle(&mut self, index: usize) {
-        if index < self.rows.len()
-            && !self.rows[index].process.detached
-            && !self.covered_by_parent(index)
-        {
+        if index < self.rows.len() && !self.blocked(index) && !self.covered_by_parent(index) {
             self.selected[index] = !self.selected[index];
             self.focused = ProcessFocus::Process(index);
         }
@@ -146,15 +313,15 @@ impl ProcessList {
 
     fn all_selected(&self) -> bool {
         !self.rows.is_empty()
-            && self.rows.iter().enumerate().all(|(index, row)| {
-                row.process.detached || self.selected[index] || self.covered_by_parent(index)
+            && (0..self.rows.len()).all(|index| {
+                self.blocked(index) || self.selected[index] || self.covered_by_parent(index)
             })
     }
 
     fn toggle_all(&mut self) {
         let selected = !self.all_selected();
-        for (index, row) in self.rows.iter().enumerate() {
-            self.selected[index] = selected && !row.process.detached;
+        for index in 0..self.rows.len() {
+            self.selected[index] = selected && !self.blocked(index);
         }
         self.focused = ProcessFocus::All;
         self.first_visible = 0;
@@ -192,6 +359,8 @@ enum MenuPage {
 pub(crate) struct TabProcessMenu {
     tab_id: TabId,
     page: RefCell<MenuPage>,
+    /// Highlighted entry of the root page: 0 detaches, 1 ends.
+    root_focus: Cell<usize>,
     elements: RefCell<Option<Vec<ComputedElement>>>,
     pending: RefCell<Option<Arc<()>>>,
 }
@@ -202,6 +371,7 @@ impl TabProcessMenu {
         Some(Self {
             tab_id: tab.tab_id(),
             page: RefCell::new(MenuPage::Actions),
+            root_focus: Cell::new(0),
             elements: RefCell::new(None),
             pending: RefCell::new(None),
         })
@@ -241,16 +411,21 @@ impl TabProcessMenu {
             ProcessMenuAction::Back => {
                 self.page.replace(MenuPage::Actions);
             }
-            ProcessMenuAction::OpenDetach => {
+            ProcessMenuAction::OpenDetach | ProcessMenuAction::OpenEnd => {
                 if self.pending.borrow().is_some() {
                     return;
                 }
+                let mode = if action == ProcessMenuAction::OpenEnd {
+                    ProcessMode::End
+                } else {
+                    ProcessMode::Detach
+                };
                 let (rows, error) = match self.process_rows() {
                     Ok(rows) => (rows, None),
                     Err(error) => (vec![], Some(format!("{error:#}"))),
                 };
                 self.page
-                    .replace(MenuPage::Processes(ProcessList::new(rows, error)));
+                    .replace(MenuPage::Processes(ProcessList::new(rows, error, mode)));
             }
             ProcessMenuAction::ToggleAll => {
                 if self.pending.borrow().is_some() {
@@ -268,15 +443,20 @@ impl TabProcessMenu {
                     list.toggle(index);
                 }
             }
-            ProcessMenuAction::Detach => {
+            ProcessMenuAction::Detach | ProcessMenuAction::End => {
                 if self.pending.borrow().is_some() {
                     return;
                 }
+                let ending = action == ProcessMenuAction::End;
                 let mut groups: BTreeMap<PaneId, (Arc<dyn Pane>, Vec<ProcessIdentity>)> =
                     BTreeMap::new();
                 if let MenuPage::Processes(list) = &*self.page.borrow() {
-                    for (row, selected) in list.rows.iter().zip(&list.selected) {
-                        if *selected && !row.process.detached {
+                    if list.mode.confirm_action() != action {
+                        return;
+                    }
+                    for (index, (row, selected)) in list.rows.iter().zip(&list.selected).enumerate()
+                    {
+                        if *selected && !list.blocked(index) {
                             groups
                                 .entry(row.pane.pane_id())
                                 .or_insert_with(|| (Arc::clone(&row.pane), vec![]))
@@ -293,64 +473,88 @@ impl TabProcessMenu {
                 };
                 let operation = Arc::new(());
                 self.pending.replace(Some(Arc::clone(&operation)));
-                let worker = std::thread::Builder::new()
-                    .name("detach-tab-processes".into())
-                    .spawn(move || {
-                        let result = (|| -> anyhow::Result<()> {
-                            let helper = std::env::current_exe()?;
-                            for (_, (pane, processes)) in groups {
-                                let local = pane.downcast_ref::<LocalPane>().ok_or_else(|| {
-                                    anyhow::anyhow!("The pane is no longer available")
-                                })?;
-                                local.detach_processes(&processes, &helper)?;
-                            }
-                            Ok(())
-                        })()
-                        .map_err(|error| format!("{error:#}"));
-                        if let Err(error) = &result {
-                            log::warn!("Process detachment failed: {error}");
-                        }
-                        window.notify(TermWindowNotif::Apply(Box::new(move |term_window| {
-                            if let Some(modal) = term_window.get_modal() {
-                                if let Some(menu) = modal.downcast_ref::<TabProcessMenu>() {
-                                    let matching =
-                                        menu.pending.borrow().as_ref().is_some_and(|pending| {
-                                            Arc::ptr_eq(pending, &operation)
-                                        });
-                                    if matching {
-                                        menu.complete_detachment(result, term_window);
+                let thread_name = if ending {
+                    "end-tab-processes"
+                } else {
+                    "detach-tab-processes"
+                };
+                let worker =
+                    std::thread::Builder::new()
+                        .name(thread_name.into())
+                        .spawn(move || {
+                            let result = (|| -> anyhow::Result<()> {
+                                let helper = if ending {
+                                    None
+                                } else {
+                                    Some(std::env::current_exe()?)
+                                };
+                                for (_, (pane, processes)) in groups {
+                                    let local =
+                                        pane.downcast_ref::<LocalPane>().ok_or_else(|| {
+                                            anyhow::anyhow!("The pane is no longer available")
+                                        })?;
+                                    match &helper {
+                                        Some(helper) => {
+                                            local.detach_processes(&processes, helper)?
+                                        }
+                                        None => {
+                                            local.terminate_processes(&processes)?;
+                                        }
                                     }
                                 }
+                                Ok(())
+                            })()
+                            .map_err(|error| format!("{error:#}"));
+                            if let Err(error) = &result {
+                                log::warn!("Process operation ({thread_name}) failed: {error}");
                             }
-                        })));
-                    });
+                            window.notify(TermWindowNotif::Apply(Box::new(move |term_window| {
+                                if let Some(modal) = term_window.get_modal() {
+                                    if let Some(menu) = modal.downcast_ref::<TabProcessMenu>() {
+                                        let matching =
+                                            menu.pending.borrow().as_ref().is_some_and(|pending| {
+                                                Arc::ptr_eq(pending, &operation)
+                                            });
+                                        if matching {
+                                            menu.complete_operation(result, term_window);
+                                        }
+                                    }
+                                }
+                            })));
+                        });
                 match worker {
                     // The worker owns its request and reports through Window::notify.
                     Ok(worker) => drop(worker),
-                    Err(error) => self.complete_detachment(Err(error.to_string()), term_window),
+                    Err(error) => self.complete_operation(Err(error.to_string()), term_window),
                 }
             }
         }
         self.invalidate(term_window);
     }
 
-    fn complete_detachment(&self, result: Result<(), String>, term_window: &mut TermWindow) {
+    fn complete_operation(&self, result: Result<(), String>, term_window: &mut TermWindow) {
         self.pending.borrow_mut().take();
-        if matches!(*self.page.borrow(), MenuPage::Processes(_)) {
+        let mode = match &*self.page.borrow() {
+            MenuPage::Processes(list) => Some(list.mode),
+            MenuPage::Actions => None,
+        };
+        if let Some(mode) = mode {
             match result {
                 Ok(()) => term_window.cancel_modal(),
                 Err(error) => {
+                    let failure = mode.failure();
                     let (rows, message) = match self.process_rows() {
-                        Ok(rows) => (rows, format!("Failed to detach: {error}")),
+                        Ok(rows) => (rows, format!("{failure}: {error}")),
                         Err(refresh) => (
                             vec![],
-                            format!(
-                                "Failed to detach: {error}; process list unavailable: {refresh:#}"
-                            ),
+                            format!("{failure}: {error}; process list unavailable: {refresh:#}"),
                         ),
                     };
-                    self.page
-                        .replace(MenuPage::Processes(ProcessList::new(rows, Some(message))));
+                    self.page.replace(MenuPage::Processes(ProcessList::new(
+                        rows,
+                        Some(message),
+                        mode,
+                    )));
                 }
             }
         }
@@ -411,31 +615,30 @@ impl TabProcessMenu {
         ];
         match &mut *self.page.borrow_mut() {
             MenuPage::Actions => {
-                let mut action = row(
-                    "1. Detach child processes".into(),
-                    self.pending
-                        .borrow()
-                        .is_none()
-                        .then_some(ProcessMenuAction::OpenDetach),
-                );
-                if self.pending.borrow().is_none() {
-                    action.colors = hover.clone();
+                let idle = self.pending.borrow().is_none();
+                let mut card = vec![style.text(&heading, "PROCESS ACTIONS".into(), false)];
+                for (position, &(label, action)) in [
+                    ("1. Detach child processes", ProcessMenuAction::OpenDetach),
+                    ("2. End processes", ProcessMenuAction::OpenEnd),
+                ]
+                .iter()
+                .enumerate()
+                {
+                    let mut entry = row(label.into(), idle.then_some(action));
+                    if idle && self.root_focus.get() == position {
+                        entry.colors = hover.clone();
+                    }
+                    card.push(entry);
                 }
-                rows.push(style.card(
+                rows.push(style.card(&font, card, inner_width));
+                rows.push(style.text(
                     &font,
-                    vec![
-                        style.text(&heading, "PROCESS ACTIONS".into(), false),
-                        action,
-                    ],
-                    inner_width,
+                    "Up/Down, Enter or 1/2: open · Esc / F4: close".into(),
+                    true,
                 ));
-                rows.push(style.text(&font, "Enter / 1: open · Esc / F4: close".into(), true));
             }
             MenuPage::Processes(list) => {
-                rows.push(row(
-                    "Select processes and their child-process trees".into(),
-                    None,
-                ));
+                rows.push(row(list.mode.subtitle().into(), None));
                 let mut process_rows =
                     vec![style.text(&heading, "PROCESS SELECTION".into(), false)];
                 let all_focused = if list.focused == ProcessFocus::All {
@@ -443,9 +646,9 @@ impl TabProcessMenu {
                 } else {
                     " "
                 };
-                let all_marker = if list.all_selected() { "☑" } else { "☐" };
+                let all_marker = checkbox(list.all_selected());
                 let can_select = self.pending.borrow().is_none()
-                    && list.rows.iter().any(|row| !row.process.detached);
+                    && (0..list.rows.len()).any(|index| !list.blocked(index));
                 let mut all = row(
                     format!("{all_focused} {all_marker} All Processes"),
                     can_select.then_some(ProcessMenuAction::ToggleAll),
@@ -471,8 +674,10 @@ impl TabProcessMenu {
                 for index in list.first_visible..end {
                     let entry = &list.rows[index];
                     let covered = list.covered_by_parent(index);
-                    let checked = entry.process.detached || list.selected[index] || covered;
-                    let marker = if checked { "☑" } else { "☐" };
+                    let blocked = list.blocked(index);
+                    let checked = blocked || list.selected[index] || covered;
+                    let marker = checkbox(checked);
+                    let branch = &list.branches[index];
                     let status = if entry.process.detached {
                         " (detached)"
                     } else {
@@ -485,12 +690,11 @@ impl TabProcessMenu {
                     };
                     let mut process = row(
                         String::new(),
-                        (!entry.process.detached && !covered)
-                            .then_some(ProcessMenuAction::Toggle(index)),
+                        (!blocked && !covered).then_some(ProcessMenuAction::Toggle(index)),
                     );
                     process.content = ElementContent::Children(vec![
                         style
-                            .text(&font, format!("{focused} {marker}"), false)
+                            .text(&font, format!("{focused} {marker} {branch}"), false)
                             .display(DisplayType::Inline),
                         style
                             .keycap(&heading, entry.process.identity.pid.to_string())
@@ -500,11 +704,7 @@ impl TabProcessMenu {
                                 ..BoxDimension::default()
                             }),
                         style
-                            .text(
-                                &font,
-                                format!("{}{status}", entry.process.name),
-                                entry.process.detached,
-                            )
+                            .text(&font, format!("{}{status}", entry.process.name), blocked)
                             .display(DisplayType::Inline),
                     ]);
                     process.min_width = Some(Dimension::Pixels((inner_width - 54.).max(1.)));
@@ -532,13 +732,14 @@ impl TabProcessMenu {
                 if let Some(error) = list.error.as_ref() {
                     process_rows.push(style.text(&font, error.clone(), true));
                 }
-                let can_detach = self.pending.borrow().is_none()
+                let can_confirm = self.pending.borrow().is_none()
                     && list.selected.iter().any(|selected| *selected);
                 rows.push(style.card(&font, process_rows, inner_width));
+                let mode = list.mode;
                 let button = |label: &str, focus: ProcessFocus, enabled: bool| {
                     let mut button = style.button(&font, label, list.focused == focus, enabled);
                     if enabled {
-                        button.item_type = Some(UIItemType::TabProcessMenuItem(focus.action()));
+                        button.item_type = Some(UIItemType::TabProcessMenuItem(focus.action(mode)));
                     }
                     button
                 };
@@ -547,7 +748,7 @@ impl TabProcessMenu {
                     ElementContent::Children(vec![
                         button("Cancel", ProcessFocus::Cancel, true),
                         button("Back", ProcessFocus::Back, true),
-                        button("Detach", ProcessFocus::Detach, can_detach),
+                        button(mode.button(), ProcessFocus::Detach, can_confirm),
                     ]),
                 )
                 .display(DisplayType::Block)
@@ -555,7 +756,7 @@ impl TabProcessMenu {
                 rows.push(buttons);
                 rows.push(row(
                     if self.pending.borrow().is_some() {
-                        "Detaching processes…".into()
+                        mode.progress().into()
                     } else {
                         "Arrows to select; Enter/Space to activate; Esc to cancel".into()
                     },
@@ -637,14 +838,27 @@ impl Modal for TabProcessMenu {
             (key, KeyModifiers::NONE) => {
                 let root = matches!(*self.page.borrow(), MenuPage::Actions);
                 match key {
-                    KeyCode::Char('1') | KeyCode::Numpad1 | KeyCode::Enter | KeyCode::Char(' ')
-                        if root =>
-                    {
+                    KeyCode::Char('1') | KeyCode::Numpad1 if root => {
                         self.perform_action(ProcessMenuAction::OpenDetach, term_window);
+                    }
+                    KeyCode::Char('2') | KeyCode::Numpad2 if root => {
+                        self.perform_action(ProcessMenuAction::OpenEnd, term_window);
+                    }
+                    KeyCode::UpArrow | KeyCode::DownArrow if root => {
+                        self.root_focus.set(1 - self.root_focus.get());
+                        self.invalidate(term_window);
+                    }
+                    KeyCode::Char(' ') | KeyCode::Enter if root => {
+                        let action = if self.root_focus.get() == 0 {
+                            ProcessMenuAction::OpenDetach
+                        } else {
+                            ProcessMenuAction::OpenEnd
+                        };
+                        self.perform_action(action, term_window);
                     }
                     KeyCode::Char(' ') | KeyCode::Enter if !root => {
                         let action = match &*self.page.borrow() {
-                            MenuPage::Processes(list) => list.focused.action(),
+                            MenuPage::Processes(list) => list.focused.action(list.mode),
                             MenuPage::Actions => ProcessMenuAction::OpenDetach,
                         };
                         self.perform_action(action, term_window);
@@ -685,7 +899,92 @@ impl Modal for TabProcessMenu {
 
 #[cfg(test)]
 mod tests {
-    use super::ProcessFocus as Focus;
+    use super::{tree_branches, tree_layout, ProcessFocus as Focus, TreeNode};
+
+    fn node(scope: u64, pid: u32, parent_pid: u32, created: u64) -> TreeNode {
+        TreeNode {
+            scope,
+            pid,
+            parent_pid,
+            created,
+        }
+    }
+
+    #[test]
+    fn tree_puts_parents_first_and_nests_by_depth() {
+        // Input is deliberately in PID order, unrelated to the tree shape.
+        let nodes = [
+            node(1, 10, 40, 4), // grandchild
+            node(1, 20, 30, 3), // child b of 30
+            node(1, 30, 40, 2), // child a of 40
+            node(1, 40, 0, 1),  // root
+            node(1, 50, 30, 5), // later child of 30
+        ];
+        let layout = tree_layout(&nodes);
+        let pids: Vec<u32> = layout.order.iter().map(|&i| nodes[i].pid).collect();
+        assert_eq!(pids, [40, 30, 20, 50, 10]);
+        assert_eq!(layout.depth, [0, 1, 2, 2, 1]);
+        assert_eq!(
+            layout.parent,
+            [None, Some(0), Some(1), Some(1), Some(0)],
+            "parents are positions in display order"
+        );
+    }
+
+    #[test]
+    fn tree_keeps_panes_apart_and_orphans_as_roots() {
+        let nodes = [
+            node(2, 5, 1, 9),  // same PID space number as pane 1, other pane
+            node(1, 5, 0, 1),  // pane 1 root
+            node(1, 6, 5, 2),  // child of pane 1's 5
+            node(1, 7, 99, 3), // parent not in the list
+        ];
+        let layout = tree_layout(&nodes);
+        let shape: Vec<(u64, u32, usize)> = layout
+            .order
+            .iter()
+            .zip(&layout.depth)
+            .map(|(&i, &d)| (nodes[i].scope, nodes[i].pid, d))
+            .collect();
+        assert_eq!(shape, [(1, 5, 0), (1, 6, 1), (1, 7, 0), (2, 5, 0)]);
+    }
+
+    #[test]
+    fn tree_breaks_pid_reuse_cycles_by_creation_time() {
+        // Each claims the other as parent; only the older one can be the parent.
+        let nodes = [node(1, 2, 3, 20), node(1, 3, 2, 10)];
+        let layout = tree_layout(&nodes);
+        let pids: Vec<u32> = layout.order.iter().map(|&i| nodes[i].pid).collect();
+        assert_eq!(pids, [3, 2]);
+        assert_eq!(layout.depth, [0, 1]);
+        assert_eq!(layout.parent, [None, Some(0)]);
+    }
+
+    #[test]
+    fn branches_use_two_columns_per_level_with_rails_for_open_siblings() {
+        let nodes = [
+            node(1, 10, 40, 4),
+            node(1, 20, 30, 3),
+            node(1, 30, 40, 2),
+            node(1, 40, 0, 1),
+            node(1, 50, 30, 5),
+            node(1, 60, 50, 6), // only child of 50, which is a last sibling
+        ];
+        let layout = tree_layout(&nodes);
+        let pids: Vec<u32> = layout.order.iter().map(|&i| nodes[i].pid).collect();
+        assert_eq!(pids, [40, 30, 20, 50, 60, 10]);
+        assert_eq!(
+            tree_branches(&layout),
+            ["", "├ ", "│ ├ ", "│ └ ", "│   └ ", "└ "]
+        );
+    }
+
+    #[test]
+    fn a_single_chain_indents_by_two_columns() {
+        let nodes = [node(1, 1, 0, 1), node(1, 2, 1, 2), node(1, 3, 2, 3)];
+        let layout = tree_layout(&nodes);
+        assert_eq!(tree_branches(&layout), ["", "└ ", "  └ "]);
+    }
 
     #[test]
     fn vertical_focus_reaches_buttons_and_returns_to_the_list() {
