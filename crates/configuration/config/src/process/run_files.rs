@@ -82,7 +82,7 @@ pub fn render_template(template: &str, dir: &Path) -> String {
         while rest.starts_with(['\\', '/']) {
             let segment_len = rest[1..]
                 .find(['\\', '/', '\r', '\n'])
-                .map_or(rest.len() - 1, |len| len);
+                .unwrap_or(rest.len() - 1);
             let segment = &rest[1..1 + segment_len];
             match segment {
                 "" | "." => {}
