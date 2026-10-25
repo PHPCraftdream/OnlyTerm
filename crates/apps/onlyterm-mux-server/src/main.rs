@@ -49,12 +49,12 @@ struct Opt {
     config_override: Vec<(String, String)>,
 
     /// Detach from the foreground and become a background process
-    #[arg(long = "daemonize")]
-    daemonize: bool,
+    #[arg(long = "angelize")]
+    angelize: bool,
 
     /// Hosted-tab mode: process exits when the last pane exits, or
     /// when its one client disconnects (whichever happens first).
-    /// In this mode, the process does NOT daemonize and does NOT
+    /// In this mode, the process does NOT angelize and does NOT
     /// spawn a Unix socket listener. Instead, it uses stdin/stdout
     /// for mux protocol communication.
     #[arg(long = "single-pane")]
@@ -132,13 +132,13 @@ fn run() -> anyhow::Result<()> {
         std::env::set_var("SSH_AUTH_SOCK", value);
     }
 
-    // Single-pane mode: skip daemonization and use stdin/stdout for mux protocol
+    // Single-pane mode: skip angelization and use stdin/stdout for mux protocol
     if opts.single_pane {
         return run_single_pane_mode(opts);
     }
 
-    if opts.daemonize {
-        // We can't literally daemonize on Windows, but we can spawn
+    if opts.angelize {
+        // We can't literally angelize on Windows, but we can spawn
         // another copy of ourselves in the background.
         let mut cmd = Command::new(std::env::current_exe().unwrap());
 
@@ -165,8 +165,8 @@ fn run() -> anyhow::Result<()> {
         }
 
         use std::os::windows::process::CommandExt;
-        cmd.stdout(config.daemon_options.open_stdout()?);
-        cmd.stderr(config.daemon_options.open_stderr()?);
+        cmd.stdout(config.angel_options.open_stdout()?);
+        cmd.stderr(config.angel_options.open_stderr()?);
 
         cmd.creation_flags(winapi::um::winbase::DETACHED_PROCESS);
         let child = cmd.spawn();
@@ -577,7 +577,7 @@ fn run_single_pane_mode(opts: Opt) -> anyhow::Result<()> {
     }
 }
 
-/// Initializes Winsock in this process. Daemon mode gets this "for free"
+/// Initializes Winsock in this process. Angel mode gets this "for free"
 /// because `filedescriptor::socketpair()` (called on the GUI/parent side)
 /// calls `WSAStartup` itself -- but Winsock initialization is per-process,
 /// not inherited across a process boundary along with a socket handle.
@@ -637,7 +637,7 @@ fn wrap_stdin_as_stream() -> UnixStream {
 /// the future and immediately drops it unpolled -- the mux protocol never
 /// actually ran, silently. `spawn_into_main_thread` (the same primitive
 /// `LocalListener::run` in `onlyterm-mux-server-impl/src/local.rs` uses for
-/// every accepted daemon-mode connection) is what actually drives it, by
+/// every accepted angel-mode connection) is what actually drives it, by
 /// scheduling it onto the `SimpleExecutor` that `run_single_pane_mode`'s
 /// `executor.tick()` loop is already polling.
 ///

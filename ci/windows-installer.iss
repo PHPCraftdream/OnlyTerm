@@ -38,6 +38,8 @@ WizardStyle=modern
 ; Build 1809 is required for pty support
 MinVersion=10.0.17763
 ChangesEnvironment=true
+; Registers the .onlyterm-run file type below.
+ChangesAssociations=yes
 ; Avoid false-positive "close this application" prompts: Inno's Restart
 ; Manager integration matches running processes by embedded original
 ; filename, not full path, so any unrelated OpenConsole.exe/conpty.dll
@@ -98,6 +100,29 @@ Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\Open OnlyTerm he
 Root: HKA; Subkey: "Software\Classes\Directory\shell\Open OnlyTerm here"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\Directory\shell\Open OnlyTerm here"; ValueName: "icon"; ValueType: string; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey;
 Root: HKA; Subkey: "Software\Classes\Directory\shell\Open OnlyTerm here\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" start --no-auto-connect --cwd ""%V\\"""; Flags: uninsdeletekey;
+; "OnlyTerm Run As": the New Tab Options dialog (shell / elevation / priority) in that folder.
+Root: HKA; Subkey: "Software\Classes\Drive\shell\OnlyTerm Run As"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Drive\shell\OnlyTerm Run As"; ValueName: "icon"; ValueType: string; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Drive\shell\OnlyTerm Run As\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" start --no-auto-connect --choose-tab --cwd ""%V\"""; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\OnlyTerm Run As"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\OnlyTerm Run As"; ValueName: "icon"; ValueType: string; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\OnlyTerm Run As\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" start --no-auto-connect --choose-tab --cwd ""%V"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\shell\OnlyTerm Run As"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Directory\shell\OnlyTerm Run As"; ValueName: "icon"; ValueType: string; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\shell\OnlyTerm Run As\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" start --no-auto-connect --choose-tab --cwd ""%V\\"""; Flags: uninsdeletekey;
+; "OnlyTerm folder settings": creates (if missing) and opens the folder's run file.
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\OnlyTerm folder settings"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\OnlyTerm folder settings"; ValueName: "icon"; ValueType: string; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\Background\shell\OnlyTerm folder settings\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" folder-settings ""%V"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\shell\OnlyTerm folder settings"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\Directory\shell\OnlyTerm folder settings"; ValueName: "icon"; ValueType: string; ValueData: "{app}\{#MyAppExeName}"; Flags: uninsdeletekey;
+Root: HKA; Subkey: "Software\Classes\Directory\shell\OnlyTerm folder settings\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" folder-settings ""%V\\"""; Flags: uninsdeletekey;
+; Run files (*.onlyterm-run): ktav startup layouts; opening one launches it.
+; The extension is OnlyTerm's own, so uninstall removes the whole key.
+Root: HKA; Subkey: "Software\Classes\.onlyterm-run"; ValueType: string; ValueData: "OnlyTerm.RunFile"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\OnlyTerm.RunFile"; ValueType: string; ValueData: "OnlyTerm run file"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\OnlyTerm.RunFile\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\OnlyTerm.RunFile\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" start --start-conf ""%1"""; Flags: uninsdeletekey
 
 [Code]
 { https://stackoverflow.com/a/46609047/149111 }

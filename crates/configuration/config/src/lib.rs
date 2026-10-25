@@ -28,7 +28,7 @@ pub use value::{ktav_value, meta};
 pub(crate) use appearance::{background, bell, color, frontend};
 pub(crate) use domains::{exec_domain, unix};
 pub(crate) use input::keys;
-pub(crate) use process::daemon;
+pub(crate) use process::angel;
 pub(crate) use value::{config_types, units, version};
 
 // Preserve the original item-level re-export surface.
@@ -44,8 +44,9 @@ pub use domains::unix::*;
 pub use font::*;
 pub use input::keyassignment::*;
 pub use input::keys::*;
-pub use process::daemon::*;
+pub use process::angel::*;
 pub use process::powershell::*;
+pub use process::run_files::*;
 pub use process::shell::*;
 pub use process::start_conf::*;
 pub use value::config_types::*;

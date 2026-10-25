@@ -226,6 +226,13 @@ pub struct LsFontsCommand {
 }
 
 #[derive(Debug, Parser, Clone)]
+pub struct FolderSettingsCommand {
+    /// The folder whose settings file to create (if missing) and open
+    #[arg(value_parser, value_hint=ValueHint::DirPath)]
+    pub dir: PathBuf,
+}
+
+#[derive(Debug, Parser, Clone)]
 pub struct ShowKeysCommand {
     /// Show the keys as ktav config statements, ready to paste into
     /// the `keys`/`key_tables` sections of your config file

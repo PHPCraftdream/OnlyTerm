@@ -75,6 +75,31 @@ queued input the shell will process once it's ready. `title` is optional;
 a tab without one keeps its normal automatic title. At least one entry in
 `tabs` is required.
 
+### Run files: opening a layout from Explorer
+
+The installer registers the `.onlyterm-run` file type. A `*.onlyterm-run` file is
+an ordinary `--start-conf` layout; opening it in Explorer (double click, Enter)
+runs `onlyterm-gui start --start-conf <file>`.
+
+OnlyTerm keeps a folder for such files, `.onlyterm-run`, beside the config file
+(`%USERPROFILE%\.onlyterm-run` for the usual `%USERPROFILE%\.onlyterm.ktav`). It
+is created the first time the GUI starts.
+
+### Folder settings
+
+Right-clicking a folder, or the empty space inside one, offers
+**OnlyTerm folder settings**. It creates that folder's run file in the `.onlyterm-run`
+folder (named after the folder's path, e.g. `D--dev-myproj-1a2b3c4d.onlyterm-run`)
+if there is none yet, and opens it in Notepad. From then on **Open OnlyTerm here**
+in that folder starts the layout from this file instead of a single tab.
+
+New files are made from `.onlyterm-run\template.ktav`, which is created with a
+one-tab default and can be edited. In it `${LAUNCH_DIR}` stands for the folder
+the file is created for. A path after it is resolved when the file is made:
+`${LAUNCH_DIR}\..\shared` becomes `D:\dev\shared` for `D:\dev\myproj` (`..`
+goes one folder up, `.` is dropped). Editing the template does not change files
+that already exist.
+
 `--start-conf` is mutually exclusive with `PROG`/`--cwd`, since the layout
 file specifies its own per-tab program/commands and working directory
 instead.

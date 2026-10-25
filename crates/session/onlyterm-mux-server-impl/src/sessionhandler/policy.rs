@@ -2,7 +2,7 @@
 /// constrained splits inside its hosted tab, never arbitrary commands.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum PduPolicy {
-    /// Unrestricted: all PDUs are processed (default for daemon-mode Unix-domain
+    /// Unrestricted: all PDUs are processed (default for angel-mode Unix-domain
     /// sockets, where the only clients are those who successfully connected to a
     /// user-owned socket path).
     Unrestricted,

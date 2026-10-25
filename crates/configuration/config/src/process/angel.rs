@@ -4,7 +4,7 @@ use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 
 #[derive(Default, Debug, Clone, FromDynamic, ToDynamic)]
-pub struct DaemonOptions {
+pub struct AngelOptions {
     pub pid_file: Option<PathBuf>,
     pub stdout: Option<PathBuf>,
     pub stderr: Option<PathBuf>,
@@ -13,7 +13,7 @@ pub struct DaemonOptions {
 /// Set the sticky bit on path.
 /// This is used in a couple of situations where we want files that
 /// we create in the RUNTIME_DIR to not be removed by a potential
-/// tmpwatch daemon.
+/// tmpwatch angel.
 pub fn set_sticky_bit(path: &Path) {
     // The sticky bit is a Unix filesystem permission concept with no
     // Windows equivalent, so there is nothing to do here.
@@ -32,7 +32,7 @@ fn open_log(path: PathBuf) -> anyhow::Result<File> {
         .map_err(|e| anyhow!("failed to open log stream: {}: {}", path.display(), e))
 }
 
-impl DaemonOptions {
+impl AngelOptions {
     #[allow(dead_code)]
     pub fn pid_file(&self) -> PathBuf {
         self.pid_file

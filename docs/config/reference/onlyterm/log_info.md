@@ -24,8 +24,8 @@ tags:
 
 This function logs the provided message string through onlyterm's logging layer
 at 'INFO' level, which can be displayed via [ShowDebugOverlay](../keyassignment/ShowDebugOverlay.md) action.  If you started onlyterm from a terminal that text will print
-to the stdout of that terminal.  If running as a daemon for the multiplexer
-server then it will be logged to the daemon output path.
+to the stdout of that terminal.  If running as a angel for the multiplexer
+server then it will be logged to the angel output path.
 
 ```rhai
 log_info("Hello!")

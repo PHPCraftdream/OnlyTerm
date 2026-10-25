@@ -645,7 +645,7 @@ pub(super) fn build_initial_mux(
 }
 
 pub(super) fn run_terminal_gui(
-    opts: StartCommand,
+    mut opts: StartCommand,
     default_domain_name: Option<String>,
 ) -> anyhow::Result<()> {
     if let Some(cls) = opts.class.as_ref() {
@@ -656,6 +656,30 @@ pub(super) fn run_terminal_gui(
     }
 
     let config = onlyterm_config::configuration();
+
+    let run_dir = onlyterm_config::Config::run_dir();
+    if let Err(err) = onlyterm_config::ensure_template(&run_dir) {
+        log::warn!("cannot prepare run folder {}: {:#}", run_dir.display(), err);
+    }
+
+    // A plain `--cwd` launch (Explorer's "Open OnlyTerm here") picks up that
+    // folder's settings file, if one was made via "OnlyTerm folder settings".
+    if opts.start_conf.is_none() && opts.prog.is_empty() && !opts.choose_tab {
+        if let Some(cwd) = &opts.cwd {
+            let dir = if cwd.is_relative() {
+                current_dir()?.join(cwd)
+            } else {
+                cwd.clone()
+            };
+            let run_file = onlyterm_config::run_file_for_dir(&run_dir, &dir);
+            if run_file.is_file() {
+                log::info!("using folder settings {}", run_file.display());
+                opts.cwd = None;
+                opts.start_conf = Some(run_file);
+            }
+        }
+    }
+
     let need_builder = !opts.prog.is_empty() || opts.cwd.is_some();
 
     let cmd = if need_builder {

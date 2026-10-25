@@ -149,7 +149,7 @@ In the host win32 configuration, use this snippet:
 unix_domains: [
   {
     name: wsl
-    serve_command: [wsl, onlyterm-mux-server, --daemonize]
+    serve_command: [wsl, onlyterm-mux-server, --angelize]
   }
 ]
 default_gui_startup_args: [connect, wsl]
@@ -168,10 +168,10 @@ to manually connect into your WSL instance.
 ## Surviving a crashed or killed GUI process
 
 The unix-domain multiplexing described above can be pointed at OnlyTerm's own
-standalone `onlyterm-mux-server` daemon (`onlyterm-mux-server.exe` on Windows)
+standalone `onlyterm-mux-server` angel (`onlyterm-mux-server.exe` on Windows)
 instead of at another GUI process's embedded mux. `onlyterm-mux-server` has no
 window, no message loop and no GPU/renderer of any kind — it is a plain
-headless daemon that owns the panes, tabs and windows and speaks the mux
+headless angel that owns the panes, tabs and windows and speaks the mux
 protocol over a unix-domain socket. Running against it turns "GUI process
 crashes" into a non-event for the programs running in your panes.
 
@@ -263,7 +263,7 @@ reading the current source, not assumed from upstream WezTerm docs):
   (`crates/onlyterm-client/src/client.rs`) unconditionally returns `false`,
   with a comment explaining why: reconnecting to a *respawned* unix socket
   server wouldn't preserve the original set of tabs anyway, so silently
-  retrying would just produce confusing, inconsistent state. If the daemon
+  retrying would just produce confusing, inconsistent state. If the angel
   process itself is killed (not just a GUI process), your panes are gone;
   GUI processes attached to it will show the domain as detached/dead rather
   than silently spinning up a replacement behind your back.
@@ -301,7 +301,7 @@ To verify the topology end-to-end yourself:
 
 1. Save the config snippet above to a config file, e.g.
    `smoke.onlyterm.ktav`.
-2. Start (or let auto-spawn) the daemon:
+2. Start (or let auto-spawn) the angel:
    `onlyterm-mux-server.exe --config-file smoke.onlyterm.ktav`
 3. Launch a GUI process attached to it:
    `onlyterm-gui.exe --config-file smoke.onlyterm.ktav start --always-new-process`
@@ -313,7 +313,7 @@ To verify the topology end-to-end yourself:
 6. Find the GUI process's PID (e.g. via Task Manager or `tasklist`) and kill
    it directly and ungracefully (`taskkill /F /PID <pid>` on Windows,
    `kill -9 <pid>` on Unix) rather than closing the window normally.
-7. Confirm the daemon is still running and the pane content is still there:
+7. Confirm the angel is still running and the pane content is still there:
    re-run the `cli get-text` command from step 5 — it should still show
    `hello-from-pane-1`, even though no GUI process is attached at all.
 8. Launch a fresh GUI process (step 3 again) and confirm it reattaches to

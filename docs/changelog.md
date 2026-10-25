@@ -12,17 +12,35 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
-### Unreleased
+### v0.0.42-alpha — 2026-10-25
 
 #### Added
 
 * F4 offers "End processes": the same process tree as "Detach child processes",
   with the selected processes and their descendants terminated.
+* Run files: `*.onlyterm-run` files are `--start-conf` startup layouts that
+  open in OnlyTerm from Explorer (double click or Enter). The installer
+  registers the file type; OnlyTerm keeps a `.onlyterm-run` folder for them
+  beside the config file (`%USERPROFILE%\.onlyterm-run`).
+* Folder settings: Explorer's folder and folder-background menu has
+  "OnlyTerm folder settings". It creates that folder's run file in
+  `.onlyterm-run` if there is none yet and opens it in Notepad; from then on
+  "Open OnlyTerm here" in that folder opens its tabs instead of a single one.
+* New folder settings are made from `.onlyterm-run\template.ktav`, which can be
+  edited. The built-in template lists every layout and tab setting with a
+  comment. In it `${LAUNCH_DIR}` is the folder, and a path after it is resolved
+  when the file is made (`${LAUNCH_DIR}\..` is the parent folder).
 
 #### Changed
 
 * The F4 process list is drawn as a tree (`├ └ │`, two columns per level) with
   plain `[ ]`/`[x]` checkboxes that render in any font.
+* The `daemon_options` setting is now `angel_options`, and the
+  `onlyterm-mux-server --daemonize` flag is now `--angelize`. Update
+  `serve_command` entries and configs that used the old names.
+* The installer now adds every Explorer entry `ci/dev-install.ps1` adds,
+  including "OnlyTerm Run As", which it lacked; uninstall removes all menu
+  entries and the `.onlyterm-run` file type.
 
 ### v0.0.41-alpha — 2026-10-09
 

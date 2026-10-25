@@ -14,8 +14,10 @@
   runtime dependencies
   (conpty.dll, OpenConsole.exe, strip-ansi-escapes.exe) and .pdb files into
   the install directory, configures Windows Error Reporting for full crash
-  dumps, and registers Explorer context menu entries ("Open OnlyTerm here" and
-  "OnlyTerm Run As") for Drive, Directory, and Directory\Background.
+  dumps, and registers all OnlyTerm Explorer integration: context menu entries
+  ("Open OnlyTerm here" and "OnlyTerm Run As" for Drive, Directory, and
+  Directory\Background; "OnlyTerm folder settings" for Directory and
+  Directory\Background) and the .onlyterm-run file type.
 
   "Hot-swap" means already-running OnlyTerm processes are never stopped:
   each destination file is renamed aside (to "<name>.old") instead of being
@@ -389,8 +391,9 @@ Write-Host "    DumpType   = 2 (full dump)"
 Write-Host "    DumpCount  = 10"
 
 # ---------------------------------------------------------------------------
-# 5. Install/update Explorer context menu entries (Open OnlyTerm here and
-#    OnlyTerm Run As) for Drive, Directory, and Directory\Background.
+# 5. Install/update Explorer context menu entries (Open OnlyTerm here,
+#    OnlyTerm Run As) for Drive, Directory, and Directory\Background, and
+#    OnlyTerm folder settings for Directory and Directory\Background.
 #
 #    HKA (in the .iss) maps to HKLM for an elevated install. We update rather
 #    than fail if keys already exist, since a dev install after a real install
@@ -464,7 +467,56 @@ foreach ($s in $scopeTails) {
     }
 }
 
+# "OnlyTerm folder settings": creates (if missing) and opens the folder's run file.
+# Same %V tails as above.
+foreach ($s in $scopeTails | Where-Object { $_.Scope -ne 'Drive' }) {
+    $argLine = "folder-settings $($s.Tail.Substring(6))"
+    Install-ContextMenuEntry -Scope $s.Scope -Label 'OnlyTerm folder settings' -ArgumentList $argLine
+    Write-Host "    $($s.Scope)\shell\OnlyTerm folder settings"
+    $entriesInstalled++
+}
+
+# Entries under names this script no longer installs.
+foreach ($scope in @('Directory', 'Directory\Background')) {
+    $stale = "HKLM:\SOFTWARE\Classes\$scope\shell\OnlyTerm Settings"
+    if (Test-Path -LiteralPath $stale) {
+        Remove-Item -LiteralPath $stale -Recurse -Force
+        Write-Host "    removed stale $scope\shell\OnlyTerm Settings"
+    }
+}
+
 Write-Host "    ($entriesInstalled entry(s) installed/updated)"
+
+# ---------------------------------------------------------------------------
+# 6. Register the .onlyterm-run file type (ktav startup layouts), mirroring the
+#    [Registry] entries in ci/windows-installer.iss, so that opening such a
+#    file in Explorer launches it. Single-quoted: the command is full of quotes.
+# ---------------------------------------------------------------------------
+Write-Host "`n==> Registering the .onlyterm-run file type" -ForegroundColor Cyan
+
+function Set-RegistryDefault {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Value
+    )
+    if (-not (Test-Path $Path)) {
+        New-Item -Path $Path -Force | Out-Null
+    }
+    Set-ItemProperty -Path $Path -Name "(default)" -Value $Value -Force | Out-Null
+}
+
+$progId = 'OnlyTerm.RunFile'
+$classes = 'HKLM:\SOFTWARE\Classes'
+Set-RegistryDefault -Path "$classes\.onlyterm-run" -Value $progId
+Set-RegistryDefault -Path "$classes\$progId" -Value 'OnlyTerm run file'
+Set-RegistryDefault -Path "$classes\$progId\DefaultIcon" -Value "$exePath,0"
+Set-RegistryDefault -Path "$classes\$progId\shell\open\command" -Value ('"{0}" start --start-conf "%1"' -f $exePath)
+
+# Tell Explorer the associations changed (SHCNE_ASSOCCHANGED), so icons refresh
+# without a logoff.
+Add-Type -Namespace OnlyTermDev -Name Shell -MemberDefinition '[System.Runtime.InteropServices.DllImport("shell32.dll")] public static extern void SHChangeNotify(int eventId, uint flags, System.IntPtr item1, System.IntPtr item2);'
+[OnlyTermDev.Shell]::SHChangeNotify(0x08000000, 0, [System.IntPtr]::Zero, [System.IntPtr]::Zero)
+Write-Host "    .onlyterm-run -> $progId"
 
 $installedGui = Join-Path $InstallDir "onlyterm-gui.exe"
 $stamp = (Get-Item $installedGui).LastWriteTime

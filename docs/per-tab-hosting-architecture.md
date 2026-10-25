@@ -73,7 +73,7 @@ GUI создаёт `ClientDomain` с конфигурацией `UnixDomain`, г
 
 ### WSAStartup: инициализация Winsock
 
-На Windows эмуляция `socketpair()` на loopback требует инициализации Winsock. Daemon-режим получает это "бесплатно", потому что `filedescriptor::socketpair()` вызывает `WSAStartup` в родителе, но инициализация — per-process, не наследуется через хэндл.
+На Windows эмуляция `socketpair()` на loopback требует инициализации Winsock. Angel-режим получает это "бесплатно", потому что `filedescriptor::socketpair()` вызывает `WSAStartup` в родителе, но инициализация — per-process, не наследуется через хэндл.
 
 Single-pane ребёнок никогда не вызывает `socketpair()` сам (он только наследует уже созданный хэндл), поэтому ему нужна явная инициализация: `init_winsock()` вызывает `WSAStartup` через `std::sync::Once`.
 

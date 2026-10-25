@@ -1,0 +1,79 @@
+## OnlyTerm folder settings for ${LAUNCH_DIR}
+##
+## "Open OnlyTerm here" in that folder opens the tabs listed below instead of
+## a single default tab. Lines starting with ## are comments: delete the ## in
+## front of a setting (and of its whole { } or [ ] block) to turn it on.
+##
+## This file was made from template.ktav in the same folder. In the template
+## the folder is written as $ followed by {LAUNCH_DIR}; a path after it is
+## resolved when a file is made from it: with \.. it becomes the parent
+## folder, with \..\shared a sibling folder. Editing the template does not
+## change files that were already made from it.
+##
+## Every top-level setting except tabs is a default for all tabs; a tab can
+## set the same key to override it for itself.
+
+## Where tabs start when they do not set their own root_dir. A relative path
+## is resolved against the folder this file is in, not the launch folder, so
+## use absolute paths here.
+## root_dir: ${LAUNCH_DIR}
+
+## Environment variables for every tab. A key also set in a tab's own vars
+## takes the tab's value; the other keys still apply.
+## vars: {
+##     GIT_PAGER: cat
+## }
+
+## Command lines typed into every tab right after its shell starts, before
+## the tab's own commands. They are typed without waiting for a prompt, so a
+## command that starts an interactive or full-screen program swallows the
+## ones after it: put such a command last.
+## commands: [
+##     echo Welcome!
+## ]
+
+## Shell to launch: cmd, bash, powershell or wsl. Unset: default_prog from
+## the main config.
+## shell: powershell
+
+## Process priority: idle, below_normal, normal (the default), above_normal,
+## high or realtime.
+## priority: normal
+
+## Launch elevated: true or false (the default). Each elevated tab raises its
+## own UAC prompt, accepted before the next tab opens.
+## admin: false
+
+## The tabs to open, in order, in one new window; at least one is required.
+## The first tab is active once all are open.
+tabs: [
+    {
+        ## Tab title. Unset: the usual automatic title.
+        ## title: main
+
+        ## Working directory of this tab; overrides the top-level root_dir.
+        root_dir: ${LAUNCH_DIR}
+
+        ## Environment variables of this tab, on top of the top-level vars.
+        ## vars: {
+        ##     PORT: 8080
+        ## }
+
+        ## Command lines typed into this tab, after the top-level commands.
+        ## commands: [
+        ##     git status
+        ## ]
+
+        ## Shell, priority and elevation of this tab; override the top-level
+        ## shell, priority and admin.
+        ## shell: cmd
+        ## priority: below_normal
+        ## admin: false
+    }
+
+    ## A second tab, one folder up.
+    ## {
+    ##     title: parent
+    ##     root_dir: ${LAUNCH_DIR}\..
+    ## }
+]

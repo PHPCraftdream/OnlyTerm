@@ -417,7 +417,7 @@ pub struct Config {
     pub disable_default_mouse_bindings: bool,
 
     #[dynamic(default)]
-    pub daemon_options: DaemonOptions,
+    pub angel_options: AngelOptions,
 
     #[dynamic(default)]
     pub send_composed_key_when_left_alt_is_pressed: bool,

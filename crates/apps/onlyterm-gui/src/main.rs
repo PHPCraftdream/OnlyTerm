@@ -158,6 +158,11 @@ enum SubCommand {
     #[command(name = "show-keys", about = "Show key assignments")]
     ShowKeys(ShowKeysCommand),
 
+    /// Explorer's "OnlyTerm folder settings" entry: creates the folder's run file
+    /// with defaults if missing, then opens it in Notepad.
+    #[command(name = "folder-settings", hide = true)]
+    FolderSettings(FolderSettingsCommand),
+
     /// Hosts one tab's GPU rendering in its own process (task #650, see
     /// docs/plans/2026-08-21-per-tab-gpu-process-isolation.md). Spawned only
     /// by `PerTabProcessBackend` (task #651) itself -- never meant to be
@@ -170,6 +175,20 @@ enum SubCommand {
 struct GpuTabHostCommand {
     #[arg(long = "supervise-pid", value_parser)]
     supervise_pid: u32,
+}
+
+fn run_folder_settings(cmd: &FolderSettingsCommand) -> anyhow::Result<()> {
+    let dir = if cmd.dir.is_relative() {
+        current_dir()?.join(&cmd.dir)
+    } else {
+        cmd.dir.clone()
+    };
+    let path = onlyterm_config::ensure_run_file_for_dir(&onlyterm_config::Config::run_dir(), &dir)?;
+    std::process::Command::new("notepad.exe")
+        .arg(&path)
+        .spawn()
+        .with_context(|| format!("opening {} in Notepad", path.display()))?;
+    Ok(())
 }
 
 async fn async_run_serial(opts: SerialCommand) -> anyhow::Result<()> {
@@ -753,6 +772,7 @@ fn run() -> anyhow::Result<()> {
         ),
         SubCommand::LsFonts(cmd) => run_ls_fonts(config, &cmd),
         SubCommand::ShowKeys(cmd) => run_show_keys(config, &cmd),
+        SubCommand::FolderSettings(cmd) => run_folder_settings(&cmd),
         SubCommand::GpuTabHost(cmd) => onlyterm_gpu_render::gpu_tab_host::run(
             onlyterm_gpu_render::gpu_tab_host::GpuTabHostArgs {
                 supervise_pid: cmd.supervise_pid,

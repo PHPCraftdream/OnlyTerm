@@ -1,8 +1,8 @@
+use crate::angel::AngelOptions;
 use crate::background::{BackgroundLayer, Gradient};
 use crate::bell::{AudibleBell, EasingFunction, VisualBell};
 use crate::color::{HsbTransform, Palette, TabBarStyle, WindowFrameConfig};
 use crate::config_types::*;
-use crate::daemon::DaemonOptions;
 use crate::exec_domain::ExecDomain;
 use crate::font::{
     AllowSquareGlyphOverflow, FontLocatorSelection, FontRasterizerSelection, FontShaperSelection,

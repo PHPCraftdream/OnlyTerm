@@ -6,8 +6,8 @@ use crate::color::{ColorSchemeFile, Palette, TabBarColor, TabBarColors};
 use crate::font::StyleRule;
 use crate::keyassignment::{KeyAssignment, KeyTable, KeyTableEntry, KeyTables, MouseEventTrigger};
 use crate::{
-    default_config_with_overrides_applied, LoadedConfig, MouseEventTriggerMods, RgbaColor,
-    CONFIG_DIRS, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
+    default_config_with_overrides_applied, run_dir_beside, LoadedConfig, MouseEventTriggerMods,
+    RgbaColor, CONFIG_DIRS, CONFIG_FILE_OVERRIDE, CONFIG_OVERRIDES, CONFIG_SKIP, HOME_DIR,
 };
 use anyhow::Context;
 use ktav::value::Value as KtavValue;
@@ -91,6 +91,12 @@ impl Config {
             }
         }
         HOME_DIR.join(".onlyterm.ktav")
+    }
+
+    /// The folder, beside the config file, that holds the user's run files
+    /// (`*.onlyterm-run` startup layouts). It need not exist yet.
+    pub fn run_dir() -> PathBuf {
+        run_dir_beside(&Self::config_file_path())
     }
 
     pub fn load_with_overrides(overrides: &onlyterm_dynamic::Value) -> LoadedConfig {

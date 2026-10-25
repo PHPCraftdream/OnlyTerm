@@ -85,7 +85,7 @@ UB, segfault и т.п. по-прежнему роняет весь процес�
 процесс на вкладку/пейн**, а не один общий «local mux-server» для всех
 обычных вкладок разом (общий процесс воспроизвёл бы сегодняшний blast radius
 один в один, просто в другом процессе). Сегодняшний `onlyterm-mux-server`
-(`--daemonize`) спроектирован как один долгоживущий демон, мультиплексирующий
+(`--angelize`) спроектирован как один долгоживущий демон, мультиплексирующий
 произвольное число пейнов — это модель, ПРОТИВОПОЛОЖНАЯ требуемой. Фаза A
 (раздел 4) поэтому теперь включает разработку "single-pane" режима хостинг-
 процесса: один инстанс = один PTY/пейн, завершается вместе с ним. Это
@@ -105,7 +105,7 @@ explicitly.
 1. **Elevation-триггер спавна mux-server.** Сегодняшний путь подключения
    (`crates/onlyterm-client/src/client/conn.rs:153-220`, `unix_connect` →
    при неудаче `unix_dom.serve_command()` → retry) спавнит
-   `onlyterm-mux-server.exe --daemonize` обычным `Command::spawn`, что не
+   `onlyterm-mux-server.exe --angelize` обычным `Command::spawn`, что не
    умеет UAC. Нужен elevation-вариант этого пути: `ShellExecuteExW("runas")`
    вместо `Command::spawn`, с той же обработкой `ERROR_CANCELLED`, что уже
    есть в `elevate.rs:162-176`.
@@ -113,7 +113,7 @@ explicitly.
    unix-domain-socket-эмуляция на Windows через `uds_windows`
    (`crates/onlyterm-uds`), путь по умолчанию — файл в `RUNTIME_DIR`.
    `create_user_owned_dirs` (`crates/config/src/lib.rs:134-139`) и
-   `set_sticky_bit` (`crates/config/src/daemon.rs:17-21`) на Windows —
+   `set_sticky_bit` (`crates/config/src/angel.rs:17-21`) на Windows —
    **no-op**. Значит подключиться к сокету сегодня может ЛЮБОЙ процесс
    текущего пользователя. Для elevated mux-server это неприемлемо as-is:
    любой процесс от имени пользователя получил бы admin-шелл без UAC.
@@ -130,7 +130,7 @@ explicitly.
    что и файловый ACL, так что при полностью корректном ACL отдельный
    хендшейк может быть избыточен — но это должно быть явным решением, а не
    умолчанием по недосмотру).
-4. **Lifecycle.** Сегодняшний `--daemonize`/`serve_command` предполагает
+4. **Lifecycle.** Сегодняшний `--angelize`/`serve_command` предполагает
    «запустить один раз и жить бесконечно», а не «запустить при первой
    admin-вкладке, завершиться, когда закрылась последняя». Нужен: триггер
    остановки (mux-server отслеживает количество живых пейнов в своём домене и
@@ -194,7 +194,7 @@ explicitly.
 только admin. Многодневная-многонедельная работа, не рефакторинг с нуля —
 показ чужого процесса как вкладки уже реализован и обкатан в этом форке,
 но нужно: новый lifecycle-режим хостинг-процесса (single-pane, не
-today's long-lived daemon), генерализация точки спавна вкладок, elevation
+today's long-lived angel), генерализация точки спавна вкладок, elevation
 поверх того же пути, обработка краха/восстановления на КАЖДОЙ вкладке (не
 только admin), транспортная безопасность, и честный замер цены по
 задержке/CPU на каждый keystroke/repaint по сравнению с сегодняшним
@@ -283,7 +283,7 @@ mux-client/server) не пересекается с gsudo и не требует
 
 1. **Security by construction**: Socket handles are inherit-only and exclusively owned. No other process can connect — not just "no ACL bug," but "no ACL surface at all." This is fundamentally stronger than any DACL-based approach, where implementation bugs could allow unauthorized access.
 
-2. **Implementation simplicity**: The code path already exists and is fully functional. No Windows DACL code needed. No filesystem management. No cleanup logic. The hosting process only needs a `--single-pane` flag to distinguish its lifecycle (exit when pane exits vs long-lived daemon).
+2. **Implementation simplicity**: The code path already exists and is fully functional. No Windows DACL code needed. No filesystem management. No cleanup logic. The hosting process only needs a `--single-pane` flag to distinguish its lifecycle (exit when pane exits vs long-lived angel).
 
 3. **Lifecycle simplicity**: When the child process exits, the socket closes automatically. No stale file cleanup. No "is this socket file still valid?" checks. The model maps directly to the single-pane use case: process life = pane life.
 
@@ -295,7 +295,7 @@ mux-client/server) не пересекается с gsudo и не требует
 
    Option 2 requires:
    - Add a `--single-pane` flag to `onlyterm-mux-server`
-   - Modify spawn logic to exit when the sole pane exits (instead of daemonizing)
+   - Modify spawn logic to exit when the sole pane exits (instead of angelizing)
    - Configure `UnixDomain.proxy_command = ["onlyterm-mux-server", "--single-pane"]`
 
 5. **Pattern alignment**: This is exactly how `UnixDomain.proxy_command` is designed to work — spawning a command and using stdin/stdout as the transport. The only difference is lifecycle management (single-pane vs long-lived), which is a small behavioral flag.
@@ -341,14 +341,14 @@ IPC path:
    would accept its inherited connection and then do nothing with it --
    silently. Fixed by using `promise::spawn::spawn_into_main_thread(async
    move { dispatch::process(stream).await... }).detach()`, the same
-   primitive `LocalListener::run` already uses for daemon-mode
+   primitive `LocalListener::run` already uses for angel-mode
    connections, scheduled onto the same `SimpleExecutor` that
    `run_single_pane_mode`'s `executor.tick()` loop is already polling --
    no separate OS thread needed.
 2. **Winsock was never initialized in the child process.** Confirmed by
    an actual manual run: `onlyterm_mux_server > Either the application
    has not called WSAStartup, or WSAStartup failed. (os error 10093)`.
-   Daemon mode gets `WSAStartup` "for free" because
+   Angel mode gets `WSAStartup` "for free" because
    `filedescriptor::socketpair()` (called on the parent/GUI side) calls
    it -- but Winsock initialization is per-process, not inherited across
    a process boundary along with a socket handle. Single-pane mode's
