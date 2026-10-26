@@ -61,6 +61,7 @@ mod quad;
 mod renderstate;
 #[path = "window/resize_increment_calculator.rs"]
 mod resize_increment_calculator;
+mod run_file_editor;
 #[path = "input/scrollbar.rs"]
 mod scrollbar;
 #[path = "input/selection.rs"]
@@ -159,7 +160,7 @@ enum SubCommand {
     ShowKeys(ShowKeysCommand),
 
     /// Explorer's "OnlyTerm folder settings" entry: creates the folder's run file
-    /// with defaults if missing, then opens it in Notepad.
+    /// with defaults if missing, then opens it in Notepad++ (or Notepad).
     #[command(name = "folder-settings", hide = true)]
     FolderSettings(FolderSettingsCommand),
 
@@ -184,10 +185,11 @@ fn run_folder_settings(cmd: &FolderSettingsCommand) -> anyhow::Result<()> {
         cmd.dir.clone()
     };
     let path = onlyterm_config::ensure_run_file_for_dir(&onlyterm_config::Config::run_dir(), &dir)?;
-    std::process::Command::new("notepad.exe")
+    let editor = run_file_editor::run_file_editor();
+    std::process::Command::new(&editor)
         .arg(&path)
         .spawn()
-        .with_context(|| format!("opening {} in Notepad", path.display()))?;
+        .with_context(|| format!("opening {} in {}", path.display(), editor.display()))?;
     Ok(())
 }
 

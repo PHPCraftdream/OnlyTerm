@@ -90,7 +90,8 @@ is created the first time the GUI starts.
 Right-clicking a folder, or the empty space inside one, offers
 **OnlyTerm folder settings**. It creates that folder's run file in the `.onlyterm-run`
 folder (named after the folder's path, e.g. `D--dev-myproj-1a2b3c4d.onlyterm-run`)
-if there is none yet, and opens it in Notepad. From then on **Open OnlyTerm here**
+if there is none yet, and opens it in Notepad++ when that is installed, otherwise
+in Notepad. From then on **Open OnlyTerm here**
 in that folder starts the layout from this file instead of a single tab.
 
 New files are made from `.onlyterm-run\template.ktav`, which is created with a

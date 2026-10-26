@@ -12,6 +12,13 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### Unreleased
+
+#### Changed
+
+* "OnlyTerm folder settings" opens the folder's run file in Notepad++ when it
+  is installed, and in Notepad otherwise.
+
 ### v0.0.42-alpha — 2026-10-25
 
 #### Added
