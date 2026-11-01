@@ -38,6 +38,10 @@ Releases are named using the date, time and git commit hash.
   latency 1 instead of 2): one window-sized buffer less per window, about
   8 MiB at 1080p, 15 MiB at 1440p and 33 MiB at 4K. The in-process fallback
   keeps latency 2.
+* The GPU-host child sizes its instance buffers to what a frame needs
+  (12.5% headroom) instead of the next power of two, and releases a buffer once
+  it holds more than 1.5 times the request instead of 4 times. A buffer could
+  hold up to twice the memory it needed, and up to four times after a burst.
 
 ### v0.0.43-alpha — 2026-11-01
 
