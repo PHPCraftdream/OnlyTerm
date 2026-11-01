@@ -12,7 +12,7 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
-### Unreleased
+### v0.0.44-alpha — 2026-11-01
 
 #### Added
 
