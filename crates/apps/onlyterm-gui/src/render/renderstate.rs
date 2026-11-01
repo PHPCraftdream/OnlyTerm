@@ -4,19 +4,37 @@ use super::utilsprites::{RenderMetrics, UtilSprites};
 use ::window::bitmaps::atlas::OutOfTextureSpace;
 use ::window::bitmaps::Texture2d;
 use onlyterm_font::FontConfiguration;
-use onlyterm_gpu_render::{adapter_info_to_gpu_info, WebGpuState, WebGpuTexture};
+use onlyterm_gpu_render::{adapter_info_to_gpu_info, CpuAtlasTexture, WebGpuState, WebGpuTexture};
 use std::cell::{Cell, RefCell, RefMut};
 use std::rc::Rc;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub struct RenderContext(pub Arc<WebGpuState>);
+pub enum RenderContext {
+    Hosted,
+    InProcess(Arc<WebGpuState>),
+}
 
 pub enum RenderFrame {
     WebGpu,
 }
 
 impl RenderContext {
+    pub fn hosted() -> Self {
+        Self::Hosted
+    }
+
+    pub fn in_process(state: Arc<WebGpuState>) -> Self {
+        Self::InProcess(state)
+    }
+
+    pub fn webgpu(&self) -> Option<&Arc<WebGpuState>> {
+        match self {
+            Self::Hosted => None,
+            Self::InProcess(state) => Some(state),
+        }
+    }
+
     pub fn allocate_vertex_buffer_initializer(
         &self,
         _num_quads: usize,
@@ -29,18 +47,28 @@ impl RenderContext {
         num_quads: usize,
         _initializer: &[crate::quad::QuadInstance],
     ) -> anyhow::Result<VertexBuffer> {
-        Ok(VertexBuffer(WebGpuInstanceBuffer::new(num_quads, &self.0)))
+        Ok(VertexBuffer(WebGpuInstanceBuffer::new(num_quads)))
     }
 
     pub fn allocate_texture_atlas(&self, size: usize) -> anyhow::Result<Rc<dyn Texture2d>> {
-        let texture: Rc<dyn Texture2d> =
-            Rc::new(WebGpuTexture::new(size as u32, size as u32, &self.0)?);
-        Ok(texture)
+        match self {
+            Self::Hosted => Ok(Rc::new(CpuAtlasTexture::new(size, size))),
+            Self::InProcess(state) => Ok(Rc::new(WebGpuTexture::new(
+                size as u32,
+                size as u32,
+                state,
+            )?)),
+        }
     }
 
-    pub fn renderer_info(&self) -> String {
-        let info = adapter_info_to_gpu_info(self.0.adapter_info().clone());
-        format!("WebGPU: {info}")
+    pub fn renderer_info(&self) -> Option<String> {
+        match self {
+            Self::Hosted => None,
+            Self::InProcess(state) => {
+                let info = adapter_info_to_gpu_info(state.adapter_info().clone());
+                Some(format!("WebGPU: {info}"))
+            }
+        }
     }
 }
 
@@ -108,57 +136,82 @@ impl WebGpuVertexBuffer {
     }
 }
 
-/// Instance-mode vertex buffer for instanced rendering.
+fn rounded_instance_capacity(new_capacity: usize) -> usize {
+    (new_capacity + 127) & !127
+}
+
+fn needs_instance_buffer_allocation(has_buffer: bool, len: usize, capacity: usize) -> bool {
+    len > capacity || (len > 0 && !has_buffer)
+}
+
 /// Uses persistent buffer with Queue::write_buffer instead of per-frame recreation.
 pub struct WebGpuInstanceBuffer {
-    buf: wgpu::Buffer,
+    buf: Option<wgpu::Buffer>,
     capacity: usize,
-    state: Arc<WebGpuState>,
     used_instances: usize,
+    #[cfg(test)]
+    allocations: usize,
 }
 
 impl WebGpuInstanceBuffer {
-    pub fn new(capacity: usize, state: &Arc<WebGpuState>) -> Self {
-        let buf = state.device().create_buffer(&wgpu::BufferDescriptor {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buf: None,
+            capacity,
+            used_instances: 0,
+            #[cfg(test)]
+            allocations: 0,
+        }
+    }
+
+    fn allocate(&self, device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
             size: (capacity * std::mem::size_of::<crate::quad::QuadInstance>())
                 as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
-        Self {
-            buf,
-            capacity,
-            state: Arc::clone(state),
-            used_instances: 0,
-        }
+        })
     }
 
     /// Ensure capacity is at least `new_capacity`. Reallocates buffer if needed.
-    pub fn ensure_capacity(&mut self, new_capacity: usize) {
+    pub fn ensure_capacity(&mut self, device: &wgpu::Device, new_capacity: usize) {
         if new_capacity <= self.capacity {
             return;
         }
-        // Round up to next multiple of 128
-        let new_capacity = (new_capacity + 127) & !127;
-        let new_buf = self.state.device().create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Instance Buffer (resized)"),
-            size: (new_capacity * std::mem::size_of::<crate::quad::QuadInstance>())
-                as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        self.buf = new_buf;
+        // Round up to next multiple of 128, as before.
+        let new_capacity = rounded_instance_capacity(new_capacity);
+        self.buf = Some(self.allocate(device, new_capacity));
+        #[cfg(test)]
+        {
+            self.allocations += 1;
+        }
         self.capacity = new_capacity;
     }
 
-    /// Write instance data to the buffer using Queue::write_buffer.
-    /// Only writes the actually-used portion, not the full capacity.
-    pub fn write_instances(&mut self, instances: &[crate::quad::QuadInstance]) {
-        self.ensure_capacity(instances.len());
-        self.state
-            .queue()
-            .write_buffer(&self.buf, 0, bytemuck::cast_slice(instances));
+    /// Upload instance data. GPU storage is created on the first in-process write.
+    pub fn write_instances(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: &[crate::quad::QuadInstance],
+    ) {
+        if instances.is_empty() {
+            self.used_instances = 0;
+            return;
+        }
+        if needs_instance_buffer_allocation(self.buf.is_some(), instances.len(), self.capacity) {
+            self.ensure_capacity(device, instances.len());
+            if self.buf.is_none() {
+                self.buf = Some(self.allocate(device, self.capacity));
+                #[cfg(test)]
+                {
+                    self.allocations += 1;
+                }
+            }
+        }
+        let buf = self.buf.as_ref().unwrap();
+        queue.write_buffer(buf, 0, bytemuck::cast_slice(instances));
         self.used_instances = instances.len();
     }
 
@@ -166,10 +219,19 @@ impl WebGpuInstanceBuffer {
         self.used_instances
     }
 
-    pub fn buffer(&self) -> &wgpu::Buffer {
-        &self.buf
+    pub fn buffer(&self) -> Option<&wgpu::Buffer> {
+        self.buf.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn allocation_count(&self) -> usize {
+        self.allocations
     }
 }
+
+#[cfg(test)]
+#[path = "instance_buffer_test.rs"]
+mod instance_buffer_gpu_tests;
 
 pub struct MappedQuadsView {
     instances: Vec<crate::quad::QuadInstance>,
@@ -311,12 +373,12 @@ impl TripleVertexBuffer {
     /// Uploads everything accumulated so far this frame to the GPU instance
     /// buffer and returns the buffer plus the instance count for draw
     /// submission.
-    pub fn write_instances_to_gpu(&self) -> (wgpu::Buffer, u32) {
+    pub fn write_instances_to_gpu(&self, state: &WebGpuState) -> (wgpu::Buffer, u32) {
         let instances = self.instances.borrow();
         let mut bufs = self.bufs.borrow_mut();
         let instance_buffer = &mut bufs[self.index.get()].0;
-        instance_buffer.write_instances(&instances);
-        let buffer = wgpu::Buffer::clone(instance_buffer.buffer());
+        instance_buffer.write_instances(state.device(), state.queue(), &instances);
+        let buffer = wgpu::Buffer::clone(instance_buffer.buffer().unwrap());
         (buffer, instance_buffer.used_instances() as u32)
     }
 
@@ -636,6 +698,62 @@ impl RenderState {
 
         *glyph_cache = new_glyph_cache;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod instance_buffer_tests {
+    use super::{
+        needs_instance_buffer_allocation, rounded_instance_capacity, WebGpuInstanceBuffer,
+    };
+    use onlyterm_gpu_render::CpuAtlasTexture;
+
+    #[test]
+    fn lazy_instance_buffer_preserves_capacity_until_first_write() {
+        let buffer = WebGpuInstanceBuffer::new(13);
+        assert!(!needs_instance_buffer_allocation(false, 0, 13));
+        assert!(needs_instance_buffer_allocation(false, 1, 13));
+        assert!(needs_instance_buffer_allocation(false, 14, 13));
+        assert!(!needs_instance_buffer_allocation(true, 13, 13));
+        assert_eq!(buffer.capacity, 13);
+        assert!(buffer.buffer().is_none());
+        assert_eq!(buffer.used_instances(), 0);
+    }
+
+    #[test]
+    fn hosted_context_allocates_cpu_atlas_and_device_free_layer_slots() {
+        let context = super::RenderContext::hosted();
+        assert!(context.webgpu().is_none());
+        let texture_before = context.allocate_texture_atlas(16).unwrap();
+        let texture_after_rebuild = context.allocate_texture_atlas(16).unwrap();
+        assert!(!std::rc::Rc::ptr_eq(
+            &texture_before,
+            &texture_after_rebuild
+        ));
+        assert!(texture_before.downcast_ref::<CpuAtlasTexture>().is_some());
+        assert!(texture_after_rebuild
+            .downcast_ref::<CpuAtlasTexture>()
+            .is_some());
+        assert!(context.renderer_info().is_none());
+        let layer = super::RenderLayer::new(&context, 32, 0).unwrap();
+        assert_eq!(layer.vb.borrow().len(), 3);
+        for vb in layer.vb.borrow().iter() {
+            assert!(vb
+                .bufs
+                .borrow()
+                .iter()
+                .all(|buffer| buffer.webgpu().buffer().is_none()));
+        }
+    }
+
+    #[test]
+    fn growth_rounding_is_unchanged() {
+        assert_eq!(rounded_instance_capacity(14), 128);
+        assert_eq!(rounded_instance_capacity(128), 128);
+        assert_eq!(rounded_instance_capacity(129), 256);
+        let buffer = WebGpuInstanceBuffer::new(13);
+        assert_eq!(buffer.capacity, 13);
+        assert!(buffer.buffer().is_none());
     }
 }
 

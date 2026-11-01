@@ -8,6 +8,8 @@
 //! and talks to this crate through its public API.
 
 pub mod backpressure;
+pub mod cpu_atlas;
+pub use cpu_atlas::CpuAtlasTexture;
 #[path = "host/gpu_tab_host.rs"]
 pub mod gpu_tab_host;
 #[path = "host/process_backend.rs"]
@@ -27,8 +29,8 @@ pub use quad::{
     CornerVertex, QuadInstance, VERTICES_PER_CELL, V_BOT_LEFT, V_BOT_RIGHT, V_TOP_LEFT, V_TOP_RIGHT,
 };
 pub use webgpu::{
-    adapter_info_to_gpu_info, GpuDraw, GpuFrame, ProcessGpuContext, WebGpuState, WebGpuTexture,
-    WindowGpuSurface,
+    adapter_info_to_gpu_info, wire_adapter_info_to_gpu_info, GpuDraw, GpuFrame, ProcessGpuContext,
+    WebGpuState, WebGpuTexture, WindowGpuSurface,
 };
 
 /// A callback the embedder (onlyterm-gui) supplies when registering a window
@@ -170,6 +172,10 @@ pub trait RenderBackend {
     /// Only `HostProcessBackend` returns `Some`; in-process backends never
     /// build wire frames and return `None`.
     fn wire_draw_pool(&self) -> Option<wire::WireDrawPool> {
+        None
+    }
+    /// GPU adapter metadata reported by the active host child, if available.
+    fn renderer_info(&self) -> Option<wire::WireAdapterInfo> {
         None
     }
 }

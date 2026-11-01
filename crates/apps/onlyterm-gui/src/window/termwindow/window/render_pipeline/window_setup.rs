@@ -127,6 +127,7 @@ impl TermWindow {
             config_subscription: None,
             os_parameters: None,
             webgpu: None,
+            render_context: None,
             render_thread: None,
             host_frame_queued_at: None,
             render_thread_hang_handled: Cell::new(false),
@@ -249,6 +250,7 @@ impl TermWindow {
             key_table_state: KeyTableState::default(),
             modal: RefCell::new(None),
             renderer_info: None,
+            renderer_info_cache: Default::default(),
             last_frame_signature: None,
             last_wire_atlas_generation: std::cell::Cell::new(None),
             atlas_generation: 0,
@@ -359,16 +361,8 @@ impl TermWindow {
         // doesn't silently fall through here unhandled.
         debug_assert_eq!(config.front_end, FrontEndSelection::WebGpu);
 
-        // Every window's GPU rendering is hosted in its own `--gpu-tab-host`
-        // child process (`HostProcessBackend`, task #651) -- unconditional,
-        // no config lever, per the decision that a proven, self-healing
-        // respawn (killing the child never takes the parent down, and a
-        // dead child's last frame keeps showing on screen while a
-        // replacement spawns) makes an opt-in toggle pointless. Falling back
-        // to the in-process `RenderThreadHandle` only happens if
-        // `HostProcessBackend::spawn` itself fails outright (no
-        // DirectComposition, spawn failure) -- exactly like falling back to
-        // it used to be the *only* option.
+        // Every window's GPU rendering is hosted in its own child. Only a
+        // failed host spawn selects the in-process GPU fallback.
         let host_process_backend =
             onlyterm_gpu_render::HostProcessBackend::spawn(&window, dimensions);
         if host_process_backend.is_none() {
@@ -378,99 +372,42 @@ impl TermWindow {
             );
         }
 
-        let webgpu = if host_process_backend.is_some() {
-            WebGpuState::new_device_only(&config, gpu_recovery_notifier(&window)).await
-        } else {
-            WebGpuState::new(&window, dimensions, &config, gpu_recovery_notifier(&window)).await
-        };
-        let webgpu = match webgpu {
-            Ok(state) => Arc::new(state),
-            Err(err) => {
-                // WebGpu adapter/device creation can fail in RDP sessions, on
-                // old/software-only GPUs, in VMs without GPU passthrough, or
-                // due to a driver mismatch (eg. opening a new window on a
-                // second monitor driven by a different, weaker GPU adapter,
-                // or a transient driver hiccup). There is no other renderer
-                // left to fall back to (task #414 removed the OpenGL/Mesa
-                // fallback that used to catch this).
-                let message = format!(
-                    "Failed to initialize the WebGpu renderer: {err:#}\n\n\
-                     This can happen in a VM without GPU passthrough, over \
-                     RDP, or due to a graphics driver mismatch. OnlyTerm has \
-                     no other rendering backend to fall back to, so it \
-                     cannot open a window without a working WebGpu \
-                     adapter/device."
-                );
-                // Whether it is safe to tear down the whole process over
-                // this failure, versus just this one window, is decided
-                // right here, right now, rather than from a flag captured
-                // before this `await`ed WebGpu init even started: WebGpu
-                // adapter/device creation can take up to several seconds on
-                // Windows/DX12 (see the comment on `window.show()` above),
-                // and `reconcile_workspace` can have several independent
-                // spawn loops racing each other (eg. session restore with
-                // multiple saved windows, possibly racing a concurrent
-                // `SpawnWindow`). A flag snapshotted ahead of time could go
-                // stale mid-`await` and let two windows both believe they
-                // are the process's only one. `known_windows` only gains an
-                // entry once `record_known_window` runs, at the very end of
-                // a *successful* `new_window`, well after this point -- so
-                // if it is empty right now, this window is genuinely the
-                // only live one, regardless of how many other
-                // `new_window` calls are concurrently in flight but haven't
-                // finished (or have also failed) yet.
-                if !front_end().has_any_known_window() {
-                    // This is the only window the process has; the process
-                    // cannot usefully continue running without it, so fail
-                    // clean the same way any other fatal startup error does:
-                    // log the real cause, show the user a toast notification
-                    // explaining what went wrong, and exit. See
-                    // `crate::terminate_with_error_message` (used
-                    // identically by `crate::terminate_with_error` for other
-                    // fatal startup failures in `main.rs`) -- reusing that
-                    // path here rather than inventing a second one means the
-                    // user sees the exact same failure UX regardless of
-                    // which fatal startup error they hit.
-                    crate::terminate_with_error_message(&message);
-                } else {
-                    // At least one other window is already up and running
-                    // with its own panes/shells/child processes attached.
-                    // Killing the whole process here (as task #414
-                    // originally did, unconditionally) would take all of
-                    // that down over a failure scoped to just this one new
-                    // window. Instead, notify the user with the same
-                    // message a fatal startup failure would have shown, and
-                    // return `Err` so the caller
-                    // (`GuiFrontEnd::reconcile_workspace`'s spawn loop, in
-                    // `frontend.rs`) can clean up only this mux window --
-                    // logging, `mux.kill_window`, and unregistering it --
-                    // exactly like it already does for any other
-                    // `new_window` failure, without touching the rest of the
-                    // process.
-                    //
-                    // `window.show()` above already made the OS window
-                    // (with its "Loading..." placeholder) visible before
-                    // WebGpu init even started, and this window was never
-                    // registered in `known_windows` (that only happens on
-                    // the success path, in `record_known_window` below) --
-                    // so nothing else will ever `close()` it for us. Windows
-                    // does not tear down the HWND on its own just because
-                    // this `TermWindow`/`Window` value is about to be
-                    // dropped (there is no `Drop` impl wired up to
-                    // `DestroyWindow` anywhere in `crates/graphics/window/src`), so
-                    // without an explicit `close()` here the OS window would
-                    // leak on screen forever as an empty, permanently
-                    // "Loading..." window with no `TermWindow` state behind
-                    // it able to ever finish it.
-                    window.close();
-                    onlyterm_toast_notification::persistent_toast_notification(
-                        "OnlyTerm: failed to open window",
-                        &message,
-                    );
-                    return Err(anyhow!(message));
-                }
+        let hosted = host_process_backend.is_some();
+        let (webgpu, render_context) = render_context_for_host(hosted, || async {
+            WebGpuState::new(&window, dimensions, &config, gpu_recovery_notifier(&window))
+                .await
+                .map(Arc::new)
+        })
+        .await
+        .map_err(|err| {
+            let message = format!(
+                "Failed to initialize the in-process WebGpu renderer: {:#}\n\nOnlyTerm requires a working adapter/device for this fallback.",
+                err
+            );
+            // Decide whether this failure can terminate the process here, after the
+            // awaited in-process GPU initialization, rather than capturing a flag before
+            // the await. Adapter/device creation can take several seconds on Windows/DX12,
+            // while workspace reconciliation may have concurrent spawn loops (session
+            // restore and SpawnWindow can race). `known_windows` is updated only at the
+            // end of successful `new_window`; if empty now, no other window is live,
+            // regardless of other in-flight spawns. Reuse the standard fatal-startup
+            // path so the cause is logged and the user gets the normal failure toast.
+            // Otherwise preserve the already-running windows and report/clean up only
+            // this failed mux window, as the spawn loop does for any `new_window` error.
+            // `window.show()` already made the Loading placeholder visible, and this
+            // window was never registered in `known_windows`; nothing else will close it.
+            // Dropping Window does not destroy its HWND, so close explicitly to avoid a
+            // permanent empty Loading window with no TermWindow state behind it.
+            if !front_end().has_any_known_window() {
+                crate::terminate_with_error_message(&message);
             }
-        };
+            window.close();
+            onlyterm_toast_notification::persistent_toast_notification(
+                "OnlyTerm: failed to open window",
+                &message,
+            );
+            anyhow!(message)
+        })?;
 
         {
             let mut myself = tw.borrow_mut();
@@ -491,7 +428,10 @@ impl TermWindow {
                 );
             }
 
-            myself.webgpu.replace(Arc::clone(&webgpu));
+            if let Some(webgpu) = webgpu.as_ref() {
+                myself.webgpu.replace(Arc::clone(webgpu));
+            }
+            myself.render_context = Some(render_context.clone());
 
             // The render backend has to be installed *before* `created()`,
             // which is what builds this window's `RenderState` and with it
@@ -505,9 +445,10 @@ impl TermWindow {
             // of the atlas and drew every glyph with alpha 0 -- a window
             // with correct background colors and no text whatsoever.
             let mut installed_render_thread = false;
-            if let Some(backend) = host_process_backend {
-                myself.render_thread =
-                    Some(Box::new(backend) as Box<dyn onlyterm_gpu_render::RenderBackend>);
+            if hosted {
+                myself.render_thread = Some(Box::new(
+                    host_process_backend.expect("hosted backend selected"),
+                ));
                 installed_render_thread = true;
             } else if config.webgpu_render_thread {
                 let (tx, rx) = std::sync::mpsc::channel();
@@ -517,7 +458,11 @@ impl TermWindow {
                 let submit_started_at = Arc::new(parking_lot::Mutex::new(None));
                 let seed = crate::renderthread::RenderThreadSeed {
                     window: window.clone(),
-                    webgpu: Arc::clone(&webgpu),
+                    webgpu: Arc::clone(
+                        webgpu
+                            .as_ref()
+                            .expect("in-process renderer requires WebGpuState"),
+                    ),
                     rx,
                     in_flight,
                     repaint_pending,
@@ -540,7 +485,7 @@ impl TermWindow {
                 installed_render_thread = myself.render_thread.is_some();
             }
 
-            myself.created(RenderContext(Arc::clone(&webgpu)))?;
+            myself.created(render_context)?;
 
             if installed_render_thread {
                 myself.schedule_render_thread_hang_check(&window);

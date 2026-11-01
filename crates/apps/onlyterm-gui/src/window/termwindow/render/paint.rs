@@ -27,6 +27,9 @@ fn atlas_retry_size(pass: usize, current: usize, requested: usize) -> usize {
 
 impl crate::TermWindow {
     pub fn paint_impl(&mut self, frame: &mut RenderFrame) {
+        if self.render_state.is_none() {
+            return;
+        }
         // On HostProcess success, in-flight -> idle means Presented ack;
         // failure/teardown also release it. Sampling here includes the
         // event-loop delay to this paint, so it is a completion upper bound.

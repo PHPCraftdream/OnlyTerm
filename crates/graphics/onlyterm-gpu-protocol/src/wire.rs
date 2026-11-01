@@ -35,7 +35,9 @@
 
 use crate::{QuadInstance, ShaderUniform};
 use parking_lot::Mutex;
+use std::convert::{TryFrom, TryInto};
 use std::io::{self, Read, Write};
+
 use std::sync::Arc;
 
 /// A thread-safe pool of reusable `Vec<QuadInstance>` buffers, shared between
@@ -93,29 +95,44 @@ pub fn pool_return_draws(pool: &WireDrawPool, draws: &mut Vec<Vec<QuadInstance>>
     }
 }
 
-#[repr(u32)]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WireMessageKind {
-    Frame = 1,
-    Resize = 2,
-    Shutdown = 3,
-    AttachSurface = 4,
-    Presented = 5,
-    Fatal = 6,
-    Failed = 7,
+    Frame,
+    Resize,
+    Shutdown,
+    AttachSurface,
+    Presented,
+    Fatal,
+    Failed,
+    AdapterInfo,
+    Unknown(u32),
 }
 
 impl WireMessageKind {
-    fn from_u32(v: u32) -> Option<Self> {
+    fn to_u32(self) -> u32 {
+        match self {
+            Self::Frame => 1,
+            Self::Resize => 2,
+            Self::Shutdown => 3,
+            Self::AttachSurface => 4,
+            Self::Presented => 5,
+            Self::Fatal => 6,
+            Self::Failed => 7,
+            Self::AdapterInfo => 8,
+            Self::Unknown(value) => value,
+        }
+    }
+    fn from_u32(v: u32) -> Self {
         match v {
-            1 => Some(Self::Frame),
-            2 => Some(Self::Resize),
-            3 => Some(Self::Shutdown),
-            4 => Some(Self::AttachSurface),
-            5 => Some(Self::Presented),
-            6 => Some(Self::Fatal),
-            7 => Some(Self::Failed),
-            _ => None,
+            1 => Self::Frame,
+            2 => Self::Resize,
+            3 => Self::Shutdown,
+            4 => Self::AttachSurface,
+            5 => Self::Presented,
+            6 => Self::Fatal,
+            7 => Self::Failed,
+            8 => Self::AdapterInfo,
+            value => Self::Unknown(value),
         }
     }
 }
@@ -155,6 +172,122 @@ struct WireAtlasUpdateHeader {
     /// (always `width * height * 4` for the rgba32 layout `BitmapImage`
     /// uses, but carried explicitly so the reader never has to assume it).
     byte_len: u32,
+}
+
+pub const MAX_ADAPTER_INFO_STRING_BYTES: usize = 4096;
+pub const MAX_UNKNOWN_MESSAGE_BYTES: usize = 1024 * 1024;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WireAdapterInfo {
+    pub name: String,
+    pub device_type: String,
+    pub backend: String,
+    pub driver: String,
+    pub driver_info: String,
+    pub vendor: u32,
+    pub device: u32,
+}
+
+fn put_string(body: &mut Vec<u8>, value: &str) -> io::Result<()> {
+    if value.len() > MAX_ADAPTER_INFO_STRING_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "adapter string exceeds wire limit",
+        ));
+    }
+    let len = u32::try_from(value.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "adapter string length overflow",
+        )
+    })?;
+    body.extend_from_slice(&len.to_le_bytes());
+    body.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+pub fn write_adapter_info(w: &mut impl Write, info: &WireAdapterInfo) -> io::Result<()> {
+    let mut body = Vec::new();
+    for value in [
+        &info.name,
+        &info.device_type,
+        &info.backend,
+        &info.driver,
+        &info.driver_info,
+    ] {
+        put_string(&mut body, value)?;
+    }
+    body.extend_from_slice(&info.vendor.to_le_bytes());
+    body.extend_from_slice(&info.device.to_le_bytes());
+    write_message(w, WireMessageKind::AdapterInfo, &body)
+}
+
+fn parse_adapter_info(body: &[u8]) -> io::Result<WireAdapterInfo> {
+    let mut cursor = 0usize;
+    let mut fields = Vec::with_capacity(5);
+    for _ in 0..5 {
+        let len_end = cursor.checked_add(4).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "adapter string length overflow")
+        })?;
+        let len_bytes = body.get(cursor..len_end).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "truncated adapter string length",
+            )
+        })?;
+        let len = u32::from_le_bytes(len_bytes.try_into().map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "invalid adapter string length")
+        })?) as usize;
+        cursor = len_end;
+        if len > MAX_ADAPTER_INFO_STRING_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "adapter string exceeds wire limit",
+            ));
+        }
+        let end = cursor.checked_add(len).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "adapter string length overflow")
+        })?;
+        let bytes = body.get(cursor..end).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "truncated adapter string")
+        })?;
+        fields.push(String::from_utf8(bytes.to_vec()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "adapter string is not UTF-8")
+        })?);
+        cursor = end;
+    }
+    if body.len().saturating_sub(cursor) != 8 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid adapter info tail",
+        ));
+    }
+    let vendor_bytes = body
+        .get(cursor..cursor + 4)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid vendor"))?;
+    let device_bytes = body
+        .get(cursor + 4..cursor + 8)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid device"))?;
+    let vendor = u32::from_le_bytes(
+        vendor_bytes
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid vendor"))?,
+    );
+    let device = u32::from_le_bytes(
+        device_bytes
+            .try_into()
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid device"))?,
+    );
+    let mut fields = fields.into_iter();
+    Ok(WireAdapterInfo {
+        name: fields.next().unwrap(),
+        device_type: fields.next().unwrap(),
+        backend: fields.next().unwrap(),
+        driver: fields.next().unwrap(),
+        driver_info: fields.next().unwrap(),
+        vendor,
+        device,
+    })
 }
 
 #[repr(C)]
@@ -270,9 +403,10 @@ pub struct WireFrame {
 }
 
 fn write_message(w: &mut impl Write, kind: WireMessageKind, body: &[u8]) -> io::Result<()> {
-    let len = body.len() as u32;
+    let len = u32::try_from(body.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "message length overflow"))?;
     w.write_all(&len.to_le_bytes())?;
-    w.write_all(&(kind as u32).to_le_bytes())?;
+    w.write_all(&kind.to_u32().to_le_bytes())?;
     w.write_all(body)?;
     Ok(())
 }
@@ -382,6 +516,8 @@ pub enum WireMessage {
     Presented(WirePresented),
     Failed(WireFailed),
     Fatal(WireFatal),
+    AdapterInfo(WireAdapterInfo),
+    Unknown { kind: u32, body: Vec<u8> },
 }
 
 /// Borrowed counterpart of [`WireMessage`], produced by
@@ -395,8 +531,19 @@ pub enum WireMessageRef<'a> {
     Presented(WirePresented),
     Failed(WireFailed),
     Fatal(WireFatal),
+    AdapterInfo(WireAdapterInfo),
+    Unknown { kind: u32, body: &'a [u8] },
 }
 
+fn read_pod<T: bytemuck::Pod>(body: &[u8]) -> io::Result<T> {
+    if body.len() != std::mem::size_of::<T>() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid fixed-size wire payload",
+        ));
+    }
+    Ok(bytemuck::pod_read_unaligned(body))
+}
 fn read_exact_vec(r: &mut impl Read, len: usize) -> io::Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
     r.read_exact(&mut buf)?;
@@ -413,11 +560,23 @@ fn read_header(r: &mut impl Read) -> io::Result<Option<(usize, WireMessageKind)>
         Err(e) => return Err(e),
     }
     let len = u32::from_le_bytes(len_buf) as usize;
-
     let mut kind_buf = [0u8; 4];
     r.read_exact(&mut kind_buf)?;
-    let kind = WireMessageKind::from_u32(u32::from_le_bytes(kind_buf))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "unknown wire message kind"))?;
+    let kind = WireMessageKind::from_u32(u32::from_le_bytes(kind_buf));
+    if matches!(kind, WireMessageKind::Unknown(_)) && len > MAX_UNKNOWN_MESSAGE_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unknown message exceeds wire limit",
+        ));
+    }
+    if matches!(kind, WireMessageKind::AdapterInfo)
+        && len > 5 * (4 + MAX_ADAPTER_INFO_STRING_BYTES) + 8
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "adapter info exceeds wire limit",
+        ));
+    }
     Ok(Some((len, kind)))
 }
 
@@ -439,21 +598,31 @@ pub fn read_message_into<'a>(
     let Some((len, kind)) = read_header(r)? else {
         return Ok(None);
     };
-
     body.clear();
     body.resize(len, 0);
     r.read_exact(body)?;
 
     Ok(Some(match kind {
-        WireMessageKind::Shutdown => WireMessageRef::Shutdown,
-        WireMessageKind::Resize => WireMessageRef::Resize(*bytemuck::from_bytes(body)),
-        WireMessageKind::Frame => WireMessageRef::Frame(parse_frame_ref(body)?),
-        WireMessageKind::AttachSurface => {
-            WireMessageRef::AttachSurface(*bytemuck::from_bytes(body))
+        WireMessageKind::Shutdown => {
+            if !body.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid Shutdown payload",
+                ));
+            }
+            WireMessageRef::Shutdown
         }
-        WireMessageKind::Presented => WireMessageRef::Presented(*bytemuck::from_bytes(body)),
-        WireMessageKind::Fatal => WireMessageRef::Fatal(*bytemuck::from_bytes(body)),
-        WireMessageKind::Failed => WireMessageRef::Failed(*bytemuck::from_bytes(body)),
+        WireMessageKind::Resize => WireMessageRef::Resize(read_pod(body)?),
+        WireMessageKind::Frame => WireMessageRef::Frame(parse_frame_ref(body)?),
+        WireMessageKind::AttachSurface => WireMessageRef::AttachSurface(read_pod(body)?),
+        WireMessageKind::Presented => WireMessageRef::Presented(read_pod(body)?),
+        WireMessageKind::Fatal => WireMessageRef::Fatal(read_pod(body)?),
+        WireMessageKind::Failed => WireMessageRef::Failed(read_pod(body)?),
+        WireMessageKind::AdapterInfo => WireMessageRef::AdapterInfo(parse_adapter_info(body)?),
+        WireMessageKind::Unknown(kind) => WireMessageRef::Unknown {
+            kind,
+            body: &body[..],
+        },
     }))
 }
 
@@ -468,30 +637,25 @@ pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
 
     let body = read_exact_vec(r, len)?;
 
-    match kind {
-        WireMessageKind::Shutdown => Ok(Some(WireMessage::Shutdown)),
-        WireMessageKind::Resize => {
-            let payload: WireResize = *bytemuck::from_bytes(&body);
-            Ok(Some(WireMessage::Resize(payload)))
+    Ok(Some(match kind {
+        WireMessageKind::Shutdown => {
+            if !body.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid Shutdown payload",
+                ));
+            }
+            WireMessage::Shutdown
         }
-        WireMessageKind::Frame => Ok(Some(WireMessage::Frame(parse_frame(&body)?))),
-        WireMessageKind::AttachSurface => {
-            let payload: WireAttachSurface = *bytemuck::from_bytes(&body);
-            Ok(Some(WireMessage::AttachSurface(payload)))
-        }
-        WireMessageKind::Presented => {
-            let payload: WirePresented = *bytemuck::from_bytes(&body);
-            Ok(Some(WireMessage::Presented(payload)))
-        }
-        WireMessageKind::Fatal => {
-            let payload: WireFatal = *bytemuck::from_bytes(&body);
-            Ok(Some(WireMessage::Fatal(payload)))
-        }
-        WireMessageKind::Failed => {
-            let payload: WireFailed = *bytemuck::from_bytes(&body);
-            Ok(Some(WireMessage::Failed(payload)))
-        }
-    }
+        WireMessageKind::Resize => WireMessage::Resize(read_pod(&body)?),
+        WireMessageKind::Frame => WireMessage::Frame(parse_frame(&body)?),
+        WireMessageKind::AttachSurface => WireMessage::AttachSurface(read_pod(&body)?),
+        WireMessageKind::Presented => WireMessage::Presented(read_pod(&body)?),
+        WireMessageKind::Fatal => WireMessage::Fatal(read_pod(&body)?),
+        WireMessageKind::Failed => WireMessage::Failed(read_pod(&body)?),
+        WireMessageKind::AdapterInfo => WireMessage::AdapterInfo(parse_adapter_info(&body)?),
+        WireMessageKind::Unknown(kind) => WireMessage::Unknown { kind, body },
+    }))
 }
 
 /// Parses a frame body into borrowed views over that same buffer, without
@@ -740,6 +904,34 @@ mod tests {
     }
 
     #[test]
+    fn read_pod_accepts_misaligned_payload_and_rejects_wrong_size() {
+        let payload = WirePresented {
+            seq: 0x1234_5678_9abc_def0,
+        };
+        let bytes = bytemuck::bytes_of(&payload);
+        let mut storage = vec![0u8; bytes.len() + std::mem::align_of::<WirePresented>()];
+        let base = storage.as_ptr() as usize;
+        let offset = (0..std::mem::align_of::<WirePresented>())
+            .find(|offset| (base + offset) % std::mem::align_of::<WirePresented>() != 0)
+            .expect("WirePresented alignment must allow a misaligned address");
+        storage[offset..offset + bytes.len()].copy_from_slice(bytes);
+        let misaligned = &storage[offset..offset + bytes.len()];
+        assert_ne!(
+            misaligned.as_ptr() as usize % std::mem::align_of::<WirePresented>(),
+            0,
+            "test payload must be misaligned"
+        );
+        let decoded: WirePresented = read_pod(misaligned).unwrap();
+        assert_eq!(decoded.seq, payload.seq);
+
+        let err = match read_pod::<WirePresented>(&misaligned[..misaligned.len() - 1]) {
+            Err(err) => err,
+            Ok(_) => panic!("read_pod accepted a payload with the wrong size"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
     fn resize_round_trips_through_the_wire() {
         let mut buf = Vec::new();
         write_resize(&mut buf, 640, 480).unwrap();
@@ -763,6 +955,389 @@ mod tests {
         assert!(matches!(decoded, WireMessage::Shutdown));
     }
 
+    #[test]
+    fn wire_message_kind_tags_match_the_original_and_adapter_extension() {
+        let expected = [
+            (WireMessageKind::Frame, 1u32),
+            (WireMessageKind::Resize, 2),
+            (WireMessageKind::Shutdown, 3),
+            (WireMessageKind::AttachSurface, 4),
+            (WireMessageKind::Presented, 5),
+            (WireMessageKind::Fatal, 6),
+            (WireMessageKind::Failed, 7),
+            (WireMessageKind::AdapterInfo, 8),
+        ];
+        for (kind, tag) in expected {
+            let mut bytes = Vec::new();
+            write_message(&mut bytes, kind, &[]).unwrap();
+            assert_eq!(&bytes[..4], &[0, 0, 0, 0]);
+            assert_eq!(&bytes[4..8], &tag.to_le_bytes());
+        }
+    }
+
+    #[test]
+    fn adapter_payload_bounds_are_enforced_by_both_readers() {
+        let mut malformed = Vec::new();
+        write_message(
+            &mut malformed,
+            WireMessageKind::AdapterInfo,
+            &[1, 0, 0, 0, 0xff],
+        )
+        .unwrap();
+        let err = match read_message(&mut malformed.as_slice()) {
+            Err(err) => err,
+            Ok(_) => panic!("owned reader accepted invalid UTF-8"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let mut malformed = Vec::new();
+        write_message(
+            &mut malformed,
+            WireMessageKind::AdapterInfo,
+            &[1, 0, 0, 0, 0xff],
+        )
+        .unwrap();
+        let mut body = Vec::new();
+        let err = match read_message_into(&mut malformed.as_slice(), &mut body) {
+            Err(err) => err,
+            Ok(_) => panic!("borrowed reader accepted invalid UTF-8"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        let mut body = Vec::new();
+
+        let field_len = (MAX_ADAPTER_INFO_STRING_BYTES + 1) as u32;
+        let mut oversized = Vec::new();
+        oversized.extend_from_slice(&field_len.to_le_bytes());
+        oversized.extend(std::iter::repeat(b'x').take(MAX_ADAPTER_INFO_STRING_BYTES + 1));
+        for _ in 0..4 {
+            oversized.extend_from_slice(&0u32.to_le_bytes());
+        }
+        oversized.extend_from_slice(&[0; 8]);
+        let mut encoded = Vec::new();
+        write_message(&mut encoded, WireMessageKind::AdapterInfo, &oversized).unwrap();
+        let err = match read_message(&mut encoded.as_slice()) {
+            Err(err) => err,
+            Ok(_) => panic!("owned reader accepted oversized adapter string"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let err = match read_message_into(&mut encoded.as_slice(), &mut body) {
+            Err(err) => err,
+            Ok(_) => panic!("borrowed reader accepted oversized adapter string"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        let mut truncated = Vec::new();
+        write_message(
+            &mut truncated,
+            WireMessageKind::AdapterInfo,
+            &[2, 0, 0, 0, b'x'],
+        )
+        .unwrap();
+        let err = match read_message(&mut truncated.as_slice()) {
+            Err(err) => err,
+            Ok(_) => panic!("owned reader accepted truncated adapter string"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let err = match read_message_into(&mut truncated.as_slice(), &mut body) {
+            Err(err) => err,
+            Ok(_) => panic!("borrowed reader accepted truncated adapter string"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn unknown_message_bounds_are_enforced_by_both_readers() {
+        let mut header = Vec::new();
+        header.extend_from_slice(&((MAX_UNKNOWN_MESSAGE_BYTES + 1) as u32).to_le_bytes());
+        header.extend_from_slice(&99u32.to_le_bytes());
+        let err = match read_message(&mut header.as_slice()) {
+            Err(err) => err,
+            Ok(_) => panic!("owned reader accepted oversized unknown kind"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let err = match read_message_into(&mut header.as_slice(), &mut Vec::new()) {
+            Err(err) => err,
+            Ok(_) => panic!("borrowed reader accepted oversized unknown kind"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        let oversized = vec![0u8; MAX_UNKNOWN_MESSAGE_BYTES + 1];
+        let mut encoded = Vec::new();
+        write_message(&mut encoded, WireMessageKind::Unknown(99), &oversized).unwrap();
+        let err = match read_message(&mut encoded.as_slice()) {
+            Err(err) => err,
+            Ok(_) => panic!("owned reader accepted oversized unknown payload"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let err = match read_message_into(&mut encoded.as_slice(), &mut Vec::new()) {
+            Err(err) => err,
+            Ok(_) => panic!("borrowed reader accepted oversized unknown payload"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+
+        let mut bounded = Vec::new();
+        write_message(
+            &mut bounded,
+            WireMessageKind::Unknown(99),
+            &vec![0x5a; MAX_UNKNOWN_MESSAGE_BYTES],
+        )
+        .unwrap();
+        let mut owned_reader = bounded.as_slice();
+        match read_message(&mut owned_reader).unwrap().unwrap() {
+            WireMessage::Unknown { kind, body } => {
+                assert_eq!(kind, 99);
+                assert_eq!(body.len(), MAX_UNKNOWN_MESSAGE_BYTES);
+                assert!(body.iter().all(|byte| *byte == 0x5a));
+            }
+            _ => panic!("expected bounded Unknown"),
+        }
+        let mut borrowed_reader = bounded.as_slice();
+        match read_message_into(&mut borrowed_reader, &mut Vec::new())
+            .unwrap()
+            .unwrap()
+        {
+            WireMessageRef::Unknown { kind, body } => {
+                assert_eq!(kind, 99);
+                assert_eq!(body.len(), MAX_UNKNOWN_MESSAGE_BYTES);
+                assert!(body.iter().all(|byte| *byte == 0x5a));
+            }
+            _ => panic!("expected bounded Unknown"),
+        }
+    }
+
+    #[test]
+    fn adapter_and_unknown_interleaving_preserves_frames_on_both_readers() {
+        let mut encoded = Vec::new();
+        write_presented(&mut encoded, 41).unwrap();
+        write_adapter_info(
+            &mut encoded,
+            &WireAdapterInfo {
+                name: "GPU 東京".into(),
+                vendor: 7,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        write_message(
+            &mut encoded,
+            WireMessageKind::Unknown(99),
+            b"future payload",
+        )
+        .unwrap();
+        write_resize(&mut encoded, 800, 600).unwrap();
+
+        let mut reader = encoded.as_slice();
+        match read_message(&mut reader).unwrap().unwrap() {
+            WireMessage::Presented(value) => assert_eq!(value.seq, 41),
+            _ => panic!("expected Presented"),
+        }
+        match read_message(&mut reader).unwrap().unwrap() {
+            WireMessage::AdapterInfo(value) => {
+                assert_eq!(value.name, "GPU 東京");
+                assert_eq!(value.vendor, 7);
+            }
+            _ => panic!("expected AdapterInfo"),
+        }
+        assert!(
+            matches!(read_message(&mut reader).unwrap().unwrap(), WireMessage::Unknown { kind: 99, body } if body == b"future payload")
+        );
+        match read_message(&mut reader).unwrap().unwrap() {
+            WireMessage::Resize(value) => {
+                assert_eq!(value.width, 800);
+                assert_eq!(value.height, 600);
+            }
+            _ => panic!("expected Resize"),
+        }
+        assert!(reader.is_empty());
+
+        let mut reader = encoded.as_slice();
+        let mut body = Vec::new();
+        match read_message_into(&mut reader, &mut body).unwrap().unwrap() {
+            WireMessageRef::Presented(value) => assert_eq!(value.seq, 41),
+            _ => panic!("expected Presented"),
+        }
+        match read_message_into(&mut reader, &mut body).unwrap().unwrap() {
+            WireMessageRef::AdapterInfo(value) => {
+                assert_eq!(value.name, "GPU 東京");
+                assert_eq!(value.vendor, 7);
+            }
+            _ => panic!("expected AdapterInfo"),
+        }
+        match read_message_into(&mut reader, &mut body).unwrap().unwrap() {
+            WireMessageRef::Unknown { kind, body } => {
+                assert_eq!(kind, 99);
+                assert_eq!(body, b"future payload");
+            }
+            _ => panic!("expected Unknown"),
+        }
+        match read_message_into(&mut reader, &mut body).unwrap().unwrap() {
+            WireMessageRef::Resize(value) => {
+                assert_eq!(value.width, 800);
+                assert_eq!(value.height, 600);
+            }
+            _ => panic!("expected Resize"),
+        }
+        assert!(reader.is_empty());
+    }
+
+    #[test]
+    fn fragmented_reads_decode_complete_messages_and_following_frames() {
+        struct Fragmented<'a> {
+            bytes: &'a [u8],
+            chunk: usize,
+        }
+        impl Read for Fragmented<'_> {
+            fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+                let count = out.len().min(self.chunk).min(self.bytes.len());
+                out[..count].copy_from_slice(&self.bytes[..count]);
+                self.bytes = &self.bytes[count..];
+                Ok(count)
+            }
+        }
+
+        let mut encoded = Vec::new();
+        write_adapter_info(
+            &mut encoded,
+            &WireAdapterInfo {
+                name: "fragmented 🧪".into(),
+                vendor: 17,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        write_presented(&mut encoded, 1234).unwrap();
+
+        let mut reader = Fragmented {
+            bytes: &encoded,
+            chunk: 2,
+        };
+        match read_message(&mut reader).unwrap().unwrap() {
+            WireMessage::AdapterInfo(info) => {
+                assert_eq!(info.name, "fragmented 🧪");
+                assert_eq!(info.vendor, 17);
+            }
+            _ => panic!("expected AdapterInfo"),
+        }
+        match read_message(&mut reader).unwrap().unwrap() {
+            WireMessage::Presented(presented) => assert_eq!(presented.seq, 1234),
+            _ => panic!("expected Presented"),
+        }
+        assert!(read_message(&mut reader).unwrap().is_none());
+    }
+
+    #[test]
+    fn adapter_info_writer_rejects_oversized_string() {
+        let info = WireAdapterInfo {
+            name: "x".repeat(MAX_ADAPTER_INFO_STRING_BYTES + 1),
+            ..Default::default()
+        };
+        let err = match write_adapter_info(&mut Vec::new(), &info) {
+            Err(err) => err,
+            Ok(()) => panic!("oversized adapter string accepted by writer"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn adapter_info_round_trips_empty_unicode_and_bounded_strings() {
+        for info in [
+            WireAdapterInfo::default(),
+            WireAdapterInfo {
+                name: "GPU 🖥️ 東京".to_string(),
+                device_type: "DiscreteGpu".into(),
+                backend: "Vulkan".into(),
+                driver: "драйвер".into(),
+                driver_info: "版本".into(),
+                vendor: 0x1234,
+                device: 0xabcd,
+            },
+            WireAdapterInfo {
+                name: "x".repeat(MAX_ADAPTER_INFO_STRING_BYTES),
+                ..Default::default()
+            },
+        ] {
+            let mut bytes = Vec::new();
+            write_adapter_info(&mut bytes, &info).unwrap();
+            let decoded = read_message(&mut bytes.as_slice()).unwrap().unwrap();
+            let WireMessage::AdapterInfo(decoded) = decoded else {
+                panic!("expected adapter info");
+            };
+            assert_eq!(decoded, info);
+        }
+    }
+
+    #[test]
+    fn adapter_info_rejects_malformed_and_truncated_payloads() {
+        let mut too_long = Vec::new();
+        too_long.extend_from_slice(&((MAX_ADAPTER_INFO_STRING_BYTES + 1) as u32).to_le_bytes());
+        let mut encoded = Vec::new();
+        write_message(&mut encoded, WireMessageKind::AdapterInfo, &too_long).unwrap();
+        let err = match read_message(&mut encoded.as_slice()) {
+            Err(err) => err,
+            Ok(_) => panic!("oversized adapter string accepted"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        let mut encoded = Vec::new();
+        write_message(
+            &mut encoded,
+            WireMessageKind::AdapterInfo,
+            &[2, 0, 0, 0, b'x'],
+        )
+        .unwrap();
+        assert_eq!(
+            read_message(&mut encoded.as_slice()).err().unwrap().kind(),
+            io::ErrorKind::InvalidData
+        );
+        let mut encoded = Vec::new();
+        write_message(
+            &mut encoded,
+            WireMessageKind::AdapterInfo,
+            &[1, 0, 0, 0, 0xff],
+        )
+        .unwrap();
+        assert_eq!(
+            read_message(&mut encoded.as_slice()).err().unwrap().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn adapter_info_and_unknown_kind_preserve_interleaved_frames() {
+        let mut bytes = Vec::new();
+        write_presented(&mut bytes, 8).unwrap();
+        write_adapter_info(
+            &mut bytes,
+            &WireAdapterInfo {
+                name: "adapter".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        write_message(&mut bytes, WireMessageKind::Unknown(99), b"future").unwrap();
+        write_failed(&mut bytes, 9).unwrap();
+        let mut cursor = bytes.as_slice();
+        assert!(matches!(
+            read_message(&mut cursor).unwrap(),
+            Some(WireMessage::Presented(_))
+        ));
+        assert!(matches!(
+            read_message(&mut cursor).unwrap(),
+            Some(WireMessage::AdapterInfo(_))
+        ));
+        assert!(
+            matches!(read_message(&mut cursor).unwrap(), Some(WireMessage::Unknown { kind: 99, body }) if body == b"future")
+        );
+        assert!(matches!(
+            read_message(&mut cursor).unwrap(),
+            Some(WireMessage::Failed(_))
+        ));
+        let mut cursor = bytes.as_slice();
+        let mut body = Vec::new();
+        for _ in 0..4 {
+            read_message_into(&mut cursor, &mut body).unwrap().unwrap();
+        }
+        assert!(cursor.is_empty());
+    }
     #[test]
     fn a_clean_eof_before_any_message_reads_as_none() {
         let mut cursor = std::io::Cursor::new(Vec::<u8>::new());

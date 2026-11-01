@@ -6,6 +6,9 @@ use std::sync::Weak;
 
 impl RenderBackend for HostProcessBackend {
     fn frame_form(&self) -> FrameForm {
+        if self.shared.demoted.load(Ordering::Acquire) {
+            return FrameForm::InProcess;
+        }
         FrameForm::Wire {
             full_resync: self.shared.needs_full_resync.swap(false, Ordering::AcqRel),
         }
@@ -32,6 +35,9 @@ impl RenderBackend for HostProcessBackend {
     }
 
     fn send_resize(&self, dims: Dimensions) {
+        if self.shared.demoted.load(Ordering::Acquire) {
+            return;
+        }
         *self.shared.dimensions.lock() = dims;
         if let Some(current) = self.shared.current.lock().as_ref() {
             current
@@ -45,6 +51,9 @@ impl RenderBackend for HostProcessBackend {
     }
 
     fn send_frame(&self, frame: SubmittableFrame) {
+        if self.shared.demoted.load(Ordering::Acquire) {
+            return;
+        }
         let SubmittableFrame::Wire(frame) = frame else {
             log::error!(
                 "HostProcessBackend::send_frame received an InProcess frame; dropping it \
@@ -93,6 +102,10 @@ impl RenderBackend for HostProcessBackend {
         }
     }
 
+    fn renderer_info(&self) -> Option<wire::WireAdapterInfo> {
+        HostProcessBackend::renderer_info(self)
+    }
+
     fn is_in_flight(&self) -> bool {
         in_flight_is_set(&self.shared.in_flight)
     }
@@ -113,6 +126,9 @@ impl RenderBackend for HostProcessBackend {
     }
 
     fn render_thread_is_hung(&self) -> bool {
+        if self.shared.demoted.load(Ordering::Acquire) {
+            return false;
+        }
         // A respawn already in flight resolves its own stall: the backoff
         // window (up to 1s) routinely exceeds how long ago the last frame
         // was sent, and the supervisor piling a full renderer rebuild on

@@ -333,8 +333,23 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                 instance_buffers = InstanceBufferPool::new();
                 match attach_surface(&config, attach) {
                     Ok((new_state, new_dimensions)) => {
+                        let info = new_state.adapter_info();
+                        let adapter = wire::WireAdapterInfo {
+                            name: info.name.clone(),
+                            device_type: format!("{:?}", info.device_type),
+                            backend: format!("{:?}", info.backend),
+                            driver: info.driver.clone(),
+                            driver_info: info.driver_info.clone(),
+                            vendor: info.vendor,
+                            device: info.device,
+                        };
                         state = Some(new_state);
                         dimensions = new_dimensions;
+                        if let Err(err) = wire::write_adapter_info(&mut writer, &adapter) {
+                            log::error!("gpu-tab-host: failed to send adapter info: {err}");
+                            break;
+                        }
+                        writer.flush()?;
                         log::info!(
                             "gpu-tab-host: attached to a new surface generation ({}x{})",
                             dimensions.pixel_width,
@@ -511,12 +526,12 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
             }
             wire::WireMessageRef::Presented(_)
             | wire::WireMessageRef::Failed(_)
-            | wire::WireMessageRef::Fatal(_) => {
-                // These only ever flow child->parent; seeing one here would
-                // mean the parent's writer and this child's reader got
-                // wired to the wrong pipes.
-                log::error!(
-                    "gpu-tab-host: received a child->parent-only message on stdin; ignoring"
+            | wire::WireMessageRef::Fatal(_)
+            | wire::WireMessageRef::AdapterInfo(_)
+            | wire::WireMessageRef::Unknown { .. } => {
+                // Child->parent and future kinds are consumed without disrupting framing.
+                log::debug!(
+                    "gpu-tab-host: ignoring child->parent-only or unknown message on stdin"
                 );
             }
         }

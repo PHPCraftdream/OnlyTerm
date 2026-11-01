@@ -332,6 +332,9 @@ enum EventState {
     InProgressWithQueued(Option<PaneId>),
 }
 
+#[path = "window/renderer_info_cache.rs"]
+mod renderer_info_cache;
+
 pub struct TermWindow {
     pub window: Option<Window>,
     pub config: ConfigHandle,
@@ -413,6 +416,8 @@ pub struct TermWindow {
     current_mouse_capture: Option<MouseCapture>,
 
     renderer_info: Option<String>,
+    renderer_info_cache:
+        renderer_info_cache::RendererInfoCache<onlyterm_gpu_render::wire::WireAdapterInfo>,
 
     /// Keeps track of double and triple clicks
     last_mouse_click: Option<LastMouseClick>,
@@ -537,6 +542,7 @@ pub struct TermWindow {
     connection_name: String,
 
     webgpu: Option<Arc<WebGpuState>>,
+    render_context: Option<RenderContext>,
     // `Box<dyn RenderBackend>`, not the concrete `RenderThreadHandle`: see
     // that trait's doc comment for why every call site here goes through it
     // instead of the concrete type.

@@ -453,6 +453,8 @@ impl super::TermWindow {
             rt.send_resize(dims);
         } else if let Some(webgpu) = self.webgpu.as_mut() {
             webgpu.resize(dims);
+        } else if self.render_context.is_some() {
+            // CPU-hosted render state has no GUI surface to resize.
         }
     }
 

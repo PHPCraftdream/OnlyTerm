@@ -1,8 +1,8 @@
 //! Memory counters for the per-PID log, shared by the GUI process and the
 //! `--gpu-tab-host` child so both report the same fields the same way.
 //!
-//! Every window has a device in the GUI process and another in its child, so
-//! a number from one of them says nothing about the other.
+//! Each hosted window's GPU device and GPU memory live in its child; the GUI
+//! process creates a device only for in-process fallback windows.
 
 use crate::WebGpuState;
 
@@ -61,6 +61,13 @@ impl DeviceMemory {
             adapter: format!("{} ({:?}, {:?})", info.name, info.device_type, info.backend),
             blocks_reserved: report.as_ref().map(|r| r.total_reserved_bytes),
             blocks_used: report.as_ref().map(|r| r.total_allocated_bytes),
+        }
+    }
+    pub fn from_host_adapter(info: &crate::wire::WireAdapterInfo) -> Self {
+        Self {
+            adapter: format!("{} ({}, {})", info.name, info.device_type, info.backend),
+            blocks_reserved: None,
+            blocks_used: None,
         }
     }
 }

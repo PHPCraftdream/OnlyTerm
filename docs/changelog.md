@@ -16,12 +16,13 @@ Releases are named using the date, time and git commit hash.
 
 #### Added
 
+* GUI windows hosted by a GPU child no longer create a GPU device in the GUI process; a local device is created only if host startup fails or rendering is demoted to in-process fallback.
 * The log says which video adapter a process runs on: a `startup: GPU adapter`
   line when the device is created, and `gpu_adapter` in the `memory:` line.
 * A window's GPU-host child (`gpu-tab-host`) writes its own `memory:` line
   every 10 minutes: working set, committed private bytes, video memory blocks,
-  atlas size and instance buffers. Each window has a device in the GUI process
-  and another in the child, and the GUI process's line covers only its own.
+  atlas size and instance buffers. Hosted windows no longer create GUI-process
+  GPU devices; only a failed host spawn or later demotion/rebuild uses one.
 
 #### Changed
 

@@ -63,7 +63,6 @@ impl TermWindow {
                 state.mouse_terminal_coords.take();
             }
         }
-
         // Reset the cursor blink phase
         self.prev_cursor.bump();
 
@@ -73,16 +72,62 @@ impl TermWindow {
         if let Some(pane) = self.get_active_pane_or_overlay() {
             pane.focus_changed(focused);
         }
-
         self.update_title();
+    }
+
+    pub(super) fn refresh_renderer_info(&mut self) {
+        let hosted_info = self
+            .render_thread
+            .as_ref()
+            .and_then(|backend| backend.renderer_info());
+        let context_identity = self
+            .render_state
+            .as_ref()
+            .and_then(|state| state.context.webgpu())
+            .map(|state| Arc::as_ptr(state) as usize);
+        let render_state = &self.render_state;
+        let unavailable = self
+            .render_state
+            .as_ref()
+            .is_some_and(|state| state.context.webgpu().is_none())
+            || self.webgpu.is_none();
+        let source =
+            super::renderer_info_cache::select_source(hosted_info, context_identity, unavailable);
+        if let Some(info) = self.renderer_info_cache.update(
+            source,
+            |info| {
+                format!(
+                    "WebGPU: {}",
+                    onlyterm_gpu_render::wire_adapter_info_to_gpu_info(info)
+                )
+            },
+            || {
+                render_state
+                    .as_ref()
+                    .and_then(|state| state.context.renderer_info())
+                    .unwrap_or_else(|| "WebGPU: n/a".to_string())
+            },
+        ) {
+            self.renderer_info.replace(info.to_string());
+        }
     }
 
     pub(super) fn created(&mut self, ctx: RenderContext) -> anyhow::Result<()> {
         self.render_state = None;
-
-        let render_info = ctx.renderer_info();
+        self.renderer_info_cache.reset();
+        let render_info = self
+            .render_thread
+            .as_ref()
+            .and_then(|backend| backend.renderer_info())
+            .map(|info| {
+                format!(
+                    "WebGPU: {}",
+                    onlyterm_gpu_render::wire_adapter_info_to_gpu_info(info)
+                )
+            })
+            .or_else(|| ctx.renderer_info())
+            .unwrap_or_else(|| "WebGPU: n/a".to_string());
         self.renderer_info.replace(render_info.clone());
-
         let mirror_atlas = self.wants_gpu_atlas_mirroring();
         match RenderState::new(
             ctx,
@@ -95,7 +140,7 @@ impl TermWindow {
                 log::debug!(
                     "Renderer initialized! {} onlyterm version: {}",
                     render_info,
-                    onlyterm_config::onlyterm_version(),
+                    onlyterm_config::onlyterm_version()
                 );
                 self.render_state.replace(render_state);
                 // The atlas inside the newly installed RenderState is a
@@ -103,24 +148,16 @@ impl TermWindow {
                 // previous texture's address and dimensions.
                 self.atlas_generation = self.atlas_generation.wrapping_add(1);
 
-                // The atlas this window's cached sprites were allocated
-                // from has just been replaced by the empty one that came
-                // with `RenderState::new`. Every other path that installs
-                // a different atlas (`recreate_texture_atlas`, called on
-                // font rescale and on `OutOfTextureSpace`) drops the
-                // caches that embed atlas coordinates; this one has to do
-                // it too, and it is the path that matters most because it
-                // is reached with the caches already full: the in-place
-                // renderer rebuild `finish_renderer_rebuild` performs
-                // after a render-thread hang or a wgpu device error keeps
-                // the window and all its panes alive, and with them every
-                // shaped line, `Rc<CachedGlyph>` and tab-bar
-                // `ComputedElement` pointing into the atlas that just went
-                // away. Without this, the window comes back drawing those
-                // stale coordinates against the new, empty atlas -- solid
-                // blocks where the text should be -- and only heals as the
-                // LFU caches evict entries. At first window creation the
-                // caches are empty, so this is a no-op there.
+                // The atlas that cached sprites were allocated from has just been
+                // replaced by the empty atlas in the new RenderState. Other atlas
+                // replacement paths (font rescale and OutOfTextureSpace) drop caches
+                // embedding atlas coordinates; this rebuild path must do likewise.
+                // It matters most during an in-place renderer rebuild: the window and
+                // panes survive a hang/device error, along with shaped lines, cached
+                // glyphs, and tab-bar ComputedElements pointing into the old atlas.
+                // Without invalidation, stale coordinates are drawn against the empty
+                // atlas (solid blocks instead of text) until LFU eviction heals them.
+                // At first creation the caches are empty, so invalidation is a no-op.
                 self.invalidate_atlas_dependent_caches();
 
                 // A working renderer is now installed, but -- unlike before
@@ -172,7 +209,6 @@ impl TermWindow {
                     .context(format!("failed to create RenderState for {}", render_info));
             }
         }
-
         Ok(())
     }
 }
