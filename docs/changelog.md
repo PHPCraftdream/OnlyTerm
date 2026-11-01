@@ -16,21 +16,28 @@ Releases are named using the date, time and git commit hash.
 
 #### Added
 
-* GUI windows hosted by a GPU child no longer create a GPU device in the GUI process; a local device is created only if host startup fails or rendering is demoted to in-process fallback.
 * The log says which video adapter a process runs on: a `startup: GPU adapter`
   line when the device is created, and `gpu_adapter` in the `memory:` line.
 * A window's GPU-host child (`gpu-tab-host`) writes its own `memory:` line
   every 10 minutes: working set, committed private bytes, video memory blocks,
-  atlas size and instance buffers. Hosted windows no longer create GUI-process
-  GPU devices; only a failed host spawn or later demotion/rebuild uses one.
+  atlas size and instance buffers.
 
 #### Changed
 
+* The GUI process of a window hosted by a GPU child no longer creates a GPU
+  device, GPU atlas texture or GPU instance buffers; the child reports its
+  adapter instead. A local device is created only if hosting fails or the host
+  is demoted to in-process rendering. Measured before this change: about 80 MiB
+  of video memory and the GPU driver per window in the GUI process.
 * A rendered row's quads are built with room for a whole row and trimmed to
   their size before they enter the line cache and the retained rows. Cached
   rows no longer keep the unused part of what they were built with. A crash
   dump of a long-running process held about 190 MiB of cached quads, part of
   it unused room.
+* The GPU-host child's swapchain keeps two buffers instead of three (frame
+  latency 1 instead of 2): one window-sized buffer less per window, about
+  8 MiB at 1080p, 15 MiB at 1440p and 33 MiB at 4K. The in-process fallback
+  keeps latency 2.
 
 ### v0.0.43-alpha — 2026-11-01
 
