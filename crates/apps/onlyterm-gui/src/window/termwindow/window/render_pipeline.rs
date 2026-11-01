@@ -65,8 +65,7 @@ where
 
 #[cfg(test)]
 mod render_context_selection_tests {
-    use super::render_context_for_host;
-    use super::WebGpuState;
+    use super::{render_context_for_host, WebGpuState};
     use crate::renderstate::RenderContext;
     use anyhow::anyhow;
     use std::sync::Arc;

@@ -85,7 +85,7 @@ impl TermWindow {
         } else if self
             .render_state
             .as_ref()
-            .map_or(false, |state| state.context.webgpu().is_none())
+            .is_some_and(|state| state.context.webgpu().is_none())
             || self.webgpu.is_none()
         {
             self.renderer_info.replace("WebGPU: n/a".to_string());

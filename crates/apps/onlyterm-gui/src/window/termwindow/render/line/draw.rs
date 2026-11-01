@@ -332,9 +332,10 @@ impl crate::TermWindow {
             .unwrap_or(FrameForm::InProcess);
         self.refresh_renderer_info();
         if matches!(frame_form, FrameForm::InProcess)
-            && self.render_state.as_ref().map_or(false, |state| {
-                state.context.webgpu().is_none() && self.webgpu.is_none()
-            })
+            && self
+                .render_state
+                .as_ref()
+                .is_some_and(|state| state.context.webgpu().is_none() && self.webgpu.is_none())
         {
             let window = self.window.as_ref().expect("render window exists").clone();
             self.handle_render_error_recovery(
