@@ -724,6 +724,43 @@ pub struct WindowGpuSurface {
     client_hwnd: Option<isize>,
 }
 
+/// Surface origin controls presentation tuning independently of its native handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SurfaceKind {
+    InProcess,
+    Composition,
+}
+
+/// Hosted composition surfaces favor low latency: DX12's latency+1 buffer count
+/// means latency 1 saves one buffer versus the in-process default; set both arms
+/// to 2 for a one-line revert.
+const fn desired_frame_latency(kind: SurfaceKind) -> u32 {
+    match kind {
+        SurfaceKind::InProcess => 2,
+        SurfaceKind::Composition => 1,
+    }
+}
+
+fn build_surface_configuration(
+    format: wgpu::TextureFormat,
+    width: u32,
+    height: u32,
+    alpha_mode: wgpu::CompositeAlphaMode,
+    view_formats: Vec<wgpu::TextureFormat>,
+    kind: SurfaceKind,
+) -> wgpu::SurfaceConfiguration {
+    wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width,
+        height,
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode,
+        view_formats,
+        desired_maximum_frame_latency: desired_frame_latency(kind),
+    }
+}
+
 impl WindowGpuSurface {
     /// Create a new WindowGpuSurface.
     ///
@@ -754,7 +791,15 @@ impl WindowGpuSurface {
         #[cfg(not(windows))]
         let client_hwnd: Option<isize> = None;
 
-        Self::from_surface(context, surface, client_hwnd, dimensions, config).await
+        Self::from_surface(
+            context,
+            surface,
+            client_hwnd,
+            dimensions,
+            config,
+            SurfaceKind::InProcess,
+        )
+        .await
     }
 
     /// Builds a surface targeting an existing DirectComposition
@@ -784,7 +829,15 @@ impl WindowGpuSurface {
                 .instance
                 .create_surface_unsafe(wgpu::SurfaceTargetUnsafe::SurfaceHandle(surface_handle))?
         };
-        Self::from_surface(context, surface, None, dimensions, config).await
+        Self::from_surface(
+            context,
+            surface,
+            None,
+            dimensions,
+            config,
+            SurfaceKind::Composition,
+        )
+        .await
     }
 
     async fn from_surface(
@@ -793,6 +846,7 @@ impl WindowGpuSurface {
         #[cfg_attr(not(windows), allow(unused_variables))] client_hwnd: Option<isize>,
         dimensions: Dimensions,
         config: &ConfigHandle,
+        kind: SurfaceKind,
     ) -> anyhow::Result<Self> {
         use super::clamp_surface_dimensions;
         use super::state_impl::compute_compatibility_list;
@@ -866,16 +920,14 @@ impl WindowGpuSurface {
             wgpu::CompositeAlphaMode::Auto
         };
 
-        let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        let surface_config = build_surface_configuration(
             format,
-            width: init_width,
-            height: init_height,
-            present_mode: wgpu::PresentMode::Fifo,
+            init_width,
+            init_height,
             alpha_mode,
             view_formats,
-            desired_maximum_frame_latency: 2,
-        };
+            kind,
+        );
 
         surface.configure(&context.device, &surface_config);
 
@@ -892,6 +944,43 @@ impl WindowGpuSurface {
     #[cfg(windows)]
     pub fn client_hwnd(&self) -> Option<isize> {
         self.client_hwnd
+    }
+}
+
+#[cfg(test)]
+mod surface_configuration_test {
+    use super::*;
+
+    #[test]
+    fn desired_frame_latency_is_one_for_composition_and_two_in_process() {
+        assert_eq!(desired_frame_latency(SurfaceKind::Composition), 1);
+        assert_eq!(desired_frame_latency(SurfaceKind::InProcess), 2);
+    }
+
+    #[test]
+    fn configurations_preserve_presentation_fields_for_both_surface_kinds() {
+        let format = wgpu::TextureFormat::Bgra8UnormSrgb;
+        let alpha_mode = wgpu::CompositeAlphaMode::PreMultiplied;
+        let view_formats = vec![wgpu::TextureFormat::Bgra8Unorm];
+
+        for (kind, latency) in [(SurfaceKind::Composition, 1), (SurfaceKind::InProcess, 2)] {
+            let config = build_surface_configuration(
+                format,
+                640,
+                480,
+                alpha_mode,
+                view_formats.clone(),
+                kind,
+            );
+            assert_eq!(config.usage, wgpu::TextureUsages::RENDER_ATTACHMENT);
+            assert_eq!(config.format, format);
+            assert_eq!(config.width, 640);
+            assert_eq!(config.height, 480);
+            assert_eq!(config.present_mode, wgpu::PresentMode::Fifo);
+            assert_eq!(config.alpha_mode, alpha_mode);
+            assert_eq!(config.view_formats, view_formats);
+            assert_eq!(config.desired_maximum_frame_latency, latency);
+        }
     }
 }
 
