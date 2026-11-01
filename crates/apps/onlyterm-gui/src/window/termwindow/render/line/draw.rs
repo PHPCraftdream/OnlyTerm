@@ -14,6 +14,57 @@ fn atlas_reset_needed(full_resync: bool, last_generation: Option<u64>, generatio
     full_resync || last_generation != Some(generation)
 }
 
+#[derive(Debug)]
+enum WireAtlasSelectionError {
+    Budget(anyhow::Error),
+    Unsupported(anyhow::Error),
+}
+
+fn select_wire_atlas(
+    texture: &dyn Texture2d,
+    needs_reset: bool,
+) -> Result<(Option<(u32, u32)>, Vec<wire::AtlasUpdate>), WireAtlasSelectionError> {
+    if let Some(atlas_tex) = texture.downcast_ref::<WebGpuTexture>() {
+        if atlas_tex.mirroring_failed() {
+            return Err(WireAtlasSelectionError::Budget(anyhow::anyhow!(
+                "GPU atlas mirror exceeded its memory budget; renderer demotion requested"
+            )));
+        }
+        if needs_reset {
+            atlas_tex.enable_mirroring();
+        }
+        let reset = needs_reset.then(|| (atlas_tex.width() as u32, atlas_tex.height() as u32));
+        let updates = if reset.is_some() {
+            atlas_tex.full_atlas_updates()
+        } else {
+            atlas_tex.drain_dirty_updates()
+        };
+        if atlas_tex.mirroring_failed() {
+            return Err(WireAtlasSelectionError::Budget(anyhow::anyhow!(
+                "GPU atlas mirror exceeded its memory budget; renderer demotion requested"
+            )));
+        }
+        Ok((reset, updates))
+    } else if let Some(atlas_tex) = texture.downcast_ref::<CpuAtlasTexture>() {
+        let reset = needs_reset.then(|| (atlas_tex.width() as u32, atlas_tex.height() as u32));
+        let updates = if reset.is_some() {
+            atlas_tex.full_atlas_updates()
+        } else {
+            atlas_tex.drain_dirty_updates()
+        };
+        if atlas_tex.mirroring_failed() {
+            return Err(WireAtlasSelectionError::Budget(anyhow::anyhow!(
+                "CPU atlas replay exceeded its memory budget; renderer demotion requested"
+            )));
+        }
+        Ok((reset, updates))
+    } else {
+        Err(WireAtlasSelectionError::Unsupported(anyhow::anyhow!(
+            "Unsupported atlas texture for wire rendering"
+        )))
+    }
+}
+
 /// Rate limit for the back-pressure/lost-wakeup diagnostics (added with the
 /// SeqCst handshake fix): these paths can fire on every colliding paint
 /// under sustained terminal output; their job is to leave a trace
@@ -560,11 +611,16 @@ impl crate::TermWindow {
         }
     }
 
-    /// Builds a `wire::WireFrame` from the accumulated CPU-side instances.
-    /// Wire frames cross a process boundary, so their draws contain owned
-    /// `QuadInstance` data rather than GPU buffer handles. `full_resync` means
-    /// the receiving GPU-host child needs a fresh atlas mirror and is handled
-    /// together with the atlas generation when constructing the frame.
+    /// Builds a `wire::WireFrame` -- the `HostProcess`-backend equivalent of
+    /// `build_webgpu_frame`: reads the same CPU-side data
+    /// (`TripleVertexBuffer::instances`, already accumulated by painting)
+    /// but never uploads it to a `wgpu::Buffer` on the GUI process's GPU
+    /// device, since a `wire::WireFrame` crosses a process boundary and a
+    /// live GPU buffer handle cannot. `full_resync` comes from
+    /// `RenderBackend::frame_form`'s `FrameForm::Wire { full_resync }` --
+    /// true right after this backend (re)attached to a fresh child, whose
+    /// atlas mirror is empty regardless of whether the real atlas's
+    /// identity changed this frame.
     fn build_wire_frame(
         &mut self,
         full_resync: bool,
@@ -572,6 +628,10 @@ impl crate::TermWindow {
     ) -> anyhow::Result<wire::WireFrame> {
         let render_state = self.render_state.as_ref().unwrap();
 
+        // The atlas generation is explicit rather than derived from the Rc
+        // address: the allocator may reuse the same address after a
+        // same-sized atlas recreation, but the child still has to discard its
+        // old mirror and receive the new atlas contents in full.
         let needs_atlas_reset = atlas_reset_needed(
             full_resync,
             self.last_wire_atlas_generation.get(),
@@ -580,50 +640,21 @@ impl crate::TermWindow {
         self.last_wire_atlas_generation
             .set(Some(self.atlas_generation));
         let atlas_rc = render_state.glyph_cache.borrow().atlas.texture();
+        // A reset means the receiving mirror is a brand-new, blank texture
+        // (a fresh child process, or a regrown atlas), so the delta since
+        // the last frame is not enough: it needs the atlas's entire recorded
+        // content. Shipping only the delta left a respawned child unable to
+        // draw glyphs it had not personally seen rasterized.
         let (atlas_reset, atlas_updates) =
-            if let Some(atlas_tex) = atlas_rc.downcast_ref::<WebGpuTexture>() {
-                if atlas_tex.mirroring_failed() {
+            match select_wire_atlas(atlas_rc.as_ref(), needs_atlas_reset) {
+                Ok(selected) => selected,
+                Err(WireAtlasSelectionError::Budget(error)) => {
                     if let Some(backend) = self.render_thread.as_ref() {
                         backend.atlas_mirroring_failed();
                     }
-                    anyhow::bail!(
-                        "GPU atlas mirror exceeded its memory budget; renderer demotion requested"
-                    );
+                    return Err(error);
                 }
-                let reset = if needs_atlas_reset {
-                    atlas_tex.enable_mirroring();
-                    Some((atlas_tex.width() as u32, atlas_tex.height() as u32))
-                } else {
-                    None
-                };
-                let updates = if reset.is_some() {
-                    atlas_tex.full_atlas_updates()
-                } else {
-                    atlas_tex.drain_dirty_updates()
-                };
-                (reset, updates)
-            } else if let Some(atlas_tex) = atlas_rc.downcast_ref::<CpuAtlasTexture>() {
-                let reset = if needs_atlas_reset {
-                    Some((atlas_tex.width() as u32, atlas_tex.height() as u32))
-                } else {
-                    None
-                };
-                let updates = if reset.is_some() {
-                    atlas_tex.full_atlas_updates()
-                } else {
-                    atlas_tex.drain_dirty_updates()
-                };
-                if atlas_tex.mirroring_failed() {
-                    if let Some(backend) = self.render_thread.as_ref() {
-                        backend.atlas_mirroring_failed();
-                    }
-                    anyhow::bail!(
-                        "CPU atlas replay exceeded its memory budget; renderer demotion requested"
-                    );
-                }
-                (reset, updates)
-            } else {
-                anyhow::bail!("Unsupported atlas texture for wire rendering")
+                Err(WireAtlasSelectionError::Unsupported(error)) => return Err(error),
             };
         // Transfer each accumulator without copying its instances. The writer
         // returns its buffer to the shared pool after serialization.
@@ -651,7 +682,97 @@ impl crate::TermWindow {
 mod tests {
     use super::*;
     use crate::quad::QuadInstance;
+    use std::rc::Rc;
     use window::bitmaps::BitmapImage;
+
+    struct UnsupportedTexture;
+
+    impl Texture2d for UnsupportedTexture {
+        fn write(&self, _rect: window::Rect, _im: &dyn BitmapImage) {}
+        fn read(&self, _rect: window::Rect, _im: &mut dyn BitmapImage) {}
+        fn width(&self) -> usize {
+            1
+        }
+        fn height(&self) -> usize {
+            1
+        }
+    }
+
+    #[test]
+    fn atlas_selector_replays_full_atlas_on_first_reset_and_generation_change() {
+        let atlas = CpuAtlasTexture::new(4, 4);
+        atlas.write(
+            window::Rect::new(window::Point::new(1, 2), window::Size::new(1, 1)),
+            &test_image([1, 2, 3, 4]),
+        );
+        let first = select_wire_atlas(&atlas, atlas_reset_needed(true, None, 1)).unwrap();
+        assert_eq!(first.0, Some((4, 4)));
+        assert_eq!(&*first.1[0].pixels, &[1, 2, 3, 4]);
+        assert!(atlas.drain_dirty_updates().is_empty());
+        atlas.write(
+            window::Rect::new(window::Point::new(2, 2), window::Size::new(1, 1)),
+            &test_image([5, 6, 7, 8]),
+        );
+        let generation = select_wire_atlas(&atlas, atlas_reset_needed(false, Some(1), 2)).unwrap();
+        assert_eq!(generation.0, Some((4, 4)));
+        assert_eq!(generation.1.len(), 2);
+        assert_eq!((generation.1[0].x, generation.1[0].y), (1, 2));
+        assert_eq!(&*generation.1[0].pixels, &[1, 2, 3, 4]);
+        assert_eq!((generation.1[1].x, generation.1[1].y), (2, 2));
+        assert_eq!(&*generation.1[1].pixels, &[5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn atlas_selector_uses_dirty_updates_without_reset() {
+        let atlas = CpuAtlasTexture::new(4, 4);
+        atlas.write(
+            window::Rect::new(window::Point::new(1, 2), window::Size::new(1, 1)),
+            &test_image([1, 2, 3, 4]),
+        );
+        let reset = select_wire_atlas(&atlas, true).unwrap();
+        assert_eq!(reset.0, Some((4, 4)));
+        assert_eq!(reset.1.len(), 1);
+        assert!(atlas.drain_dirty_updates().is_empty());
+        atlas.write(
+            window::Rect::new(window::Point::new(2, 2), window::Size::new(1, 1)),
+            &test_image([5, 6, 7, 8]),
+        );
+        let selected = select_wire_atlas(&atlas, atlas_reset_needed(false, Some(3), 3)).unwrap();
+        assert_eq!(selected.0, None);
+        assert_eq!(selected.1.len(), 1);
+        assert_eq!((selected.1[0].x, selected.1[0].y), (2, 2));
+        assert_eq!(&*selected.1[0].pixels, &[5, 6, 7, 8]);
+        let empty = select_wire_atlas(&atlas, atlas_reset_needed(false, Some(3), 3)).unwrap();
+        assert!(empty.1.is_empty());
+    }
+
+    #[test]
+    fn atlas_selector_reports_budget_and_unsupported_errors() {
+        let atlas = CpuAtlasTexture::with_mirror_limit(4, 4, 4);
+        let image = test_image([1, 2, 3, 4]);
+        atlas.write(
+            window::Rect::new(window::Point::new(0, 0), window::Size::new(1, 1)),
+            &image,
+        );
+        atlas.write(
+            window::Rect::new(window::Point::new(1, 0), window::Size::new(1, 1)),
+            &image,
+        );
+        assert!(atlas.mirroring_failed());
+        match select_wire_atlas(&atlas, false) {
+            Err(WireAtlasSelectionError::Budget(error)) => {
+                assert!(error.to_string().contains("memory budget"));
+            }
+            _ => panic!("expected explicit atlas budget failure"),
+        }
+        let unsupported: Rc<dyn Texture2d> = Rc::new(UnsupportedTexture);
+        match select_wire_atlas(unsupported.as_ref(), false) {
+            Err(WireAtlasSelectionError::Unsupported(error)) => {
+                assert!(error.to_string().contains("Unsupported atlas texture"));
+            }
+            _ => panic!("expected unsupported texture error"),
+        }
+    }
 
     fn test_image(pixel: [u8; 4]) -> window::Image {
         let mut image = window::Image::new(1, 1);

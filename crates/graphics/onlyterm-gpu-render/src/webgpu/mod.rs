@@ -370,6 +370,8 @@ impl AtlasMirrorLog {
             .keys()
             .filter_map(|rect| Self::updates_for(&self.written, *rect))
             .collect();
+        // Keep full resyncs deterministic, matching the former BTreeMap
+        // iteration order. Delta updates retain first-write order in `pending`.
         updates.sort_unstable_by_key(|update| (update.x, update.y, update.width, update.height));
         updates
     }
@@ -520,7 +522,11 @@ impl WebGpuTexture {
         self.mirror.lock().drain()
     }
 
-    /// Every recorded update for a fresh remote atlas; also clears pending deltas.
+    /// Every write recorded since `enable_mirroring`, not just the ones
+    /// since the last drain -- what a remote mirror starting from a blank
+    /// texture needs to catch up in one frame (first attach, or reattach after
+    /// the GPU-host child respawns; see `FrameForm::Wire`'s `full_resync`).
+    /// Also clears the pending delta, since everything in it is included here.
     pub fn full_atlas_updates(&self) -> Vec<wire::AtlasUpdate> {
         self.mirror.lock().full_updates()
     }
@@ -599,6 +605,7 @@ mod wire_adapter_info_tests {
 }
 
 /// Clamp a requested surface size to a maximum.
+/// (e.g. the GPU adapter's maximum texture dimension)
 ///
 /// This is necessary before `Surface::configure` as it raises a validation error if either
 /// dimension exceeds the GPU supported max dimension.

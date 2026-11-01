@@ -542,7 +542,7 @@ fn read_pod<T: bytemuck::Pod>(body: &[u8]) -> io::Result<T> {
             "invalid fixed-size wire payload",
         ));
     }
-    Ok(*bytemuck::from_bytes(body))
+    Ok(bytemuck::pod_read_unaligned(body))
 }
 fn read_exact_vec(r: &mut impl Read, len: usize) -> io::Result<Vec<u8>> {
     let mut buf = vec![0u8; len];
@@ -901,6 +901,34 @@ mod tests {
             panic!("expected a Frame message");
         };
         assert_eq!(decoded.atlas_reset, None);
+    }
+
+    #[test]
+    fn read_pod_accepts_misaligned_payload_and_rejects_wrong_size() {
+        let payload = WirePresented {
+            seq: 0x1234_5678_9abc_def0,
+        };
+        let bytes = bytemuck::bytes_of(&payload);
+        let mut storage = vec![0u8; bytes.len() + std::mem::align_of::<WirePresented>()];
+        let base = storage.as_ptr() as usize;
+        let offset = (0..std::mem::align_of::<WirePresented>())
+            .find(|offset| (base + offset) % std::mem::align_of::<WirePresented>() != 0)
+            .expect("WirePresented alignment must allow a misaligned address");
+        storage[offset..offset + bytes.len()].copy_from_slice(bytes);
+        let misaligned = &storage[offset..offset + bytes.len()];
+        assert_ne!(
+            misaligned.as_ptr() as usize % std::mem::align_of::<WirePresented>(),
+            0,
+            "test payload must be misaligned"
+        );
+        let decoded: WirePresented = read_pod(misaligned).unwrap();
+        assert_eq!(decoded.seq, payload.seq);
+
+        let err = match read_pod::<WirePresented>(&misaligned[..misaligned.len() - 1]) {
+            Err(err) => err,
+            Ok(_) => panic!("read_pod accepted a payload with the wrong size"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
 
     #[test]

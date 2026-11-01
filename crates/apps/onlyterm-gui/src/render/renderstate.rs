@@ -149,6 +149,8 @@ pub struct WebGpuInstanceBuffer {
     buf: Option<wgpu::Buffer>,
     capacity: usize,
     used_instances: usize,
+    #[cfg(test)]
+    allocations: usize,
 }
 
 impl WebGpuInstanceBuffer {
@@ -157,6 +159,8 @@ impl WebGpuInstanceBuffer {
             buf: None,
             capacity,
             used_instances: 0,
+            #[cfg(test)]
+            allocations: 0,
         }
     }
 
@@ -178,13 +182,18 @@ impl WebGpuInstanceBuffer {
         // Round up to next multiple of 128, as before.
         let new_capacity = rounded_instance_capacity(new_capacity);
         self.buf = Some(self.allocate(device, new_capacity));
+        #[cfg(test)]
+        {
+            self.allocations += 1;
+        }
         self.capacity = new_capacity;
     }
 
     /// Upload instance data. GPU storage is created on the first in-process write.
     pub fn write_instances(
         &mut self,
-        state: &WebGpuState,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
         instances: &[crate::quad::QuadInstance],
     ) {
         if instances.is_empty() {
@@ -192,15 +201,17 @@ impl WebGpuInstanceBuffer {
             return;
         }
         if needs_instance_buffer_allocation(self.buf.is_some(), instances.len(), self.capacity) {
-            self.ensure_capacity(state.device(), instances.len());
+            self.ensure_capacity(device, instances.len());
             if self.buf.is_none() {
-                self.buf = Some(self.allocate(state.device(), self.capacity));
+                self.buf = Some(self.allocate(device, self.capacity));
+                #[cfg(test)]
+                {
+                    self.allocations += 1;
+                }
             }
         }
         let buf = self.buf.as_ref().unwrap();
-        state
-            .queue()
-            .write_buffer(buf, 0, bytemuck::cast_slice(instances));
+        queue.write_buffer(buf, 0, bytemuck::cast_slice(instances));
         self.used_instances = instances.len();
     }
 
@@ -211,7 +222,16 @@ impl WebGpuInstanceBuffer {
     pub fn buffer(&self) -> Option<&wgpu::Buffer> {
         self.buf.as_ref()
     }
+
+    #[cfg(test)]
+    pub fn allocation_count(&self) -> usize {
+        self.allocations
+    }
 }
+
+#[cfg(test)]
+#[path = "instance_buffer_test.rs"]
+mod instance_buffer_gpu_tests;
 
 pub struct MappedQuadsView {
     instances: Vec<crate::quad::QuadInstance>,
@@ -357,7 +377,7 @@ impl TripleVertexBuffer {
         let instances = self.instances.borrow();
         let mut bufs = self.bufs.borrow_mut();
         let instance_buffer = &mut bufs[self.index.get()].0;
-        instance_buffer.write_instances(state, &instances);
+        instance_buffer.write_instances(state.device(), state.queue(), &instances);
         let buffer = wgpu::Buffer::clone(instance_buffer.buffer().unwrap());
         (buffer, instance_buffer.used_instances() as u32)
     }

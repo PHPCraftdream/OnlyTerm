@@ -250,6 +250,7 @@ impl TermWindow {
             key_table_state: KeyTableState::default(),
             modal: RefCell::new(None),
             renderer_info: None,
+            renderer_info_cache: Default::default(),
             last_frame_signature: None,
             last_wire_atlas_generation: std::cell::Cell::new(None),
             atlas_generation: 0,
@@ -383,6 +384,20 @@ impl TermWindow {
                 "Failed to initialize the in-process WebGpu renderer: {:#}\n\nOnlyTerm requires a working adapter/device for this fallback.",
                 err
             );
+            // Decide whether this failure can terminate the process here, after the
+            // awaited in-process GPU initialization, rather than capturing a flag before
+            // the await. Adapter/device creation can take several seconds on Windows/DX12,
+            // while workspace reconciliation may have concurrent spawn loops (session
+            // restore and SpawnWindow can race). `known_windows` is updated only at the
+            // end of successful `new_window`; if empty now, no other window is live,
+            // regardless of other in-flight spawns. Reuse the standard fatal-startup
+            // path so the cause is logged and the user gets the normal failure toast.
+            // Otherwise preserve the already-running windows and report/clean up only
+            // this failed mux window, as the spawn loop does for any `new_window` error.
+            // `window.show()` already made the Loading placeholder visible, and this
+            // window was never registered in `known_windows`; nothing else will close it.
+            // Dropping Window does not destroy its HWND, so close explicitly to avoid a
+            // permanent empty Loading window with no TermWindow state behind it.
             if !front_end().has_any_known_window() {
                 crate::terminate_with_error_message(&message);
             }

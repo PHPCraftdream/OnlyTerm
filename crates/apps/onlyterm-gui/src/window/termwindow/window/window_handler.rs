@@ -38,8 +38,11 @@ impl TermWindow {
             self.quad_generation
         );
         self.load_os_parameters();
+
         if self.focused.is_none() {
             self.last_mouse_click = None;
+            // Key-ups can be lost across Alt+Tab, so both a half-complete
+            // tap and an armed mode are dropped.
             let outcome = self.pass_through.focus_lost();
             self.pending_pass_through = None;
             if let Some(armed) = outcome.armed_edge {
@@ -47,18 +50,25 @@ impl TermWindow {
                     "diag: pass-through {} (focus lost)",
                     if armed { "armed" } else { "disarmed" }
                 );
+                // Same as the keyevent.rs edge sites: the cached fancy tab
+                // bar must drop (or pick up) its accent rim.
                 self.invalidate_fancy_tab_bar();
             }
             self.current_mouse_buttons.clear();
             self.current_mouse_capture = None;
             self.is_click_to_focus_window = false;
             self.suppress_move_after_focus_click = None;
+
             for state in self.pane_state.borrow_mut().values_mut() {
                 state.mouse_terminal_coords.take();
             }
         }
+        // Reset the cursor blink phase
         self.prev_cursor.bump();
+
+        // force cursor to be repainted
         window.invalidate();
+
         if let Some(pane) = self.get_active_pane_or_overlay() {
             pane.focus_changed(focused);
         }
@@ -69,31 +79,42 @@ impl TermWindow {
         let hosted_info = self
             .render_thread
             .as_ref()
-            .and_then(|backend| backend.renderer_info())
-            .map(|info| {
+            .and_then(|backend| backend.renderer_info());
+        let context_identity = self
+            .render_state
+            .as_ref()
+            .and_then(|state| state.context.webgpu())
+            .map(|state| Arc::as_ptr(state) as usize);
+        let render_state = &self.render_state;
+        let unavailable = self
+            .render_state
+            .as_ref()
+            .is_some_and(|state| state.context.webgpu().is_none())
+            || self.webgpu.is_none();
+        let source =
+            super::renderer_info_cache::select_source(hosted_info, context_identity, unavailable);
+        if let Some(info) = self.renderer_info_cache.update(
+            source,
+            |info| {
                 format!(
                     "WebGPU: {}",
                     onlyterm_gpu_render::wire_adapter_info_to_gpu_info(info)
                 )
-            });
-        let context_info = self
-            .render_state
-            .as_ref()
-            .and_then(|state| state.context.renderer_info());
-        if let Some(info) = hosted_info.or(context_info) {
-            self.renderer_info.replace(info);
-        } else if self
-            .render_state
-            .as_ref()
-            .is_some_and(|state| state.context.webgpu().is_none())
-            || self.webgpu.is_none()
-        {
-            self.renderer_info.replace("WebGPU: n/a".to_string());
+            },
+            || {
+                render_state
+                    .as_ref()
+                    .and_then(|state| state.context.renderer_info())
+                    .unwrap_or_else(|| "WebGPU: n/a".to_string())
+            },
+        ) {
+            self.renderer_info.replace(info.to_string());
         }
     }
 
     pub(super) fn created(&mut self, ctx: RenderContext) -> anyhow::Result<()> {
         self.render_state = None;
+        self.renderer_info_cache.reset();
         let render_info = self
             .render_thread
             .as_ref()
@@ -122,7 +143,21 @@ impl TermWindow {
                     onlyterm_config::onlyterm_version()
                 );
                 self.render_state.replace(render_state);
+                // The atlas inside the newly installed RenderState is a
+                // distinct mirror source even if the allocator reuses the
+                // previous texture's address and dimensions.
                 self.atlas_generation = self.atlas_generation.wrapping_add(1);
+
+                // The atlas that cached sprites were allocated from has just been
+                // replaced by the empty atlas in the new RenderState. Other atlas
+                // replacement paths (font rescale and OutOfTextureSpace) drop caches
+                // embedding atlas coordinates; this rebuild path must do likewise.
+                // It matters most during an in-place renderer rebuild: the window and
+                // panes survive a hang/device error, along with shaped lines, cached
+                // glyphs, and tab-bar ComputedElements pointing into the old atlas.
+                // Without invalidation, stale coordinates are drawn against the empty
+                // atlas (solid blocks instead of text) until LFU eviction heals them.
+                // At first creation the caches are empty, so invalidation is a no-op.
                 self.invalidate_atlas_dependent_caches();
 
                 // A working renderer is now installed, but -- unlike before

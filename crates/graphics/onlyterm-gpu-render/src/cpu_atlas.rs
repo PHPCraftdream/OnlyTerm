@@ -21,6 +21,15 @@ impl CpuAtlasTexture {
         }
     }
 
+    /// Construct an atlas with an explicit mirror-log budget.
+    pub fn with_mirror_limit(width: usize, height: usize, max_bytes: usize) -> Self {
+        Self {
+            width,
+            height,
+            mirror: RefCell::new(AtlasMirrorLog::with_limit(max_bytes)),
+        }
+    }
+
     #[cfg(test)]
     fn from_mirror(width: usize, height: usize, mirror: RefCell<AtlasMirrorLog>) -> Self {
         Self {
