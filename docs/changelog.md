@@ -12,16 +12,23 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
-### Unreleased
+### v0.0.43-alpha — 2026-11-01
+
+#### Added
+
+* Every window process writes a `memory:` line to its log every 10 minutes:
+  working set, committed private bytes, video memory blocks reserved and used,
+  glyph atlas size, the render cache sizes and the quads they hold. A long-lived
+  process can now be diagnosed without a crash dump.
 
 #### Changed
 
-* "OnlyTerm folder settings" opens the folder's run file in Notepad++ when it
-  is installed, and in Notepad otherwise.
 * The GPU device is created with wgpu's `MemoryUsage` hint, so video memory is
   taken in 8 MiB (GPU) and 4 MiB (host) blocks instead of 256 MiB and 64 MiB
   ones. A dump of a long-running process held about 1 GiB of such blocks for
   roughly 30 MiB of data.
+* "OnlyTerm folder settings" opens the folder's run file in Notepad++ when it
+  is installed, and in Notepad otherwise.
 
 ### v0.0.42-alpha — 2026-10-25
 

@@ -238,6 +238,11 @@ impl std::fmt::Debug for HeapQuadAllocator {
 }
 
 impl HeapQuadAllocator {
+    /// Quads held across all three layers.
+    pub fn quad_count(&self) -> usize {
+        self.layer0.len() + self.layer1.len() + self.layer2.len()
+    }
+
     pub fn apply_to(&self, other: &mut TripleLayerQuadAllocator) -> anyhow::Result<()> {
         let start = std::time::Instant::now();
         other.extend_from_slice(0, &self.layer0);
@@ -352,6 +357,18 @@ fn size() {
     assert_eq!(std::mem::size_of::<QuadInstance>(), 84);
     // CornerVertex is 8 bytes (2 f32s)
     assert_eq!(std::mem::size_of::<onlyterm_gpu_render::CornerVertex>(), 8);
+}
+
+#[cfg(test)]
+#[test]
+fn quad_count_sums_all_three_layers() {
+    let mut heap = HeapQuadAllocator::default();
+    assert_eq!(heap.quad_count(), 0);
+    heap.extend_with_instance(0, QuadInstance::default());
+    heap.extend_with_instance(1, QuadInstance::default());
+    heap.extend_with_instance(1, QuadInstance::default());
+    heap.extend_with_instance(2, QuadInstance::default());
+    assert_eq!(heap.quad_count(), 4);
 }
 
 /// Test that HeapQuadAllocator::apply_to now preserves ALL quads even when

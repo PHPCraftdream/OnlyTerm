@@ -133,6 +133,7 @@ impl TermWindow {
             hang_check_scheduled: Cell::new(false),
             rebuild_attempts: RefCell::new(Vec::new()),
             process_usage_scheduled: Cell::new(false),
+            memory_report_scheduled: Cell::new(false),
             last_process_usage_sample: RefCell::new(None),
             process_usage_suffix: RefCell::new(None),
             window: None,
@@ -545,6 +546,7 @@ impl TermWindow {
                 myself.schedule_render_thread_hang_check(&window);
             }
             myself.schedule_process_usage_tick(&window);
+            myself.schedule_memory_report(&window);
             myself.load_os_parameters();
             myself.subscribe_to_pane_updates();
 

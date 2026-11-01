@@ -58,6 +58,8 @@ mod frecency;
 pub mod help_menu;
 #[path = "input/keyevent.rs"]
 pub mod keyevent;
+#[path = "window/memory_report.rs"]
+mod memory_report;
 #[path = "ui/menu_style.rs"]
 pub(crate) mod menu_style;
 #[path = "ui/modal.rs"]
@@ -594,6 +596,8 @@ pub struct TermWindow {
     /// set when a tick is armed, cleared at the top of `process_usage_tick`,
     /// so at most one chain is ever pending per window.
     process_usage_scheduled: Cell<bool>,
+    /// Same guard for `schedule_memory_report`'s timer chain.
+    memory_report_scheduled: Cell<bool>,
     /// The previous periodic CPU-time sample, used to compute a percentage
     /// from the delta with the current sample. `None` until the first tick
     /// has run once (a single sample has no rate to derive).
