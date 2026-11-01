@@ -14,6 +14,7 @@ pub mod gpu_tab_host;
 pub mod host_process_backend;
 #[path = "geometry/instance_buffer_pool.rs"]
 mod instance_buffer_pool;
+pub mod memory;
 #[path = "geometry/quad.rs"]
 mod quad;
 #[cfg(test)]

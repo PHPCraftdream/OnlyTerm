@@ -502,6 +502,14 @@ impl ProcessGpuContext {
         log::info!("startup: GPU Instance/Adapter/Device ready");
 
         let adapter_info = adapter.get_info();
+        log::info!(
+            "startup: GPU adapter '{}' ({:?}, {:?}), driver '{}' '{}'",
+            adapter_info.name,
+            adapter_info.device_type,
+            adapter_info.backend,
+            adapter_info.driver,
+            adapter_info.driver_info,
+        );
         log::trace!("Using adapter: {adapter_info:?}");
         let downlevel_caps = adapter.get_downlevel_capabilities();
         log::trace!("downlevel_caps: {downlevel_caps:?}");

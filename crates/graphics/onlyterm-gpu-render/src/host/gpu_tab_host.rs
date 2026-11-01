@@ -38,16 +38,41 @@
 //! log file, not stdout.
 
 use crate::instance_buffer_pool::InstanceBufferPool;
+use crate::memory::{format_host_memory_report, process_memory, DeviceMemory, HostMemorySnapshot};
 use crate::{wire, GpuDraw, GpuFrame, WebGpuState, WebGpuTexture};
 use onlyterm_config::ConfigHandle;
 use std::convert::TryFrom;
 use std::io::{self, Write};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use window::bitmaps::{BitmapImage, Texture2d};
 use window::{Dimensions, Point, Rect, Size};
 
 pub struct GpuTabHostArgs {
     pub supervise_pid: u32,
+}
+
+/// How often the child writes its memory line to its log; same cadence as the
+/// GUI process's own line.
+const MEMORY_REPORT_INTERVAL: Duration = Duration::from_secs(600);
+
+/// The child blocks reading its control channel, so the line is written when
+/// a message arrives after the interval; a window that sends nothing for
+/// longer logs on its next message.
+fn memory_snapshot(
+    state: Option<&WebGpuState>,
+    atlas: Option<&MirroredAtlas>,
+    instance_buffers: &InstanceBufferPool,
+) -> HostMemorySnapshot {
+    let (working_set, private_bytes) = process_memory();
+    let (instance_slots, instance_bytes) = instance_buffers.usage();
+    HostMemorySnapshot {
+        working_set,
+        private_bytes,
+        device: state.map(DeviceMemory::of),
+        atlas: atlas.map(|a| (a.texture.width(), a.texture.height())),
+        instance_slots,
+        instance_bytes,
+    }
 }
 
 /// Maintains the child's mirror of the window's glyph atlas: recreated
@@ -268,6 +293,7 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
     // `Vec`s -- was the same never-reused large-allocation pattern that
     // exhausted memory on the parent side.
     let mut wire_body = Vec::new();
+    let mut last_memory_report = Instant::now();
 
     loop {
         let message = match wire::read_message_into(&mut reader, &mut wire_body) {
@@ -281,6 +307,18 @@ pub fn run(args: GpuTabHostArgs, config: ConfigHandle) -> anyhow::Result<()> {
                 break;
             }
         };
+
+        if last_memory_report.elapsed() >= MEMORY_REPORT_INTERVAL {
+            last_memory_report = Instant::now();
+            log::info!(
+                "{}",
+                format_host_memory_report(&memory_snapshot(
+                    state.as_ref(),
+                    atlas.as_ref(),
+                    &instance_buffers
+                ))
+            );
+        }
 
         match message {
             wire::WireMessageRef::Shutdown => {

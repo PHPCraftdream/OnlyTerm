@@ -12,6 +12,25 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### Unreleased
+
+#### Added
+
+* The log says which video adapter a process runs on: a `startup: GPU adapter`
+  line when the device is created, and `gpu_adapter` in the `memory:` line.
+* A window's GPU-host child (`gpu-tab-host`) writes its own `memory:` line
+  every 10 minutes: working set, committed private bytes, video memory blocks,
+  atlas size and instance buffers. Each window has a device in the GUI process
+  and another in the child, and the GUI process's line covers only its own.
+
+#### Changed
+
+* A rendered row's quads are built with room for a whole row and trimmed to
+  their size before they enter the line cache and the retained rows. Cached
+  rows no longer keep the unused part of what they were built with. A crash
+  dump of a long-running process held about 190 MiB of cached quads, part of
+  it unused room.
+
 ### v0.0.43-alpha — 2026-11-01
 
 #### Added
