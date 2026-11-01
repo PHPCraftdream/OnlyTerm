@@ -2,8 +2,14 @@ use super::*;
 
 impl TermWindow {
     pub(super) fn do_paint_webgpu(&mut self) -> anyhow::Result<bool> {
+        if self.render_state.is_none() {
+            return Ok(false);
+        }
+        self.refresh_renderer_info();
         let dims = self.dimensions;
-        self.resize_webgpu_surface(dims);
+        if self.render_context.is_some() {
+            self.resize_webgpu_surface(dims);
+        }
         match self.do_paint_webgpu_impl() {
             Ok(ok) => Ok(ok),
             Err(err) => {

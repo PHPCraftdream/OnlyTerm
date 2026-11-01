@@ -274,7 +274,7 @@ const MAX_ATLAS_MIRROR_BYTES: usize = 128 * 1024 * 1024;
 type AtlasRectMap = std::collections::HashMap<AtlasRect, std::sync::Arc<[u8]>, ahash::RandomState>;
 type AtlasRectSet = std::collections::HashSet<AtlasRect, ahash::RandomState>;
 
-struct AtlasMirrorLog {
+pub(crate) struct AtlasMirrorLog {
     written: AtlasRectMap,
     pending: Vec<AtlasRect>,
     pending_set: AtlasRectSet,
@@ -290,7 +290,7 @@ impl Default for AtlasMirrorLog {
 }
 
 impl AtlasMirrorLog {
-    fn with_limit(max_bytes: usize) -> Self {
+    pub(crate) fn with_limit(max_bytes: usize) -> Self {
         Self {
             written: AtlasRectMap::default(),
             pending: Vec::new(),
@@ -301,7 +301,7 @@ impl AtlasMirrorLog {
         }
     }
 
-    fn record(&mut self, rect: AtlasRect, pixels: &[u8]) {
+    pub(crate) fn record(&mut self, rect: AtlasRect, pixels: &[u8]) {
         if self.over_budget {
             return;
         }
@@ -330,7 +330,10 @@ impl AtlasMirrorLog {
         }
     }
 
-    fn updates_for(written: &AtlasRectMap, rect: AtlasRect) -> Option<wire::AtlasUpdate> {
+    pub(crate) fn updates_for(
+        written: &AtlasRectMap,
+        rect: AtlasRect,
+    ) -> Option<wire::AtlasUpdate> {
         written.get(&rect).map(|pixels| wire::AtlasUpdate {
             x: rect.0,
             y: rect.1,
@@ -340,8 +343,35 @@ impl AtlasMirrorLog {
         })
     }
 
-    fn is_over_budget(&self) -> bool {
+    pub(crate) fn is_over_budget(&self) -> bool {
         self.over_budget
+    }
+
+    pub(crate) fn drain(&mut self) -> Vec<wire::AtlasUpdate> {
+        if self.is_over_budget() {
+            return vec![];
+        }
+        let pending = std::mem::take(&mut self.pending);
+        self.pending_set.clear();
+        pending
+            .into_iter()
+            .filter_map(|rect| Self::updates_for(&self.written, rect))
+            .collect()
+    }
+
+    pub(crate) fn full_updates(&mut self) -> Vec<wire::AtlasUpdate> {
+        if self.is_over_budget() {
+            return vec![];
+        }
+        self.pending.clear();
+        self.pending_set.clear();
+        let mut updates: Vec<_> = self
+            .written
+            .keys()
+            .filter_map(|rect| Self::updates_for(&self.written, *rect))
+            .collect();
+        updates.sort_unstable_by_key(|update| (update.x, update.y, update.width, update.height));
+        updates
     }
 }
 
@@ -487,47 +517,12 @@ impl WebGpuTexture {
     /// `enable_mirroring`, if this is the first). Returns an empty `Vec` if
     /// mirroring was never enabled.
     pub fn drain_dirty_updates(&self) -> Vec<wire::AtlasUpdate> {
-        let mut mirror = self.mirror.lock();
-        let mirror = &mut *mirror;
-        if mirror.is_over_budget() {
-            return vec![];
-        }
-        let pending = std::mem::take(&mut mirror.pending);
-        mirror.pending_set.clear();
-        pending
-            .into_iter()
-            .filter_map(|rect| AtlasMirrorLog::updates_for(&mirror.written, rect))
-            .collect()
+        self.mirror.lock().drain()
     }
 
-    /// Every write recorded since `enable_mirroring`, not just the ones
-    /// since the last drain -- what a mirror that is starting from a blank
-    /// texture needs in order to catch up in a single frame (a first attach,
-    /// or a reattach after the GPU-host child process was respawned; see
-    /// `FrameForm::Wire`'s `full_resync`). Also clears the pending delta,
-    /// since everything in it is included here.
+    /// Every recorded update for a fresh remote atlas; also clears pending deltas.
     pub fn full_atlas_updates(&self) -> Vec<wire::AtlasUpdate> {
-        let mut mirror = self.mirror.lock();
-        if mirror.is_over_budget() {
-            return vec![];
-        }
-        mirror.pending.clear();
-        mirror.pending_set.clear();
-        let mut updates: Vec<_> = mirror
-            .written
-            .iter()
-            .map(|(rect, pixels)| wire::AtlasUpdate {
-                x: rect.0,
-                y: rect.1,
-                width: rect.2,
-                height: rect.3,
-                pixels: std::sync::Arc::clone(pixels),
-            })
-            .collect();
-        // Keep full resyncs deterministic, matching the former BTreeMap
-        // iteration order. Delta updates retain first-write order in `pending`.
-        updates.sort_unstable_by_key(|update| (update.x, update.y, update.width, update.height));
-        updates
+        self.mirror.lock().full_updates()
     }
 
     /// Whether the replay log has stopped accepting writes because retaining
@@ -557,8 +552,53 @@ pub fn adapter_info_to_gpu_info(info: wgpu::AdapterInfo) -> GpuInfo {
     }
 }
 
+pub fn wire_adapter_info_to_gpu_info(info: wire::WireAdapterInfo) -> GpuInfo {
+    GpuInfo {
+        name: info.name,
+        vendor: Some(info.vendor),
+        device: Some(info.device),
+        device_type: info.device_type,
+        driver: if info.driver.is_empty() {
+            None
+        } else {
+            Some(info.driver)
+        },
+        driver_info: if info.driver_info.is_empty() {
+            None
+        } else {
+            Some(info.driver_info)
+        },
+        backend: info.backend,
+    }
+}
+
+#[cfg(test)]
+mod wire_adapter_info_tests {
+    use super::wire_adapter_info_to_gpu_info;
+    use crate::wire::WireAdapterInfo;
+
+    #[test]
+    fn wire_adapter_metadata_preserves_reported_fields() {
+        let info = wire_adapter_info_to_gpu_info(WireAdapterInfo {
+            name: "adapter".to_string(),
+            device_type: "DiscreteGpu".to_string(),
+            backend: "Vulkan".to_string(),
+            driver: "driver".to_string(),
+            driver_info: "version".to_string(),
+            vendor: 12,
+            device: 34,
+        });
+        assert_eq!(info.name, "adapter");
+        assert_eq!(info.vendor, Some(12));
+        assert_eq!(info.device, Some(34));
+        assert_eq!(info.device_type, "DiscreteGpu");
+        assert_eq!(info.backend, "Vulkan");
+        assert_eq!(info.driver.as_deref(), Some("driver"));
+        assert_eq!(info.driver_info.as_deref(), Some("version"));
+    }
+}
+
 /// Clamp a requested surface size to a maximum.
-/// (e.g. the GPU adapter's maximum texture dimension)
 ///
 /// This is necessary before `Surface::configure` as it raises a validation error if either
 /// dimension exceeds the GPU supported max dimension.

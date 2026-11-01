@@ -435,135 +435,48 @@ impl TermWindow {
     /// pattern in `schedule_render_thread_hang_check` for bridging sync
     /// code -> async GUI-thread-only work -> re-entry via
     /// `TermWindowNotif::Apply`).
-    fn begin_renderer_rebuild(&mut self, window: &Window) {
-        // Grab the outgoing render thread's teardown sentinel (task #292)
-        // *before* taking/shutting it down below: `RenderThreadHandle::
-        // teardown_sentinel` only exists on the handle itself, so this has
-        // to happen while `self.render_thread` still holds it. See that
-        // method's doc comment for why this -- not a `Weak` obtained by
-        // downgrading `self.webgpu` -- is the correct signal for
-        // `recreate_webgpu_child_window`/`sweep_retired_webgpu_children` to
-        // poll: a `Weak<WebGpuState>`'s strong count can read zero while
-        // `WebGpuState::drop` (and the `wgpu::Surface`/DXGI swapchain
-        // teardown inside it) is still running on the render thread, since
-        // `Arc::drop` decrements the strong count before running the
-        // value's own `drop_in_place`. The sentinel instead only reports
-        // zero strong references once the render thread has fully returned
-        // from `render_thread_loop`, strictly after every `Arc<WebGpuState>`
-        // clone it held has already been dropped.
-        //
-        // Only actually consumed on Windows (`recreate_webgpu_child_window`
-        // below), since that's the only platform with a dedicated WebGpu
-        // child HWND to retire in the first place; the `#[allow]` avoids an
-        // unused-variable warning on other platforms where it's computed
-        // but never read.
-        #[allow(unused_variables)]
-        let old_webgpu_weak: std::sync::Weak<dyn std::any::Any + Send + Sync> = self
-            .render_thread
+    pub(super) fn begin_renderer_rebuild(&mut self, window: &Window) {
+        // Capture the renderer kind before frame_form can consume resync state
+        // or demotion can change the backend's reported form.
+        let outgoing_hosted = self
+            .render_state
             .as_ref()
-            .map(|rt| rt.teardown_sentinel())
-            .unwrap_or_else(|| {
-                std::sync::Weak::<()>::new() as std::sync::Weak<dyn std::any::Any + Send + Sync>
-            });
-
-        // Step 1: abandon the old render thread. Detach, don't join --
-        // exactly like the `Destroyed` handler: a stuck GPU driver call
-        // can't freeze the GUI thread, so blocking here via `.join()` would
-        // defeat the whole purpose of having a separate render thread.
-        // Sending `Shutdown` (which also sets `window_destroyed` on the
-        // shared flag) is enough to let the thread's `recv()` loop end on
-        // its own, whenever the driver call it may currently be stuck in
-        // eventually returns.
+            .map(|state| state.context.webgpu().is_none())
+            .unwrap_or_else(|| self.webgpu.is_none());
+        // Capture the outgoing render thread's teardown sentinel before taking
+        // it; hosted processes have no local WebGPU thread to await.
+        #[allow(unused_variables)]
+        let old_webgpu_weak: std::sync::Weak<dyn std::any::Any + Send + Sync> = if outgoing_hosted {
+            std::sync::Weak::<()>::new() as std::sync::Weak<dyn std::any::Any + Send + Sync>
+        } else {
+            self.render_thread
+                .as_ref()
+                .map(|rt| rt.teardown_sentinel())
+                .unwrap_or_else(|| {
+                    std::sync::Weak::<()>::new() as std::sync::Weak<dyn std::any::Any + Send + Sync>
+                })
+        };
         if let Some(rt) = self.render_thread.take() {
             rt.shutdown();
         }
-
-        // Step 2: retire the old GPU resources in the same order the
-        // `Destroyed` handler documents: render_state first, then the
-        // device+surface (webgpu) -- but neither is dropped synchronously
-        // here any more.
-        //
-        // We are in this function because this window's device/render
-        // thread was already judged unreliable: a hang, a device-lost
-        // event, or -- the case that motivated this -- a GPU driver being
-        // reinstalled out from under the process. Running `RenderState`'s
-        // ordinary `Drop` right now would call straight back into that same
-        // suspect driver to release its buffers/textures/glyph atlas,
-        // synchronously, on the GUI thread. Observed live: with the driver
-        // genuinely unavailable mid-reinstall, that call never returned --
-        // it froze the GUI message loop for the rest of the process's life,
-        // until the user killed it by hand. Windows' own AppHang mechanism
-        // only *reports* a stuck message loop; it does not recover one.
-        //
-        // `RenderState` holds `Rc`/`RefCell` internally (its glyph
-        // cache/layers are shared with the rest of the GUI-thread-only
-        // rendering code), so it is `!Send` and cannot be hosted on a
-        // background thread for a clean deferred drop. The device it was
-        // built against is being discarded here regardless -- a fresh one
-        // is what the rest of this function goes on to build -- so once the
-        // OS/driver finishes tearing down (or replacing) that device, its
-        // own device-removed cleanup reclaims whatever GPU memory this
-        // `RenderState` still referenced, whether or not wgpu's `Drop` ever
-        // ran for it. `mem::forget` trades a resource release we can no
-        // longer safely attempt for a GUI thread that can no longer hang on
-        // it.
         if let Some(render_state) = self.render_state.take() {
-            std::mem::forget(render_state);
+            if !outgoing_hosted {
+                std::mem::forget(render_state);
+            }
         }
-        // Mark the outgoing device stale (task #267) before dropping it: its
-        // `set_device_lost_callback` closure keeps living (wgpu gives no way
-        // to unregister it) for as long as the underlying `wgpu::Device`
-        // handle does, so a *late* device-lost event from this now-abandoned
-        // device must be able to tell it's stale and no-op, instead of
-        // charging a spurious rebuild attempt against the freshly-rebuilt,
-        // perfectly healthy device that replaces it below.
+        self.render_context = None;
         if let Some(webgpu) = self.webgpu.take() {
             webgpu.mark_stale();
-            // Unlike `RenderState` above, `Arc<WebGpuState>` holds no
-            // `Rc`/`RefCell` and is `Send`, so its eventual drop can be
-            // deferred to a background thread instead of risking the same
-            // suspect-driver call on the GUI thread. This is usually a
-            // no-op: per `old_webgpu_weak`'s comment above, the
-            // just-shutdown render thread typically still holds its own
-            // clone, so this is rarely the last strong reference and this
-            // thread's only job is decrementing a refcount. It matters in
-            // the edge case where that render thread had already exited
-            // (e.g. a rebuild-after-failed-rebuild), where this would
-            // otherwise be the last reference and run the real teardown.
             std::thread::Builder::new()
                 .name("webgpu-drop".to_string())
                 .spawn(move || drop(webgpu))
                 .ok();
         }
-
         let window_for_async = window.clone();
         let dimensions = self.dimensions;
         let config = self.config.clone();
 
         onlyterm_promise::spawn::spawn(async move {
-            // Step 3: retire the old WebGpu child HWND and create a fresh
-            // one, *before* rebuilding `WebGpuState` below. This has to
-            // happen ahead of the `WebGpuState::new` call, not after it:
-            // `WebGpuState::new` picks whichever child HWND
-            // `window.webgpu_child_hwnd()` currently returns, so rebuilding
-            // the surface against the *old* child HWND (the one whose
-            // swapchain may itself be the thing that's wedged) would defeat
-            // the entire point of task #252's dedicated child HWND.
-            //
-            // This can't run synchronously back in `begin_renderer_rebuild`
-            // (unlike steps 1-2 above): `Window::recreate_webgpu_child_window`
-            // needs to borrow this window's `WindowInner`, but
-            // `begin_renderer_rebuild` is always reached synchronously from
-            // inside `notify()`'s dispatch, which is itself invoked from
-            // `Connection::with_window_inner` while that exact `WindowInner`
-            // is already mutably borrowed -- a synchronous re-borrow here
-            // panics with "already mutably borrowed" (hit in this task's own
-            // manual verification). `recreate_webgpu_child_window` is
-            // `async` and internally defers its borrow via
-            // `onlyterm_promise::spawn::spawn` for exactly this reason (see its doc
-            // comment), so awaiting it here, one spawned task removed from
-            // the original `notify()` call, is what actually avoids the
-            // re-entrant borrow.
             #[cfg(windows)]
             if let Err(err) = window_for_async
                 .recreate_webgpu_child_window(old_webgpu_weak)
@@ -668,11 +581,15 @@ impl TermWindow {
         // `recreate_webgpu_child_window`, before `WebGpuState::new` was even
         // called. So the surface/device just resolved above already targets
         // the fresh child HWND. Nothing left to do for the HWND here.
+        // A fresh local renderer only follows host demotion/rebuild; hosted
+        // startup never enters this path. The atlas is recreated in created().
         self.webgpu.replace(Arc::clone(&webgpu));
+        self.render_context = Some(RenderContext::in_process(Arc::clone(&webgpu)));
+        self.render_thread = None;
         // Reset frame signature on renderer rebuild - new renderer/surface,
         // so the previous frame is no longer comparable (task #450)
         self.last_frame_signature = None;
-        if let Err(err) = self.created(RenderContext(Arc::clone(&webgpu))) {
+        if let Err(err) = self.created(RenderContext::in_process(Arc::clone(&webgpu))) {
             // Same reasoning as the `WebGpuState::new` failure arm above
             // (task #272): the device/surface rebuild itself just
             // succeeded, so this is a `RenderState::new` failure (shader
@@ -734,10 +651,10 @@ impl TermWindow {
                 self.schedule_render_thread_hang_check(window);
             }
         }
-
         // The rebuild succeeded and a fresh render thread (if configured)
         // is running: re-arm the one-shot guard so a later, separate hang
         // on this same window can also be recovered from.
+        self.render_context = Some(RenderContext::in_process(Arc::clone(&webgpu)));
         self.render_thread_hang_handled.set(false);
 
         // The old frame's content is gone (new device, new/blank surface);

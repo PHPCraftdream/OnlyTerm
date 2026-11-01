@@ -34,6 +34,7 @@ impl TermWindow {
                 if let Some(webgpu) = self.webgpu.take() {
                     webgpu.mark_stale();
                 }
+                self.render_context = None;
                 // Detach, don't join: the whole point of the render
                 // thread is that a stuck GPU driver call can't freeze the
                 // GUI thread, so blocking window-close on that same thread
@@ -91,7 +92,7 @@ impl TermWindow {
                 self.resizes_pending -= 1;
                 if self.is_repaint_pending {
                     self.is_repaint_pending = false;
-                    if self.webgpu.is_some() {
+                    if self.render_state.is_some() {
                         self.do_paint_webgpu()?;
                     }
                 }
@@ -126,6 +127,7 @@ impl TermWindow {
                 Ok(true)
             }
             WindowEvent::NeedRepaint => {
+                self.refresh_renderer_info();
                 // Early-show (task #331) means the window can be visible --
                 // and generating `NeedRepaint` events from focus/resize/OS
                 // paint requests -- before the renderer is attached.
@@ -144,7 +146,7 @@ impl TermWindow {
                 if self.resizes_pending > 0 {
                     self.is_repaint_pending = true;
                     Ok(true)
-                } else if self.webgpu.is_some() {
+                } else if self.render_state.is_some() {
                     self.do_paint_webgpu()
                 } else {
                     Ok(false)

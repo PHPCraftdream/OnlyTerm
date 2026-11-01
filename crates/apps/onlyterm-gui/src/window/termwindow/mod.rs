@@ -537,6 +537,7 @@ pub struct TermWindow {
     connection_name: String,
 
     webgpu: Option<Arc<WebGpuState>>,
+    render_context: Option<RenderContext>,
     // `Box<dyn RenderBackend>`, not the concrete `RenderThreadHandle`: see
     // that trait's doc comment for why every call site here goes through it
     // instead of the concrete type.

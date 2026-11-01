@@ -151,6 +151,7 @@ struct Shared {
     /// `write_frame` has serialized their contents onto the wire. See
     /// `wire::WireDrawPool`'s doc comment for the full rationale.
     draw_pool: wire::WireDrawPool,
+    renderer_info: Mutex<Option<(u64, wire::WireAdapterInfo)>>,
 }
 
 // SAFETY: `HANDLE` is an opaque kernel object identifier (an index into a
@@ -281,6 +282,7 @@ impl HostProcessBackend {
             pending_surface_handles: Mutex::new(std::collections::HashMap::new()),
             child_exe,
             draw_pool: wire::new_draw_pool(),
+            renderer_info: Mutex::new(None),
         });
 
         if !lifecycle::spawn_generation(&shared) {
@@ -289,6 +291,18 @@ impl HostProcessBackend {
         }
 
         Some(Self { shared })
+    }
+
+    pub(crate) fn renderer_info(&self) -> Option<wire::WireAdapterInfo> {
+        let current = self.shared.current.lock();
+        let generation = current.as_ref()?.generation;
+        self.shared
+            .renderer_info
+            .lock()
+            .as_ref()
+            .and_then(|(info_generation, info)| {
+                (*info_generation == generation).then(|| info.clone())
+            })
     }
 
     /// The current generation's child process id, if one is running. Used

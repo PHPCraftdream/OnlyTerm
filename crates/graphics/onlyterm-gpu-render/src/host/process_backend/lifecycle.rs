@@ -67,13 +67,21 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
         return false;
     }
 
+    let child_pid = child.id();
     let generation = shared.next_generation.fetch_add(1, Ordering::AcqRel);
+    *shared.renderer_info.lock() = None;
     let dimensions = *shared.dimensions.lock();
 
     let (writer_tx, writer_rx) = std::sync::mpsc::channel::<HostToChildMsg>();
     let stdin = child.stdin.take().expect("stdin was piped");
     let stdout = child.stdout.take().expect("stdout was piped");
 
+    *shared.current.lock() = Some(ChildGeneration {
+        generation,
+        child,
+        _job: job,
+        writer_tx: writer_tx.clone(),
+    });
     io::spawn_writer_thread(generation, stdin, writer_rx, Arc::clone(&shared.draw_pool));
     io::spawn_reader_thread_with_death_handling(Arc::clone(shared), generation, stdout);
 
@@ -100,15 +108,8 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
     log::info!(
         "HostProcessBackend: generation {generation} running as PID {} \
          (see that PID's own onlyterm-gui.exe-log-<pid>.txt for its diagnostics)",
-        child.id()
+        child_pid
     );
-    *shared.current.lock() = Some(ChildGeneration {
-        generation,
-        child,
-        _job: job,
-        writer_tx,
-    });
-
     // The visual keeps showing whatever the previous generation last
     // presented (or nothing yet, on the very first spawn) until this
     // generation's reader thread sees its first `Presented` ack and swaps

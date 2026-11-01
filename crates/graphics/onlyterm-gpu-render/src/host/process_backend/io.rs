@@ -111,6 +111,20 @@ pub(super) fn spawn_reader_thread_with_death_handling(
 fn reader_loop(shared: &Arc<Shared>, generation: u64, mut stdout: std::process::ChildStdout) {
     loop {
         match wire::read_message(&mut stdout) {
+            Ok(Some(wire::WireMessage::AdapterInfo(info))) => {
+                let is_current = {
+                    let current = shared.current.lock();
+                    if current.as_ref().map(|child| child.generation) == Some(generation) {
+                        *shared.renderer_info.lock() = Some((generation, info));
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if is_current {
+                    (shared.invalidate)();
+                }
+            }
             Ok(Some(wire::WireMessage::Presented(presented))) => {
                 on_presented(shared, generation, presented.seq);
             }

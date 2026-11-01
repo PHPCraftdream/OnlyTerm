@@ -46,6 +46,56 @@ fn gpu_recovery_notifier(window: &Window) -> onlyterm_gpu_render::GpuRecoveryNot
     })
 }
 
+/// Chooses a no-GPU hosted context before evaluating the local-device factory.
+async fn render_context_for_host<F, Fut>(
+    hosted: bool,
+    local: F,
+) -> anyhow::Result<(Option<Arc<WebGpuState>>, RenderContext)>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<Arc<WebGpuState>>>,
+{
+    if hosted {
+        Ok((None, RenderContext::hosted()))
+    } else {
+        let state = local().await?;
+        Ok((Some(Arc::clone(&state)), RenderContext::in_process(state)))
+    }
+}
+
+#[cfg(test)]
+mod render_context_selection_tests {
+    use super::render_context_for_host;
+    use super::WebGpuState;
+    use crate::renderstate::RenderContext;
+    use anyhow::anyhow;
+    use std::sync::Arc;
+
+    #[test]
+    fn hosted_selection_does_not_evaluate_gpu_factory() {
+        let called = std::cell::Cell::new(false);
+        let selected = futures::executor::block_on(render_context_for_host(true, || {
+            called.set(true);
+            async { Err::<Arc<WebGpuState>, anyhow::Error>(anyhow!("should not run")) }
+        }))
+        .expect("hosted context selection");
+        assert!(!called.get(), "hosted path must not evaluate GPU factory");
+        assert!(selected.0.is_none());
+        assert!(matches!(selected.1, RenderContext::Hosted));
+    }
+
+    #[test]
+    fn in_process_selection_runs_gpu_factory_and_propagates_failure() {
+        let called = std::cell::Cell::new(false);
+        let result = futures::executor::block_on(render_context_for_host(false, || {
+            called.set(true);
+            async { Err::<Arc<WebGpuState>, anyhow::Error>(anyhow!("expected factory error")) }
+        }));
+        assert!(called.get(), "in-process path must evaluate GPU factory");
+        assert!(result.is_err(), "in-process factory error must propagate");
+    }
+}
+
 #[path = "render_pipeline/painting.rs"]
 mod painting;
 #[path = "render_pipeline/pane_events.rs"]

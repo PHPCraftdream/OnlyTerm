@@ -33,6 +33,12 @@ pub(super) struct MemorySnapshot {
     pub retained_quads: u64,
 }
 
+pub(super) fn hosted_device_memory(
+    info: Option<&onlyterm_gpu_render::wire::WireAdapterInfo>,
+) -> Option<DeviceMemory> {
+    info.map(DeviceMemory::from_host_adapter)
+}
+
 pub(super) fn format_memory_report(s: &MemorySnapshot) -> String {
     let atlas_bytes = (s.atlas_side as u64) * (s.atlas_side as u64) * 4;
     format!(
@@ -110,7 +116,16 @@ impl TermWindow {
 
         if let Some(render_state) = self.render_state.as_ref() {
             snapshot.atlas_side = render_state.glyph_cache.borrow().atlas.size();
-            snapshot.device = Some(DeviceMemory::of(&render_state.context.0));
+            if let Some(webgpu) = render_state.context.webgpu() {
+                snapshot.device = Some(DeviceMemory::of(webgpu.as_ref()));
+            } else {
+                snapshot.device = hosted_device_memory(
+                    self.render_thread
+                        .as_ref()
+                        .and_then(|backend| backend.renderer_info())
+                        .as_ref(),
+                );
+            }
         }
         snapshot
     }
@@ -156,6 +171,42 @@ mod tests {
         assert!(line.contains("gpu_blocks=n/a"), "{}", line);
         assert!(!line.contains("gpu_blocks_reserved"), "{}", line);
         assert!(line.contains("gpu_adapter=\"n/a\""), "{}", line);
+    }
+
+    #[test]
+    fn hosted_memory_report_has_no_gui_gpu_device_but_keeps_cpu_atlas_size() {
+        let line = format_memory_report(&MemorySnapshot {
+            atlas_side: 2048,
+            ..Default::default()
+        });
+        assert!(line.contains("gpu_adapter=\"n/a\" gpu_blocks=n/a"));
+        assert!(line.contains("atlas=2048px (16 MiB)"));
+    }
+
+    #[test]
+    fn hosted_adapter_memory_uses_wire_info_without_claiming_parent_gpu_blocks() {
+        let info = onlyterm_gpu_render::wire::WireAdapterInfo {
+            name: "adapter".to_string(),
+            device_type: "DiscreteGpu".to_string(),
+            backend: "Vulkan".to_string(),
+            driver: "driver".to_string(),
+            driver_info: "version".to_string(),
+            vendor: 1,
+            device: 2,
+        };
+        let before = hosted_device_memory(None);
+        let after = hosted_device_memory(Some(&info));
+        assert!(before.is_none());
+        let line = format_memory_report(&MemorySnapshot {
+            device: after,
+            ..Default::default()
+        });
+        assert!(
+            line.contains("gpu_adapter=\"adapter (DiscreteGpu, Vulkan)\" gpu_blocks=n/a"),
+            "{}",
+            line
+        );
+        assert!(!line.contains("gpu_blocks_reserved"), "{}", line);
     }
 
     #[test]
