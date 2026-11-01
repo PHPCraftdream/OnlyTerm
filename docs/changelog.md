@@ -18,6 +18,10 @@ Releases are named using the date, time and git commit hash.
 
 * "OnlyTerm folder settings" opens the folder's run file in Notepad++ when it
   is installed, and in Notepad otherwise.
+* The GPU device is created with wgpu's `MemoryUsage` hint, so video memory is
+  taken in 8 MiB (GPU) and 4 MiB (host) blocks instead of 256 MiB and 64 MiB
+  ones. A dump of a long-running process held about 1 GiB of such blocks for
+  roughly 30 MiB of data.
 
 ### v0.0.42-alpha — 2026-10-25
 

@@ -625,6 +625,9 @@ const _: fn() = || {
 mod atlas_upload_test;
 
 #[cfg(test)]
+mod device_memory_test;
+
+#[cfg(test)]
 mod tests {
     use super::{clamp_surface_dimensions, AtlasMirrorLog};
     use crate::webgpu::state_impl::needs_explicit_clear;

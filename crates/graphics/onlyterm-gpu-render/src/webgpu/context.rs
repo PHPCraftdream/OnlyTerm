@@ -204,6 +204,25 @@ fn try_fast_dx12_adapter(
     Some(unsafe { instance.create_adapter_from_hal::<Dx12>(exposed) })
 }
 
+/// The descriptor of the process-wide device, given the adapter's limits.
+pub(crate) fn device_descriptor(adapter_limits: wgpu::Limits) -> wgpu::DeviceDescriptor<'static> {
+    wgpu::DeviceDescriptor {
+        required_features: wgpu::Features::empty(),
+        required_limits: if cfg!(target_arch = "wasm32") {
+            wgpu::Limits::downlevel_webgl2_defaults()
+        } else {
+            wgpu::Limits::downlevel_defaults()
+        }
+        .using_resolution(adapter_limits),
+        label: None,
+        // `Performance` makes gpu-allocator take 256 MiB (GPU) / 64 MiB (host)
+        // heaps per memory type and keep the last one forever -- about 1 GiB
+        // for a few MiB of atlas and buffers. This takes 8 / 4 MiB blocks.
+        memory_hints: wgpu::MemoryHints::MemoryUsage,
+        trace: wgpu::Trace::Off,
+    }
+}
+
 /// Process-wide GPU context shared by all windows.
 /// Created once per process on first window creation and reused thereafter.
 ///
@@ -451,18 +470,7 @@ impl ProcessGpuContext {
 
                     if let Some(adapter) = adapter {
                         let (device, queue) = futures::executor::block_on(
-                            adapter.request_device(&wgpu::DeviceDescriptor {
-                                required_features: wgpu::Features::empty(),
-                                required_limits: if cfg!(target_arch = "wasm32") {
-                                    wgpu::Limits::downlevel_webgl2_defaults()
-                                } else {
-                                    wgpu::Limits::downlevel_defaults()
-                                }
-                                .using_resolution(adapter.limits()),
-                                label: None,
-                                memory_hints: Default::default(),
-                                trace: wgpu::Trace::Off,
-                            }),
+                            adapter.request_device(&device_descriptor(adapter.limits())),
                         )?;
                         // Install the device-lost callback immediately, on
                         // this same background thread, before doing any
