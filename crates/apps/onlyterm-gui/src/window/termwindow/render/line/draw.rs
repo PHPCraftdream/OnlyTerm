@@ -20,10 +20,13 @@ enum WireAtlasSelectionError {
     Unsupported(anyhow::Error),
 }
 
+/// `atlas_reset` size (when the child must start from a blank atlas) and the updates to send.
+type WireAtlasPayload = (Option<(u32, u32)>, Vec<wire::AtlasUpdate>);
+
 fn select_wire_atlas(
     texture: &dyn Texture2d,
     needs_reset: bool,
-) -> Result<(Option<(u32, u32)>, Vec<wire::AtlasUpdate>), WireAtlasSelectionError> {
+) -> Result<WireAtlasPayload, WireAtlasSelectionError> {
     if let Some(atlas_tex) = texture.downcast_ref::<WebGpuTexture>() {
         if atlas_tex.mirroring_failed() {
             return Err(WireAtlasSelectionError::Budget(anyhow::anyhow!(
