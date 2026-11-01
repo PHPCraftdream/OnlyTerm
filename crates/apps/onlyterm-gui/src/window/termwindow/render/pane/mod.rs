@@ -732,7 +732,7 @@ impl crate::TermWindow {
                         }
                         RowAction::Build => {
                             // Full rebuild path (existing logic).
-                            let mut buf = HeapQuadAllocator::default();
+                            let mut buf = HeapQuadAllocator::with_row_capacity(self.dims.cols);
                             let next_due = self.term_window.has_animation.borrow_mut().take();
 
                             let shape_key = LineToEleShapeCacheKey {
@@ -811,7 +811,7 @@ impl crate::TermWindow {
                                 .context("HeapQuadAllocator::apply_to_translated")?;
 
                             // Store into line_quad_cache (existing).
-                            let quads = Rc::new(buf);
+                            let quads = buf.into_shared();
                             let quad_value = LineQuadCacheValue {
                                 layers: Rc::clone(&quads),
                                 expires,

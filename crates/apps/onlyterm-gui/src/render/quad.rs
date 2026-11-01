@@ -237,7 +237,32 @@ impl std::fmt::Debug for HeapQuadAllocator {
     }
 }
 
+/// Quads reserved for layer 2 (cursor, sprites) when a row starts: a row has
+/// a handful of them at most.
+const LAYER2_ROW_RESERVE: usize = 4;
+
 impl HeapQuadAllocator {
+    /// Room for a whole row up front, so building it does not regrow a layer
+    /// again and again: a row emits about one background and one glyph quad
+    /// per column. Pair with `into_shared`, which gives the unused part back.
+    pub fn with_row_capacity(cols: usize) -> Self {
+        Self {
+            layer0: Vec::with_capacity(cols),
+            layer1: Vec::with_capacity(cols),
+            layer2: Vec::with_capacity(LAYER2_ROW_RESERVE),
+        }
+    }
+
+    /// Trims every layer to the quads it holds and wraps the row for sharing
+    /// between the line cache and the retained rows. A cached row lives long,
+    /// so it must not carry the unused part of what it was built with.
+    pub fn into_shared(mut self) -> std::rc::Rc<Self> {
+        self.layer0.shrink_to_fit();
+        self.layer1.shrink_to_fit();
+        self.layer2.shrink_to_fit();
+        std::rc::Rc::new(self)
+    }
+
     /// Quads held across all three layers.
     pub fn quad_count(&self) -> usize {
         self.layer0.len() + self.layer1.len() + self.layer2.len()
@@ -369,6 +394,61 @@ fn quad_count_sums_all_three_layers() {
     heap.extend_with_instance(1, QuadInstance::default());
     heap.extend_with_instance(2, QuadInstance::default());
     assert_eq!(heap.quad_count(), 4);
+}
+
+#[cfg(test)]
+fn quad_at(x: f32) -> QuadInstance {
+    QuadInstance {
+        position: [x, 0.0, x + 1.0, 1.0],
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn a_row_built_within_its_reserve_never_regrows() {
+    let mut heap = HeapQuadAllocator::with_row_capacity(80);
+    let (cap0, cap1, cap2) = (
+        heap.layer0.capacity(),
+        heap.layer1.capacity(),
+        heap.layer2.capacity(),
+    );
+    assert!(cap0 >= 80 && cap1 >= 80 && cap2 >= LAYER2_ROW_RESERVE);
+    for i in 0..80 {
+        heap.extend_with_instance(0, quad_at(i as f32));
+        heap.extend_with_instance(1, quad_at(i as f32));
+    }
+    for i in 0..LAYER2_ROW_RESERVE {
+        heap.extend_with_instance(2, quad_at(i as f32));
+    }
+    assert_eq!(
+        (
+            heap.layer0.capacity(),
+            heap.layer1.capacity(),
+            heap.layer2.capacity()
+        ),
+        (cap0, cap1, cap2)
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn a_shared_row_keeps_its_quads_and_none_of_the_unused_reserve() {
+    let mut heap = HeapQuadAllocator::with_row_capacity(200);
+    for i in 0..5 {
+        heap.extend_with_instance(0, quad_at(i as f32));
+    }
+    for i in 0..3 {
+        heap.extend_with_instance(1, quad_at(10.0 + i as f32));
+    }
+    let row = heap.into_shared();
+    assert_eq!(row.quad_count(), 8);
+    assert_eq!(row.layer0.capacity(), row.layer0.len());
+    assert_eq!(row.layer1.capacity(), row.layer1.len());
+    assert_eq!(row.layer2.capacity(), 0, "an empty layer keeps nothing");
+    let xs: Vec<f32> = row.layer0.iter().map(|q| q.position[0]).collect();
+    assert_eq!(xs, vec![0.0, 1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(row.layer1[2].position[0], 12.0);
 }
 
 /// Test that HeapQuadAllocator::apply_to now preserves ALL quads even when

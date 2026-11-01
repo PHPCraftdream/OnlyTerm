@@ -45,6 +45,10 @@ impl BufferPoolCore {
         (target, changed)
     }
 
+    fn total_bytes(&self) -> u64 {
+        self.capacities.iter().sum()
+    }
+
     #[cfg(test)]
     fn slot_count(&self) -> usize {
         self.capacities.len()
@@ -57,6 +61,12 @@ impl InstanceBufferPool {
             core: BufferPoolCore::default(),
             slots: Vec::new(),
         }
+    }
+
+    /// Slots alive and the bytes of video memory their buffers were created
+    /// with, for the memory log.
+    pub(crate) fn usage(&self) -> (usize, u64) {
+        (self.slots.len(), self.core.total_bytes())
     }
 
     /// Releases slots that are no longer used by this frame.
@@ -186,6 +196,18 @@ mod tests {
         let mut core = BufferPoolCore::default();
         assert_eq!(prepare_frame(&mut core, &[64, 128], 1024), 2);
         assert_eq!(prepare_frame(&mut core, &[64, 128], 1024), 0);
+    }
+
+    #[test]
+    fn total_bytes_follows_slot_capacities_through_growth_and_truncation() {
+        let mut core = BufferPoolCore::default();
+        assert_eq!(core.total_bytes(), 0);
+        assert_eq!(prepare_frame(&mut core, &[64, 128], 1024), 2);
+        assert_eq!(core.total_bytes(), 64 + 128);
+        assert_eq!(prepare_frame(&mut core, &[64, 200], 1024), 1);
+        assert_eq!(core.total_bytes(), 64 + 256);
+        assert_eq!(prepare_frame(&mut core, &[64], 1024), 0);
+        assert_eq!(core.total_bytes(), 64);
     }
 
     #[test]
