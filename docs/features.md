@@ -5,7 +5,9 @@ hide:
 
 ## Available Features
 
-* Runs on Linux, macOS, Windows 10, FreeBSD and NetBSD
+* Runs on Windows 10 (1809) and later
+* [Launch it from a shell, from the Explorer menu or from a startup layout](launching.md)
+* [F1–F4 dialogs: help, rename tab, pane layout, tab processes](function-keys.md)
 * [Multiplex terminal panes, tabs and windows, with native mouse and scrollback](multiplexing.md)
 * <a href="https://github.com/tonsky/FiraCode#fira-code-monospaced-font-with-programming-ligatures">Ligatures</a>, Color Emoji and font fallback, with true color and [dynamic color schemes](config/appearance.md).
 * [Hyperlinks](hyperlinks.md)

@@ -5,7 +5,7 @@ for yourself.  OnlyTerm runs on Windows 10 and later.
 
 * Install `rustup` to get the `rust` compiler installed on your system.
   [Install rustup](https://rust-lang.org/tools/install/).
-* Rust version 1.71 or later is required
+* The current stable Rust toolchain is recommended (CI builds with it)
 * Build in release mode: `cargo build --release`
 * Run it via either `cargo run --release --bin onlyterm-gui` or `target/release/onlyterm-gui`
 

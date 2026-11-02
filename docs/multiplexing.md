@@ -3,6 +3,12 @@
 
 ## Multiplexing
 
+A multiplexer is the part of a terminal that owns tabs, panes and windows. In
+OnlyTerm it is built in and drawn natively; you use it every time you open a
+tab or split a pane (**F3**). The rest of this page is about *domains*, which
+let a set of tabs live in another process or on another machine. You can ignore
+it for everyday use.
+
 The out-of-the-box experience with OnlyTerm allows you to multiplex local tabs
 and windows which will persist until they are closed.  With a little extra
 configuration you can enable local terminal multiplexing with features similar

@@ -4,6 +4,27 @@
 {% include "../examples/cmd-synopsis-onlyterm-start--help.txt" %}
 ```
 
+## Examples
+
+Options that apply to the whole program go **before** `start`.
+
+```console
+$ onlyterm start                                  # your default shell
+$ onlyterm start -- powershell.exe -NoLogo        # a program instead of the shell
+$ onlyterm start --cwd C:/work                    # initial directory
+$ onlyterm start --choose-tab --cwd C:/work       # pick shell / elevation / priority first
+$ onlyterm start --start-conf project.onlyterm-run  # a startup layout
+$ onlyterm start --workspace dev                  # open in the "dev" workspace
+$ onlyterm start --position 100,100               # initial window position
+$ onlyterm start --always-new-process             # do not reuse a running GUI process
+$ onlyterm --config font_size=14 start            # override a setting
+$ onlyterm --config-file D:/cfg/other.ktav start  # another config file
+$ onlyterm --skip-config start                    # built-in defaults only
+```
+
+See [Launching OnlyTerm](../launching.md) for the Explorer entries and the
+`--choose-tab` dialog.
+
 ## `--start-conf`: opening a fixed set of tabs at startup
 
 `--start-conf <path.ktav>` loads a startup layout instead of spawning the

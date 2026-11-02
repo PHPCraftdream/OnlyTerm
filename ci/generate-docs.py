@@ -328,6 +328,8 @@ TOC = [
         "index.md",
         children=[
             Page("Features", "features.md"),
+            Page("Launching OnlyTerm", "launching.md"),
+            Page("Function Keys F1-F4", "function-keys.md"),
             Page("Scrollback", "scrollback.md"),
             Page("Quick Select Mode", "quickselect.md"),
             Page("Copy Mode", "copymode.md"),
