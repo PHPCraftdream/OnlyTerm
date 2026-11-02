@@ -1,5 +1,5 @@
-OnlyTerm - Terminal Emulator (fork of OnlyTerm)
-http://github.com/wezterm/wezterm
+OnlyTerm - Terminal Emulator for Windows
+https://github.com/PHPCraftdream/OnlyTerm
 
 Usage: onlyterm.EXE [OPTIONS] [COMMAND]
 

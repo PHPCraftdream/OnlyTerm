@@ -380,10 +380,7 @@ impl Pane for LocalPane {
     fn is_dead(&self) -> bool {
         let mut proc = self.process.lock();
 
-        const EXIT_BEHAVIOR: &str = "This message is shown because \
-            \x1b]8;;https://wezterm.org/\
-            config/reference/config/exit_behavior.html\
-            \x1b\\exit_behavior\x1b]8;;\x1b\\";
+        const EXIT_BEHAVIOR: &str = "This message is shown because exit_behavior";
 
         let mut terse = String::new();
         let mut brief = String::new();

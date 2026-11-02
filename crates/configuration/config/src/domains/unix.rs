@@ -69,9 +69,8 @@ pub struct UnixDomain {
     pub local_echo_threshold_ms: Option<u64>,
 
     /// Show time since last response when waiting for a response.
-    /// It is recommended to use
-    /// <https://wezterm.org/config/reference/pane/get_metadata.html#since_last_response_ms>
-    /// instead.
+    /// It is recommended to use the `since_last_response_ms` field of
+    /// `pane:get_metadata()` instead.
     #[dynamic(default)]
     pub overlay_lag_indicator: bool,
 }

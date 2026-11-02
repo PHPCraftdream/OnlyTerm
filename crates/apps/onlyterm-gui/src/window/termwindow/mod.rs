@@ -131,8 +131,6 @@ const STARTER_CONFIG: &str = "\
 ##
 ## Everything below is commented out, i.e. this file currently changes
 ## nothing. Uncomment a line and save to try it.
-##
-## Full reference: https://wezterm.org/config/files.html
 
 ## font_size: 12.0
 ## color_scheme: Catppuccin Mocha

@@ -2,39 +2,13 @@ use super::*;
 
 pub(super) fn derive(action: &KeyAssignment) -> Option<Option<CommandDef>> {
     Some(Some(match action {
-        OpenUri(uri) => match uri.as_ref() {
-            "https://wezterm.org/" => CommandDef {
-                brief: "Documentation".into(),
-                doc: "Visit the onlyterm documentation website".into(),
-                keys: vec![],
-                args: &[],
-                menubar: &["Help"],
-                icon: Some("md_help"),
-            },
-            "https://github.com/wezterm/wezterm/discussions/" => CommandDef {
-                brief: "Discuss on GitHub".into(),
-                doc: "Visit onlyterm's GitHub discussion".into(),
-                keys: vec![],
-                args: &[],
-                menubar: &["Help"],
-                icon: Some("oct_comment_discussion"),
-            },
-            "https://github.com/wezterm/wezterm/issues/" => CommandDef {
-                brief: "Search or report issue on GitHub".into(),
-                doc: "Visit onlyterm's GitHub issues".into(),
-                keys: vec![],
-                args: &[],
-                menubar: &["Help"],
-                icon: Some("fa_ticket"),
-            },
-            _ => CommandDef {
-                brief: format!("Open {uri} in your browser").into(),
-                doc: format!("Open {uri} in your browser").into(),
-                keys: vec![],
-                args: &[],
-                menubar: &[],
-                icon: Some("oct_browser"),
-            },
+        OpenUri(uri) => CommandDef {
+            brief: format!("Open {uri} in your browser").into(),
+            doc: format!("Open {uri} in your browser").into(),
+            keys: vec![],
+            args: &[],
+            menubar: &[],
+            icon: Some("oct_browser"),
         },
         SendEnterOrNewline(mods) if *mods == Modifiers::CTRL => CommandDef {
             brief: "Send CTRL+Enter, or a newline".into(),

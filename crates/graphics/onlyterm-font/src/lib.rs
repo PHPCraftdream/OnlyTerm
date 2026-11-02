@@ -715,8 +715,7 @@ impl FontConfigInner {
 
                 onlyterm_config::show_error(&format!(
                     "{}. Fallback(s) are being used instead, and the terminal \
-                    may not render as intended{}. See \
-                    https://wezterm.org/config/fonts.html for more information",
+                    may not render as intended{}.",
                     explanation, styled_extra
                 ));
             }

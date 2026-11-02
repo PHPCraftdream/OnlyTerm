@@ -30,7 +30,7 @@ use setcwd::SetCwdCommand;
 // "onlyterm v0.0.8...".
 #[command(
     name = "onlyterm",
-    about = "OnlyTerm - Terminal Emulator (fork of OnlyTerm)\nhttp://github.com/wezterm/wezterm",
+    about = "OnlyTerm - Terminal Emulator for Windows\nhttps://github.com/PHPCraftdream/OnlyTerm",
     version = onlyterm_version()
 )]
 pub struct Opt {

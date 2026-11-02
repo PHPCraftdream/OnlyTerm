@@ -174,8 +174,6 @@ impl FallbackResolveInfo {
                     .lock()
                     .unwrap()
                     .replace((Instant::now(), self.config.generation()));
-                let url = "https://wezterm.org/config/fonts.html";
-
                 // If font_dirs is configured but search_font_dirs_for_fallback
                 // is off, those fonts are scanned into a database that is
                 // then never consulted for fallback resolution, which looks
@@ -202,11 +200,9 @@ impl FallbackResolveInfo {
                      Placeholder glyphs are being displayed instead.\n\
                      You may wish to install additional fonts, or adjust your\n\
                      configuration so that it can find them.{}\n\
-                     {} has more information about configuring fonts.\n\
                      Set warn_about_missing_glyphs=false to suppress this message.",
                     fallback_str.escape_unicode(),
                     font_dirs_hint,
-                    url,
                 );
 
                 ToastNotification {
@@ -221,7 +217,7 @@ impl FallbackResolveInfo {
                         fallback_str.escape_unicode(),
                         font_dirs_hint,
                     ),
-                    url: Some(url.to_string()),
+                    url: None,
                     timeout: Some(Duration::from_secs(15)),
                 }
                 .show();

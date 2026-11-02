@@ -170,7 +170,7 @@ number of variables!
 
 If after experimenting with your environment and related settings you believe
 that OnlyTerm isn't sending the correct input then please [open an
-issue](https://github.com/wezterm/wezterm/issues) and include the `xxd` hexdump,
+issue](https://github.com/PHPCraftdream/OnlyTerm/issues) and include the `xxd` hexdump,
 and output from `env` and any other pertinent information about what you're
 trying and why it doesn't match your expectations.
 

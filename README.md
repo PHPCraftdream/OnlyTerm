@@ -171,11 +171,7 @@ Release notes: [docs/changelog.md](docs/changelog.md).
 
 ## Getting help
 
-The [issue tracker for this repository](https://github.com/PHPCraftdream/OnlyTerm/issues) is the first place to look. For general questions about the terminal itself (not specific to this fork), the upstream community channels are also available:
-
-* [Upstream GitHub issue tracker](https://github.com/wezterm/wezterm/issues)
-* [Upstream GitHub Discussions](https://github.com/wezterm/wezterm/discussions)
-* [Upstream Matrix room via Element.io](https://matrix.to/#/#wezterm:matrix.org)
+Use the [issue tracker of this repository](https://github.com/PHPCraftdream/OnlyTerm/issues) for questions, bug reports and ideas. Press **F1** inside OnlyTerm for the built-in help.
 
 ## Attribution and license
 

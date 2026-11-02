@@ -21,7 +21,7 @@ use std::thread;
 
 #[derive(Debug, Parser)]
 #[command(
-    about = "OnlyTerm - Terminal Emulator (fork of OnlyTerm)\nhttp://github.com/wezterm/wezterm",
+    about = "OnlyTerm - Terminal Emulator for Windows\nhttps://github.com/PHPCraftdream/OnlyTerm",
     version = onlyterm_config::onlyterm_version(),
     trailing_var_arg = true,
 )]

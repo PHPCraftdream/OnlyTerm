@@ -1,9 +1,9 @@
 copyright: Copyright &copy; 2018-Present Wez Furlong
 use_directory_urls: false
 site_name: OnlyTerm
-site_url: https://wezterm.org/
+site_url: https://github.com/PHPCraftdream/OnlyTerm/
 site_description: OnlyTerm
-repo_url: https://github.com/wezterm/wezterm
+repo_url: https://github.com/PHPCraftdream/OnlyTerm
 repo_name: OnlyTerm
 edit_uri: edit/main/docs/
 docs_dir: docs
@@ -128,8 +128,4 @@ markdown_extensions:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/wezterm/wezterm
-    - icon: fontawesome/brands/mastodon
-      link: https://fosstodon.org/@wez
-    - icon: fontawesome/brands/twitter
-      link: https://twitter.com/wezfurlong
+      link: https://github.com/PHPCraftdream/OnlyTerm

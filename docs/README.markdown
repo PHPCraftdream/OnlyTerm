@@ -1,3 +1,2 @@
 This directory contains the sources for the documentation.
-Read the generated documentation at:
-https://wezterm.org
+See https://github.com/PHPCraftdream/OnlyTerm

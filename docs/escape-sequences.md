@@ -4,7 +4,7 @@
 > with the various technical documents is laborious and tedious and I only
 > have so much spare time!
 >
-> If you notice that something is inaccurate or missing, please do [file an issue](https://github.com/wezterm/wezterm/issues/new/choose)
+> If you notice that something is inaccurate or missing, please do [file an issue](https://github.com/PHPCraftdream/OnlyTerm/issues/new)
 > so that it can be resolved!
 
 ## Output/Escape Sequences
