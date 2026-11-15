@@ -323,6 +323,35 @@ fn throughput(name: &str, unit: &str, total: usize) {
     );
 }
 
+/// The escape sequence parser alone, with the actions thrown away: what is
+/// left of a workload's cost once the terminal model is taken out.
+fn parse_only(name: &str, unit: &str, total: usize) {
+    let mut parser = termwiz::escape::parser::Parser::new();
+    let mut chunk = String::with_capacity(64 * 1024 + unit.len());
+    while chunk.len() < 64 * 1024 {
+        chunk.push_str(unit);
+    }
+    let lines_per_chunk = chunk.matches('\n').count();
+    let rounds = total / chunk.len();
+    let mut actions = 0usize;
+    let started = Instant::now();
+    for _ in 0..rounds {
+        parser.parse(chunk.as_bytes(), |action| {
+            actions += 1;
+            std::hint::black_box(&action);
+        });
+    }
+    let elapsed = started.elapsed();
+    let lines = rounds * lines_per_chunk;
+    println!(
+        "  {:<34} {:>7.1} MiB/s   {:>7.0} ns/line   {} actions/line",
+        name,
+        (rounds * chunk.len()) as f64 / (1024.0 * 1024.0) / elapsed.as_secs_f64(),
+        elapsed.as_nanos() as f64 / lines as f64,
+        actions / lines
+    );
+}
+
 fn model_throughput() {
     println!("3. Terminal model throughput (parse + apply, no rendering)");
     let total = 16 * 1024 * 1024;
@@ -364,6 +393,18 @@ fn model_throughput() {
         &format!("{}\r\n", cursor),
         total,
     );
+    // A pen that stays coloured across newlines, as ConPTY keeps it for a
+    // console with `color f8` and as colourful TUIs leave it.
+    let kept = format!(
+        "\x1b[38;5;15m\x1b[48;5;0m{}\r\n",
+        "The quick brown fox jumps over the lazy dog 0123456789 "
+    );
+    throughput("coloured pen kept over newlines", &kept, total);
+    println!("  parser alone (no terminal model):");
+    parse_only("  SGR-coloured lines", &format!("{}\r\n", sgr), total);
+    parse_only("  same words, no SGR", &format!("{}\r\n", words), total);
+    parse_only("  10 x simple SGR 31", &format!("{}\r\n", simple), total);
+    parse_only("  coloured pen kept", &kept, total);
     let cyr = "\u{421}\u{44a}\u{435}\u{448}\u{44c} \u{436}\u{435} \u{435}\u{449}\u{451} \u{44d}\u{442}\u{438}\u{445} \u{431}\u{443}\u{43b}\u{43e}\u{43a} ".repeat(4);
     throughput("Cyrillic lines", &format!("{}\r\n", cyr), total);
     let cjk = "\u{754c}\u{6f22}\u{5b57}\u{65e5}\u{672c}\u{8a9e} ".repeat(8);

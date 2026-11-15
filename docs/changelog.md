@@ -47,6 +47,14 @@ Releases are named using the date, time and git commit hash.
   0.04 ms. Rules from the configuration are unchanged.
 * A line without Hebrew text is clustered without the Hebrew reordering pass
   when bidi is on (the default), about 1.5-2.4 times faster per changed row.
+* When the pen has a colour (a ConPTY console after `color f8`, a TUI that
+  leaves its colours set), every line that scrolls off the top is blanked for
+  the new bottom row. That used to unpack the packed line into cells only to
+  overwrite them; it now builds the blank row directly, about 0.3 us instead of
+  2.5-4.5 us per line. Packing a line kept as cells back into clusters when it
+  enters the scrollback is about 1.6 times faster. Together, output with a
+  colour kept across newlines is processed in about 5.5 us per line instead of
+  28 us.
 * Frequently used metrics (frame counters and paint, atlas and quad timings)
   resolve their handle once instead of on every call.
 * `mux_enable_ssh_agent` and `default_ssh_auth_sock` no longer do anything and
@@ -65,9 +73,10 @@ Releases are named using the date, time and git commit hash.
 * The profiling harness records `localpane.render_snapshot.lines_cloned.size`
   and `lines_unchanged.size`: how many viewport rows each render snapshot
   cloned, and how many of them had not changed.
-* Benchmarks for the hot paths measured above: `hot_path_bench` (mux),
-  `hyperlink_bench` and `line_bench` (onlyterm-surface), run with
-  `cargo run --release --example <name>`.
+* Benchmarks for the hot paths measured above: `hot_path_bench` (mux, with the
+  parser measured alone next to the whole terminal model), `hyperlink_bench`
+  and `line_bench` (onlyterm-surface, including blanking and packing a line),
+  run with `cargo run --release --example <name>`.
 * The security model document and the launching guide say that an admin tab is
   typed into from the normal window, so other programs of the same user can
   send it keystrokes without a UAC prompt.

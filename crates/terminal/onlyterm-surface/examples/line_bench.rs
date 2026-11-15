@@ -1,13 +1,15 @@
 //! Per-line costs the renderer pays for every row whose content changed:
 //! splitting the row into clusters (with and without bidi), hashing it for
-//! the shape cache, and turning it into a string.
+//! the shape cache, and turning it into a string; plus blanking a scrolled-off
+//! line when the pen has a colour.
 //!
 //! ```text
 //! cargo run --release -p onlyterm-surface --features std --example line_bench
 //! ```
 
 use onlyterm_bidi::ParagraphDirectionHint;
-use onlyterm_cell::CellAttributes;
+use onlyterm_cell::color::ColorAttribute;
+use onlyterm_cell::{Cell, CellAttributes};
 use onlyterm_surface::{Line, SEQ_ZERO};
 use std::time::Instant;
 
@@ -77,7 +79,128 @@ fn bench(name: &str, text: &str) {
     }
 }
 
+/// `Screen::scroll_up` blanks the line that scrolled off the top with
+/// `resize_and_clear` when the pen is not the default one. Compares it with
+/// expanding the line and overwriting every cell (what it used to do),
+/// alternating the two so that load on the machine hits both equally.
+fn bench_resize_and_clear(width: usize, clustered: bool) {
+    const LINES: usize = 40;
+    let mut pen = CellAttributes::default();
+    pen.set_foreground(ColorAttribute::PaletteIndex(15));
+    pen.set_background(ColorAttribute::PaletteIndex(0));
+    let text: String = "status=busy worker=042 "
+        .chars()
+        .cycle()
+        .take(width)
+        .collect();
+    let fresh = || -> Vec<Line> {
+        (0..LINES)
+            .map(|_| {
+                let mut line = Line::from_text(&text, &CellAttributes::default(), SEQ_ZERO, None);
+                if clustered {
+                    line.compress_for_scrollback();
+                }
+                line
+            })
+            .collect()
+    };
+
+    let (mut old, mut new) = (Vec::new(), Vec::new());
+    for round in 0..600 {
+        let mut lines = fresh();
+        let start = Instant::now();
+        if round % 2 == 0 {
+            for line in &mut lines {
+                for cell in line.cells_mut() {
+                    *cell = Cell::blank_with_attrs(pen.clone());
+                }
+            }
+            old.push(start.elapsed().as_secs_f64() * 1e6);
+        } else {
+            for line in &mut lines {
+                line.resize_and_clear(width, SEQ_ZERO, pen.clone());
+            }
+            new.push(start.elapsed().as_secs_f64() * 1e6);
+        }
+        std::hint::black_box(&lines);
+    }
+    let stat = |v: &mut Vec<f64>| {
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        (v[0] / LINES as f64, v[v.len() / 2] / LINES as f64)
+    };
+    let (old_min, old_med) = stat(&mut old);
+    let (new_min, new_med) = stat(&mut new);
+    println!(
+        "blank a scrolled-off line, coloured pen, {} columns, {} storage",
+        width,
+        if clustered {
+            "clustered"
+        } else {
+            "cell vector"
+        }
+    );
+    println!(
+        "  expand + overwrite (old)     min {:>6.2} us/line   median {:>6.2} us/line",
+        old_min, old_med
+    );
+    println!(
+        "  resize_and_clear (new)       min {:>6.2} us/line   median {:>6.2} us/line",
+        new_min, new_med
+    );
+}
+
+/// A line kept as cells (a coloured pen blanks the row at the bottom, and
+/// cursor addressing edits it) is packed into clusters when it scrolls off the
+/// top of the screen.
+fn bench_compress_for_scrollback(name: &str, build: impl Fn() -> Line) {
+    const LINES: usize = 40;
+    let mut samples: Vec<f64> = (0..400)
+        .map(|_| {
+            let mut lines: Vec<Line> = (0..LINES).map(|_| build()).collect();
+            let start = Instant::now();
+            for line in &mut lines {
+                line.compress_for_scrollback();
+            }
+            let us = start.elapsed().as_secs_f64() * 1e6 / LINES as f64;
+            std::hint::black_box(&lines);
+            us
+        })
+        .collect();
+    samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    println!(
+        "compress_for_scrollback, {}: min {:.2} us/line   median {:.2} us/line",
+        name,
+        samples[0],
+        samples[samples.len() / 2]
+    );
+}
+
 fn main() {
+    let mut pen = CellAttributes::default();
+    pen.set_foreground(ColorAttribute::PaletteIndex(15));
+    pen.set_background(ColorAttribute::PaletteIndex(0));
+    let text = "The quick brown fox jumps over the lazy dog 0123456789 ";
+    bench_compress_for_scrollback("120 cells, one pen", || {
+        let mut line =
+            Line::with_width_and_cell(120, Cell::blank_with_attrs(pen.clone()), SEQ_ZERO);
+        line.overlay_text_with_attribute(0, text, pen.clone(), SEQ_ZERO);
+        line
+    });
+    let mut red = CellAttributes::default();
+    red.set_foreground(ColorAttribute::PaletteIndex(1));
+    bench_compress_for_scrollback("120 cells, 8 colour runs", || {
+        let mut line = Line::with_width_and_cell(120, Cell::blank(), SEQ_ZERO);
+        for (i, word) in text.split(' ').take(8).enumerate() {
+            let attrs = if i % 2 == 0 { pen.clone() } else { red.clone() };
+            line.overlay_text_with_attribute(i * 7, word, attrs, SEQ_ZERO);
+        }
+        line
+    });
+    for clustered in [true, false] {
+        for width in [80, 120, 200] {
+            bench_resize_and_clear(width, clustered);
+        }
+    }
     bench(
         "ASCII words",
         "status=busy | worker=042 | redraw payload with several short words here",
