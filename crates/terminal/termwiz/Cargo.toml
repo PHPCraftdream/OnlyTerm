@@ -2,7 +2,7 @@
 authors = ["Wez Furlong"]
 name = "termwiz"
 version = "0.24.0"
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "Terminal Wizardry for Windows"
 license = "MIT"

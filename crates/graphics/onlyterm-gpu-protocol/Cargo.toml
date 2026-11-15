@@ -2,7 +2,7 @@
 name = "onlyterm-gpu-protocol"
 version = "0.1.0"
 authors = ["Wez Furlong <wez@wezfurlong.org>"]
-edition = "2018"
+edition = "2021"
 publish = false
 
 [dependencies]

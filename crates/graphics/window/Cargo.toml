@@ -2,7 +2,7 @@
 name = "window"
 version = "0.1.0"
 authors = ["Wez Furlong"]
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "Windows window setup and render"
 license = "MIT"

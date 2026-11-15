@@ -2,7 +2,7 @@
 name = "onlyterm-color-types"
 version = "0.3.0"
 authors = ["Wez Furlong"]
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "Types for working with colors"
 license = "MIT"
