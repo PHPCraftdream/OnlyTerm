@@ -303,7 +303,7 @@ pub struct LocalPane {
     /// of the four GUI-thread-reachable accessors below, and cleared
     /// back to `false` the moment any subsequent bounded attempt
     /// succeeds. `is_unresponsive()` reads this (OR'd with
-    /// `render_budget_exceeded` below, see task #269) directly, with no
+    /// `render_budget_exceeded` below) directly, with no
     /// lock of its own, mirroring `unseen_output` above and for the same
     /// reason: this needs to be safely pollable from the GUI thread for
     /// *every* pane, including ones whose terminal mutex is currently
@@ -323,7 +323,7 @@ pub struct LocalPane {
     ///
     /// Task #269: this is written ONLY by `try_lock_terminal_for` (the
     /// real hang-detection signal). It used to also be written directly
-    /// by the GUI's per-frame render-budget path (task #251), which
+    /// by the GUI's per-frame render-budget path, which
     /// clobbered this signal back to `false` on almost every frame for
     /// whichever pane the user was actively looking at, since the
     /// render-budget write ran ~60 times/second and was `false` far more
@@ -564,6 +564,11 @@ impl LocalPane {
         &self,
     ) -> anyhow::Result<Vec<portable_pty::win::detach::PtyProcessInfo>> {
         self.with_conpty(|conpty| conpty.child_processes())
+    }
+
+    #[cfg(windows)]
+    pub fn child_process_names(&self) -> anyhow::Result<Vec<String>> {
+        self.with_conpty(|conpty| conpty.child_process_names())
     }
 
     #[cfg(windows)]

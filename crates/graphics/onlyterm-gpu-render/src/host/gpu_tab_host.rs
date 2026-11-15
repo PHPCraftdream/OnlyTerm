@@ -1,8 +1,8 @@
-//! `onlyterm-gui.exe --gpu-tab-host` (task #650): a hidden mode of this same
+//! `onlyterm-gui.exe --gpu-tab-host`: a hidden mode of this same
 //! binary that hosts one window's GPU rendering in its own OS process, for
 //! `webgpu_engine: HostProcess` (see
-//! docs/plans/2026-08-21-per-tab-gpu-process-isolation.md, Phase B, and the
-//! `@ox` architecture review this session that settled on per-window rather
+//! docs/plans/2026-08-21-per-tab-gpu-process-isolation.md, Phase B, which
+//! settled on per-window rather
 //! than per-tab granularity, silent respawn instead of a crash-visible
 //! epitaph screen).
 //!
@@ -15,16 +15,16 @@
 //! `wire::WireFrame`'s atlas deltas read from stdin. A crash anywhere in this
 //! process's GPU calls (the exact class of fault that used to take down the
 //! whole `onlyterm-gui.exe` -- see the investigation doc) now only takes
-//! down this one child; `HostProcessBackend` (task #651) respawns a
+//! down this one child; `HostProcessBackend` respawns a
 //! replacement, and since a DirectComposition surface keeps displaying its
-//! last presented content after its producer dies (confirmed empirically
-//! this session), nothing visibly drops while that happens.
+//! last presented content after its producer dies (confirmed empirically),
+//! nothing visibly drops while that happens.
 //!
 //! There is no CLI-supplied surface handle: attaching to a surface (both the
 //! very first one and every respawn generation after it) goes through the
 //! same `AttachSurface` message, so "first attach" and "reattach after
 //! respawn" are one code path, not two -- this is also what would let a
-//! future warm-standby pool (task #643) hand a pre-started, adapter-already-
+//! future warm-standby pool hand a pre-started, adapter-already-
 //! initialized child a surface on demand instead of spawning fresh each time.
 //!
 //! Supervision mirrors `per_tab_process_isolation`'s pty-hosting children:

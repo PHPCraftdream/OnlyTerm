@@ -2,7 +2,7 @@
 authors = ["Wez Furlong <wez@wezfurlong.org>"]
 name = "vtparse"
 version = "0.7.0"
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "Low level escape sequence parser"
 license = "MIT"

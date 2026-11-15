@@ -1,20 +1,29 @@
 use super::*;
 use crate::rebuild_backoff_for_attempt;
 use onlyterm_client::client::windows_job::assign_to_kill_on_close_job;
+use std::convert::TryFrom;
 use std::os::windows::io::AsRawHandle;
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
-use windows::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS};
+use windows::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS, WAIT_OBJECT_0};
 use windows::Win32::Graphics::DirectComposition::DCompositionCreateSurfaceHandle;
-use windows::Win32::System::Threading::GetCurrentProcess;
+use windows::Win32::System::Threading::{GetCurrentProcess, WaitForSingleObject};
+
+/// How long a child told to shut down gets to exit by itself before the
+/// process is ended.
+pub(super) const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 
 /// Spawns a fresh child generation, ties its lifetime to this process via a
 /// Job Object (falling back to the `--supervise-pid` watcher thread inside
 /// the child if that setup fails, exactly like `per_tab_process_isolation`'s
 /// pty-hosting children), creates a new composition-surface handle for it,
 /// and starts its writer/reader threads. Returns `false` (logged) if the
-/// process itself couldn't be spawned at all.
+/// process itself couldn't be spawned at all, or the window was closed in the
+/// meantime (no child is left running then).
 pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
+    if shared.window_destroyed.load(Ordering::Acquire) {
+        return false;
+    }
     let mut command = Command::new(&shared.child_exe);
     command
         .arg("gpu-tab-host")
@@ -34,7 +43,7 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
     let job = assign_to_kill_on_close_job(&child, "onlyterm-gui.exe (gpu-tab-host)");
 
     // SAFETY: `GENERIC_ALL`/`None` security attributes match the validated
-    // Phase A spike (`.scratch/dcomp-spike/parent/src/main.rs`) exactly.
+    // Phase A spike exactly.
     let h_surface: HANDLE = match unsafe { DCompositionCreateSurfaceHandle(GENERIC_ALL, None) } {
         Ok(h) => h,
         Err(err) => {
@@ -43,17 +52,20 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
             return false;
         }
     };
+    // SAFETY: just created above and used nowhere else; from here the wrapper
+    // closes it on every path that does not hand it on.
+    let surface = unsafe { surface_handles::SurfaceHandle::from_raw(h_surface) };
 
     let child_process_handle = HANDLE(child.as_raw_handle());
     let mut h_surface_in_child = HANDLE::default();
-    // SAFETY: `h_surface` was just created above and is valid; `child_process_handle`
+    // SAFETY: `surface` was just created above and is valid; `child_process_handle`
     // is the freshly-spawned child's own process handle (still owned by `child`,
     // not yet closed), satisfying `DuplicateHandle`'s requirement that both
     // handles be valid for the duration of the call.
     let dup_result = unsafe {
         DuplicateHandle(
             GetCurrentProcess(),
-            h_surface,
+            surface.raw(),
             child_process_handle,
             &mut h_surface_in_child,
             0,
@@ -76,12 +88,27 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
     let stdin = child.stdin.take().expect("stdin was piped");
     let stdout = child.stdout.take().expect("stdout was piped");
 
-    *shared.current.lock() = Some(ChildGeneration {
-        generation,
-        child,
-        _job: job,
-        writer_tx: writer_tx.clone(),
-    });
+    {
+        // The window can be closed while this child was starting. `shutdown`
+        // sets the flag before it takes `current`, so checking under the same
+        // lock means either shutdown sees this generation or this sees the
+        // flag: a child is never installed behind a closed window.
+        let mut current = shared.current.lock();
+        if shared.window_destroyed.load(Ordering::Acquire) {
+            drop(current);
+            log::info!(
+                "HostProcessBackend: window closed while a child was starting; discarding it"
+            );
+            let _ = child.kill();
+            return false;
+        }
+        *current = Some(ChildGeneration {
+            generation,
+            child,
+            _job: job,
+            writer_tx: writer_tx.clone(),
+        });
+    }
     io::spawn_writer_thread(generation, stdin, writer_rx, Arc::clone(&shared.draw_pool));
     io::spawn_reader_thread_with_death_handling(Arc::clone(shared), generation, stdout);
 
@@ -113,10 +140,13 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
     // The visual keeps showing whatever the previous generation last
     // presented (or nothing yet, on the very first spawn) until this
     // generation's reader thread sees its first `Presented` ack and swaps
-    // `SetContent` -- see `spawn_reader_thread`. `h_surface`/`content` for
-    // *this* generation are wrapped there, not here, since the swap must
-    // not happen before that ack.
-    shared_generation_surface_handle_store(shared, generation, h_surface);
+    // `SetContent` -- see `spawn_reader_thread`. The handle for *this*
+    // generation is wrapped there, not here, since the swap must not happen
+    // before that ack.
+    shared
+        .surface_handles
+        .lock()
+        .add_pending(generation, surface);
 
     // Ask for a repaint: nothing else necessarily will. A static screen
     // produces no frames on its own, so without this a respawned child sits
@@ -129,16 +159,54 @@ pub(super) fn spawn_generation(shared: &Arc<Shared>) -> bool {
     true
 }
 
-/// Per-generation composition-surface handles the parent side still needs
-/// once the child has acked its first frame (to wrap via
-/// `CreateSurfaceFromHandle` and swap into the visual). Keyed by generation
-/// so a late ack from an already-superseded generation is ignored rather
-/// than reaching for a handle that may have already been closed.
-fn shared_generation_surface_handle_store(shared: &Arc<Shared>, generation: u64, handle: HANDLE) {
-    shared
-        .pending_surface_handles
-        .lock()
-        .insert(generation, handle);
+/// Gives a child that was just told to shut down time to exit by itself, then
+/// ends it. Returns whether it exited on its own. Blocks for at most `grace`.
+pub(super) fn wait_or_kill(child: &mut Child, grace: Duration) -> bool {
+    let millis = u32::try_from(grace.as_millis()).unwrap_or(u32::MAX - 1);
+    // SAFETY: the handle belongs to `child`, which outlives this call.
+    let waited = unsafe { WaitForSingleObject(HANDLE(child.as_raw_handle()), millis) };
+    let exited = waited == WAIT_OBJECT_0;
+    if !exited {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    exited
+}
+
+/// Ends a child generation that is no longer wanted without blocking the
+/// caller: the child gets `SHUTDOWN_GRACE` to act on its `Shutdown` message,
+/// and its Job Object (which kills it) is only released afterwards. Dropping
+/// the generation right away would kill the child before it could read the
+/// message.
+pub(super) fn retire_in_background(generation: ChildGeneration) {
+    let ChildGeneration {
+        generation: number,
+        mut child,
+        _job,
+        writer_tx,
+    } = generation;
+    // Messages already queued (the `Shutdown` just sent) are still delivered.
+    drop(writer_tx);
+    let spawned = std::thread::Builder::new()
+        .name("gpu-host-retire".to_string())
+        .spawn(move || {
+            if !wait_or_kill(&mut child, SHUTDOWN_GRACE) {
+                log::warn!(
+                    "HostProcessBackend: generation {} did not exit within {:?} of Shutdown; ended",
+                    number,
+                    SHUTDOWN_GRACE
+                );
+            }
+            drop(_job);
+        });
+    if let Err(err) = spawned {
+        // The closure (and the generation inside it) was dropped, which ended
+        // the child at once -- the same as before this grace existed.
+        log::warn!(
+            "HostProcessBackend: cannot start the retire thread: {}",
+            err
+        );
+    }
 }
 
 /// Called when a generation's reader thread observes its child is gone
@@ -187,13 +255,7 @@ pub(super) fn handle_child_death(shared: &Arc<Shared>, dead_generation: u64) {
     shared.respawn_pending.store(true, Ordering::SeqCst);
     let delay = rebuild_backoff_for_attempt(attempt);
     let shared = Arc::clone(shared);
-    let respawn = move || {
-        let spawned = spawn_generation(&shared);
-        shared.respawn_pending.store(false, Ordering::SeqCst);
-        if !spawned {
-            log::error!("HostProcessBackend: respawn attempt failed to even launch a child");
-        }
-    };
+    let respawn = move || run_scheduled_respawn(&shared);
     match delay {
         None => respawn(),
         Some(delay) => {
@@ -205,5 +267,15 @@ pub(super) fn handle_child_death(shared: &Arc<Shared>, dead_generation: u64) {
                 })
                 .ok();
         }
+    }
+}
+
+/// The scheduled respawn itself. The window can be closed while a respawn
+/// waits out its backoff, so `spawn_generation` re-checks that.
+pub(super) fn run_scheduled_respawn(shared: &Arc<Shared>) {
+    let spawned = spawn_generation(shared);
+    shared.respawn_pending.store(false, Ordering::SeqCst);
+    if !spawned && !shared.window_destroyed.load(Ordering::Acquire) {
+        log::error!("HostProcessBackend: respawn attempt failed to even launch a child");
     }
 }

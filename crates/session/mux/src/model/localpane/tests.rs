@@ -231,7 +231,7 @@ pub(super) fn make_pane() -> (Arc<LocalPane>, Arc<std::sync::atomic::AtomicBool>
 /// `NeverExitChild`, so `ProcessState::Running.pid` is
 /// `Some(std::process::id())` -- a pid that
 /// `LocalProcessInfo::with_root_pid` can genuinely resolve. Needed by
-/// `divine_process_list`/`CachedProcInfo` tests (task #247): with
+/// `divine_process_list`/`CachedProcInfo` tests: with
 /// `NeverExitChild`'s `pid: None`, `divine_process_list` bails out
 /// before ever touching the cache at all.
 fn make_pane_with_real_pid() -> Arc<LocalPane> {
@@ -611,9 +611,9 @@ fn has_unseen_output_does_not_block_on_a_locked_terminal() {
     handle.join().expect("blocker thread panicked");
 }
 
-/// Regression test for task #246: `get_title()` used to take
+/// Regression test: `get_title()` used to take
 /// `terminal.lock()` unconditionally, with no timeout. Like
-/// `has_unseen_output()` before it (task #244), `get_title()` is
+/// `has_unseen_output()` before it, `get_title()` is
 /// called for the active pane of *every* tab from
 /// `get_tab_information()`/`update_title_impl` on the GUI thread on
 /// essentially every key/mouse event, so a single background pane
@@ -707,7 +707,7 @@ fn get_title_does_not_block_on_a_locked_terminal() {
 /// *observable* at the pane level, rather than only showing up as a
 /// silent `metrics::counter!` increment. Mirrors the
 /// real-blocker-thread contention setup used by
-/// `get_title_does_not_block_on_a_locked_terminal` (task #246).
+/// `get_title_does_not_block_on_a_locked_terminal`.
 #[test]
 fn is_unresponsive_flips_on_timeout_and_clears_on_success() {
     let (pane, _dropped) = make_pane();

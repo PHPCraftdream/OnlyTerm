@@ -223,9 +223,6 @@ fn init_config(opts: &Opt) -> anyhow::Result<ConfigHandle> {
     .context("onlyterm_config::common_init")?;
     let config = onlyterm_config::configuration();
     config.update_ulimit()?;
-    if let Some(value) = &config.default_ssh_auth_sock {
-        std::env::set_var("SSH_AUTH_SOCK", value);
-    }
     Ok(config)
 }
 

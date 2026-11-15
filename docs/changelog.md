@@ -12,6 +12,75 @@ changelog
 
 Releases are named using the date, time and git commit hash.
 
+### v0.0.45-alpha — 2026-11-15
+
+#### Fixed
+
+* The update check never found a release: it asked GitHub for the "latest"
+  release, which skips pre-releases, and every OnlyTerm release is one. It now
+  reads the release list, ignores drafts and unrecognized tags, and compares
+  versions by number, so `v0.0.100-alpha` is newer than `v0.0.44-alpha`. A
+  release the check cannot parse no longer switches the whole check off.
+* A new admin tab whose working directory ends in a backslash
+  (`C:\Program Files\App\`) got a broken command line: the closing quote was
+  swallowed. Arguments are now quoted by the C runtime rules.
+* A window's GPU-host child could be started after the window had been closed,
+  if the window closed while a respawn waited out its backoff, and it then ran
+  until the application exited. Surface handles of children that died before
+  showing a frame were never closed. A closing window now gives its child a few
+  seconds to exit on its own instead of ending it before it could read the
+  shutdown message.
+* The GPU-host wire protocol no longer panics or allocates by an untrusted
+  length on a truncated or corrupt frame: every length is checked against what
+  is left, oversized messages are rejected before they are read, and a frame
+  larger than 256 MiB is refused on both ends.
+
+#### Changed
+
+* Ctrl+letter and Shift+Enter ask which programs run in the pane (for the
+  Codex and Claude Code key encodings). The answer now comes from the pane's own
+  job object: about 0.05 ms instead of 14-22 ms, up to 100 ms, for a snapshot of
+  every process on the machine, on the GUI thread.
+* Implicit hyperlink detection skips a rule when the text it needs (`://` or
+  `@`) is not in the line. The pass over a freshly drawn screen under the
+  terminal lock took 0.5 ms at 120x40 and 1.4 ms at 200x60; it now takes about
+  0.04 ms. Rules from the configuration are unchanged.
+* A line without Hebrew text is clustered without the Hebrew reordering pass
+  when bidi is on (the default), about 1.5-2.4 times faster per changed row.
+* When the pen has a colour (a ConPTY console after `color f8`, a TUI that
+  leaves its colours set), every line that scrolls off the top is blanked for
+  the new bottom row. That used to unpack the packed line into cells only to
+  overwrite them; it now builds the blank row directly, about 0.3 us instead of
+  2.5-4.5 us per line. Packing a line kept as cells back into clusters when it
+  enters the scrollback is about 1.6 times faster. Together, output with a
+  colour kept across newlines is processed in about 5.5 us per line instead of
+  28 us.
+* Frequently used metrics (frame counters and paint, atlas and quad timings)
+  resolve their handle once instead of on every call.
+* `mux_enable_ssh_agent` and `default_ssh_auth_sock` no longer do anything and
+  produce a deprecation warning. Panes used to get an `SSH_AUTH_SOCK` pointing
+  at a symbolic link meant for forwarded Unix agent sockets; this Windows build
+  has none, and the link pointed at nothing.
+* The whole workspace is on Rust edition 2021.
+* CI: clippy runs on the whole workspace, a `cargo deny` workflow checks bans,
+  licenses and sources (and reports advisories without failing), Dependabot
+  also watches Cargo dependencies, and the Windows jobs are pinned to Rust
+  1.99.1 because sccache cannot start rustc 1.100 (its command line is longer
+  than Windows allows).
+
+#### Added
+
+* The profiling harness records `localpane.render_snapshot.lines_cloned.size`
+  and `lines_unchanged.size`: how many viewport rows each render snapshot
+  cloned, and how many of them had not changed.
+* Benchmarks for the hot paths measured above: `hot_path_bench` (mux, with the
+  parser measured alone next to the whole terminal model), `hyperlink_bench`
+  and `line_bench` (onlyterm-surface, including blanking and packing a line),
+  run with `cargo run --release --example <name>`.
+* The security model document and the launching guide say that an admin tab is
+  typed into from the normal window, so other programs of the same user can
+  send it keystrokes without a UAC prompt.
+
 ### v0.0.44-alpha — 2026-11-01
 
 #### Added

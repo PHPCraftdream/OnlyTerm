@@ -130,7 +130,7 @@ impl Config {
     ///
     /// A legacy `.rhai`/`.lua` sibling found next to one candidate path must
     /// not stop the search: a *later* candidate path may still have a valid,
-    /// already-migrated `.ktav` config (task #298 / bug F9), and that should
+    /// already-migrated `.ktav` config, and that should
     /// win outright with no error at all. So a `LegacyScriptSiblingError`
     /// from `try_load` is stashed here instead of being returned
     /// immediately, and only surfaced -- using the first one found, i.e. the
@@ -206,7 +206,7 @@ impl Config {
     /// `.rhai`- or `.lua`-suffixed sibling does, produce a clear, actionable
     /// error explaining that scripted configs are no longer supported at
     /// runtime: the rhai/mlua config-scripting engines have been retired
-    /// from the live config-loading path (task #275 onward) in favor of the
+    /// from the live config-loading path in favor of the
     /// static `ktav` format, and users must migrate their config and rename
     /// the file.
     ///
@@ -779,7 +779,7 @@ impl Config {
             Some(palette)
         } else {
             // Parses just the named scheme rather than all ~1000 bundled
-            // ones; see `lookup_default_scheme` for why (task #405).
+            // ones; see `lookup_default_scheme` for why.
             crate::lookup_default_scheme(scheme_name)
         }
     }

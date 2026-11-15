@@ -1,4 +1,4 @@
-//! Elevated window spawn helper for OnlyTerm.
+//! Elevated single-pane tab spawn helper for OnlyTerm.
 //!
 //! On Windows, a non-elevated process cannot spawn an elevated child that
 //! shares its existing ConPTY handle. Elevation is only reachable via
@@ -6,14 +6,14 @@
 //! and produces a process at a different integrity level that cannot share
 //! the calling process's PTY/console the normal way.
 //!
-//! This module provides a helper to spawn a new elevated OnlyTerm window
-//! running a specific shell command, with the result indicating success,
-//! user cancellation, or failure.
+//! This module spawns the elevated `onlyterm-mux-server` for one pane and
+//! waits for it to connect back, with the result indicating success, user
+//! cancellation, or failure.
 //!
 //! Called from the "New Tab Options" dialog's admin path
 //! (`crates/apps/onlyterm-gui/src/termwindow/newtab_options.rs`), off the GUI
-//! thread via `onlyterm_promise::spawn::spawn_into_new_thread` -- this function's
-//! own blocking `ShellExecuteExW` call cannot run on the GUI thread's
+//! thread via `onlyterm_promise::spawn::spawn_into_new_thread` -- the
+//! blocking `ShellExecuteExW` call cannot run on the GUI thread's
 //! cooperative executor without freezing the whole application for as
 //! long as the UAC prompt is up.
 
@@ -33,17 +33,6 @@ pub enum ElevatedSinglePaneResult {
     Failed(String),
 }
 
-/// Result of attempting to spawn an elevated window.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ElevateResult {
-    /// Successfully spawned elevated window.
-    Success,
-    /// User cancelled the UAC prompt (ERROR_CANCELLED / 1223).
-    UserCancelled,
-    /// Failed to spawn elevated window with an error message.
-    Failed(String),
-}
-
 /// Convert a rust string to a NUL-terminated UTF-16 wide string.
 fn wide_string(s: &str) -> Vec<u16> {
     OsStr::new(s)
@@ -52,43 +41,37 @@ fn wide_string(s: &str) -> Vec<u16> {
         .collect()
 }
 
-/// Quote a single command-line argument for Windows shell parsing.
-/// Wraps in double quotes and escapes embedded quotes with backslashes.
+/// Quotes one argument so the C runtime / `CommandLineToArgvW` splits it back
+/// into exactly `arg`.
+///
+/// Backslashes are literal unless they precede a double quote: a run of them
+/// before a `"` is doubled and the quote gets one more backslash. The run
+/// before the closing quote is doubled too, otherwise `C:\dir\` would swallow
+/// it.
 fn quote_arg(arg: &str) -> String {
-    if arg.contains(' ') || arg.contains('\t') || arg.contains('"') || arg.is_empty() {
-        let mut result = String::new();
-        result.push('"');
-        for c in arg.chars() {
-            if c == '"' {
-                result.push('\\');
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
+        return arg.to_string();
+    }
+    let mut result = String::with_capacity(arg.len() + 2);
+    result.push('"');
+    let mut backslashes = 0usize;
+    for c in arg.chars() {
+        match c {
+            '\\' => backslashes += 1,
+            '"' => {
+                result.push_str(&"\\".repeat(backslashes * 2 + 1));
+                backslashes = 0;
+                result.push('"');
             }
-            result.push(c);
+            _ => {
+                result.push_str(&"\\".repeat(backslashes));
+                backslashes = 0;
+                result.push(c);
+            }
         }
-        result.push('"');
-        result
-    } else {
-        arg.to_string()
     }
-}
-
-/// Construct a command line string suitable for passing as lpParameters
-/// to ShellExecuteExW when spawning an elevated OnlyTerm instance.
-///
-/// The format is: `start -- <shell> <arg1> <arg2> ...`
-///
-/// Arguments are properly quoted if they contain spaces or special characters.
-fn construct_start_command_line(shell_args: &[String]) -> String {
-    if shell_args.is_empty() {
-        return String::from("start --");
-    }
-
-    let mut result = String::from("start --");
-
-    for arg in shell_args {
-        result.push(' ');
-        result.push_str(&quote_arg(arg));
-    }
-
+    result.push_str(&"\\".repeat(backslashes * 2));
+    result.push('"');
     result
 }
 
@@ -134,106 +117,6 @@ fn construct_single_pane_command_line(
     }
 
     result
-}
-
-/// Spawn an elevated OnlyTerm window running the specified shell command.
-///
-/// This function:
-/// 1. Gets the path to the current OnlyTerm executable.
-/// 2. Constructs a `start -- <shell_args>` command line.
-/// 3. Calls `ShellExecuteExW` with `lpVerb = "runas"` to trigger UAC.
-/// 4. Returns an `ElevateResult` indicating the outcome.
-///
-/// # Important Notes
-///
-/// - This function MUST be called off the GUI thread on a real OS
-///   thread (e.g., via `onlyterm_promise::spawn::spawn_into_new_thread`, NOT
-///   `onlyterm_promise::spawn::spawn`, which runs on the GUI thread's own
-///   cooperative executor) because `ShellExecuteExW("runas")` blocks
-///   until the user responds to the UAC prompt.
-/// - The spawned elevated window is completely independent of the current
-///   process/window and cannot share the PTY.
-/// - If the user cancels the UAC prompt, this returns `UserCancelled`
-///   (distinct from a hard failure).
-///
-/// # Parameters
-///
-/// * `shell_args` - The shell command and arguments to run in the elevated
-///   window (e.g., `["cmd.exe", "/k", "echo elevated"]`).
-/// * `priority` - The process priority class for the elevated window.
-///   Note: This is for future use; the current ShellExecuteExW-based
-///   implementation does not support setting priority, so this parameter
-///   is accepted but not yet applied. A future implementation may switch
-///   to a more sophisticated approach that allows priority setting.
-///
-/// # Returns
-///
-/// * `ElevateResult::Success` - Elevated window spawned successfully.
-/// * `ElevateResult::UserCancelled` - User cancelled the UAC prompt.
-/// * `ElevateResult::Failed(message)` - Failed to spawn with an error message.
-#[allow(dead_code)] // Kept for potential future "open in new OS window" option
-pub fn spawn_elevated_window(shell_args: &[String], _priority: ProcessPriority) -> ElevateResult {
-    use winapi::shared::winerror::ERROR_CANCELLED;
-    use winapi::um::shellapi::ShellExecuteExW;
-    use winapi::um::winuser::SW_SHOW;
-
-    // Get the path to the current OnlyTerm executable
-    let exe_path = match std::env::current_exe() {
-        Ok(path) => path,
-        Err(err) => {
-            return ElevateResult::Failed(format!("Failed to resolve current executable: {}", err))
-        }
-    };
-
-    let exe_path_str = match exe_path.to_str() {
-        Some(s) => s,
-        None => {
-            return ElevateResult::Failed("Current executable path is not valid UTF-8".to_string())
-        }
-    };
-
-    // Construct the command line parameters
-    let parameters = construct_start_command_line(shell_args);
-
-    // Convert to wide strings
-    let exe_wide = wide_string(exe_path_str);
-    let operation = wide_string("runas");
-    let params_wide = wide_string(&parameters);
-
-    // Prepare SHELLEXECUTEINFOW
-    // SAFETY: SHELLEXECUTEINFOW is a plain C struct of integers/pointers;
-    // an all-zero bit pattern is a valid value for every field, and every
-    // field this code actually reads (cbSize, lpVerb, lpFile,
-    // lpParameters, nShow) is explicitly set below before the struct is
-    // passed to ShellExecuteExW.
-    let mut sei = unsafe { std::mem::zeroed::<winapi::um::shellapi::SHELLEXECUTEINFOW>() };
-    sei.cbSize = std::mem::size_of::<winapi::um::shellapi::SHELLEXECUTEINFOW>() as u32;
-    sei.lpVerb = operation.as_ptr();
-    sei.lpFile = exe_wide.as_ptr();
-    sei.lpParameters = params_wide.as_ptr();
-    sei.nShow = SW_SHOW;
-
-    // Call ShellExecuteExW
-    // SAFETY: All pointers are valid NUL-terminated wide strings that
-    // outlive this synchronous call. cbSize is correctly set to the
-    // struct size. Other fields are zero-initialized or set as above.
-    let result = unsafe { ShellExecuteExW(&mut sei) };
-
-    if result == 0 {
-        // Failed - check for ERROR_CANCELLED (user cancelled UAC prompt)
-        // SAFETY: GetLastError() takes no arguments and has no preconditions;
-        // it just reads the calling thread's last-error TLS slot.
-        let error_code = unsafe { winapi::um::errhandlingapi::GetLastError() };
-        if error_code == ERROR_CANCELLED {
-            ElevateResult::UserCancelled
-        } else {
-            let error_msg = format!("ShellExecuteExW failed: error {}", error_code);
-            log::error!("spawn_elevated_window: {}", error_msg);
-            ElevateResult::Failed(error_msg)
-        }
-    } else {
-        ElevateResult::Success
-    }
 }
 
 /// Spawn an elevated single-pane tab and wait for the WebSocket rendezvous.
@@ -430,38 +313,6 @@ mod tests {
     }
 
     #[test]
-    fn test_construct_start_command_line_empty() {
-        let result = construct_start_command_line(&[]);
-        assert_eq!(result, "start --");
-    }
-
-    #[test]
-    fn test_construct_start_command_line_single() {
-        let result = construct_start_command_line(&["cmd.exe".to_string()]);
-        assert_eq!(result, "start -- cmd.exe");
-    }
-
-    #[test]
-    fn test_construct_start_command_line_multiple() {
-        let result =
-            construct_start_command_line(&["powershell.exe".to_string(), "-NoLogo".to_string()]);
-        assert_eq!(result, "start -- powershell.exe -NoLogo");
-    }
-
-    #[test]
-    fn test_construct_start_command_line_with_spaces() {
-        let result =
-            construct_start_command_line(&["C:\\Program Files\\Git\\bin\\bash.exe".to_string()]);
-        assert_eq!(result, "start -- \"C:\\Program Files\\Git\\bin\\bash.exe\"");
-    }
-
-    #[test]
-    fn test_construct_start_command_line_with_quotes() {
-        let result = construct_start_command_line(&["path\"with\"quotes".to_string()]);
-        assert_eq!(result, "start -- \"path\\\"with\\\"quotes\"");
-    }
-
-    #[test]
     fn test_construct_single_pane_command_line_minimal() {
         let result = construct_single_pane_command_line(
             12345,
@@ -596,6 +447,110 @@ mod tests {
     #[test]
     fn test_quote_arg_empty() {
         assert_eq!(quote_arg(""), "\"\"");
+    }
+
+    #[test]
+    fn test_quote_arg_doubles_trailing_backslashes() {
+        assert_eq!(quote_arg(r"C:\Program Files\"), r#""C:\Program Files\\""#);
+        assert_eq!(quote_arg(r"a b\\"), r#""a b\\\\""#);
+    }
+
+    #[test]
+    fn test_quote_arg_escapes_backslashes_before_quote() {
+        assert_eq!(quote_arg(r#"a\"b"#), r#""a\\\"b""#);
+        assert_eq!(quote_arg(r#"a\\"b"#), r#""a\\\\\"b""#);
+    }
+
+    #[test]
+    fn test_quote_arg_leaves_inner_backslashes_alone() {
+        assert_eq!(quote_arg(r"C:\a b\c"), r#""C:\a b\c""#);
+        assert_eq!(quote_arg(r"C:\nospace\"), r"C:\nospace\");
+    }
+
+    /// Splits a command line the way the Microsoft C runtime does, for
+    /// checking that `quote_arg` output survives a round trip.
+    fn split_command_line(line: &str) -> Vec<String> {
+        let chars: Vec<char> = line.chars().collect();
+        let mut args = Vec::new();
+        let mut i = 0;
+        loop {
+            while i < chars.len() && (chars[i] == ' ' || chars[i] == '\t') {
+                i += 1;
+            }
+            if i >= chars.len() {
+                break;
+            }
+            let mut arg = String::new();
+            let mut in_quotes = false;
+            loop {
+                let mut backslashes = 0;
+                while i < chars.len() && chars[i] == '\\' {
+                    backslashes += 1;
+                    i += 1;
+                }
+                if i < chars.len() && chars[i] == '"' {
+                    arg.push_str(&"\\".repeat(backslashes / 2));
+                    if backslashes % 2 == 1 {
+                        arg.push('"');
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                    i += 1;
+                } else {
+                    arg.push_str(&"\\".repeat(backslashes));
+                    if i >= chars.len() || (!in_quotes && (chars[i] == ' ' || chars[i] == '\t')) {
+                        break;
+                    }
+                    arg.push(chars[i]);
+                    i += 1;
+                }
+            }
+            args.push(arg);
+        }
+        args
+    }
+
+    #[test]
+    fn test_quote_arg_round_trips_through_command_line_parsing() {
+        let args = [
+            "",
+            "simple",
+            "with space",
+            "tab\there",
+            r"C:\Program Files\",
+            r"C:\Program Files\App",
+            r#"a"b"#,
+            r#"a\"b"#,
+            r#"a\\"b"#,
+            r"\",
+            r"\\",
+            r"\ ",
+            "trailing \\",
+            r#""quoted""#,
+            r#"echo "hello world" & more"#,
+            "unicode \u{8def}\u{5f84} \u{fc}",
+        ];
+        let line = args
+            .iter()
+            .map(|arg| quote_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(split_command_line(&line), args);
+    }
+
+    #[test]
+    fn test_single_pane_command_line_keeps_a_cwd_with_trailing_backslash_intact() {
+        let line = construct_single_pane_command_line(
+            1,
+            "tok",
+            Some(std::path::Path::new(r"C:\Program Files\App\")),
+            ProcessPriority::Normal,
+            &["cmd.exe".to_string()],
+        );
+        let args = split_command_line(&line);
+        let cwd = args.iter().position(|arg| arg == "--cwd").unwrap();
+        assert_eq!(args[cwd + 1], r"C:\Program Files\App\");
+        assert_eq!(args.last().map(String::as_str), Some("cmd.exe"));
     }
 
     /// Measures what the `hProcess` handle from `ShellExecuteExW` can actually

@@ -76,14 +76,14 @@ impl TermWindow {
     }
 
     pub(super) fn mux_pane_output_event(&mut self, pane_id: PaneId) {
-        metrics::histogram!("mux.pane_output_event.rate").record(1.);
+        onlyterm_metrics::cached_histogram!("mux.pane_output_event.rate").record(1.);
         // `PaneOutput` notifications are delivered to every `TermWindow` in
         // the process (see `subscribe_to_pane_updates` -- the mux
         // subscription is global, not per-window), so this must check
         // `window_contains_pane` before treating the event as "this
         // window's shell is alive"; otherwise output from an unrelated
         // pane in a different OS window would trigger this window's
-        // startup fade (task #385) too.
+        // startup fade too.
         if !self.shell_output_seen && self.window_contains_pane(pane_id) {
             // First non-empty pty output for this window, from any of its
             // panes/tabs (not just the currently-visible one -- a window

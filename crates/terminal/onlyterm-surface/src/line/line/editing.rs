@@ -18,13 +18,27 @@ impl Line {
         seqno: SequenceNo,
         blank_attr: CellAttributes,
     ) {
-        {
-            let cells = self.coerce_vec_storage();
-            for c in cells.iter_mut() {
-                *c = Cell::blank_with_attrs(blank_attr.clone());
-            }
-            cells.resize_with(width, || Cell::blank_with_attrs(blank_attr.clone()));
-            cells.shrink_to_fit();
+        // The old content is discarded. Going through `coerce_vec_storage`
+        // would expand a scrolled-off (clustered) line into cells, or copy
+        // storage a render snapshot still shares, only to overwrite every
+        // cell of it. So overwrite in place only a cell vector of the right
+        // width that nobody else holds, and build fresh storage otherwise.
+        let reused = match &mut self.cells {
+            CellStorage::V(cells) => match Arc::get_mut(cells) {
+                Some(cells) if cells.len() == width => {
+                    for c in cells.iter_mut() {
+                        *c = Cell::blank_with_attrs(blank_attr.clone());
+                    }
+                    true
+                }
+                _ => false,
+            },
+            CellStorage::C(_) => false,
+        };
+        if !reused {
+            let mut cells = Vec::with_capacity(width);
+            cells.resize(width, Cell::blank_with_attrs(blank_attr));
+            self.cells = CellStorage::V(Arc::new(VecStorage::new(cells)));
         }
         self.update_last_change_seqno(seqno);
         self.invalidate_zones();
@@ -374,5 +388,106 @@ impl Line {
     /// cell, so that important invariants are upheld.
     pub fn cells_mut_for_attr_changes_only(&mut self) -> &mut [Cell] {
         self.coerce_vec_storage().as_mut_slice()
+    }
+}
+
+#[cfg(test)]
+mod resize_and_clear_tests {
+    use super::*;
+    use onlyterm_cell::color::ColorAttribute;
+
+    /// The previous implementation, kept as the reference.
+    fn reference(line: &mut Line, width: usize, seqno: SequenceNo, blank_attr: CellAttributes) {
+        {
+            let cells = line.coerce_vec_storage();
+            for c in cells.iter_mut() {
+                *c = Cell::blank_with_attrs(blank_attr.clone());
+            }
+            cells.resize_with(width, || Cell::blank_with_attrs(blank_attr.clone()));
+            cells.shrink_to_fit();
+        }
+        line.update_last_change_seqno(seqno);
+        line.invalidate_zones();
+        line.bits = LineBits::NONE;
+        line.cached_last_cell_wrapped_seqno
+            .store(usize::MAX, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn attrs() -> Vec<CellAttributes> {
+        let mut red = CellAttributes::default();
+        red.set_foreground(ColorAttribute::PaletteIndex(1));
+        let mut boxed = CellAttributes::default();
+        boxed.set_background(ColorAttribute::PaletteIndex(4));
+        boxed.set_underline(onlyterm_cell::Underline::Single);
+        vec![CellAttributes::default(), red, boxed]
+    }
+
+    fn lines() -> Vec<Line> {
+        let plain = CellAttributes::default();
+        let mut clustered = Line::from_text("scrolled off the top", &plain, 3, None);
+        clustered.compress_for_scrollback();
+        let wide = Line::from_text(&"w".repeat(200), &plain, 3, None);
+        let narrow = Line::from_text("ab", &plain, 3, None);
+        let mut wrapped = Line::from_text("wrapped", &plain, 3, None);
+        wrapped.set_last_cell_was_wrapped(true, 4);
+        vec![
+            Line::new(1),
+            clustered,
+            wide,
+            narrow,
+            wrapped,
+            Line::with_width_and_cell(10, Cell::blank(), 2),
+        ]
+    }
+
+    /// Every start line, owned alone and (second) with a snapshot that holds
+    /// a clone of it, as the GUI does across frames.
+    #[test]
+    fn matches_the_cell_by_cell_reference_for_every_start_and_width() {
+        for blank in attrs() {
+            for width in [0usize, 1, 5, 120, 300] {
+                for index in 0..lines().len() {
+                    for snapshot_holds_a_clone in [false, true] {
+                        let mut new = lines().swap_remove(index);
+                        let mut old = lines().swap_remove(index);
+                        let snapshot = snapshot_holds_a_clone.then(|| new.clone());
+                        new.resize_and_clear(width, 9, blank.clone());
+                        reference(&mut old, width, 9, blank.clone());
+                        let case = format!(
+                            "line {} width {} shared {} attrs {:?}",
+                            index, width, snapshot_holds_a_clone, blank
+                        );
+                        assert_eq!(new, old, "{}", case);
+                        assert_eq!(new.len(), width, "{}", case);
+                        assert!(
+                            new.cells_mut()
+                                .iter()
+                                .all(|c| *c == Cell::blank_with_attrs(blank.clone())),
+                            "{}",
+                            case
+                        );
+                        assert_eq!(new.current_seqno(), old.current_seqno(), "{}", case);
+                        assert!(!new.last_cell_was_wrapped(), "{}", case);
+                        drop(snapshot);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn leaves_a_line_that_shares_the_storage_untouched() {
+        let mut line = Line::from_text(
+            "shared with a snapshot",
+            &CellAttributes::default(),
+            3,
+            None,
+        );
+        line.coerce_vec_storage();
+        let snapshot = line.clone();
+        let before = snapshot.as_str().into_owned();
+        line.resize_and_clear(22, 5, CellAttributes::default());
+        assert_eq!(snapshot.as_str(), before);
+        assert_eq!(line.as_str().trim(), "");
     }
 }

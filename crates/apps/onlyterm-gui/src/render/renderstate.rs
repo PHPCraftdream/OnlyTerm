@@ -458,7 +458,7 @@ impl RenderLayer {
 
         let result = f(&mut layers);
 
-        metrics::histogram!("gui.paint.collect").record(start.elapsed());
+        onlyterm_metrics::cached_histogram!("gui.paint.collect").record(start.elapsed());
 
         // `f` collected quads into each view's own owned `Vec` (see
         // `TripleVertexBuffer::map_instances`'s doc comment); merge them

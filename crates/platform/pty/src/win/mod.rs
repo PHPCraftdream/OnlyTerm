@@ -297,6 +297,7 @@ impl std::future::Future for WinChild {
 
                 let waker = cx.waker().clone();
                 std::thread::spawn(move || {
+                    let _ = &handle;
                     // SAFETY: `handle.0` is a duplicated, valid process handle.
                     unsafe {
                         WaitForSingleObject(handle.0 as _, INFINITE);

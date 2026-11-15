@@ -1,4 +1,4 @@
-//! End-to-end regression test for task #256 ("244.t1"): proves the
+//! End-to-end regression test: proves the
 //! COMBINED, user-visible effect of tasks #244-#251 -- a background pane
 //! whose terminal is wedged (here: a real thread holding `terminal.lock()`
 //! indefinitely, the same faithful stand-in used by
@@ -147,7 +147,7 @@ const COLS: usize = 80;
 
 /// Builds a real `LocalPane` with a real `onlyterm_term::Terminal` behind
 /// the exact same `Mutex` used in production, and a real
-/// `crate::domain::WriterWrapper` (task #245) in front of a
+/// `crate::domain::WriterWrapper` in front of a
 /// `BlockingWriter`, so `pane.writer().write_all()` exercises the actual
 /// non-blocking machinery rather than a plain `Vec` sink.
 fn make_pane(

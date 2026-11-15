@@ -13,7 +13,7 @@
 //! that: a `window_destroyed` flag so a `Frame`/`Resize` message that was
 //! already queued before `Shutdown` don't reach into a dead HWND's GPU
 //! resources, and a `submit_started_at` timestamp so a future per-window
-//! supervisor (task #223) can ask "is this window's render thread currently
+//! supervisor can ask "is this window's render thread currently
 //! stuck inside a submit/reconfigure call".
 //!
 //! Gated behind `onlyterm_config::webgpu_render_thread`, which now defaults to

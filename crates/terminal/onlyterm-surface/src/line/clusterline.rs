@@ -125,16 +125,17 @@ impl ClusteredLine {
     }
 
     pub fn from_cell_vec<'a>(hint: usize, iter: impl Iterator<Item = CellRef<'a>>) -> Self {
-        let mut last_cluster: Option<Cluster> = None;
-        let mut is_double_wide = FixedBitSet::with_capacity(hint);
-        let mut text = String::new();
-        let mut clusters = vec![];
-        let mut any_double = false;
+        // `hint` is the number of cells: most of them are one byte of text.
+        let mut text = String::with_capacity(hint);
+        let mut clusters: Vec<Cluster> = vec![];
+        // Only lines with a wide character need it.
+        let mut is_double_wide: Option<FixedBitSet> = None;
         let mut len = 0;
         let mut last_cell_width = None;
 
         for cell in iter {
-            len += cell.width();
+            let width = cell.width();
+            len += width;
             // Track the *actual* width of whichever cell turns out to be
             // last, not a hardcoded 1: `set_last_cell_was_wrapped` uses
             // this to know how many trailing columns the final cluster
@@ -142,45 +143,30 @@ impl ClusteredLine {
             // corrupts the cluster's own column bookkeeping for a line
             // ending in a double-width (e.g. CJK) grapheme, not just the
             // wrapped attribute.
-            last_cell_width = NonZeroU8::new(cell.width().max(1) as u8);
+            last_cell_width = NonZeroU8::new(width.max(1) as u8);
 
-            if cell.width() > 1 {
-                any_double = true;
-                is_double_wide.set(cell.cell_index(), true);
+            if width > 1 {
+                is_double_wide
+                    .get_or_insert_with(|| FixedBitSet::with_capacity(hint))
+                    .set(cell.cell_index(), true);
             }
 
             text.push_str(cell.str());
 
-            last_cluster = match last_cluster.take() {
-                None => Some(Cluster {
-                    cell_width: cell.width() as u16,
+            match clusters.last_mut() {
+                Some(cluster) if cluster.attrs == *cell.attrs() => {
+                    cluster.cell_width += width as u16;
+                }
+                _ => clusters.push(Cluster {
+                    cell_width: width as u16,
                     attrs: cell.attrs().clone(),
                 }),
-                Some(cluster) if cluster.attrs != *cell.attrs() => {
-                    clusters.push(cluster);
-                    Some(Cluster {
-                        cell_width: cell.width() as u16,
-                        attrs: cell.attrs().clone(),
-                    })
-                }
-                Some(mut cluster) => {
-                    cluster.cell_width += cell.width() as u16;
-                    Some(cluster)
-                }
-            };
-        }
-
-        if let Some(cluster) = last_cluster.take() {
-            clusters.push(cluster);
+            }
         }
 
         Self {
             text,
-            is_double_wide: if any_double {
-                Some(Box::new(is_double_wide))
-            } else {
-                None
-            },
+            is_double_wide: is_double_wide.map(Box::new),
             clusters,
             len: len.try_into().unwrap(),
             last_cell_width,
@@ -1131,5 +1117,104 @@ mod test {
             cl.text.capacity() >= cap_before,
             "clear_in_place must keep the allocation, not reset it"
         );
+    }
+}
+
+#[cfg(test)]
+mod from_cell_vec_tests {
+    use super::*;
+    use crate::line::Line;
+    use crate::SEQ_ZERO;
+    use onlyterm_cell::color::ColorAttribute;
+
+    /// The previous implementation, kept as the reference.
+    fn reference<'a>(hint: usize, iter: impl Iterator<Item = CellRef<'a>>) -> ClusteredLine {
+        let mut last_cluster: Option<Cluster> = None;
+        let mut is_double_wide = FixedBitSet::with_capacity(hint);
+        let mut text = String::new();
+        let mut clusters = vec![];
+        let mut any_double = false;
+        let mut len = 0;
+        let mut last_cell_width = None;
+
+        for cell in iter {
+            len += cell.width();
+            last_cell_width = NonZeroU8::new(cell.width().max(1) as u8);
+            if cell.width() > 1 {
+                any_double = true;
+                is_double_wide.set(cell.cell_index(), true);
+            }
+            text.push_str(cell.str());
+            last_cluster = match last_cluster.take() {
+                None => Some(Cluster {
+                    cell_width: cell.width() as u16,
+                    attrs: cell.attrs().clone(),
+                }),
+                Some(cluster) if cluster.attrs != *cell.attrs() => {
+                    clusters.push(cluster);
+                    Some(Cluster {
+                        cell_width: cell.width() as u16,
+                        attrs: cell.attrs().clone(),
+                    })
+                }
+                Some(mut cluster) => {
+                    cluster.cell_width += cell.width() as u16;
+                    Some(cluster)
+                }
+            };
+        }
+        if let Some(cluster) = last_cluster.take() {
+            clusters.push(cluster);
+        }
+        ClusteredLine {
+            text,
+            is_double_wide: if any_double {
+                Some(Box::new(is_double_wide))
+            } else {
+                None
+            },
+            clusters,
+            len: len.try_into().unwrap(),
+            last_cell_width,
+        }
+    }
+
+    fn coloured(fg: u8) -> CellAttributes {
+        let mut attrs = CellAttributes::default();
+        attrs.set_foreground(ColorAttribute::PaletteIndex(fg));
+        attrs
+    }
+
+    fn lines() -> Vec<Line> {
+        let plain = CellAttributes::default();
+        let mut mixed = Line::with_width_and_cell(40, Cell::blank(), SEQ_ZERO);
+        mixed.overlay_text_with_attribute(0, "red", coloured(1), SEQ_ZERO);
+        mixed.overlay_text_with_attribute(3, " plain ", plain.clone(), SEQ_ZERO);
+        mixed.overlay_text_with_attribute(10, "green", coloured(2), SEQ_ZERO);
+        let mut wide = Line::with_width_and_cell(20, Cell::blank(), SEQ_ZERO);
+        wide.overlay_text_with_attribute(2, "\u{754c}\u{6f22}a\u{5b57}", plain.clone(), SEQ_ZERO);
+        let mut wide_last = Line::with_width_and_cell(6, Cell::blank(), SEQ_ZERO);
+        wide_last.overlay_text_with_attribute(4, "\u{754c}", coloured(3), SEQ_ZERO);
+        vec![
+            Line::from_cells(vec![], SEQ_ZERO),
+            Line::from_text("x", &plain, SEQ_ZERO, None),
+            Line::from_text("plain ascii text", &plain, SEQ_ZERO, None),
+            Line::with_width_and_cell(120, Cell::blank_with_attrs(coloured(15)), SEQ_ZERO),
+            mixed,
+            wide,
+            wide_last,
+            Line::from_text("e\u{301}a\u{300} combining", &plain, SEQ_ZERO, None),
+        ]
+    }
+
+    #[test]
+    fn matches_the_cell_by_cell_reference() {
+        for line in lines() {
+            let hint = line.len();
+            let new = ClusteredLine::from_cell_vec(hint, line.visible_cells());
+            let old = reference(hint, line.visible_cells());
+            assert_eq!(new, old, "{:?}", line.as_str());
+            assert_eq!(new.len(), line.len());
+        }
     }
 }

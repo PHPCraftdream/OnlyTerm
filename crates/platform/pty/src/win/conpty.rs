@@ -143,6 +143,16 @@ impl ConPtyMasterPty {
         detach::terminate_selected(job.as_raw_handle() as _, selected)
     }
 
+    /// Executable base names of every live process of this pane, read from
+    /// the pane's job object without a machine-wide process snapshot.
+    pub fn child_process_names(&self) -> anyhow::Result<Vec<String>> {
+        let job = {
+            let inner = self.inner.lock().unwrap();
+            Self::pane_job(&inner)?
+        };
+        detach::process_names(job.as_raw_handle() as _)
+    }
+
     pub fn child_processes(&self) -> anyhow::Result<Vec<PtyProcessInfo>> {
         let inner = self.inner.lock().unwrap();
         let job = Self::pane_job(&inner)?;

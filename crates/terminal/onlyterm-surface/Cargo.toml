@@ -2,7 +2,7 @@
 authors = ["Wez Furlong"]
 name = "onlyterm-surface"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "Surface and Line types for terminals"
 license = "MIT"

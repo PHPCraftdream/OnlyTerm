@@ -90,7 +90,7 @@ impl CornerVertex {
     }
 }
 
-/// Regression coverage for the instanced-rendering vertex layout (task #447).
+/// Regression coverage for the instanced-rendering vertex layout.
 ///
 /// The instanced pipeline binds two vertex buffers -- `CornerVertex` (one
 /// static set of 4 corners, `step_mode: Vertex`) and `QuadInstance` (one

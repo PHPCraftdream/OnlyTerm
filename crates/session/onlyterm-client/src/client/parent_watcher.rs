@@ -5,7 +5,7 @@
 //! watcher (`crates/apps/onlyterm-mux-server/src/main.rs`), which is a separate
 //! binary crate and so cannot be called into directly. Kept here, in a
 //! crate both `onlyterm-mux-server` callers and `onlyterm-gui`'s
-//! `--gpu-tab-host` mode (task #650) can depend on, as a fallback layered on
+//! `--gpu-tab-host` mode can depend on, as a fallback layered on
 //! top of a Job Object (`windows_job::assign_to_kill_on_close_job`) rather
 //! than a replacement for it -- see that module's doc comment for why both
 //! exist.
@@ -58,6 +58,7 @@ pub fn spawn_parent_watcher(parent_pid: u32) {
     let h_parent = ParentHandle(h_parent);
 
     std::thread::spawn(move || {
+        let _ = &h_parent;
         let h_parent = h_parent.0;
 
         log::info!(

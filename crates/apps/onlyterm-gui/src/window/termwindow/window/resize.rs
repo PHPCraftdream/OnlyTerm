@@ -136,7 +136,7 @@ impl super::TermWindow {
         self.resize_webgpu_surface(dimensions);
 
         // Reset frame signature on resize - surface dimensions changed,
-        // so the previous frame is no longer comparable (task #450)
+        // so the previous frame is no longer comparable
         self.last_frame_signature = None;
 
         // For simple, user-interactive resizes where the dpi doesn't change,

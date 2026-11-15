@@ -323,7 +323,12 @@ ln -s /usr/local/git/bin/git /usr/local/bin/git""",
 
         return steps
 
-    def install_rust(self, cache=True, toolchain="stable"):
+    # Pinned, not "stable": since Rust 1.100 cargo passes a `-L dependency=`
+    # for every transitive dependency (per-package build-dir layout), and the
+    # rustc command line of the larger crates passes 32767 characters. sccache
+    # 0.19 expands it and then cannot spawn the compiler on Windows. Move to a
+    # newer toolchain once sccache copes with that.
+    def install_rust(self, cache=True, toolchain="1.99.1"):
         salt = "2"
         key_prefix = f"{self.name}-{self.rust_target}-{salt}-${{{{ runner.os }}}}"
         params = dict()
@@ -402,8 +407,8 @@ rustup default {toolchain}
     def lint_all(self):
         return [
             RunStep(
-                name="Clippy (GUI, window, terminal and process tracking)",
-                run="cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p onlyterm-mux -p onlyterm-procinfo --all-targets -- -D warnings",
+                name="Clippy (whole workspace)",
+                run="cargo --config .cargo/vendor.toml clippy --locked --workspace --all-targets -- -D warnings",
                 shell="cmd",
             ),
         ]

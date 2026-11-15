@@ -54,8 +54,7 @@ fn osc7_can_refresh_the_fallback_when_os_cwd_is_unavailable() {
 /// and hand the refresh off to a background thread, rather than
 /// recomputing inline on the caller's thread.
 ///
-/// Honesty note (matching this session's established practice, see
-/// task #241's commit for the precedent): there's no cheap,
+/// Honesty note: there's no cheap,
 /// deterministic way to make a *real* `with_root_pid` system-process
 /// snapshot artificially slow, so this cannot directly assert "the
 /// call returned in under N milliseconds while a slow refresh was

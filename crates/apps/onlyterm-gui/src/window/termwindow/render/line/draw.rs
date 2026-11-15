@@ -271,7 +271,7 @@ fn test_reemitting_same_row_quads_yields_same_signature() {
 /// if two frames emit the same underlying quads in a different order, the byte
 /// sequence TripleVertexBuffer::instances accumulates changes, changing the
 /// content hash for what's actually a pixel-identical frame -- silently defeating
-/// task #450's frame-skipping optimization. Production code maintains row order
+/// the frame-skipping optimization. Production code maintains row order
 /// (see render/pane.rs::render_lines, which processes slots in order 0..n_rows
 /// regardless of RowAction) -- this test just pins that the hash function itself
 /// is order-sensitive, so that invariant is actually load-bearing.
@@ -337,7 +337,7 @@ impl crate::TermWindow {
         if let Some(rt) = self.render_thread.as_ref() {
             if rt.is_in_flight() {
                 rt.set_repaint_pending();
-                metrics::counter!("gui.render_thread.frames_dropped").increment(1);
+                onlyterm_metrics::cached_counter!("gui.render_thread.frames_dropped").increment(1);
                 if BACKPRESSURE_FRAME_DROPPED_LOG.should_log(HANDSHAKE_LOG_RATE) {
                     log::info!(
                         "gui: dropped a freshly built frame: the previous frame is still \
@@ -412,12 +412,12 @@ impl crate::TermWindow {
         // Compare with the previous frame signature and skip if identical
         if let Some(last_signature) = self.last_frame_signature {
             if signature == last_signature {
-                metrics::counter!("gui.frame.skipped").increment(1);
+                onlyterm_metrics::cached_counter!("gui.frame.skipped").increment(1);
                 return Ok(());
             }
         }
         self.last_frame_signature = Some(signature);
-        metrics::counter!("gui.frame.submitted").increment(1);
+        onlyterm_metrics::cached_counter!("gui.frame.submitted").increment(1);
 
         match frame_form {
             FrameForm::InProcess => {
@@ -589,9 +589,9 @@ impl crate::TermWindow {
             }
         }
 
-        metrics::histogram!("gui.webgpu_frame.vertex_recreate.latency")
+        onlyterm_metrics::cached_histogram!("gui.webgpu_frame.vertex_recreate.latency")
             .record(vertex_recreate_start.elapsed());
-        metrics::histogram!("gui.webgpu_frame.vertex_recreate.size")
+        onlyterm_metrics::cached_histogram!("gui.webgpu_frame.vertex_recreate.size")
             .record(vertex_recreate_bytes as f64);
 
         Ok(GpuFrame {

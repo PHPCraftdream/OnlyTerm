@@ -156,16 +156,28 @@ pub fn default_hyperlink_rules() -> Vec<hyperlink::Rule> {
     vec![
         // First handle URLs wrapped with punctuation (i.e. brackets)
         // e.g. [http://foo] (http://foo) <http://foo>
-        hyperlink::Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1).unwrap(),
-        hyperlink::Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1).unwrap(),
-        hyperlink::Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1).unwrap(),
+        hyperlink::Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1)
+            .unwrap()
+            .requiring_text("://"),
+        hyperlink::Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1)
+            .unwrap()
+            .requiring_text("://"),
+        hyperlink::Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1)
+            .unwrap()
+            .requiring_text("://"),
         // Then handle URLs not wrapped in brackets that
         // 1) have a balanced ending parenthesis or
-        hyperlink::Rule::new(hyperlink::CLOSING_PARENTHESIS_HYPERLINK_PATTERN, "$0").unwrap(),
+        hyperlink::Rule::new(hyperlink::CLOSING_PARENTHESIS_HYPERLINK_PATTERN, "$0")
+            .unwrap()
+            .requiring_text("://"),
         // 2) include terminating _, / or - characters, if any
-        hyperlink::Rule::new(hyperlink::GENERIC_HYPERLINK_PATTERN, "$0").unwrap(),
+        hyperlink::Rule::new(hyperlink::GENERIC_HYPERLINK_PATTERN, "$0")
+            .unwrap()
+            .requiring_text("://"),
         // implicit mailto link
-        hyperlink::Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0").unwrap(),
+        hyperlink::Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0")
+            .unwrap()
+            .requiring_text("@"),
     ]
 }
 
@@ -430,5 +442,20 @@ pub(crate) fn validate_domain_name(name: &str) -> Result<(), String> {
         Err("the empty string is an invalid domain name".to_string())
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod hyperlink_rule_tests {
+    use super::*;
+
+    #[test]
+    fn default_hyperlink_rules_carry_the_hint_their_pattern_needs() {
+        let rules = default_hyperlink_rules();
+        assert_eq!(rules.len(), 6);
+        for rule in &rules {
+            let hint = rule.required_text().expect("every default rule has a hint");
+            assert!(rule.regex.as_str().contains(hint));
+        }
     }
 }

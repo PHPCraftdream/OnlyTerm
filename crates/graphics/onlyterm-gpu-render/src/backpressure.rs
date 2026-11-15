@@ -111,13 +111,15 @@ mod tests {
     #[test]
     fn should_log_admits_at_most_one_per_interval() {
         let limiter = LogRateLimiter::new();
-        let interval = Duration::from_millis(50);
+        // Long enough that a descheduled test thread cannot let it lapse
+        // between the first two calls.
+        let interval = Duration::from_millis(500);
         assert!(limiter.should_log(interval), "first call must be admitted");
         assert!(
             !limiter.should_log(interval),
             "an immediate second call must be throttled"
         );
-        std::thread::sleep(interval + Duration::from_millis(20));
+        std::thread::sleep(interval + Duration::from_millis(50));
         assert!(
             limiter.should_log(interval),
             "after the interval elapses the next call must be admitted again"

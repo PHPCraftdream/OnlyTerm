@@ -145,10 +145,10 @@ impl WebGpuState {
     /// (device/queue/shaders/pipelines), but no `WindowGpuSurface` at all --
     /// no `CreateSwapChainForHwnd`, no `Surface::configure`,
     /// `Surface::present` never runs for it. For a window using
-    /// `HostProcessBackend` (task #651): the parent still needs a
+    /// `HostProcessBackend`: the parent still needs a
     /// `WebGpuState` for backend-agnostic CPU-side work (`RenderState`/
     /// `GlyphCache`'s atlas texture creation), but must never touch the
-    /// exact three calls behind every GPU crash diagnosed this session --
+    /// exact three calls behind every diagnosed GPU crash --
     /// all of which live on `WindowGpuSurface`, not `ProcessGpuContext`.
     ///
     /// Registers for device-lost notifications the same way `new` does: if
@@ -169,7 +169,7 @@ impl WebGpuState {
     }
 
     /// Builds a `WebGpuState` for the `webgpu_engine: PerTabProcess` GPU-host
-    /// child process (task #650): no `Window` (this process has none of its
+    /// child process: no `Window` (this process has none of its
     /// own -- it renders directly into a composition surface the parent
     /// created), so no device-lost subscriber registration either -- there
     /// is nothing else in this private, single-tab process to notify. Uses

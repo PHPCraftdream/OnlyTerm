@@ -5,9 +5,6 @@ impl Mux {
         if let Some(info) = self.clients.write().get_mut(client_id) {
             info.update_last_input();
         }
-        if let Some(agent) = &self.agent {
-            agent.update_target();
-        }
     }
 
     pub fn record_input_for_current_identity(&self) {

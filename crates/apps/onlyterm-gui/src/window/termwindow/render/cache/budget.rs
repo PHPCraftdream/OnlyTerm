@@ -1,10 +1,8 @@
 //! Progressive sweep policy for frame-build budget management.
 //!
-//! This module implements the row-sweep logic that fixes task #457's Cause B
-//! (livelock under budget pressure) while ensuring the invariant from Cause A
-//! (no row is ever left blank once rendered).
-//!
-//! See the task #457 design review by @oh for the full rationale.
+//! This module implements the row-sweep logic that avoids a livelock under
+//! budget pressure while ensuring that no row is ever left blank once
+//! rendered.
 
 use std::time::Instant;
 
@@ -590,7 +588,7 @@ mod tests {
     #[test]
     fn ordinary_retained_rows_still_defer_over_budget() {
         // Regression guard: ordinary retained rows (without cursor) should still be
-        // deferred when over budget, preserving the task #457 budget optimization.
+        // deferred when over budget, preserving the budget optimization.
         let deadline = mock_deadline();
         let work_start = 5;
         let slot = 2; // Below work_start, so not the rotation target

@@ -20,6 +20,8 @@ pub struct ClientId {
     pub pid: u32,
     pub epoch: u64,
     pub id: usize,
+    /// Always `None` now. Kept so the wire layout of `SetClientId` does not
+    /// change.
     pub ssh_auth_sock: Option<String>,
 }
 
@@ -35,7 +37,7 @@ impl ClientId {
             pid: std::process::id(),
             epoch: *EPOCH,
             id,
-            ssh_auth_sock: crate::AgentProxy::default_ssh_auth_sock(),
+            ssh_auth_sock: None,
         }
     }
 }

@@ -2,7 +2,7 @@
 authors = ["Wez Furlong <wez@wezfurlong.org>"]
 name = "onlyterm-term"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "The Virtual Terminal Emulator core from onlyterm; helpful for implementing terminal emulators"
 license = "MIT"

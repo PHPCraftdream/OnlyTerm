@@ -294,7 +294,7 @@ pub(crate) fn parse_buffered_data(
                 // hostage while ConPTY sat silent waiting for exactly
                 // those answers, a mutual wait broken only by ConPTY's
                 // 3000ms WaitUntilDA1 timeout, i.e. a 3 second stall on
-                // every single pane spawn (task #328). The upstream code
+                // every single pane spawn. The upstream code
                 // this was ported from could `continue` safely because it
                 // used poll(), which only *checks* readiness -- the data
                 // stayed queued for the outer read. `recv_timeout`

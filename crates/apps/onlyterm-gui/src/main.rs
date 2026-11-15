@@ -57,6 +57,8 @@ mod inputmap;
 mod overlay;
 #[path = "render/quad.rs"]
 mod quad;
+#[path = "startup/release_version.rs"]
+mod release_version;
 #[path = "render/renderstate.rs"]
 mod renderstate;
 #[path = "window/resize_increment_calculator.rs"]
@@ -166,7 +168,7 @@ enum SubCommand {
 
     /// Hosts one tab's GPU rendering in its own process (task #650, see
     /// docs/plans/2026-08-21-per-tab-gpu-process-isolation.md). Spawned only
-    /// by `PerTabProcessBackend` (task #651) itself -- never meant to be
+    /// by `PerTabProcessBackend` itself -- never meant to be
     /// typed by a user, hence `hide = true`.
     #[command(name = "gpu-tab-host", hide = true)]
     GpuTabHost(GpuTabHostCommand),
@@ -714,9 +716,6 @@ fn run() -> anyhow::Result<()> {
     )?;
     log::info!("startup: config loaded");
     let config = onlyterm_config::configuration();
-    if let Some(value) = &config.default_ssh_auth_sock {
-        std::env::set_var("SSH_AUTH_SOCK", value);
-    }
 
     let sub = match opts.cmd.as_ref().cloned() {
         Some(SubCommand::BlockingStart(start)) => {

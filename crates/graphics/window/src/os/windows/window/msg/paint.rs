@@ -17,7 +17,7 @@ const PLACEHOLDER_SPINNER_PERIOD_MS: u128 = 1400;
 /// `rect` (the window's client area) with the background color first. Task
 /// #384's original design (a ring of orbiting dots) read as an illegible
 /// speck once made large enough to actually be visible on a big/high-DPI
-/// window (task #406) -- a plain text label sidesteps that entirely, since
+/// window -- a plain text label sidesteps that entirely, since
 /// its size already tracks the font instead of a hand-picked pixel radius.
 /// Same cheap GDI path as before (no WebGpu/render-thread involvement,
 /// since that pipeline is exactly what is not ready yet).

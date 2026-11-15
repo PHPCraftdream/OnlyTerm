@@ -14,7 +14,7 @@ impl TermWindow {
     /// under the hood), which holds here since all call sites already run
     /// on the GUI thread.
     ///
-    /// Guarded by `hang_check_scheduled` (task #287): if a chain is already
+    /// Guarded by `hang_check_scheduled`: if a chain is already
     /// pending for this window, this is a no-op rather than arming a second,
     /// concurrent chain. See that field's doc comment for the race this
     /// closes. The guard is set here, at the point a new timer is actually
@@ -82,7 +82,7 @@ impl TermWindow {
     /// scheduling half.
     fn check_render_thread_hang_tick(&mut self, window: &Window) {
         // Clear the "a chain is pending" guard before any other logic in
-        // this tick runs (task #287): this tick *is* that pending chain
+        // this tick runs: this tick *is* that pending chain
         // firing, so from this point on `schedule_render_thread_hang_check`
         // must be willing to arm a fresh timer again -- whether that
         // happens below (the `!hung` re-arm path) or later, from
@@ -95,7 +95,7 @@ impl TermWindow {
         self.hang_check_scheduled.set(false);
 
         // Sweep any WebGpu child HWNDs retired by an earlier
-        // `begin_renderer_rebuild` (task #283): destroys the ones whose
+        // `begin_renderer_rebuild`: destroys the ones whose
         // paired `Weak<WebGpuState>` has since hit zero strong references
         // (i.e. the old render thread has actually returned), leaving any
         // others -- still possibly referenced by a render thread that
@@ -443,7 +443,7 @@ impl TermWindow {
             .as_ref()
             .map(|state| state.context.webgpu().is_none())
             .unwrap_or_else(|| self.webgpu.is_none());
-        // Capture the outgoing render thread's teardown sentinel (task #292)
+        // Capture the outgoing render thread's teardown sentinel
         // *before* taking/shutting it down: `RenderThreadHandle::teardown_sentinel`
         // exists only on the handle itself. Hosted processes have no local WebGPU
         // thread to await. For in-process renderers, a Weak<WebGpuState> is not the
@@ -494,7 +494,7 @@ impl TermWindow {
         }
         self.render_context = None;
         if let Some(webgpu) = self.webgpu.take() {
-            // Mark the outgoing device stale (task #267) before dropping it: wgpu's
+            // Mark the outgoing device stale before dropping it: wgpu's
             // device-lost callback cannot be unregistered and can outlive this state.
             // A late event from this abandoned device must no-op rather than charge a
             // spurious rebuild attempt against the fresh, healthy replacement.
@@ -556,12 +556,12 @@ impl TermWindow {
     /// thread, mirroring `new_window`'s original setup sequence.
     ///
     /// There are two sequential failure points here -- `WebGpuState::new`
-    /// itself failing, and (task #272) `self.created` (i.e. `RenderState::new`:
+    /// itself failing, and `self.created` (i.e. `RenderState::new`:
     /// shader compilation, glyph atlas allocation, etc.) failing even though
     /// `WebGpuState::new` just succeeded -- and both re-enter the same
     /// circuit-breaker-gated path (`attempt_renderer_rebuild_or_close`) that
-    /// got us here, rather than closing the window immediately. Rationale
-    /// (task #255, extended by #272): either failure is, from the circuit
+    /// got us here, rather than closing the window immediately. Rationale:
+    /// either failure is, from the circuit
     /// breaker's point of view, just another WebGpu rebuild attempt that
     /// didn't pan out -- exactly like a rebuild that "succeeds" (returns a
     /// device) but then immediately re-hangs, which the breaker already
@@ -577,7 +577,7 @@ impl TermWindow {
     /// the breaker trips, closes the window (see that function; task #414
     /// removed the OpenGL fallback that used to be tried at that point).
     fn finish_renderer_rebuild(&mut self, window: &Window, result: anyhow::Result<WebGpuState>) {
-        // Opportunistic extra sweep (task #283): by the time `WebGpuState::new`
+        // Opportunistic extra sweep: by the time `WebGpuState::new`
         // (real adapter/device/surface setup work, not instantaneous) has
         // resolved, the old render thread this rebuild abandoned has
         // usually already observed the shutdown signal and returned,
@@ -633,11 +633,11 @@ impl TermWindow {
         self.render_context = Some(RenderContext::in_process(Arc::clone(&webgpu)));
         self.render_thread = None;
         // Reset frame signature on renderer rebuild - new renderer/surface,
-        // so the previous frame is no longer comparable (task #450)
+        // so the previous frame is no longer comparable
         self.last_frame_signature = None;
         if let Err(err) = self.created(RenderContext::in_process(Arc::clone(&webgpu))) {
-            // Same reasoning as the `WebGpuState::new` failure arm above
-            // (task #272): the device/surface rebuild itself just
+            // Same reasoning as the `WebGpuState::new` failure arm above:
+            // the device/surface rebuild itself just
             // succeeded, so this is a `RenderState::new` failure (shader
             // compilation, glyph atlas allocation, etc.) on top of a
             // healthy device -- still just another WebGpu rebuild attempt

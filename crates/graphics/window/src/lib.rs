@@ -261,7 +261,7 @@ pub trait WindowOps {
     /// first frame (Windows-only concern -- see
     /// `os::windows::window::WindowInner::placeholder_spinner`'s doc
     /// comment for the full rationale). Called the first time a real frame
-    /// has actually been *presented* (task #425, hardened by task #407),
+    /// has actually been *presented*,
     /// not merely once a renderer object exists or a frame has merely been
     /// handed off for presentation -- the caller is `onlyterm-gui`'s
     /// `TermWindow::paint_impl` on the synchronous (no dedicated render

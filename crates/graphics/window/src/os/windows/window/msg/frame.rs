@@ -108,8 +108,8 @@ impl WindowInner {
         // the instant the WebGpu child underneath it resizes. A
         // shifted/mismatched rectangle would look worse than an instant cut,
         // so finish the fade now rather than trying to reposition the
-        // overlay. This runs from both `wm_size` and `wm_windowposchanged`
-        // (task #399), and `WM_WINDOWPOSCHANGED` also fires for pure moves,
+        // overlay. This runs from both `wm_size` and `wm_windowposchanged`,
+        // and `WM_WINDOWPOSCHANGED` also fires for pure moves,
         // z-order changes and activation with no size change at all -- `same`
         // (computed from `GetClientRect`, above) is what distinguishes a
         // real resize from those, so a plain move no longer cuts the fade

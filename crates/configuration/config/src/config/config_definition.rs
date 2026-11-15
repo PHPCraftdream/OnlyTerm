@@ -358,10 +358,21 @@ pub struct Config {
     #[dynamic(default = "default_mux_output_parser_chunk_size")]
     pub mux_output_parser_chunk_size: usize,
 
-    #[dynamic(default = "default_true")]
+    /// Used to point `SSH_AUTH_SOCK` in every pane at a symlink that followed
+    /// the most recently active mux client. That only makes sense for
+    /// forwarded Unix agent sockets, which this Windows build has none of, and
+    /// the symlink pointed at nothing, so it is gone.
+    #[dynamic(
+        default = "default_true",
+        deprecated = "this option no longer does anything: panes no longer get a proxied SSH_AUTH_SOCK, and it will be removed in a future release"
+    )]
     pub mux_enable_ssh_agent: bool,
 
-    #[dynamic(default)]
+    /// Used to set `SSH_AUTH_SOCK` for the process; nothing reads it any more.
+    #[dynamic(
+        default,
+        deprecated = "this option no longer does anything and will be removed in a future release"
+    )]
     pub default_ssh_auth_sock: Option<String>,
 
     /// How many ms to delay after reading a chunk of output
@@ -911,7 +922,7 @@ pub struct Config {
     /// callbacks this timeout used to guard -- `format-tab-title`,
     /// `format-window-title`, `update-status` -- no longer exist), nothing
     /// in this codebase reads this field. It is kept only because the
-    /// `.ktav` format still declares/defaults it; see task #315 for the
+    /// `.ktav` format still declares/defaults it; for the
     /// investigation that turned it up as dead. Marked deprecated (task
     /// #320) so anyone who set it explicitly gets a warning instead of
     /// silently believing it still guards something.

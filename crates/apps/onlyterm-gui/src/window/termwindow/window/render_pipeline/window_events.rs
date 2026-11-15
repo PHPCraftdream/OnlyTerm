@@ -128,7 +128,7 @@ impl TermWindow {
             }
             WindowEvent::NeedRepaint => {
                 self.refresh_renderer_info();
-                // Early-show (task #331) means the window can be visible --
+                // Early-show means the window can be visible --
                 // and generating `NeedRepaint` events from focus/resize/OS
                 // paint requests -- before the renderer is attached.
                 // `self.webgpu` is still `None` from when it's constructed
@@ -138,7 +138,7 @@ impl TermWindow {
                 // `do_paint_webgpu` is simply unreachable while
                 // `self.webgpu` is `None` (the `else` branch below runs
                 // instead). The client area itself is covered by the
-                // `WM_ERASEBKGND` placeholder brush (task #330) for the
+                // `WM_ERASEBKGND` placeholder brush for the
                 // brief window before `created()` runs, so a dropped
                 // repaint here is harmless -- `created()` also forces one
                 // more `window.invalidate()` once the renderer is actually in

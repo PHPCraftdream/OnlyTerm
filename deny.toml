@@ -101,6 +101,10 @@ allow = [
     "CC0-1.0",
     "WTFPL",
     "Apache-2.0 WITH LLVM-exception",
+    # The ICU crates and unicode-ident (Unicode data and its license).
+    "Unicode-3.0",
+    # libfuzzer-sys, pulled in by a dependency's fuzzing support.
+    "NCSA",
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the

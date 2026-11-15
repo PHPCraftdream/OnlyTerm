@@ -135,7 +135,7 @@ impl Drop for PlaceholderSpinner {
 /// full story).
 const PLACEHOLDER_OVERLAY_CLASS_NAME: &str = "OnlyTermPlaceholderOverlay";
 
-/// State for the placeholder-overlay fade-out (task #385). Unlike
+/// State for the placeholder-overlay fade-out. Unlike
 /// `PlaceholderSpinner` (which owns GDI brushes/pens for as long as no
 /// renderer is up), this only exists for the brief final transition: it is
 /// created once both gating conditions in `start_placeholder_fade` are
@@ -178,7 +178,7 @@ pub(super) const PLACEHOLDER_SPINNER_INTERVAL_MS: u32 = 1000 / 30;
 pub(super) const PLACEHOLDER_SPINNER_TIMER_ID: usize = 1;
 
 /// `SetTimer`/`KillTimer`/`WM_TIMER` id for the placeholder-overlay fade
-/// tick (task #385). Deliberately distinct from
+/// tick. Deliberately distinct from
 /// `PLACEHOLDER_SPINNER_TIMER_ID`: although in practice the spinner timer
 /// is killed by `clear_placeholder_background` before the fade timer is
 /// ever armed (there is no message-dispatch point between the
@@ -340,7 +340,7 @@ impl Window {
 }
 
 impl WindowInner {
-    /// Mark the renderer as ready (task #385's first gating condition) and,
+    /// Mark the renderer as ready (the first gating condition) and,
     /// if the shell is also already known to be ready, hand off from the
     /// opaque spinner to the fade overlay; then drop the placeholder
     /// spinner's own timer/GDI resources (see `placeholder_spinner`'s doc
@@ -435,7 +435,7 @@ impl WindowInner {
         }
     }
 
-    /// Mark the shell as ready (task #385's second gating condition -- see
+    /// Mark the shell as ready (the second gating condition -- see
     /// `WindowOps::notify_shell_ready`) and, if the renderer is also already
     /// ready, start the placeholder fade. Idempotent: `shell_ready` is only
     /// ever set to `true`, and `start_placeholder_fade` is separately
@@ -445,7 +445,7 @@ impl WindowInner {
         self.start_placeholder_fade();
     }
 
-    /// Start the placeholder-overlay fade-out (task #385) if, and only if,
+    /// Start the placeholder-overlay fade-out if, and only if,
     /// both gating conditions are now satisfied (`renderer_ready` -- a
     /// working `RenderState` exists and is producing frames -- and
     /// `shell_ready` -- the shell has produced its first output) and no

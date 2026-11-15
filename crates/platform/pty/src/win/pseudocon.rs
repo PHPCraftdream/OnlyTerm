@@ -70,7 +70,7 @@ fn load_conpty() -> ConPtyFuncs {
     // ConPTY: on at least Windows 10 22H2 (build 19045) the in-box
     // `CreatePseudoConsole` succeeds, but the pseudo-console it creates
     // cannot actually host a child process -- `CreateProcessW` against it
-    // fails with `ERROR_INVALID_HANDLE` (see task #326). The sideload is
+    // fails with `ERROR_INVALID_HANDLE`. The sideload is
     // there precisely to paper over that gap, so losing it (missing
     // `conpty.dll`/`OpenConsole.exe` next to the executable) is a real
     // degradation, not just a cosmetic difference. We still return the
@@ -86,7 +86,7 @@ fn load_conpty() -> ConPtyFuncs {
             "sideloaded conpty.dll not found next to the executable; \
              falling back to the system-provided ConPTY in kernel32.dll. \
              On some Windows versions this fallback cannot actually host a \
-             shell (see task #326); if pane spawn fails, that's why."
+             shell; if pane spawn fails, that's why."
         );
         kernel
     }

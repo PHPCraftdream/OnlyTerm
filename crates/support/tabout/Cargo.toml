@@ -2,7 +2,7 @@
 name = "tabout"
 version = "0.3.0"
 authors = ["Wez Furlong <wez@wezfurlong.org>"]
-edition = "2018"
+edition = "2021"
 repository = "https://github.com/wezterm/wezterm"
 description = "Tabulate output for CLI programs"
 license = "MIT"

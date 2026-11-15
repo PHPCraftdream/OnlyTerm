@@ -140,7 +140,7 @@ pub const SCHEMES: [(&'static str, &'static str); {count}] = [\n
     code.push_str("];\n");
 
     {
-        let file_name = "config/src/scheme_data.rs";
+        let file_name = "crates/configuration/onlyterm-color-schemes-data/src/scheme_data.rs";
         let update = match std::fs::read_to_string(file_name) {
             Ok(existing) => existing != code,
             Err(_) => true,

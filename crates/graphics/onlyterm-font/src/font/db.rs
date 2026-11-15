@@ -29,7 +29,7 @@ lazy_static::lazy_static! {
     // hadn't changed. Cache the resulting `FontDatabase` keyed by the
     // config generation and the font_dirs list, so that repeated
     // construction within one generation is a cheap Arc clone instead of
-    // a second filesystem scan+parse. See task #312.
+    // a second filesystem scan+parse.
     static ref FONT_DIRS_CACHE: Mutex<FontDirsCacheValue> =
         Mutex::new(None);
     // The built-in font selection is compiled into the binary and never
@@ -97,7 +97,7 @@ impl FontDatabase {
     /// generation reuse the previous scan+parse instead of re-walking the
     /// filesystem and re-parsing every font file. This matters because
     /// `FontConfiguration::new` is invoked more than once during startup
-    /// (see task #312) with the same `font_dirs`, and a scan of a system
+    /// with the same `font_dirs`, and a scan of a system
     /// fonts directory can take the better part of a second.
     ///
     /// The generation is part of the key even though it has no bearing on

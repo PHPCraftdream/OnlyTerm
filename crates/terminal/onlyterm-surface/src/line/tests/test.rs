@@ -328,7 +328,7 @@ Line {
 
 #[test]
 fn cluster_wrap_last_wide_trailing_grapheme() {
-    // Regression test for a 6th @oh review pass finding:
+    // Regression test:
     // `ClusteredLine::from_cell_vec` (used by `Line::compress_for_scrollback`)
     // hardcoded `last_cell_width` to 1 regardless of the real last cell's
     // width, so `set_last_cell_was_wrapped` on a compressed line ending in a
@@ -435,7 +435,7 @@ fn last_cell_was_wrapped_cache_invalidated_by_resize_and_clear() {
     assert_eq!(line.last_cell_was_wrapped(), false);
 }
 
-// Regression tests for a bug an @oh review pass caught in the wrap-cache
+// Regression tests for a bug in the wrap-cache
 // fix above: `update_last_change_seqno` takes `max(self.seqno, seqno)`, so
 // a caller that computes `seqno` as the max of two already-existing seqnos
 // (as `apply_hyperlink_rules` does when joining physical lines back into a
@@ -488,7 +488,7 @@ fn last_cell_was_wrapped_cache_invalidated_by_split_off() {
 
 #[test]
 fn last_cell_was_wrapped_wide_trailing_grapheme() {
-    // Regression test for a bug the 3rd @oh review pass found: for a
+    // Regression test for a bug: for a
     // V-storage line ending in a double-width grapheme (e.g. CJK),
     // `set_last_cell_was_wrapped`'s old `cells.last_mut()` targeted the
     // padding cell that follows the wide grapheme, while the reader's
@@ -510,7 +510,7 @@ fn last_cell_was_wrapped_wide_trailing_grapheme() {
         "setter and reader must agree on which cell is 'last' for a wide trailing grapheme"
     );
     // Cache-independent pin of the actual invariant (setter and reader
-    // resolve the same cell), found missing by a 5th @oh review pass: the
+    // resolve the same cell), which was found missing: the
     // assertion above alone depends on `last_cell_was_wrapped()`'s cache
     // being keyed on `seqno` specifically, so if the cache were ever
     // rekeyed on something else, a bare seqno bump would stop busting it
@@ -526,12 +526,12 @@ fn last_cell_was_wrapped_wide_trailing_grapheme() {
 
 #[test]
 fn from_text_with_wrapped_last_col_wide_trailing_grapheme() {
-    // Regression test for a 4th @oh review pass finding: the test-only
+    // Regression test: the test-only
     // constructor `from_text_with_wrapped_last_col` had the exact same
     // last_mut()-vs-visible_cells().last() mismatch as the setter fixed
     // above. It's fixed by delegating to `set_last_cell_was_wrapped`, which
     // means this constructor now goes through the very same seqno-keyed
-    // cache as the setter -- so, as a 5th @oh review pass found, an
+    // cache as the setter -- so an
     // immediate read here is just as susceptible to passing off a
     // cache-primed value as the setter test above was; it needs the same
     // seqno bump to force a real recompute.

@@ -42,8 +42,8 @@ multi-day sessions).
 - Не изменять пользовательский конфиг `.onlyterm.ktav` в домашнем каталоге.
 - Проверки: `cargo build -p onlyterm-gui`, `cargo clippy -p onlyterm-gui --all-targets -- -D warnings`,
   `cargo fmt --check`, `cargo test -p onlyterm-gui`.
-- Edition 2018: `panic!("...{var}")` без явных аргументов не интерполирует и валит
-  `clippy -D warnings` — только `panic!("...{}", var)`.
+- Весь workspace на edition 2021 (кроме двух крейтов на 2024): `panic!("...{var}")` интерполирует, `TryFrom`/`TryInto`
+  в prelude. Форматирование — `cargo +nightly fmt` (в `.rustfmt.toml` есть nightly-опция).
 - Логи OnlyTerm пишутся по одному файлу на PID в `.local/share/onlyterm/` внутри домашнего каталога пользователя
   (`onlyterm-gui.exe-log-<pid>.txt`) — это авторитетный источник при разборе падений,
   а не stderr (у GUI-бинаря нет консоли) и не Event Log.

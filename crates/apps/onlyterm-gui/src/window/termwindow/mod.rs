@@ -442,8 +442,7 @@ pub struct TermWindow {
     /// Not a content cache (that's `line_quad_cache`, keyed by content) --
     /// this answers "what is currently on screen at visual row N", which is
     /// the only thing that can be re-emitted when the frame-build budget
-    /// defers a row's rebuild. See task #457 / the @oh design review this
-    /// implements.
+    /// defers a row's rebuild. See `render/cache/budget.rs`.
     retained_rows: RefCell<HashMap<onlyterm_mux::pane::PaneId, render::RetainedPaneRows>>,
 
     /// Rate-limit state for title/tab-bar rebuilds; see
@@ -484,7 +483,7 @@ pub struct TermWindow {
     created: Instant,
 
     /// Set the first time any pane in this window produces non-empty pty
-    /// output (task #385). Used as a practical proxy for "the shell is
+    /// output. Used as a practical proxy for "the shell is
     /// alive and likely ready to accept input" -- there is no harder
     /// "ready for input" handshake available (the alternative, waiting for
     /// a DA1/DSR-style negotiation to complete, isn't something every shell
@@ -499,8 +498,8 @@ pub struct TermWindow {
     /// harmless if sent more than once, but there's no reason to.
     shell_output_seen: bool,
 
-    /// Set once `paint_impl` has cleared the GDI startup placeholder itself
-    /// (task #425). This only ever happens on the *synchronous* path --
+    /// Set once `paint_impl` has cleared the GDI startup placeholder itself.
+    /// This only ever happens on the *synchronous* path --
     /// when there is no dedicated render thread (`self.render_thread` is
     /// `None`) -- where `call_draw` returning `Ok` really does mean
     /// `WebGpuState::submit_frame` already ran inline. On the
@@ -556,7 +555,7 @@ pub struct TermWindow {
     /// no-op instead of double-closing the window.
     render_thread_hang_handled: Cell<bool>,
     /// Structural (not timing-based) guard against more than one concurrent
-    /// hang-check timer chain existing for this window (task #287).
+    /// hang-check timer chain existing for this window.
     ///
     /// `schedule_render_thread_hang_check` -> `Timer::at` -> `notify` ->
     /// `check_render_thread_hang_tick` -> (re-)`schedule_render_thread_hang_check`
@@ -611,7 +610,7 @@ pub struct TermWindow {
     /// (no delta yet) or while `show_process_tree_stats_in_title` is off.
     process_usage_suffix: RefCell<Option<process_stats::UsageText>>,
     config_subscription: Option<onlyterm_config::ConfigSubscription>,
-    /// Frame signature for deduplicating identical consecutive frames (task #450).
+    /// Frame signature for deduplicating identical consecutive frames.
     /// `None` means "no valid previous frame signature to compare against" -
     /// reset on window creation, resize, renderer rebuild, or atlas resize,
     /// since these events can change what "identical" even means.

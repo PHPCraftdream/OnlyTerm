@@ -2,7 +2,7 @@
 authors = ["Wez Furlong <wez@wezfurlong.org>"]
 name = "onlyterm-promise"
 version = "0.2.0"
-edition = "2018"
+edition = "2021"
 publish = false
 
 [dependencies]

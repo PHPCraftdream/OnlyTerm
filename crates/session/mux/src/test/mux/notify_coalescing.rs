@@ -3,7 +3,7 @@ use crate::pane::PaneId;
 use crate::{Mux, MuxNotification, PANE_OUTPUT_MAX_SYNC_ROUNDS};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-// Regression coverage for task #148: `Mux::notify` no longer holds
+// Regression coverage: `Mux::notify` no longer holds
 // `subscribers.write()` while invoking callbacks, and repeated
 // `MuxNotification::PaneOutput` notifications for the same pane are
 // coalesced while one is already queued for delivery.

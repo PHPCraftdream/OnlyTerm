@@ -301,11 +301,11 @@ macro_rules! int {
 impl FromDynamic for $ty {
     fn from_dynamic(value: &Value, _options: FromDynamicOptions) -> Result<Self, Error> {
         match value {
-            Value::I64(n) => match (*n).try_into() {
+            Value::I64(n) => match i128::from(*n).try_into() {
                 Ok(n) => Ok(n),
                 Err(err) => Err(Error::Message(err.to_string())),
             },
-            Value::U64(n) => match (*n).try_into() {
+            Value::U64(n) => match i128::from(*n).try_into() {
                 Ok(n) => Ok(n),
                 Err(err) => Err(Error::Message(err.to_string())),
             },

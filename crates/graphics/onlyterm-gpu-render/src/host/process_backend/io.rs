@@ -171,11 +171,14 @@ fn on_presented(shared: &Arc<Shared>, generation: u64, _seq: u64) {
     // First ack of a freshly (re)attached generation: swap the visual over
     // to it now -- never before this point, or a broken/blank child would
     // flash on screen instead of the previous generation's last good frame.
-    let mut pending = shared.pending_surface_handles.lock();
-    if let Some(handle) = pending.remove(&generation) {
-        drop(pending);
-        if let Err(err) = swap_visual_content(shared, handle) {
-            log::error!("HostProcessBackend: failed to swap visual content: {err:#}");
+    let claimed = shared.surface_handles.lock().take_for_swap(generation);
+    if let Some(handle) = claimed {
+        match swap_visual_content(shared, handle.raw()) {
+            // The shown surface's handle stays open while it is shown; the
+            // one it replaces is closed.
+            Ok(()) => shared.surface_handles.lock().set_displayed(handle),
+            // Never shown, so nothing needs the handle: dropped, so closed.
+            Err(err) => log::error!("HostProcessBackend: failed to swap visual content: {err:#}"),
         }
         // Real content has now actually landed on screen for the first time
         // (this generation's first ack) -- safe to tear down the Windows

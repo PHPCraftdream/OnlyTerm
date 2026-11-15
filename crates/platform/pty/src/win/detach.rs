@@ -187,19 +187,26 @@ fn parent_processes() -> anyhow::Result<HashMap<u32, u32>> {
 }
 
 fn process_name(process: HANDLE) -> String {
+    image_name(process).unwrap_or_else(|| "(name unavailable)".to_string())
+}
+
+/// Base name of the process's executable, `None` when it cannot be read.
+fn image_name(process: HANDLE) -> Option<String> {
     let mut buffer = [0u16; 1024];
     let mut length = buffer.len() as DWORD;
     // SAFETY: The query writes at most `length` WCHARs to the live buffer.
     let ok = unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) };
     if ok == 0 {
-        return "(name unavailable)".to_string();
+        return None;
     }
     let path = std::ffi::OsString::from_wide(&buffer[..length as usize]);
-    Path::new(&path)
-        .file_name()
-        .unwrap_or(&path)
-        .to_string_lossy()
-        .into_owned()
+    Some(
+        Path::new(&path)
+            .file_name()
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 pub(crate) fn processes(
@@ -233,6 +240,29 @@ pub(crate) fn processes(
         });
     }
     Ok(result)
+}
+
+/// Executable base names of the live processes in `job`.
+///
+/// Reads the job's own process list only. `processes` also needs parent PIDs
+/// and so takes a snapshot of every process on the machine; that costs
+/// milliseconds and is too slow for a per-keystroke question. A process that
+/// cannot be opened or named is skipped.
+pub(crate) fn process_names(job: HANDLE) -> anyhow::Result<Vec<String>> {
+    let mut names = vec![];
+    for pid in job_process_ids(job)? {
+        let Ok(Some(process)) = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION) else {
+            continue;
+        };
+        // A PID taken from the list may already belong to an unrelated process.
+        if !process_in_job(process.as_raw_handle() as _, job).unwrap_or(false) {
+            continue;
+        }
+        if let Some(name) = image_name(process.as_raw_handle() as _) {
+            names.push(name);
+        }
+    }
+    Ok(names)
 }
 
 pub(crate) fn selected_processes(

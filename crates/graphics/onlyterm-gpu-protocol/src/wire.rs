@@ -11,7 +11,7 @@
 //! instead of already-uploaded GPU resources.
 //!
 //! Both ends of the wire are the same binary (`onlyterm-gui.exe`, just
-//! running in a different mode -- see task #650's `--gpu-tab-host`), so
+//! running in a different mode -- see the `--gpu-tab-host`), so
 //! there is no cross-version compatibility concern and no need for a serde
 //! dependency: messages are a `u32` length prefix, a `u32` kind tag, then a
 //! payload that is just the `bytemuck` bytes of the structs below.
@@ -176,6 +176,36 @@ struct WireAtlasUpdateHeader {
 
 pub const MAX_ADAPTER_INFO_STRING_BYTES: usize = 4096;
 pub const MAX_UNKNOWN_MESSAGE_BYTES: usize = 1024 * 1024;
+/// Largest `Frame` body either side will send or accept: a full atlas replay
+/// (the mirror log is capped at 128 MiB) plus draws, with room to spare. It
+/// keeps a corrupt length prefix from asking for gigabytes.
+pub const MAX_FRAME_BYTES: usize = 256 * 1024 * 1024;
+
+fn invalid_data(message: &'static str) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+fn check_frame_len(len: usize) -> io::Result<()> {
+    if len > MAX_FRAME_BYTES {
+        return Err(invalid_data("frame exceeds wire limit"));
+    }
+    Ok(())
+}
+
+/// Exact payload size of the kinds whose body is one fixed `Pod` struct (or
+/// nothing), so a wrong length is rejected before any body is allocated.
+fn fixed_payload_len(kind: WireMessageKind) -> Option<usize> {
+    use std::mem::size_of;
+    match kind {
+        WireMessageKind::Shutdown => Some(0),
+        WireMessageKind::Resize => Some(size_of::<WireResize>()),
+        WireMessageKind::AttachSurface => Some(size_of::<WireAttachSurface>()),
+        WireMessageKind::Presented => Some(size_of::<WirePresented>()),
+        WireMessageKind::Failed => Some(size_of::<WireFailed>()),
+        WireMessageKind::Fatal => Some(size_of::<WireFatal>()),
+        WireMessageKind::Frame | WireMessageKind::AdapterInfo | WireMessageKind::Unknown(_) => None,
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WireAdapterInfo {
@@ -435,8 +465,8 @@ pub fn write_frame_with_buffer(
     };
     let header = WireFrameHeader {
         uniform: frame.uniform,
-        draw_count: frame.draws.len() as u32,
-        atlas_update_count: frame.atlas_updates.len() as u32,
+        draw_count: wire_count(frame.draws.len())?,
+        atlas_update_count: wire_count(frame.atlas_updates.len())?,
         atlas_reset,
         atlas_width,
         atlas_height,
@@ -444,7 +474,7 @@ pub fn write_frame_with_buffer(
     body.extend_from_slice(bytemuck::bytes_of(&header));
     for draw in &frame.draws {
         let draw_header = WireDrawHeader {
-            instance_count: draw.len() as u32,
+            instance_count: wire_count(draw.len())?,
         };
         body.extend_from_slice(bytemuck::bytes_of(&draw_header));
         body.extend_from_slice(bytemuck::cast_slice(draw));
@@ -455,12 +485,25 @@ pub fn write_frame_with_buffer(
             y: update.y,
             width: update.width,
             height: update.height,
-            byte_len: update.pixels.len() as u32,
+            byte_len: wire_count(update.pixels.len())?,
         };
         body.extend_from_slice(bytemuck::bytes_of(&update_header));
         body.extend_from_slice(update.pixels.as_ref());
     }
+    // The reader rejects anything larger, so fail here with the cause
+    // instead of leaving the child to hang up on a frame it will not read.
+    if body.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "frame exceeds wire limit",
+        ));
+    }
     write_message(w, WireMessageKind::Frame, body)
+}
+
+fn wire_count(count: usize) -> io::Result<u32> {
+    u32::try_from(count)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "wire count overflow"))
 }
 
 pub fn write_resize(w: &mut impl Write, width: u32, height: u32) -> io::Result<()> {
@@ -563,6 +606,12 @@ fn read_header(r: &mut impl Read) -> io::Result<Option<(usize, WireMessageKind)>
     let mut kind_buf = [0u8; 4];
     r.read_exact(&mut kind_buf)?;
     let kind = WireMessageKind::from_u32(u32::from_le_bytes(kind_buf));
+    if fixed_payload_len(kind).is_some_and(|expected| expected != len) {
+        return Err(invalid_data("invalid fixed-size wire payload"));
+    }
+    if matches!(kind, WireMessageKind::Frame) {
+        check_frame_len(len)?;
+    }
     if matches!(kind, WireMessageKind::Unknown(_)) && len > MAX_UNKNOWN_MESSAGE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -658,44 +707,77 @@ pub fn read_message(r: &mut impl Read) -> io::Result<Option<WireMessage>> {
     }))
 }
 
+/// Splits `len` bytes off the front of `rest`, or fails with `what` when fewer
+/// are left.
+fn split_front<'a>(rest: &mut &'a [u8], len: usize, what: &'static str) -> io::Result<&'a [u8]> {
+    if len > rest.len() {
+        return Err(invalid_data(what));
+    }
+    let (head, tail) = rest.split_at(len);
+    *rest = tail;
+    Ok(head)
+}
+
 /// Parses a frame body into borrowed views over that same buffer, without
 /// copying any of the bulk payload. See [`WireFrameRef`] for why the reading
 /// side wants this rather than owned `Vec`s.
+///
+/// The body comes from the other process, so every length in it is checked
+/// against what is actually left: a corrupt or truncated frame is an error,
+/// never a panic or an allocation sized by an untrusted count.
 fn parse_frame_ref(body: &[u8]) -> io::Result<WireFrameRef<'_>> {
-    let header_size = std::mem::size_of::<WireFrameHeader>();
-    if body.len() < header_size {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "frame body shorter than its own header",
-        ));
+    use std::mem::size_of;
+
+    let mut rest = body;
+    let header: WireFrameHeader = bytemuck::pod_read_unaligned(split_front(
+        &mut rest,
+        size_of::<WireFrameHeader>(),
+        "frame body shorter than its own header",
+    )?);
+
+    // Each draw is at least its own header: a count that cannot fit in what
+    // is left is corrupt, and must not size the allocation below.
+    let draw_count = header.draw_count as usize;
+    if draw_count > rest.len() / size_of::<WireDrawHeader>() {
+        return Err(invalid_data("draw count exceeds the frame body"));
     }
-    let header: WireFrameHeader = *bytemuck::from_bytes(&body[..header_size]);
-    let mut cursor = header_size;
-
-    let mut draws = Vec::with_capacity(header.draw_count as usize);
-    for _ in 0..header.draw_count {
-        let draw_header_size = std::mem::size_of::<WireDrawHeader>();
-        let draw_header: WireDrawHeader =
-            *bytemuck::from_bytes(&body[cursor..cursor + draw_header_size]);
-        cursor += draw_header_size;
-
-        let byte_len = draw_header.instance_count as usize * std::mem::size_of::<QuadInstance>();
-        let instances: &[QuadInstance] = bytemuck::cast_slice(&body[cursor..cursor + byte_len]);
+    let mut draws = Vec::with_capacity(draw_count);
+    for _ in 0..draw_count {
+        let draw_header: WireDrawHeader = bytemuck::pod_read_unaligned(split_front(
+            &mut rest,
+            size_of::<WireDrawHeader>(),
+            "truncated draw header",
+        )?);
+        let byte_len = (draw_header.instance_count as usize)
+            .checked_mul(size_of::<QuadInstance>())
+            .ok_or_else(|| invalid_data("draw size overflow"))?;
+        let bytes = split_front(&mut rest, byte_len, "truncated draw instances")?;
+        // An empty draw has nothing to align.
+        let instances: &[QuadInstance] = if bytes.is_empty() {
+            &[]
+        } else {
+            bytemuck::try_cast_slice(bytes)
+                .map_err(|_| invalid_data("misaligned draw instances"))?
+        };
         draws.push(instances);
-        cursor += byte_len;
     }
 
-    let mut atlas_updates = Vec::with_capacity(header.atlas_update_count as usize);
-    for _ in 0..header.atlas_update_count {
-        let update_header_size = std::mem::size_of::<WireAtlasUpdateHeader>();
-        let update_header: WireAtlasUpdateHeader =
-            *bytemuck::from_bytes(&body[cursor..cursor + update_header_size]);
-        cursor += update_header_size;
-
-        let byte_len = update_header.byte_len as usize;
-        let pixels = &body[cursor..cursor + byte_len];
-        cursor += byte_len;
-
+    let update_count = header.atlas_update_count as usize;
+    if update_count > rest.len() / size_of::<WireAtlasUpdateHeader>() {
+        return Err(invalid_data("atlas update count exceeds the frame body"));
+    }
+    let mut atlas_updates = Vec::with_capacity(update_count);
+    for _ in 0..update_count {
+        let update_header: WireAtlasUpdateHeader = bytemuck::pod_read_unaligned(split_front(
+            &mut rest,
+            size_of::<WireAtlasUpdateHeader>(),
+            "truncated atlas update header",
+        )?);
+        let pixels = split_front(
+            &mut rest,
+            update_header.byte_len as usize,
+            "truncated atlas update pixels",
+        )?;
         atlas_updates.push(AtlasUpdateRef {
             x: update_header.x,
             y: update_header.y,
@@ -703,6 +785,9 @@ fn parse_frame_ref(body: &[u8]) -> io::Result<WireFrameRef<'_>> {
             height: update_header.height,
             pixels,
         });
+    }
+    if !rest.is_empty() {
+        return Err(invalid_data("trailing bytes after the frame"));
     }
 
     Ok(WireFrameRef {
@@ -912,7 +997,7 @@ mod tests {
         let mut storage = vec![0u8; bytes.len() + std::mem::align_of::<WirePresented>()];
         let base = storage.as_ptr() as usize;
         let offset = (0..std::mem::align_of::<WirePresented>())
-            .find(|offset| (base + offset) % std::mem::align_of::<WirePresented>() != 0)
+            .find(|offset| !(base + offset).is_multiple_of(std::mem::align_of::<WirePresented>()))
             .expect("WirePresented alignment must allow a misaligned address");
         storage[offset..offset + bytes.len()].copy_from_slice(bytes);
         let misaligned = &storage[offset..offset + bytes.len()];
@@ -1008,7 +1093,7 @@ mod tests {
         let field_len = (MAX_ADAPTER_INFO_STRING_BYTES + 1) as u32;
         let mut oversized = Vec::new();
         oversized.extend_from_slice(&field_len.to_le_bytes());
-        oversized.extend(std::iter::repeat(b'x').take(MAX_ADAPTER_INFO_STRING_BYTES + 1));
+        oversized.extend(std::iter::repeat_n(b'x', MAX_ADAPTER_INFO_STRING_BYTES + 1));
         for _ in 0..4 {
             oversized.extend_from_slice(&0u32.to_le_bytes());
         }
@@ -1564,5 +1649,211 @@ mod tests {
             cap,
             "returned buffer must preserve its capacity"
         );
+    }
+}
+
+/// The other process is not trusted to send well-formed bytes: every shape of
+/// bad input below must come back as an error, never a panic, and never an
+/// allocation sized by a number taken from the wire.
+#[cfg(test)]
+mod untrusted_input_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    fn frame() -> WireFrame {
+        WireFrame {
+            uniform: ShaderUniform {
+                foreground_text_hsb: [0.1, 0.2, 0.3],
+                milliseconds: 7,
+                projection: [[1.0; 4]; 4],
+            },
+            draws: vec![
+                vec![QuadInstance::default(), QuadInstance::default()],
+                vec![],
+                vec![QuadInstance::default()],
+            ],
+            atlas_reset: Some((64, 64)),
+            atlas_updates: vec![
+                AtlasUpdate {
+                    x: 0,
+                    y: 0,
+                    width: 2,
+                    height: 2,
+                    pixels: Arc::from(vec![1u8; 2 * 2 * 4]),
+                },
+                AtlasUpdate {
+                    x: 2,
+                    y: 2,
+                    width: 1,
+                    height: 1,
+                    pixels: Arc::from(vec![2u8; 4]),
+                },
+            ],
+        }
+    }
+
+    /// The frame body alone, without the length and kind prefix.
+    fn body_of(frame: &WireFrame) -> Vec<u8> {
+        let mut message = Vec::new();
+        write_frame(&mut message, frame).unwrap();
+        message[8..].to_vec()
+    }
+
+    fn parse_err(body: &[u8]) -> io::Error {
+        match parse_frame_ref(body) {
+            Err(err) => err,
+            Ok(_) => panic!("a malformed frame body was accepted"),
+        }
+    }
+
+    fn header_bytes(len: u32, kind: u32) -> Vec<u8> {
+        [len.to_le_bytes(), kind.to_le_bytes()].concat()
+    }
+
+    #[test]
+    fn the_untampered_frame_parses() {
+        let body = body_of(&frame());
+        let parsed = parse_frame_ref(&body).unwrap_or_else(|err| panic!("{}", err));
+        assert_eq!(parsed.draws.len(), 3);
+        assert_eq!(parsed.draws[0].len(), 2);
+        assert!(parsed.draws[1].is_empty());
+        assert_eq!(parsed.atlas_updates.len(), 2);
+        assert_eq!(parsed.atlas_reset, Some((64, 64)));
+    }
+
+    #[test]
+    fn every_truncation_of_a_frame_is_an_error() {
+        let body = body_of(&frame());
+        for cut in 0..body.len() {
+            let err = parse_err(&body[..cut]);
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "cut at {}", cut);
+        }
+    }
+
+    #[test]
+    fn trailing_bytes_after_a_frame_are_an_error() {
+        let mut body = body_of(&frame());
+        body.push(0);
+        assert_eq!(parse_err(&body).kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_huge_draw_count_is_rejected_without_allocating() {
+        let header = WireFrameHeader {
+            draw_count: u32::MAX,
+            ..Default::default()
+        };
+        assert_eq!(
+            parse_err(bytemuck::bytes_of(&header)).kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn a_huge_atlas_update_count_is_rejected_without_allocating() {
+        let header = WireFrameHeader {
+            atlas_update_count: u32::MAX,
+            ..Default::default()
+        };
+        assert_eq!(
+            parse_err(bytemuck::bytes_of(&header)).kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn an_instance_count_past_the_end_of_the_body_is_an_error() {
+        let header = WireFrameHeader {
+            draw_count: 1,
+            ..Default::default()
+        };
+        let draw = WireDrawHeader {
+            instance_count: u32::MAX,
+        };
+        let mut body = bytemuck::bytes_of(&header).to_vec();
+        body.extend_from_slice(bytemuck::bytes_of(&draw));
+        assert_eq!(parse_err(&body).kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn an_atlas_payload_past_the_end_of_the_body_is_an_error() {
+        let header = WireFrameHeader {
+            atlas_update_count: 1,
+            ..Default::default()
+        };
+        let update = WireAtlasUpdateHeader {
+            byte_len: 1000,
+            ..Default::default()
+        };
+        let mut body = bytemuck::bytes_of(&header).to_vec();
+        body.extend_from_slice(bytemuck::bytes_of(&update));
+        assert_eq!(parse_err(&body).kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn a_body_that_is_not_aligned_for_instances_is_an_error_not_a_panic() {
+        let body = body_of(&frame());
+        let mut storage = vec![0u8; body.len() + 4];
+        let base = storage.as_ptr() as usize;
+        let offset = (0..4)
+            .find(|offset| !(base + offset).is_multiple_of(std::mem::align_of::<QuadInstance>()))
+            .expect("some offset must be misaligned");
+        storage[offset..offset + body.len()].copy_from_slice(&body);
+        let misaligned = &storage[offset..offset + body.len()];
+        assert_eq!(parse_err(misaligned).kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn fixed_size_kinds_reject_a_wrong_length_before_reading_any_body() {
+        // Resize, Shutdown, AttachSurface, Presented, Fatal, Failed.
+        for kind in 2..=7u32 {
+            // No body follows: reading one would fail with UnexpectedEof
+            // instead, which is what a length-sized allocation looks like.
+            let mut owned = Cursor::new(header_bytes(1_000_000, kind));
+            let owned_err = match read_message(&mut owned) {
+                Err(err) => err,
+                Ok(_) => panic!("kind {} accepted a wrong-sized payload", kind),
+            };
+            assert_eq!(
+                owned_err.kind(),
+                io::ErrorKind::InvalidData,
+                "kind {}",
+                kind
+            );
+
+            let mut body = Vec::new();
+            let mut borrowed = Cursor::new(header_bytes(1_000_000, kind));
+            let borrowed_err = match read_message_into(&mut borrowed, &mut body) {
+                Err(err) => err,
+                Ok(_) => panic!("kind {} accepted a wrong-sized payload", kind),
+            };
+            assert_eq!(
+                borrowed_err.kind(),
+                io::ErrorKind::InvalidData,
+                "kind {}",
+                kind
+            );
+            assert_eq!(body.capacity(), 0, "kind {} grew the body buffer", kind);
+        }
+    }
+
+    #[test]
+    fn a_frame_over_the_limit_is_rejected_before_its_body_is_read() {
+        let too_long = u32::try_from(MAX_FRAME_BYTES + 1).unwrap();
+        let mut body = Vec::new();
+        let mut reader = Cursor::new(header_bytes(too_long, 1));
+        let err = match read_message_into(&mut reader, &mut body) {
+            Err(err) => err,
+            Ok(_) => panic!("an oversized frame was accepted"),
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(body.capacity(), 0);
+    }
+
+    #[test]
+    fn the_frame_limit_is_inclusive() {
+        assert!(check_frame_len(MAX_FRAME_BYTES).is_ok());
+        assert!(check_frame_len(MAX_FRAME_BYTES + 1).is_err());
+        assert!(check_frame_len(0).is_ok());
     }
 }

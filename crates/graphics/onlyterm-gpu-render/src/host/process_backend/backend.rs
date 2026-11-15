@@ -64,7 +64,7 @@ impl RenderBackend for HostProcessBackend {
         // SeqCst: handshake op -- see backpressure.rs.
         if self.shared.in_flight.swap(true, Ordering::SeqCst) {
             mark_repaint_pending(&self.shared.repaint_pending);
-            metrics::counter!("gui.host_process.frames_dropped").increment(1);
+            onlyterm_metrics::cached_counter!("gui.host_process.frames_dropped").increment(1);
             return;
         }
         *self.shared.submit_started_at.lock() = Some(Instant::now());
@@ -120,8 +120,12 @@ impl RenderBackend for HostProcessBackend {
         // timestamp behind for `render_thread_is_hung` to misread as a
         // stall.
         *self.shared.submit_started_at.lock() = None;
-        if let Some(current) = self.shared.current.lock().take() {
+        let current = self.shared.current.lock().take();
+        if let Some(current) = current {
             current.writer_tx.send(HostToChildMsg::Shutdown).ok();
+            // The child gets a moment to act on the message before its Job
+            // Object ends it; dropping `current` here would kill it first.
+            lifecycle::retire_in_background(current);
         }
     }
 
