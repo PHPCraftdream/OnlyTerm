@@ -23,7 +23,7 @@ jobs:
       - name: "checkout repo"
         uses: actions/checkout@v7
       - name: "Install Rust"
-        uses: dtolnay/rust-toolchain@1.99.1
+        uses: dtolnay/rust-toolchain@1.120.0
         with:
           target: "x86_64-pc-windows-msvc"
           components: "clippy"
