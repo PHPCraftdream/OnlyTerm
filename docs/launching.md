@@ -61,6 +61,11 @@ program or `--start-conf`.
 The same dialog opens inside a running window with **Alt+Ctrl+T**, or by
 right-clicking the **+** button. Choosing *admin* shows a Windows UAC prompt.
 
+An admin tab is shown and typed into from the normal, non-elevated window, so
+other programs of your own user can send it keystrokes without a UAC prompt.
+Close admin tabs when you are done with them, and do not leave one open while
+running code you do not trust.
+
 ## From Explorer
 
 ![The OnlyTerm entries in Explorer's context menu](images/explorer-menu.png)

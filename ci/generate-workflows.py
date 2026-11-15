@@ -407,8 +407,8 @@ rustup default {toolchain}
     def lint_all(self):
         return [
             RunStep(
-                name="Clippy (GUI, window, terminal and process tracking)",
-                run="cargo --config .cargo/vendor.toml clippy --locked -p onlyterm-gui -p window -p onlyterm-term -p onlyterm-mux -p onlyterm-procinfo --all-targets -- -D warnings",
+                name="Clippy (whole workspace)",
+                run="cargo --config .cargo/vendor.toml clippy --locked --workspace --all-targets -- -D warnings",
                 shell="cmd",
             ),
         ]
