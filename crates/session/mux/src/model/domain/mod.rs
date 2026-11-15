@@ -451,9 +451,6 @@ impl LocalDomain {
             cmd.env("ONLYTERM_UNIX_SOCKET", sock);
         }
         cmd.env("ONLYTERM_PANE", pane_id.to_string());
-        if let Some(agent) = Mux::get().agent.as_ref() {
-            cmd.env("SSH_AUTH_SOCK", agent.path());
-        }
         self.fixup_command(&mut cmd).await?;
         Ok(cmd)
     }
@@ -555,7 +552,7 @@ impl Domain for LocalDomain {
         // Seed the pane's cwd cache with the directory it's about to be
         // spawned into (falling back to $HOME, matching what an unset cwd
         // resolves to at spawn time). This is shown as a placeholder tab
-        // title until the foreground-process cache (task #247) has warmed
+        // title until the foreground-process cache has warmed
         // up enough for `divine_current_working_dir` to report the real,
         // OS-observed value.
         let starting_cwd = cmd

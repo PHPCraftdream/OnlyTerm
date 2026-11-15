@@ -13,12 +13,6 @@ impl Mux {
             );
         }
 
-        let agent = if onlyterm_config::configuration().mux_enable_ssh_agent {
-            Some(AgentProxy::new())
-        } else {
-            None
-        };
-
         Self {
             tabs: RwLock::new(HashMap::new()),
             panes: RwLock::new(HashMap::new()),
@@ -32,7 +26,6 @@ impl Mux {
             identity: RwLock::new(None),
             num_panes_by_workspace: RwLock::new(HashMap::new()),
             main_thread_id: std::thread::current().id(),
-            agent,
             pane_output_notify_state: Mutex::new(HashMap::new()),
         }
     }

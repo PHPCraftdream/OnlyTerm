@@ -60,6 +60,14 @@ pub struct Rule {
     /// Which capture to highlight
     #[dynamic(default)]
     pub highlight: usize,
+
+    /// Text that every match of `regex` must contain. A line without it
+    /// cannot match, so the regex is not run on it at all. Purely an
+    /// accelerator: results are identical with or without it. Optional in
+    /// configuration.
+    #[cfg_attr(feature = "use_serde", serde(skip))]
+    #[dynamic(default)]
+    required_text: Option<String>,
 }
 
 struct RegexWrap(Regex);
@@ -190,7 +198,26 @@ impl Rule {
             regex: Regex::new(regex)?,
             format: format.to_owned(),
             highlight,
+            required_text: None,
         })
+    }
+
+    /// Declares text that every match of this rule's regex contains, so
+    /// lines without it skip the regex. Only declare text that really is
+    /// required: a wrong declaration makes the rule miss matches.
+    ///
+    /// Worth it for patterns that start with `\b\w+` (URLs, e-mail
+    /// addresses): on a line without a link the regex engine still tries
+    /// every word start, which costs ~10 us per 120-column line, and falls
+    /// back to a slower engine when the line has non-ASCII text.
+    pub fn requiring_text(mut self, text: &str) -> Self {
+        self.required_text = Some(text.to_owned());
+        self
+    }
+
+    /// See [`Rule::requiring_text`].
+    pub fn required_text(&self) -> Option<&str> {
+        self.required_text.as_deref()
     }
 
     /// Given a line of text from the terminal screen, and a set of
@@ -198,6 +225,11 @@ impl Rule {
     pub fn match_hyperlinks(line: &str, rules: &[Rule]) -> Vec<RuleMatch> {
         let mut matches = Vec::new();
         for rule in rules.iter() {
+            if let Some(required) = rule.required_text.as_deref() {
+                if !line.contains(required) {
+                    continue;
+                }
+            }
             for captures in rule.regex.captures_iter(line).flatten() {
                 let m = Match { rule, captures };
                 if m.highlight().is_some() {
@@ -356,5 +388,95 @@ mod test {
             "http://en.wikipedia.org/wiki/Bar_(foo)",
             "A URL's own balanced parenthesis must be preserved when there is no outer wrapping.",
         );
+    }
+
+    /// The default rule set as configured in `onlyterm_config`, with and
+    /// without the required-text hints.
+    fn default_rules(hints: bool) -> Vec<Rule> {
+        let hint = |rule: Rule, text: &str| {
+            if hints {
+                rule.requiring_text(text)
+            } else {
+                rule
+            }
+        };
+        vec![
+            hint(
+                Rule::with_highlight(r"\((\w+://\S+)\)", "$1", 1).unwrap(),
+                "://",
+            ),
+            hint(
+                Rule::with_highlight(r"\[(\w+://\S+)\]", "$1", 1).unwrap(),
+                "://",
+            ),
+            hint(
+                Rule::with_highlight(r"<(\w+://\S+)>", "$1", 1).unwrap(),
+                "://",
+            ),
+            hint(
+                Rule::new(CLOSING_PARENTHESIS_HYPERLINK_PATTERN, "$0").unwrap(),
+                "://",
+            ),
+            hint(Rule::new(GENERIC_HYPERLINK_PATTERN, "$0").unwrap(), "://"),
+            hint(
+                Rule::new(r"\b\w+@[\w-]+(\.[\w-]+)+\b", "mailto:$0").unwrap(),
+                "@",
+            ),
+        ]
+    }
+
+    #[test]
+    fn required_text_never_changes_what_matches() {
+        let hinted = default_rules(true);
+        let plain = default_rules(false);
+        let lines = [
+            "",
+            "plain text with no link at all",
+            "status=busy worker=042 redraw payload \u{754c}\u{754c}\u{754c}",
+            "\u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} \u{43c}\u{438}\u{440}, \u{43d}\u{435}\u{442} \u{441}\u{441}\u{44b}\u{43b}\u{43e}\u{43a}",
+            "see http://example.com for details",
+            "  http://example.com",
+            "(http://example.com) and [https://example.org/path] and <ftp://host.example.net/x>",
+            "http://example.com/(complete_parentheses)-((-)-()-_-",
+            "(see http://example.com/Foo_(Bar))",
+            "mail foo@example.com or woot@example.com now",
+            "a@b is not an address, but a@b.co is",
+            "scheme:// alone and ://x and ftp:/missing",
+            "user@host and https://example.com/a@b.c together",
+            "\u{754c}http://example.com\u{754c}",
+            "@://@://",
+        ];
+        for line in lines {
+            assert_eq!(
+                Rule::match_hyperlinks(line, &hinted),
+                Rule::match_hyperlinks(line, &plain),
+                "hints changed the result for {:?}",
+                line
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_without_the_required_text_skips_its_rule() {
+        // `foo` matches this regex, but the declared text is absent, so the
+        // rule is skipped: proof that the hint is what gates the regex.
+        let gated = Rule::new(r"\bfoo\b", "$0").unwrap().requiring_text("bar");
+        assert!(Rule::match_hyperlinks("foo", std::slice::from_ref(&gated)).is_empty());
+        assert_eq!(Rule::match_hyperlinks("foo bar", &[gated]).len(), 1);
+        let open = Rule::new(r"\bfoo\b", "$0").unwrap();
+        assert_eq!(Rule::match_hyperlinks("foo", &[open]).len(), 1);
+    }
+
+    #[test]
+    fn every_hint_of_the_default_rules_appears_in_its_pattern() {
+        for rule in default_rules(true) {
+            let hint = rule.required_text().expect("default rules carry a hint");
+            assert!(
+                rule.regex.as_str().contains(hint),
+                "{:?} does not contain its hint {:?}",
+                rule.regex.as_str(),
+                hint
+            );
+        }
     }
 }

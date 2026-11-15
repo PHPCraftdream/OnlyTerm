@@ -19,12 +19,31 @@ impl LocalPane {
             // a stale negative silently disables Codex's Ctrl-letter fix,
             // and a stale positive corrupts input after returning to a shell.
             // Use only lightweight snapshot names, outside the process lock.
+            // This runs on the GUI thread for every affected chord. The pane's
+            // job lists its processes directly (~0.1 ms); a machine-wide
+            // snapshot costs ~10 ms and is kept only as the fallback.
             let start = Instant::now();
-            let result = LocalProcessInfo::fresh_process_tree_exe_names(pid);
+            let (source, result) = match self.child_process_names() {
+                Ok(names) if !names.is_empty() => ("job", Ok(names.into_iter().collect())),
+                other => {
+                    if let Err(err) = other {
+                        log::debug!(
+                            "key-compat pane={}: job process list unavailable: {:#}",
+                            self.pane_id,
+                            err
+                        );
+                    }
+                    (
+                        "fresh-snapshot",
+                        LocalProcessInfo::fresh_process_tree_exe_names(pid),
+                    )
+                }
+            };
             log::debug!(
-                "diag: key-compat LocalPane pane={} process_pid={} source=fresh-snapshot elapsed_us={}",
+                "diag: key-compat LocalPane pane={} process_pid={} source={} elapsed_us={}",
                 self.pane_id,
                 pid,
+                source,
                 start.elapsed().as_micros(),
             );
             match result {

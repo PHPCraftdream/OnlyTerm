@@ -452,7 +452,7 @@ fn a_shared_row_keeps_its_quads_and_none_of_the_unused_reserve() {
 }
 
 /// Test that HeapQuadAllocator::apply_to now preserves ALL quads even when
-/// the initial capacity is exceeded. The old bug (task #453) silently dropped
+/// the initial capacity is exceeded. The old bug silently dropped
 /// overflow quads via capacity clamps; this test confirms that all quads
 /// survive after the fix.
 ///
@@ -540,8 +540,8 @@ fn test_apply_to_preserves_all_quads_beyond_capacity() {
 /// `instances.get(..available)`, which returns `None` (and therefore an
 /// empty slice via `unwrap_or`) whenever `available > instances.len()` --
 /// i.e. in the overwhelmingly common non-overflow case, silently dropping
-/// every quad instead of copying it. This shipped as a real regression
-/// (task #453): line content stopped reaching the GPU, producing a white
+/// every quad instead of copying it. This shipped as a real regression:
+/// line content stopped reaching the GPU, producing a white
 /// screen with an otherwise-responsive window. This test pins the fix.
 #[test]
 fn test_apply_to_copies_everything_when_under_capacity() {
@@ -583,7 +583,7 @@ fn test_apply_to_copies_everything_when_under_capacity() {
     assert_eq!(result[2].position[0], 2.0);
 }
 
-/// Test that Rc<HeapQuadAllocator> (post task #457's LineQuadCacheValue::layers type change)
+/// Test that Rc<HeapQuadAllocator> (post the LineQuadCacheValue::layers type change)
 /// still applies correctly via .apply_to() when called through the Rc. This pins that the
 /// type change from HeapQuadAllocator to Rc<HeapQuadAllocator> didn't silently break anything
 /// about how apply_to is invoked at real call sites (both cache-hit and retained-row paths).

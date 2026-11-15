@@ -194,7 +194,7 @@ impl TermWindow {
                 // `finish_renderer_rebuild`), and a forced repaint is
                 // exactly as necessary as before for both -- only the
                 // placeholder teardown moved. The window
-                // may already be visible (task #331/early show) with
+                // may already be visible with
                 // nothing queued to trigger a repaint yet, so this ensures
                 // the first (or, for a rebuild, next) real frame appears
                 // immediately instead of waiting for some unrelated event

@@ -70,7 +70,7 @@ impl crate::TermWindow {
         if let Some(rt) = self.render_thread.as_ref() {
             if rt.is_in_flight() {
                 rt.set_repaint_pending();
-                metrics::counter!("gui.render_thread.frames_dropped").increment(1);
+                onlyterm_metrics::cached_counter!("gui.render_thread.frames_dropped").increment(1);
                 // Same lost-wakeup double-check as in call_draw_webgpu:
                 // the render thread can finish (and check repaint_pending)
                 // in the gap between the two calls above, observing
@@ -213,7 +213,7 @@ impl crate::TermWindow {
 
         // Task #425: only after a fully-built frame has actually been
         // *presented* is it safe to tear down the Windows GDI placeholder
-        // (task #330) that has been the only thing painting this window's
+        // that has been the only thing painting this window's
         // client area up to this point. Doing this from `TermWindow::created`
         // instead (the pre-#425 behavior) cleared it as soon as the
         // renderer/pipeline merely *existed*, which on Windows is well before
@@ -278,8 +278,8 @@ impl crate::TermWindow {
         // frame-build time only, not full frame-build-and-submit time.
         // (Submission time is tracked separately, on the render thread, as
         // `gui.render_thread.submit`.)
-        metrics::histogram!("gui.paint.impl").record(self.last_frame_duration);
-        metrics::histogram!("gui.paint.impl.rate").record(1.);
+        onlyterm_metrics::cached_histogram!("gui.paint.impl").record(self.last_frame_duration);
+        onlyterm_metrics::cached_histogram!("gui.paint.impl.rate").record(1.);
         // This is deliberately a next-paint reaction proxy: it does not
         // require changed cells, an accepted frame enqueue, or terminal echo.
         while let Some(input_started) = self.pending_input_to_next_paint.pop_front() {
@@ -508,7 +508,7 @@ impl crate::TermWindow {
             .layer_for_zindex(0)
             .context("layer_for_zindex(0)")?;
         log::trace!("quad map elapsed {:?}", start.elapsed());
-        metrics::histogram!("quad.map").record(start.elapsed());
+        onlyterm_metrics::cached_histogram!("quad.map").record(start.elapsed());
 
         layer.with_quad_allocator(|layers| -> anyhow::Result<()> {
             self.paint_window_background(layers, &panes)?;

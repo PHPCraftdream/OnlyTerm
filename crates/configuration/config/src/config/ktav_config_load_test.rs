@@ -15,7 +15,7 @@ static CONFIG_OVERRIDES_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(
 
 /// End to end proof that the real, public config-loading path (`Config::load`,
 /// via `Config::try_load`) parses a `.ktav` config file: this is the
-/// keystone task (#275) of the rhai -> ktav config-format migration,
+/// keystone task of the rhai -> ktav config-format migration,
 /// replacing the previous rhai-script-evaluation loading path with a
 /// direct `ktav::parse` -> `onlyterm_dynamic::Value` ->
 /// `Config::from_dynamic` pipeline (see `ktav_value::ktav_value_to_dynamic`
@@ -130,7 +130,7 @@ fn legacy_front_end_values_migrate_to_web_gpu() {
     assert_eq!(cfg.front_end, FrontEndSelection::WebGpu);
 }
 
-/// Regression test for task #336: `color_scheme` used to have no effect
+/// Regression test: `color_scheme` used to have no effect
 /// whatsoever. `colors` carried a non-empty default (this fork's light
 /// `default_colors` palette), and `compute_extra_defaults` overlays
 /// `colors` on top of the resolved scheme -- so the default silently
@@ -194,7 +194,7 @@ colors: { background: #123456 }
     );
 }
 
-/// Regression test for task #294: ktav object keys are unconditionally
+/// Regression test: ktav object keys are unconditionally
 /// strings (see `crate::ktav_value::ktav_value_to_dynamic`), so a
 /// numeric-looking `colors.indexed` key like `136` arrives as
 /// `Value::String("136")`, not `Value::I64(136)`. `Palette::indexed` is
@@ -273,7 +273,7 @@ fn legacy_rhai_only_config_produces_actionable_error() {
     );
 }
 
-/// Regression test for task #298 / bug F9: a legacy `.rhai`/`.lua`
+/// Regression test: a legacy `.rhai`/`.lua`
 /// sibling sitting next to an *earlier* candidate in the config search
 /// order must not prevent a *later* candidate's valid, already-migrated
 /// `.ktav` config from loading. Concretely: a user who migrated from
@@ -376,7 +376,7 @@ fn legacy_sibling_with_no_ktav_anywhere_still_errors() {
 /// from `file_name`; with `None` nothing gets watched in this error
 /// state, so migrating the legacy file while OnlyTerm is still running
 /// would never be picked up by the live-reload watcher until the user
-/// manually restarts. Before task #298's refactor this was
+/// manually restarts. Before the refactor this was
 /// `Some(path_item.path.clone())`; the refactor accidentally dropped it
 /// to `None` on the deferred-error path specifically.
 #[test]
@@ -425,7 +425,7 @@ fn deferred_legacy_error_still_reports_expected_ktav_path_as_file_name() {
     );
 }
 
-/// Regression test for task #295: `ExecDomain::fixup_command` used to
+/// Regression test: `ExecDomain::fixup_command` used to
 /// name a rhai function that rewrote a spawned command (e.g. to route
 /// it into `docker exec`, `ssh`, etc. -- see
 /// `LocalDomain::fixup_command` in `crates/session/mux/src/domain.rs`). With
@@ -475,7 +475,7 @@ exec_domains: [
 }
 
 /// The common case -- no `exec_domains` at all -- must be completely
-/// unaffected by the task #295 check: no new error, no behavior change.
+/// unaffected by the check: no new error, no behavior change.
 #[test]
 fn config_with_no_exec_domains_is_unaffected() {
     // See `CONFIG_OVERRIDES_TEST_LOCK`.
@@ -496,7 +496,7 @@ fn config_with_no_exec_domains_is_unaffected() {
     assert_eq!(cfg.font_size, 12.0);
 }
 
-/// Regression test for task #296: a config file that parses
+/// Regression test: a config file that parses
 /// successfully as *syntactically valid ktav* but not as a top-level
 /// `Object` -- e.g. because a `key: value` line is missing the space
 /// after the `:`, so ktav reads the whole line as one bare unquoted

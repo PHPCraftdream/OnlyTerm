@@ -144,7 +144,7 @@ impl TermWindow {
     }
 
     // `pub(in crate::termwindow)`: also called from mouseevent.rs's drag-to-reorder
-    // handling (task #429), not just the MoveTab key assignment below.
+    // handling, not just the MoveTab key assignment below.
     pub(in crate::termwindow) fn move_tab(&mut self, tab_idx: usize) -> anyhow::Result<()> {
         let mux = Mux::get();
         let mut window = mux

@@ -166,6 +166,22 @@ impl Pane for LocalPane {
                         "localpane.terminal_lock.hold.render_snapshot"
                     )
                     .record(snapshot_started.elapsed());
+                    // Every viewport row is cloned under the lock, changed or
+                    // not. These two counts say how many of those clones were
+                    // rows nobody needed, which decides whether reusing
+                    // unchanged rows between snapshots is worth its risk.
+                    let cloned = snapshot.lines.len();
+                    let changed = usize::try_from(snapshot.changed_since.len())
+                        .unwrap_or(0)
+                        .min(cloned);
+                    onlyterm_metrics::cached_histogram!(
+                        "localpane.render_snapshot.lines_cloned.size"
+                    )
+                    .record(cloned as f64);
+                    onlyterm_metrics::cached_histogram!(
+                        "localpane.render_snapshot.lines_unchanged.size"
+                    )
+                    .record((cloned - changed) as f64);
                 }
                 snapshot
             },

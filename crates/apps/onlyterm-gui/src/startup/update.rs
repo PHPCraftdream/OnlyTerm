@@ -1,14 +1,13 @@
+use crate::release_version::{is_newer, newest_by_tag};
 use crate::ICON_DATA;
 use anyhow::anyhow;
 use http_req::request::{HttpVersion, Request};
 use http_req::uri::Uri;
 use onlyterm_config::{configuration, onlyterm_version};
-use onlyterm_mux::connui::ConnectionUI;
 use onlyterm_toast_notification::*;
 use serde::*;
 use std::convert::TryFrom;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 use std::time::Duration;
 use termwiz::cell::{Hyperlink, Underline};
 use termwiz::color::AnsiColor;
@@ -19,9 +18,13 @@ use termwiz::escape::{OneBased, OperatingSystemCommand, CSI};
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Release {
     pub url: String,
-    pub body: String,
+    /// GitHub sends `null` for a release without notes.
+    #[serde(default)]
+    pub body: Option<String>,
     pub html_url: String,
     pub tag_name: String,
+    #[serde(default)]
+    pub draft: bool,
     pub assets: Vec<Asset>,
 }
 
@@ -33,34 +36,57 @@ pub struct Asset {
     pub browser_download_url: String,
 }
 
-fn get_github_release_info(uri: &str) -> anyhow::Result<Release> {
+/// The list, not `/releases/latest`: that endpoint never returns a
+/// pre-release, and every OnlyTerm release is one.
+const RELEASES_URL: &str =
+    "https://api.github.com/repos/PHPCraftdream/OnlyTerm/releases?per_page=30";
+
+fn get_github_releases(uri: &str) -> anyhow::Result<Vec<Release>> {
     let uri = Uri::try_from(uri)?;
 
-    let mut latest = Vec::new();
-    let _res = Request::new(&uri)
+    let mut body = Vec::new();
+    let response = Request::new(&uri)
         .version(HttpVersion::Http10)
         .header(
             "User-Agent",
             &format!("OnlyTerm/OnlyTerm-{}", onlyterm_version()),
         )
-        .send(&mut latest)
+        .send(&mut body)
         .map_err(|e| anyhow!("failed to query github releases: {}", e))?;
 
-    /*
-    println!("Status: {} {}", _res.status_code(), _res.reason());
-    println!("{}", String::from_utf8_lossy(&latest));
-    */
+    let status = response.status_code();
+    if !status.is_success() {
+        anyhow::bail!("github releases request failed with status {}", status);
+    }
+    parse_releases(&body)
+}
 
-    let latest: Release = serde_json::from_slice(&latest)?;
-    Ok(latest)
+/// A release that does not fit [`Release`] is skipped, not fatal: one odd
+/// entry must not switch the whole update check off.
+fn parse_releases(body: &[u8]) -> anyhow::Result<Vec<Release>> {
+    let entries: Vec<serde_json::Value> = serde_json::from_slice(body)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| {
+            serde_json::from_value::<Release>(entry)
+                .map_err(|err| log::warn!("skipping a malformed release entry: {}", err))
+                .ok()
+        })
+        .collect())
+}
+
+/// The newest published release, by version rather than by publish date or
+/// tag text.
+fn latest_release(releases: Vec<Release>) -> Option<Release> {
+    newest_by_tag(
+        releases.into_iter().filter(|release| !release.draft),
+        |release| release.tag_name.as_str(),
+    )
 }
 
 pub fn get_latest_release_info() -> anyhow::Result<Release> {
-    get_github_release_info("https://api.github.com/repos/PHPCraftdream/OnlyTerm/releases/latest")
-}
-
-lazy_static::lazy_static! {
-    static ref UPDATER_WINDOW: Mutex<Option<ConnectionUI>> = Mutex::new(None);
+    latest_release(get_github_releases(RELEASES_URL)?)
+        .ok_or_else(|| anyhow!("no published release has a recognizable version tag"))
 }
 
 pub fn load_last_release_info_and_set_banner() {
@@ -77,7 +103,7 @@ pub fn load_last_release_info_and_set_banner() {
 
         let current = onlyterm_version();
         let force_ui = std::env::var_os("ONLYTERM_ALWAYS_SHOW_UPDATE_UI").is_some();
-        if latest.tag_name.as_str() <= current && !force_ui {
+        if !is_newer(&latest.tag_name, current) && !force_ui {
             return;
         }
 
@@ -127,15 +153,14 @@ fn set_banner_from_release_info(latest: &Release) {
 }
 
 fn schedule_set_banner_from_release_info(latest: &Release) {
-    let current = onlyterm_version();
-    if latest.tag_name.as_str() <= current {
+    if !is_newer(&latest.tag_name, onlyterm_version()) {
         return;
     }
     // This fires at most once per `check_for_updates_interval_seconds`
     // (hours by default) and only sets an informational banner string;
     // it is not something the user is waiting on, unlike pty output
     // becoming visible or input being processed. Route it through the
-    // low priority queue (task #149) so that it never jumps ahead of
+    // low priority queue so that it never jumps ahead of
     // pending high-priority GUI work (e.g. a backlog of pane output
     // notifications) competing for the same main-thread spawn queue.
     onlyterm_promise::spawn::spawn_into_main_thread_with_low_priority({
@@ -147,7 +172,6 @@ fn schedule_set_banner_from_release_info(latest: &Release) {
     .detach();
 }
 
-/// Returns true if the provided socket path is dead.
 fn update_checker() {
     // Compute how long we should sleep for;
     // if we've never checked, give it a few seconds after the first
@@ -186,7 +210,7 @@ fn update_checker() {
             if let Ok(latest) = get_latest_release_info() {
                 schedule_set_banner_from_release_info(&latest);
                 let current = onlyterm_version();
-                if latest.tag_name.as_str() > current || force_ui {
+                if is_newer(&latest.tag_name, current) || force_ui {
                     log::info!(
                         "latest release {} is newer than current build {}",
                         latest.tag_name,
@@ -233,5 +257,75 @@ pub fn start_update_checker() {
             .name("update_checker".into())
             .spawn(update_checker)
             .expect("failed to spawn update checker thread");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn release_json(tag: &str, draft: bool, body: &str) -> String {
+        format!(
+            r#"{{"url":"u","body":{},"html_url":"h","tag_name":"{}","draft":{},"assets":[]}}"#,
+            body, tag, draft
+        )
+    }
+
+    fn releases(entries: &[String]) -> Vec<Release> {
+        parse_releases(format!("[{}]", entries.join(",")).as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_release_without_notes_still_parses() {
+        let parsed = releases(&[release_json("v0.0.44-alpha", false, "null")]);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].body, None);
+    }
+
+    #[test]
+    fn a_malformed_entry_is_skipped_not_fatal() {
+        let parsed = releases(&[
+            r#"{"tag_name":"v0.0.1-alpha"}"#.to_string(),
+            release_json("v0.0.2-alpha", false, r#""notes""#),
+        ]);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].tag_name, "v0.0.2-alpha");
+    }
+
+    #[test]
+    fn a_body_that_is_not_a_list_is_an_error() {
+        assert!(parse_releases(br#"{"message":"Not Found"}"#).is_err());
+        assert!(parse_releases(b"").is_err());
+    }
+
+    #[test]
+    fn the_latest_release_is_the_highest_version_not_the_last_or_longest_tag() {
+        let latest = latest_release(releases(&[
+            release_json("v0.0.44-alpha", false, "null"),
+            release_json("v0.0.100-alpha", false, "null"),
+            release_json("v0.0.9-alpha", false, "null"),
+        ]));
+        assert_eq!(latest.unwrap().tag_name, "v0.0.100-alpha");
+    }
+
+    #[test]
+    fn drafts_and_unrecognized_tags_are_never_the_latest() {
+        let latest = latest_release(releases(&[
+            release_json("v9.9.9-alpha", true, "null"),
+            release_json("nightly", false, "null"),
+            release_json("v0.0.44-alpha", false, "null"),
+        ]));
+        assert_eq!(latest.unwrap().tag_name, "v0.0.44-alpha");
+        assert!(latest_release(releases(&[release_json("nightly", false, "null")])).is_none());
+        assert!(latest_release(Vec::new()).is_none());
+    }
+
+    #[test]
+    fn a_cached_release_from_an_older_build_still_loads() {
+        let old =
+            r#"{"url":"u","body":"notes","html_url":"h","tag_name":"v0.0.40-alpha","assets":[]}"#;
+        let cached: Release = serde_json::from_str(old).unwrap();
+        assert!(!cached.draft);
+        assert_eq!(cached.body.as_deref(), Some("notes"));
     }
 }

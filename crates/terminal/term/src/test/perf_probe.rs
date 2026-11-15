@@ -1,4 +1,4 @@
-//! Ad-hoc profiling for task #147: where does the ~42-50ms
+//! Ad-hoc profiling: where does the ~42-50ms
 //! `terminal.lock()` hold time measured by
 //! `onlyterm_mux::test::terminal_lock_contention::perform_actions_hold_time_uncontended_baseline`
 //! actually go inside `Terminal::perform_actions`?
@@ -200,7 +200,7 @@ fn probe_perform_actions_hold_time_breakdown() {
 /// and confirms (a) chunking actually reduces per-call hold time roughly
 /// linearly with chunk size, and (b) final terminal state (grid +
 /// scrollback, compared via `Line` equality across every physical row) is
-/// identical either way. This is the evidence behind task #147's chunking
+/// identical either way. This is the evidence behind the chunking
 /// fix: if final state differed, chunking would not be a safe rewrite of
 /// `perform_actions`.
 #[test]

@@ -158,7 +158,7 @@ pub(crate) struct WindowInner {
     /// today's behavior of a null-brush class).
     placeholder_spinner: Option<PlaceholderSpinner>,
     /// Set once `clear_placeholder_background` has run, i.e. a working
-    /// `RenderState` is installed and producing frames (task #385's first
+    /// `RenderState` is installed and producing frames (the first
     /// gating condition -- see `start_placeholder_fade`). Kept
     /// separate from `placeholder_spinner.is_none()` even though they
     /// currently flip at the same time: this flag specifically means
@@ -167,7 +167,7 @@ pub(crate) struct WindowInner {
     /// visible on screen.
     renderer_ready: bool,
     /// Set once this window's pane(s) have produced their first non-empty
-    /// pty output (task #385's second gating condition -- proxy for "the
+    /// pty output (the second gating condition -- proxy for "the
     /// shell is alive and likely to accept input"; see
     /// `WindowOps::notify_shell_ready`'s doc comment for why this specific
     /// signal was chosen over waiting for a harder handshake).
@@ -181,7 +181,7 @@ pub(crate) struct WindowInner {
     /// stashed in `GWLP_USERDATA` for `wm_nccreate` to pick up (see
     /// `rc_to_pointer`'s call site in `new_window`).
     ///
-    /// Exists to fix a double-free (task #402): `CreateWindowExW` always
+    /// Exists to fix a double-free: `CreateWindowExW` always
     /// sends `WM_NCCREATE` before it can fail, so a *later* failure (e.g.
     /// GDI/USER handle exhaustion) still runs `wm_nccreate` -> stores the
     /// pointer in `GWLP_USERDATA` -> Windows then sends `WM_NCDESTROY` to
@@ -201,7 +201,7 @@ pub(crate) struct WindowInner {
 /// Decides whether `new_window`'s `CreateWindowExW`-failure path must itself
 /// reclaim (`Rc::from_raw`) the extra strong ref it stashed in
 /// `GWLP_USERDATA`, or whether `wm_ncdestroy` already did so as part of
-/// Windows unwinding a partially-constructed window (task #402).
+/// Windows unwinding a partially-constructed window.
 ///
 /// `already_reclaimed` is `WindowInner::extra_ref_reclaimed_by_ncdestroy`
 /// read *after* `create_window` has returned, i.e. after any `WM_NCDESTROY`
@@ -351,6 +351,7 @@ fn schedule_show_window(hwnd: HWindow, show: ShowWindowCommand) {
     // to lock inner, so we avoid locking it ourselves here
     log::trace!("scheduling ShowWindowCommand {show:?}");
     onlyterm_promise::spawn::spawn(async move {
+        let _ = &hwnd;
         // SAFETY: `hwnd.0` is a valid window handle and the show command is a
         // valid `SW_*` constant.
         unsafe {

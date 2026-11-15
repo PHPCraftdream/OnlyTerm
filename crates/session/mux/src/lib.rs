@@ -2,7 +2,7 @@
 
 #[path = "client/mod.rs"]
 mod client_modules;
-pub use client_modules::{activity, client, connui, ssh_agent};
+pub use client_modules::{activity, client, connui};
 mod model;
 pub use model::{domain, localpane, pane, tab};
 pub use tab::termwiztermtab;
@@ -15,7 +15,6 @@ mod window_modules;
 pub use window_modules::{renderable, window};
 
 mod mux;
-pub(crate) use client::ClientId;
 pub(crate) use domain::{Domain, DomainId};
 pub(crate) use mux::terminal_size_to_pty_size;
 #[cfg(test)]
@@ -25,7 +24,6 @@ pub use mux::*;
 pub(crate) use onlyterm_config::configuration;
 pub(crate) use onlyterm_config::ExitBehavior;
 pub(crate) use pane::{Pane, PaneId};
-pub(crate) use ssh_agent::AgentProxy;
 pub(crate) use tab::{Tab, TabId};
 pub(crate) use window::WindowId;
 pub(crate) use window_modules::pty_reader::read_from_pane_pty;

@@ -29,7 +29,7 @@ use std::path::Path;
 ///
 /// Deliberately free of quote characters so it survives being quoted into a
 /// single argument by every spawn path, including `elevate.rs`'s
-/// `construct_start_command_line`.
+/// `quote_arg`.
 ///
 /// Verified in a real ConPTY (`onlyterm record`): all three report `utf-8`
 /// afterwards and `chcp` reports 65001, with no exception from the

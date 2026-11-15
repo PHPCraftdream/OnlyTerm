@@ -1,4 +1,4 @@
-//! Load test for task #146: which caller actually dominates the wait to
+//! Load test: which caller actually dominates the wait to
 //! acquire `LocalPane::terminal` (a `parking_lot::Mutex<Terminal>`) --
 //! the pty output parser (`perform_actions`), simulated user input
 //! (`key_down`/`mouse_event`), or the renderer (`with_lines_mut`)?

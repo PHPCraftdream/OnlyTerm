@@ -1,14 +1,14 @@
-//! `HostProcessBackend` (task #651): the parent-side `RenderBackend` for
+//! `HostProcessBackend`: the parent-side `RenderBackend` for
 //! `webgpu_engine: HostProcess` (see
-//! docs/plans/2026-08-21-per-tab-gpu-process-isolation.md, Phase B, and the
-//! `@ox` architecture review this session that settled per-window
+//! docs/plans/2026-08-21-per-tab-gpu-process-isolation.md, Phase B, which
+//! settled per-window
 //! granularity, silent respawn-in-place, and no crash-visible epitaph
 //! screen).
 //!
 //! Owns, for one window: a DirectComposition device/target/visual (the
 //! window's real swapchain-equivalent, but this process never touches D3D
 //! for it -- `Surface::configure`/`Surface::present`, the exact calls behind
-//! every crash diagnosed this session, never run here), the current
+//! every diagnosed crash, never run here), the current
 //! `--gpu-tab-host` child process and its composition-surface generation,
 //! and a writer/reader thread pair that talk to it (mirroring
 //! `RenderThreadHandle`'s in-flight/repaint_pending/submit_started_at
@@ -16,9 +16,8 @@
 //!
 //! Respawn-in-place is silent: a composition surface keeps displaying its
 //! last presented frame even after its producer process dies (confirmed
-//! empirically this session via the Phase A spike -- see
-//! `.scratch/dcomp-spike`), so nothing visibly drops while a replacement
-//! child spawns, attaches to a *new* surface generation, and only takes over
+//! empirically with a standalone spike), so nothing visibly drops while a
+//! replacement child spawns, attaches to a *new* surface generation, and only takes over
 //! the visual once it has acked its first presented frame. Respawns are
 //! rate-limited with `rebuild_backoff_for_attempt`'s exact schedule
 //! (reused, not reimplemented) and a 3-per-30s sliding-window budget; once
@@ -78,13 +77,8 @@ enum HostToChildMsg {
 /// background threads from a freshly spawned replacement's.
 struct ChildGeneration {
     generation: u64,
-    // Kept alive for its `id()` (read by `debug_current_child_pid`, used
-    // only by tests -- production code never needs this generation's PID
-    // again once its writer/reader threads and Job Object are set up) and
-    // so its `stdin`/`stdout` (already `.take()`n into the writer/reader
-    // threads) and process handle stay valid for as long as this
-    // generation is current.
-    #[allow(dead_code)]
+    /// Its `stdin`/`stdout` are already `.take()`n into the writer/reader
+    /// threads; the handle stays so shutdown can wait for the process.
     child: Child,
     _job: Option<filedescriptor::OwnedHandle>,
     writer_tx: Sender<HostToChildMsg>,
@@ -134,12 +128,12 @@ struct Shared {
     /// supervisor rebuilds via a plain in-process `RenderThreadHandle`.
     demoted: AtomicBool,
     teardown_sentinel_strong: Arc<()>,
-    /// Composition-surface handles awaiting their generation's first
+    /// Composition-surface handles: those awaiting their generation's first
     /// `Presented` ack before being wrapped and swapped into the visual
-    /// (`on_presented`/`swap_visual_content`). Keyed by generation so a late
-    /// ack from an already-superseded generation can't reach for a handle
-    /// that may already have been closed by a newer one taking over.
-    pending_surface_handles: Mutex<std::collections::HashMap<u64, HANDLE>>,
+    /// (`on_presented`/`swap_visual_content`), and the one on screen. Keyed
+    /// by generation so a late ack from an already-superseded generation
+    /// can't reach for a handle a newer one has closed.
+    surface_handles: Mutex<surface_handles::SurfaceHandles>,
     /// Path to the `onlyterm-gui.exe` binary to spawn as `gpu-tab-host`.
     /// `std::env::current_exe()` in production; a test overrides it because
     /// under `cargo test` that would resolve to the test harness binary
@@ -279,7 +273,7 @@ impl HostProcessBackend {
             respawn_attempts: Mutex::new(Vec::new()),
             demoted: AtomicBool::new(false),
             teardown_sentinel_strong: Arc::new(()),
-            pending_surface_handles: Mutex::new(std::collections::HashMap::new()),
+            surface_handles: Mutex::new(surface_handles::SurfaceHandles::default()),
             child_exe,
             draw_pool: wire::new_draw_pool(),
             renderer_info: Mutex::new(None),
@@ -321,6 +315,8 @@ mod backend;
 mod io;
 #[path = "process_backend/lifecycle.rs"]
 mod lifecycle;
+#[path = "process_backend/surface_handles.rs"]
+mod surface_handles;
 
 #[cfg(test)]
 #[path = "process_backend/tests.rs"]

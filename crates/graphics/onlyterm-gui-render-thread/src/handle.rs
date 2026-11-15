@@ -49,14 +49,14 @@ pub struct RenderThreadSeed {
     /// This only helps for calls that haven't *started* yet: a thread
     /// already blocked inside a stuck `present()`/`configure()` call when
     /// `Destroyed` fires is not rescued by this flag. Full protection
-    /// against that belongs to future process-level isolation (task #224);
+    /// against that belongs to future process-level isolation;
     /// out of scope here.
     pub window_destroyed: Arc<AtomicBool>,
     /// `Some(when the currently in-flight submit/reconfigure call started)`,
     /// or `None` when no such call is in flight right now. Set/cleared
     /// around `webgpu.submit_frame` (see `submit_one_frame`) so
     /// `RenderThreadHandle::render_thread_is_hung` can tell a future
-    /// per-window supervisor (task #223) whether this window's render
+    /// per-window supervisor whether this window's render
     /// thread is currently stuck.
     pub submit_started_at: Arc<Mutex<Option<Instant>>>,
     /// Invoked on the render thread when a non-transient surface error needs
@@ -128,9 +128,9 @@ pub struct RenderThreadHandle {
     window_destroyed: Arc<AtomicBool>,
     /// Same `Arc<Mutex<Option<Instant>>>` as `RenderThreadSeed::submit_started_at`;
     /// read by `render_thread_is_hung()`, which in turn is polled by
-    /// `TermWindow`'s per-window render-thread hang supervisor (task #223).
+    /// `TermWindow`'s per-window render-thread hang supervisor.
     submit_started_at: Arc<Mutex<Option<Instant>>>,
-    /// `Weak` half of this render thread's teardown sentinel (task #292).
+    /// `Weak` half of this render thread's teardown sentinel.
     /// `spawn` creates a fresh, dedicated `Arc<()>` for this purpose and
     /// moves the *only* strong reference onto the spawned thread itself,
     /// where it is held until strictly after `render_thread_loop` (and
@@ -380,8 +380,8 @@ impl RenderThreadHandle {
         !self.window_destroyed.load(Ordering::Acquire) && self.teardown_sentinel.strong_count() == 0
     }
 
-    /// Type-erased `Weak` handle to this render thread's teardown sentinel
-    /// (task #292), for `TermWindow::begin_renderer_rebuild` to stash
+    /// Type-erased `Weak` handle to this render thread's teardown sentinel,
+    /// for `TermWindow::begin_renderer_rebuild` to stash
     /// alongside the retired WebGpu child HWND via
     /// `Window::recreate_webgpu_child_window`, in place of a
     /// `Weak<WebGpuState>` obtained by downgrading `self.webgpu` directly.

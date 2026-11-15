@@ -951,7 +951,7 @@ impl crate::TermWindow {
             // one, precisely so this per-frame write (unconditional, ~60
             // times/second, `false` far more often than `true`) can never
             // clobber a genuine concurrent lock-timeout `true` for this
-            // same pane (see task #269).
+            // same pane.
             //
             // Task #457: use `deferred_any` instead of `budget_exceeded`. The old
             // sticky flag only tracked whether the deadline passed, not whether

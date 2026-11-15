@@ -1,7 +1,6 @@
 use crate::client::{ClientId, ClientInfo};
 use crate::domain::{Domain, DomainId, DomainState, SplitSource};
 use crate::pane::{CachePolicy, Pane, PaneId};
-use crate::ssh_agent::AgentProxy;
 use crate::tab::{NotifyMux, SplitRequest, Tab, TabId};
 use crate::window::{Window, WindowId};
 use anyhow::{anyhow, Context, Error};
@@ -95,7 +94,6 @@ pub struct Mux {
     identity: RwLock<Option<Arc<ClientId>>>,
     num_panes_by_workspace: RwLock<HashMap<String, usize>>,
     main_thread_id: std::thread::ThreadId,
-    pub(crate) agent: Option<AgentProxy>,
     /// Coalescing state for `MuxNotification::PaneOutput`: maps pane id
     /// to (in_flight, has_more_output, coalesce_count). When new output arrives:
     ///
@@ -224,7 +222,7 @@ impl onlyterm_term::DownloadHandler for MuxDownloader {
 
 #[cfg(test)]
 mod captrack_integration {
-    //! Proof-of-wiring test for `captrack` (task #151). This does not touch
+    //! Proof-of-wiring test for `captrack`. This does not touch
     //! any production code path: it only demonstrates that the `captrack`
     //! dependency resolves and its `t*!` macros compile/run in both the
     //! default (telemetry disabled, zero-overhead bare constructor) and

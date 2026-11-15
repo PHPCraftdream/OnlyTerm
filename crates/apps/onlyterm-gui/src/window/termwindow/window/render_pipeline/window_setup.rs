@@ -11,7 +11,7 @@ impl TermWindow {
     /// whole process, or whether it must instead fail only this one window
     /// and leave any other already-running windows untouched, by checking
     /// `front_end().has_any_known_window()` *at the point of failure* --
-    /// see the WebGpu init failure handling below (task #428).
+    /// see the WebGpu init failure handling below.
     pub async fn new_window(mux_window_id: MuxWindowId) -> anyhow::Result<()> {
         let config = configuration();
         let dpi = config.dpi.unwrap_or_else(::window::default_dpi) as usize;

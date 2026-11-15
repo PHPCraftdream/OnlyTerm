@@ -1,9 +1,9 @@
 //! Guards the "(StableRowIndex, seqno) identifies a unique line" contract.
 //!
-//! The GUI's `shape_hash_cache` (task #439) is keyed by
+//! The GUI's `shape_hash_cache` is keyed by
 //! `(pane_id, stable_row)` and validated by
 //! `entry.seqno == line.current_seqno()`, and `Line::last_cell_was_wrapped`'s
-//! own memo (task #462) is seqno-keyed too. Both are only sound if the
+//! own memo is seqno-keyed too. Both are only sound if the
 //! terminal model guarantees:
 //!
 //!   for a given pane, the pair (StableRowIndex, Line::current_seqno())

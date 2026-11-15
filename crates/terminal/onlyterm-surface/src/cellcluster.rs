@@ -337,6 +337,15 @@ impl CellCluster {
             return Vec::new();
         }
 
+        // Only Hebrew cells are ever reordered: without one, the order below
+        // is the identity and no run boundary exists, which is exactly the
+        // no-bidi clustering. Nearly every line takes this path, and it
+        // skips the three per-line vectors and the phrase scan (about half
+        // of the clustering time for a line of Latin text).
+        if !cells.iter().any(|c| Self::is_hebrew_cell(c.str())) {
+            return Self::make_cluster_no_bidi(cells.into_iter());
+        }
+
         let (order, in_run) =
             Self::reorder_hebrew_phrases(&cells, is_wrap_continuation, continues_next);
 
@@ -694,5 +703,95 @@ mod test {
             }
             assert_eq!(cluster.attrs, expect_attrs, "cluster {} attrs", i);
         }
+    }
+
+    /// What a cluster carries, for comparing two clusterings.
+    fn summary(
+        clusters: &[CellCluster],
+    ) -> Vec<(String, usize, usize, CellAttributes, Vec<usize>)> {
+        clusters
+            .iter()
+            .map(|c| {
+                (
+                    c.text.clone(),
+                    c.first_cell_idx,
+                    c.width,
+                    c.attrs.clone(),
+                    (0..c.text.len()).map(|i| c.byte_to_cell_idx(i)).collect(),
+                )
+            })
+            .collect()
+    }
+
+    /// The reference: bidi clustering as it was before lines without Hebrew
+    /// took the no-bidi path, i.e. always through `reorder_hebrew_phrases`.
+    fn cluster_through_reorder(line: &Line) -> Vec<CellCluster> {
+        let cells: Vec<CellRef<'_>> = line.visible_cells().collect();
+        let (order, in_run) = CellCluster::reorder_hebrew_phrases(&cells, false, false);
+        assert!(
+            order.iter().copied().eq(0..cells.len()),
+            "a line without Hebrew must not be reordered"
+        );
+        assert!(in_run.iter().all(|inside| !inside));
+        CellCluster::make_cluster_no_bidi(cells.into_iter())
+    }
+
+    #[test]
+    fn a_line_without_hebrew_clusters_the_same_with_bidi_on_or_off() {
+        let lines = [
+            "",
+            " ",
+            "plain ascii words  with   runs of   spaces",
+            "status=busy | worker=042 | redraw payload",
+            "it's a 'quoted' word, isn't it",
+            "\u{441}\u{442}\u{430}\u{442}\u{443}\u{441} \u{433}\u{43e}\u{442}\u{43e}\u{432}, \u{43f}\u{43e}\u{442}\u{43e}\u{43a} 42",
+            "\u{754c}\u{6f22}\u{5b57} \u{65e5}\u{672c}\u{8a9e} mixed with ascii",
+            "\u{250c}\u{2500}\u{2500}\u{2510} box \u{2502} drawing \u{2514}\u{2500}\u{2518}",
+            "arabic is not reordered here: \u{645}\u{631}\u{62d}\u{628}\u{627}",
+            "emoji \u{1f600} and e\u{301} combining",
+        ];
+        for text in lines {
+            let line = Line::from_text(text, &CellAttributes::default(), SEQ_ZERO, None);
+            let off = CellCluster::make_cluster(line.visible_cells(), None, false, false);
+            for hint in [
+                ParagraphDirectionHint::LeftToRight,
+                ParagraphDirectionHint::AutoLeftToRight,
+                ParagraphDirectionHint::RightToLeft,
+            ] {
+                let on = CellCluster::make_cluster(line.visible_cells(), Some(hint), true, true);
+                assert_eq!(summary(&on), summary(&off), "{:?} with {:?}", text, hint);
+            }
+            assert_eq!(
+                summary(&cluster_through_reorder(&line)),
+                summary(&off),
+                "{:?}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_with_hebrew_still_goes_through_the_reordering() {
+        // Reversed within the phrase, so the result differs from no-bidi.
+        let line = Line::from_text(
+            "ab \u{05D0}\u{05D1}\u{05D2} cd",
+            &CellAttributes::default(),
+            SEQ_ZERO,
+            None,
+        );
+        let off = CellCluster::make_cluster(line.visible_cells(), None, false, false);
+        let on = CellCluster::make_cluster(
+            line.visible_cells(),
+            Some(ParagraphDirectionHint::LeftToRight),
+            false,
+            false,
+        );
+        assert_ne!(summary(&on), summary(&off));
+        let hebrew: String = on
+            .iter()
+            .map(|c| c.text.as_str())
+            .filter(|t| CellCluster::is_hebrew_cell(t))
+            .collect();
+        assert_eq!(hebrew, "\u{05D2}\u{05D1}\u{05D0}");
     }
 }

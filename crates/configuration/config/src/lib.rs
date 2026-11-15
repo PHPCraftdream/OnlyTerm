@@ -97,7 +97,7 @@ lazy_static! {
 /// TOML-parsing all ~1000 bundled schemes up front, which measured at ~2.2s
 /// of startup time (debug build) for a config that names a single scheme --
 /// it was the single largest contributor to the delay before the window
-/// appeared (task #405). Since a config can only name one scheme, parse just
+/// appeared. Since a config can only name one scheme, parse just
 /// that one.
 ///
 /// The linear scan over `SCHEMES` is only string comparisons against static

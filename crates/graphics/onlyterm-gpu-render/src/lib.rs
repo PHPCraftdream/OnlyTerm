@@ -76,8 +76,8 @@ pub enum SubmittableFrame {
 /// window's process-wide `ProcessGpuContext` -- see
 /// `termwindow::webgpu::context`) and `HostProcessBackend` (task #651,
 /// per-window, a dedicated `--gpu-tab-host` child process; see
-/// docs/plans/2026-08-21-per-tab-gpu-process-isolation.md and the `@ox`
-/// architecture review that settled per-window granularity with silent
+/// docs/plans/2026-08-21-per-tab-gpu-process-isolation.md, which settled
+/// per-window granularity with silent
 /// respawn-in-place over per-tab or a crash-visible epitaph screen).
 /// `TermWindow`/`render_pipeline.rs` talk only to this trait, never to a
 /// concrete implementation directly, so the config-selected backend
@@ -154,7 +154,7 @@ pub trait RenderBackend {
     /// child dying is normal and handled internally by respawning it
     /// (silently, no user-visible epitaph -- a dead child's composition
     /// surface keeps showing its last presented frame, confirmed
-    /// empirically this session); this must read `false` while a respawn is
+    /// empirically); this must read `false` while a respawn is
     /// in progress or could still be attempted, and only flips to `true`
     /// once the respawn budget (`rebuild_backoff_for_attempt`'s shape, 3
     /// attempts / 30s) is exhausted and this backend has demoted itself
@@ -192,7 +192,7 @@ use std::time::Duration;
 ///
 /// Kept as a free function so the schedule can be asserted without a
 /// `TermWindow`, a GPU or a window. `pub` so both this crate's
-/// `HostProcessBackend` (task #651) and the GUI crate's renderer-rebuild retry
+/// `HostProcessBackend` and the GUI crate's renderer-rebuild retry
 /// logic can reuse the exact same schedule for its own child-process
 /// respawns -- the reasoning transfers unchanged, and if anything applies
 /// more strongly there (a whole process's device creation, not just a

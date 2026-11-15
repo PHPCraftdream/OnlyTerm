@@ -47,7 +47,7 @@ pub struct WebGpuState {
     /// `HostProcessBackend` render backend: that backend's whole point is
     /// that the *parent* process never creates a swapchain or calls
     /// `Surface::configure`/`Surface::present` for this window at all (those
-    /// are exactly where every GPU crash diagnosed this session happened) --
+    /// are exactly where every diagnosed GPU crash happened) --
     /// the parent still needs a `WebGpuState` for CPU-side work that's
     /// backend-agnostic (`RenderState`/`GlyphCache`'s atlas texture), just
     /// not a real surface. See `new_device_only`.
@@ -172,7 +172,7 @@ impl RawHandlePair {
     /// created alongside the top-level window (see
     /// `window::os::windows::Window::webgpu_child_hwnd`) instead of the
     /// top-level HWND, so that DXGI's one-swapchain-per-HWND rule doesn't
-    /// get in the way of a future in-place renderer rebuild (task #253).
+    /// get in the way of a future in-place renderer rebuild.
     /// The display handle is still taken from `window`, since
     /// `WindowsDisplayHandle` is a zero-sized marker with no HWND of its own
     /// (see `HasDisplayHandle for Window`/`WindowInner`, which construct the

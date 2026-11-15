@@ -129,3 +129,46 @@ fn killer_without_process_handle_still_reaps_its_owned_job_children() {
     assert_eq!(child.wait(5000), WAIT_OBJECT_0);
     killer.kill().unwrap();
 }
+
+#[test]
+fn process_names_lists_only_the_pane_jobs_own_processes() {
+    let root = create_kill_on_close_job().unwrap();
+    let inside = TestProcess::spawn(Some(root.as_raw_handle() as _));
+    // Same executable, but not in the job: it must not be counted.
+    let outside = TestProcess::spawn(None);
+
+    let names = process_names(root.as_raw_handle() as _).unwrap();
+
+    assert_eq!(names.len(), 1, "{:?}", names);
+    assert!(names[0].eq_ignore_ascii_case("cmd.exe"), "{:?}", names);
+    assert_eq!(inside.wait(0), WAIT_TIMEOUT);
+    assert_eq!(outside.wait(0), WAIT_TIMEOUT);
+}
+
+#[test]
+fn process_names_of_an_empty_job_is_empty() {
+    let root = create_kill_on_close_job().unwrap();
+    assert!(process_names(root.as_raw_handle() as _).unwrap().is_empty());
+}
+
+#[test]
+fn process_names_includes_processes_moved_to_a_nested_protected_job() {
+    // A detached process (F4) lives in a nested job but must still count as
+    // part of the pane: a program the user detached is still running there.
+    let root = create_kill_on_close_job().unwrap();
+    // SAFETY: Null attributes/name request a new non-inheritable empty job.
+    let raw = unsafe { CreateJobObjectW(ptr::null_mut(), ptr::null()) };
+    assert!(!raw.is_null());
+    // SAFETY: The newly created job is uniquely owned by this test.
+    let protected = unsafe { OwnedHandle::from_raw_handle(raw as _) };
+    let process = TestProcess::spawn(Some(root.as_raw_handle() as _));
+    assign_protected(
+        process.handle.as_raw_handle() as _,
+        protected.as_raw_handle() as _,
+    )
+    .unwrap();
+
+    let names = process_names(root.as_raw_handle() as _).unwrap();
+
+    assert_eq!(names.len(), 1, "{:?}", names);
+}

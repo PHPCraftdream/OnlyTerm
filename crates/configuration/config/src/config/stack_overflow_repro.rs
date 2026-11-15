@@ -84,7 +84,7 @@ fn config_default_fits_comfortably_under_half_the_default_stack() {
              would abort the whole process instead of reaching this message) on a thread stack \
              half the size of Windows' default 1MiB main-thread stack -- FromDynamic's generated \
              from_dynamic for Config has grown large enough to be a real stack-overflow risk \
-             (see task #422); consider whether new fields can avoid growing this further, or \
+            ; consider whether new fields can avoid growing this further, or \
              whether the derive macro needs to split large structs' from_dynamic bodies into \
              smaller, separately-framed helper functions",
     );

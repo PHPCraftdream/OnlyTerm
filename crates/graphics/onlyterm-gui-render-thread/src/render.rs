@@ -138,10 +138,9 @@ struct SubmitState<'a> {
 /// `Shutdown` in the channel -- see `RenderThreadHandle::shutdown`). A call
 /// already blocked inside `submit_frame`/`reconfigure` when the window gets
 /// destroyed is not interrupted by this check; that residual risk is
-/// accepted for now and belongs to future process-level isolation
-/// (task #224), not this task.
+/// accepted for now and belongs to future process-level isolation.
 ///
-/// `placeholder_cleared` (task #407): `*placeholder_cleared` starts `false`
+/// `placeholder_cleared`: `*placeholder_cleared` starts `false`
 /// and this function flips it to `true` and calls
 /// `Window::clear_placeholder_background` the first time `webgpu.submit_frame`
 /// (which does the real `Queue::submit` + `SurfaceTexture::present`) actually
@@ -187,7 +186,7 @@ fn submit_one_frame(
         return;
     }
     // `submit_started_at` must cover the debug stall too, not just the real
-    // `submit_frame` call below: this is what task #253's manual hang/rebuild
+    // `submit_frame` call below: this is what the manual hang/rebuild
     // verification (and anyone else exercising `debug_render_thread_stall_ms`)
     // relies on to simulate a stuck GPU driver call. Setting it only around
     // `submit_frame` (which is fast) would mean `render_thread_is_hung()`
@@ -310,7 +309,7 @@ fn submit_one_frame(
                     // directly (GUI-thread-only state), so signal back to the
                     // GUI thread via the same `TermWindowNotif::Apply`
                     // mechanism `schedule_render_thread_hang_check` uses,
-                    // reusing task #253's in-place rebuild (and its circuit
+                    // reusing the in-place rebuild (and its circuit
                     // breaker, so a persistently broken adapter that throws
                     // this on every frame doesn't loop-rebuild forever).
                     if !surface_error_needs_renderer_rebuild(&other) {

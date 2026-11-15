@@ -140,7 +140,7 @@ impl Window {
     /// This exists because DXGI only permits one swapchain per HWND: putting
     /// the surface on a dedicated child HWND (rather than directly on the
     /// application's own top-level HWND) means a future in-place renderer
-    /// rebuild (task #253, not yet implemented) can tear down and recreate
+    /// rebuild can tear down and recreate
     /// the child HWND/surface without fighting the top-level window's own
     /// swapchain lifetime. Today this child window is purely structural: it
     /// is kept perfectly in sync with the parent's client area and made
@@ -333,7 +333,7 @@ impl Window {
                 // will drop) this same extra ref via `take_rc_from_pointer`
                 // -- see `WindowInner::extra_ref_reclaimed_by_ncdestroy`.
                 // Reclaiming it again here would double-drop the same
-                // strong reference (task #402). Only reclaim it ourselves
+                // strong reference. Only reclaim it ourselves
                 // when `wm_ncdestroy` never ran, i.e. `CreateWindowExW`
                 // failed before `WM_NCCREATE` (bad class/parent handle,
                 // etc.), in which case `GWLP_USERDATA` was never populated
@@ -423,7 +423,7 @@ impl Window {
 
     /// Retire the existing WebGpu child window (if any) and create a fresh
     /// one in its place, parented to this window and sized to its current
-    /// client area. Used by task #253's in-place renderer rebuild: when a
+    /// client area. Used by the in-place renderer rebuild: when a
     /// window's render thread is found stuck inside a GPU submit call, we
     /// tear down and recreate the whole WebGpu stack (instance/adapter/
     /// device/surface) rather than the whole top-level OS window, and this
@@ -438,7 +438,7 @@ impl Window {
     /// `dyn Any`) to the `WebGpuState` whose surface targets the *old* child
     /// HWND, downgraded from the caller's `Arc` right before the caller
     /// drops its own strong reference (see `begin_renderer_rebuild`). We do
-    /// not immediately `DestroyWindow` the old child here (task #283): if
+    /// not immediately `DestroyWindow` the old child here: if
     /// the just-shut-down render thread is wedged inside
     /// `submit_frame`/`present()` -- the whole reason a rebuild was
     /// triggered -- it can still hold the other strong `Arc<WebGpuState>`
@@ -550,8 +550,8 @@ impl Window {
     /// repeatedly (each entry is only ever destroyed once, then removed).
     ///
     /// Deferred via `onlyterm_promise::spawn::spawn`, exactly like
-    /// `recreate_webgpu_child_window` above and for the identical reason
-    /// (task #291): both call sites (`check_render_thread_hang_tick`,
+    /// `recreate_webgpu_child_window` above and for the identical reason:
+    /// both call sites (`check_render_thread_hang_tick`,
     /// `finish_renderer_rebuild`) reach this synchronously from inside
     /// `notify()`'s `WindowEvent::Notification` dispatch, which is itself
     /// invoked from `Connection::with_window_inner` while it still holds

@@ -804,7 +804,7 @@ impl WindowGpuSurface {
 
     /// Builds a surface targeting an existing DirectComposition
     /// composition-surface handle instead of a window -- used by the
-    /// `webgpu_engine: PerTabProcess` GPU-host child process (task #650),
+    /// `webgpu_engine: PerTabProcess` GPU-host child process,
     /// which has no window of its own and renders directly into a
     /// composition surface the parent process created and duplicated to it
     /// (see docs/plans/2026-08-21-per-tab-gpu-process-isolation.md).

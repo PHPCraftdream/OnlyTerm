@@ -14,7 +14,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// itself (which has no `gpu-tab-host` subcommand -- it parses its own
 /// test-filter arguments instead), not the plain GUI executable, so
 /// these tests need the real one built first (`cargo build -p
-/// onlyterm-gui`, already a prerequisite for every check this session).
+/// onlyterm-gui`).
 fn real_gui_exe() -> std::path::PathBuf {
     let mut path = std::env::current_exe().expect("current_exe");
     path.pop();
@@ -305,4 +305,107 @@ fn wait_until_child_pid(backend: &HostProcessBackend) -> Option<u32> {
         Duration::from_secs(5),
     );
     pid
+}
+
+/// A child that outlives any grace period, spawned by the test itself (so it
+/// is also the test's to end).
+fn spawn_long_running_child() -> std::process::Child {
+    std::process::Command::new("ping")
+        .args(["-n", "60", "127.0.0.1"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn ping")
+}
+
+fn process_is_running(pid: u32) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{
+        OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
+    };
+    // SAFETY: `pid` is a child this test spawned; the handle is closed
+    // before the block ends and the wait has a zero timeout.
+    unsafe {
+        match OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
+            Ok(handle) => {
+                let running = WaitForSingleObject(handle, 0) != WAIT_OBJECT_0;
+                let _ = CloseHandle(handle);
+                running
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+/// The window can be closed while a respawn is waiting out its backoff. The
+/// respawn must then do nothing: a child started behind a closed window
+/// would run until the whole application exits.
+#[test]
+fn a_respawn_that_wakes_after_the_window_closed_launches_no_child() {
+    let backend = spawn_test_backend();
+    let generations_before = backend.shared.next_generation.load(Ordering::Acquire);
+
+    backend.shutdown();
+    backend.shared.respawn_pending.store(true, Ordering::SeqCst);
+    lifecycle::run_scheduled_respawn(&backend.shared);
+
+    assert_eq!(
+        backend.shared.next_generation.load(Ordering::Acquire),
+        generations_before,
+        "a closed window must not get a new child generation"
+    );
+    assert!(backend.debug_current_child_pid().is_none());
+    assert!(
+        !backend.shared.respawn_pending.load(Ordering::SeqCst),
+        "the respawn gate must clear even when nothing was spawned"
+    );
+}
+
+#[test]
+fn wait_or_kill_reports_a_child_that_exits_by_itself() {
+    let mut child = std::process::Command::new("cmd")
+        .args(["/C", "exit", "0"])
+        .spawn()
+        .expect("spawn cmd");
+    assert!(lifecycle::wait_or_kill(&mut child, Duration::from_secs(10)));
+}
+
+#[test]
+fn wait_or_kill_ends_a_child_that_outlasts_the_grace_period() {
+    let mut child = spawn_long_running_child();
+    let pid = child.id();
+
+    assert!(!lifecycle::wait_or_kill(
+        &mut child,
+        Duration::from_millis(200)
+    ));
+    assert!(!process_is_running(pid), "the child must have been ended");
+}
+
+/// Shutdown runs on the GUI thread: it must return at once, and the child
+/// must still be gone once its grace period is over.
+#[test]
+fn retiring_a_generation_neither_blocks_the_caller_nor_leaves_the_child() {
+    let child = spawn_long_running_child();
+    let pid = child.id();
+    let (writer_tx, _writer_rx) = std::sync::mpsc::channel();
+
+    let started = Instant::now();
+    lifecycle::retire_in_background(ChildGeneration {
+        generation: 7,
+        child,
+        _job: None,
+        writer_tx,
+    });
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "retiring must not wait for the grace period"
+    );
+
+    assert!(
+        wait_until(
+            || !process_is_running(pid),
+            lifecycle::SHUTDOWN_GRACE + Duration::from_secs(15)
+        ),
+        "the child must be ended once its grace period is over"
+    );
 }

@@ -21,8 +21,8 @@ use winreg::RegKey;
 
 impl WindowInner {
     fn close(&mut self) {
-        // Eagerly destroy any retired WebGpu child HWNDs we can right now
-        // (task #283). Not strictly required for correctness -- any left
+        // Eagerly destroy any retired WebGpu child HWNDs we can right now.
+        // Not strictly required for correctness -- any left
         // in `retired_webgpu_children` are still `WS_CHILD` windows of
         // `self.hwnd`, which Windows destroys automatically as part of
         // `hwnd`'s own teardown below -- but doing it here avoids relying
@@ -30,6 +30,7 @@ impl WindowInner {
         self.sweep_retired_webgpu_children();
         let hwnd = self.hwnd;
         onlyterm_promise::spawn::spawn(async move {
+            let _ = &hwnd;
             // SAFETY: `hwnd.0` is a valid window handle; `DestroyWindow` is
             // queued on the owning thread via the spawned task.
             unsafe {
@@ -359,6 +360,7 @@ impl WindowOps for Window {
             let hwnd = inner.hwnd;
             let decorations = inner.config.window_decorations;
             onlyterm_promise::spawn::spawn(async move {
+                let _ = &hwnd;
                 log::trace!("set_inner_size called with {width}x{height}");
                 // SAFETY: `hwnd.0` is a valid window handle.
                 let frame_dpi = unsafe { GetDpiForWindow(hwnd.0) };

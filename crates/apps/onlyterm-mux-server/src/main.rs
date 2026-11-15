@@ -128,9 +128,6 @@ fn run() -> anyhow::Result<()> {
     let config = onlyterm_config::configuration();
 
     config.update_ulimit()?;
-    if let Some(value) = &config.default_ssh_auth_sock {
-        std::env::set_var("SSH_AUTH_SOCK", value);
-    }
 
     // Single-pane mode: skip angelization and use stdin/stdout for mux protocol
     if opts.single_pane {
@@ -398,6 +395,7 @@ fn spawn_parent_watcher(supervise_pid: Option<u32>) {
     let h_parent = ParentHandle(h_parent);
 
     std::thread::spawn(move || {
+        let _ = &h_parent;
         let h_parent = h_parent.0;
 
         log::info!(

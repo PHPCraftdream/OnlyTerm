@@ -135,8 +135,7 @@ pub struct LineQuadCacheValue {
 /// Not a content cache (that's `line_quad_cache`, keyed by content) --
 /// this answers "what is currently on screen at visual row N", which is
 /// the only thing that can be re-emitted when the frame-build budget
-/// defers a row's rebuild. See task #457 / the @oh design review this
-/// implements.
+/// defers a row's rebuild. See `cache/budget.rs`.
 pub struct RetainedPaneRows {
     /// Fail-safe stamp: everything that would invalidate the *pixels* of
     /// a retained row without necessarily changing that row's text
@@ -677,7 +676,7 @@ impl crate::TermWindow {
     /// the ones that resize the atlas in place.
     pub(crate) fn invalidate_atlas_dependent_caches(&mut self) {
         // Reset frame signature on atlas resize - texture content changed,
-        // so the previous frame is no longer comparable (task #450)
+        // so the previous frame is no longer comparable
         self.last_frame_signature = None;
         self.shape_generation += 1;
         self.shape_cache.borrow_mut().clear();

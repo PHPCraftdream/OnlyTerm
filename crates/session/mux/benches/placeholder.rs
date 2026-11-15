@@ -1,5 +1,5 @@
 //! Placeholder benchmark demonstrating how `bench-scale-tool` is wired up
-//! in this crate (task #150).
+//! in this crate.
 //!
 //! This intentionally benchmarks trivial, side-effect-free work — the goal
 //! is a working, compiling example of the harness plumbing, not a real
